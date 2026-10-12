@@ -6,6 +6,7 @@
 |------|------|
 | [`ascendc-port-orchestrator`](../plugins-community/ascendc-port-orchestrator/) | AscendC 算子跨代际移植与反向算子生成 |
 | [`model-train-precision-diagnose`](../plugins-community/model-train-precision-diagnose/) | PyTorch on Ascend NPU 训练精度异常诊断 |
+| [`tilelang2ascendc-ops-generator`](../plugins-community/tilelang2ascendc-ops-generator/) | Ascend C 算子自动生成（双路径设计表达 + AscendC 转译） |
 | [`triton-auto-evolve`](../plugins-community/triton-auto-evolve/) | Triton-Ascend 算子多轮自动优化 |
 
 ## ascendc-port-orchestrator
@@ -43,6 +44,20 @@ npx @cannbot-plugin/cannbot@latest install model-train-precision-diagnose \
 ```
 
 源码安装与各客户端（OpenCode / Codex / Claude Code / TRAE / DSH）参数见 [quickstart.md](../plugins-community/model-train-precision-diagnose/quickstart.md)。
+
+## tilelang2ascendc-ops-generator
+
+Ascend C 算子自动生成：双路径（ops-direct-invoke / TileLang）设计表达与 AscendC 转译优化，端到端完成算子开发。简单算子（Index / Gather / Scatter 等）走 ops-direct-invoke 工作流（Architect 设计 → Developer 实现 → Reviewer 审查）；复杂算子（Attention / MatMul / Norm / Sort 等）走 TileLang 设计表达 → AscendC 转译，内置 7 Phase 端到端工作流（含知识演进闭环）。
+
+前置条件：Python ≥ 3.8、PyTorch ≥ 2.0、tilelang-ascend、CANN Toolkit（建议 ≥ 9.0.0）及可用 NPU 设备（Ascend 910 / 950 PR 等）。
+
+安装（当前面向 Claude Code）：
+
+```bash
+cd plugins-community/tilelang2ascendc-ops-generator && bash init.sh project claude
+```
+
+各客户端安装参数与使用方式见 [quickstart.md](../plugins-community/tilelang2ascendc-ops-generator/quickstart.md)。
 
 ## triton-auto-evolve
 
