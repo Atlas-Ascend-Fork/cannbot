@@ -1,18 +1,22 @@
-title: M6｜性能摸底与优化
+title: M6｜性能摸底
 goal:
-- 在精度验证通过的实现上完成性能摸底，并在已确认性能目标范围内优化。
+- 在精度验证通过的最终算子实现上，用 msprof 采集一个核心 case 的设备性能数据并保存原始证据；本节点只做摸底，不做优化。
 approach:
-- 修改算子源码时，必须加载 `cannbot-dsl-best-practice` Skill，按其中的要求执行。
-- 运行结构用例时，将 `$WORK_DIR` 加入 `PYTHONPATH`，使用 `CANNBOTDSL_PROBE_MODULE=operators.<op>.probe.<op>_probe`，沿用冻结的探针事件断言。
-- 使用固定输入集记录优化前的设备性能、测试环境和原始测量结果。
-- 仅依据测量证据在冻结设计范围内修改实现，每次修改后回归受影响用例；最终采纳版本有变化时，运行冻结的黑盒、白盒与 TDD 全量设备回归，并复验声明的导出变体与 Native 产物命中，保存该版本证据。未采纳修改时复用原有效证据。
-- 将优化前后结果、命令、退出码及实现版本保存到 `$WORK_DIR/performance/`，汇总报告固定为 `$WORK_DIR/performance/performance-report.md`。
+- 从 `$WORK_DIR/design/doc/REQUIREMENTS.md` 已确认的性能目标场景选定核心 case：取 `$WORK_DIR/operators/<op>/test/testcase.csv` 中与该场景对应的一条 active blackbox `case_id`；没有完全对应的 case 时记录缺口与来源并终止本节点，不自造输入。
+- 在 `$WORK_DIR/performance/` 编写单进程采集脚本：以 `$WORK_DIR` 为 `PYTHONPATH`，按 `CANNBOTDSL_OP_MODULE=operators.<op>.<op>` 导入算子公开入口（入口非 `run` 时按 `CANNBOTDSL_OP_ENTRY`）；复用该 case 的 `inputs_json` 配方与 `<op>_golden.py` 的 `make_inputs` 构造与精度验证完全相同的输入。
+- 采集脚本先预热调用 10 次再正式采样 10 次：首次预热完成该静态 case 的唯一一次编译，采样循环全部命中编译缓存、零重新编译；将 `CANNBOTDSL_CACHE_DIR` 固定到 `$WORK_DIR/performance/` 下的目录；采集环境不得设置 `CANNBOTDSL_DUMP_*`、`CANNBOTDSL_PRINT_*`、`CANNBOTDSL_REUSE_ASCENDC`、`CANNBOTDSL_PIPE_STAGE`，被测代码不得残留 `cbd.print` 或 `dump_*`。
+- 用 msprof 包裹采集脚本：`msprof --aic-metrics=PipeUtilization --task-time=on --ai-core=on --application=<采集脚本及参数> --output=$WORK_DIR/performance/msprof_<case_id>`；固定设备型号与 `ASCEND_RT_VISIBLE_DEVICES`，不与其他进程共用设备。
+- 从 msprof 输出中提取算子目标 kernel 的 10 次 `Task Duration`，取最小值作为该 case 的性能结论，全部原始样本一并保留；报告注明所统计 kernel 的名称并与算子实现对应，对照已确认的性能目标仅作事实性记录，不作达标放行判定。
+- 将采集脚本、msprof 输出目录、运行命令、退出码、设备与驱动环境及实现版本保存到 `$WORK_DIR/performance/`，汇总报告固定为 `$WORK_DIR/performance/performance-report.md`。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
-- 核对测量与回归报告可对应到同一输入集和实现版本，原始测量证据完整。
-- 核对最终采纳版本有完整设备回归证据，或与原有效证据的版本一致；性能结论有原始测量证据，且满足已确认的硬性目标。
+- 核对核心 case 的 `case_id` 可追溯到 `REQUIREMENTS.md` 的性能目标场景，且输入配方与 `testcase.csv` 中该 `case_id` 一致，未自造输入。
+- 核对预热 10 次完成后才进入正式采样，采样期间未发生新的编译（编译日志或缓存证据）；采集环境未设置旁路编译缓存或触发回读的调试类变量，被测代码无残留 `cbd.print` 或 `dump_*`。
+- 核对 `Task Duration` 来自 msprof 原始输出、样本数为 10、取最小值口径一致，所统计 kernel 与算子实现对应，设备与环境固定；报告结论与原始样本一一对应。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
 - 'test -s "$WORK_DIR/performance/performance-report.md"'
+- 'find "$WORK_DIR/performance" -maxdepth 1 -type d -name "msprof_*" | grep -q .'
 out_of_scope:
-- 不修改已冻结的规格、Golden、测试阈值或设计事实。
+- 不做性能优化，不修改算子实现、测试用例或性能测量数据。
+- 不修改已冻结的规格、Golden、测试阈值或设计事实；不采集核心 case 以外的用例。
