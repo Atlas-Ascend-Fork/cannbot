@@ -32,7 +32,8 @@ function sandbox(t) {
 
 function install(box, tool, source, extra = []) {
   const args = [cli, 'install', plugin, '--tool', tool, '--target', box.target];
-  if (source === 'repository') args.push('--source', repository, '--plugin-dir', sourceDirectory);
+  if (source === 'repository') args.push('--source', repository, '--plugin-dir', sourceDirectory,
+    '--skills', join(repository, 'vendor/cannbot-skills'));
   else args.push('--plugin-dir', bundleDirectory);
   const result = spawnSync(process.execPath, [...args, ...extra], { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -139,14 +140,16 @@ test('harness knowledge overrides preserve the source and cannot replace schedul
   mkdirSync(join(overrides, 'workflow-orchestrator'));
   writeFileSync(join(overrides, 'workflow-orchestrator/SKILL.md'), '---\nname: workflow-orchestrator\n---\n');
   const result = spawnSync(process.execPath, [cli, 'install', plugin, '--source', repository, '--plugin-dir', sourceDirectory,
-    '--tool', 'codex', '--target', box.target, '--override-skills', overrides], { env: box.env, encoding: 'utf8' });
+    '--tool', 'codex', '--target', box.target, '--override-skills', overrides,
+    '--skills', join(repository, 'vendor/cannbot-skills')], { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /cannot be overridden/);
 });
 
 test('harness source init delegates to the unified installer', (t) => {
   const box = sandbox(t);
-  const result = spawnSync('bash', [join(repository, sourceDirectory, 'init.sh'), 'project', 'codex', box.target],
+  const result = spawnSync('bash', [join(repository, sourceDirectory, 'init.sh'), 'project', 'codex', box.target,
+    '--skills', join(repository, 'vendor/cannbot-skills')],
     { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.ok(existsSync(join(box.target, '.agents/skills', entry, 'tasks/ascendc/知识搜集.yaml')));
@@ -418,7 +421,8 @@ test('ops-direct-invoke assembles and installs from a self-contained source layo
   assert.equal(bundles.length, 1);
   for (const name of localKnowledge) assert.ok(existsSync(join(bundles[0].destination, 'skills', name, 'SKILL.md')));
   const result = spawnSync(process.execPath, [cli, 'install', plugin, '--source', isolated, '--plugin-dir', sourceDirectory,
-    '--tool', 'codex', '--target', box.target], { env: box.env, encoding: 'utf8' });
+    '--tool', 'codex', '--target', box.target,
+    '--skills', join(repository, 'vendor/cannbot-skills')], { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const skills = join(box.target, '.agents/skills');
   for (const name of localKnowledge) {

@@ -17,10 +17,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { findPluginDirectory, pluginSourceDefinition } from "../lib/plugin-bundle.js";
+import { prepareSharedSkills, resolveSkillSource, sourceRevisions } from "../lib/skills-source.js";
 
 const installerPackage = readJson(new URL("../package.json", import.meta.url));
 const OPENCODE_PLUGIN_SPEC = `${installerPackage.name}@${installerPackage.version}`;
@@ -54,7 +55,7 @@ function tryRun(command, args, cwd) {
 function parseArgs(argv) {
   const [command, pluginId, ...rest] = argv;
   if (command !== "install" || !pluginId) {
-    fail(`usage: cannbot install <plugin> --tool <${TOOL_NAMES.join("|")}> [--target <dir>] [--source <repository>] [--plugin-dir <dir>] [--override-skills <dir>]`);
+    fail(`usage: cannbot install <plugin> --tool <${TOOL_NAMES.join("|")}> [--target <dir>] [--source <repository>] [--plugin-dir <dir>] [--override-skills <dir>] [--skills <SHA|path>]`);
   }
   const options = { command, pluginId, target: process.cwd() };
   for (let index = 0; index < rest.length; index += 1) {
@@ -76,7 +77,10 @@ function parseArgs(argv) {
     else if (key === "--plugin-dir") options.pluginDir = value;
     else if (key === "--mode") options.mode = value;
     else if (key === "--override-skills") options.overrideSkills = resolve(value);
-    else fail(`unknown option: ${key}`);
+    else if (key === "--skills") {
+      if (options.skills !== undefined || value.startsWith("--")) fail("--skills requires one SHA or local repository path");
+      options.skills = value;
+    } else fail(`unknown option: ${key}`);
     index += 1;
   }
   if (!TOOL_DIRECTORIES[options.tool]) {
@@ -102,14 +106,7 @@ function containsPlugin(repoPath, pluginId) {
 function resolveBundle(override, pluginId, pluginDirectory = null) {
   if (override) {
     const source = pluginSourceDefinition(override, pluginId, pluginDirectory);
-    if (source) {
-      const skillsRepository = resolve(override, source.skillsRepository);
-      if (!existsSync(join(skillsRepository, ".git"))) {
-        console.log(`Initializing ${source.skillsRepository} submodule...`);
-        run("git", ["submodule", "update", "--init", "--recursive", "--depth", "1", source.skillsRepository], override);
-      }
-      return source.pluginRoot;
-    }
+    if (source) return source.pluginRoot;
     if (pluginDirectory) return pluginDirectory;
     if (containsPlugin(override, pluginId)) return resolvePluginDir(override, pluginId);
     fail(`invalid CANNBot repository: ${override}`);
@@ -155,7 +152,7 @@ function installSkill(source, destination, mode) {
   cpSync(source, destination, { recursive: true, dereference: true });
 }
 
-function installPluginAssets(pluginDir, plugin, target, sourceDefinition, skillRewrites) {
+function installPluginAssets(pluginDir, plugin, target, sourceDefinition, skillRewrites, sharedSkills) {
   const relativeRoot = `.cannbot/plugins/${plugin.name}`;
   const destinationRoot = join(target, relativeRoot);
   rmSync(destinationRoot, { recursive: true, force: true });
@@ -164,11 +161,13 @@ function installPluginAssets(pluginDir, plugin, target, sourceDefinition, skillR
   let installed = false;
   for (const name of ["workflows", "agents", "hooks", "LICENSE", "SKILLS_LICENSE"]) {
     let source = join(pluginDir, name);
-    if (!existsSync(source) && sourceDefinition && name === "LICENSE") {
+    if (name === "SKILLS_LICENSE" && sharedSkills) {
+      source = join(sharedSkills.root, "LICENSE");
+    } else if (!existsSync(source) && sourceDefinition && name === "LICENSE") {
       source = join(dirname(pluginDir), "LICENSE");
       if (!existsSync(source)) source = resolve(pluginDir, "../..", "LICENSE");
     } else if (!existsSync(source) && sourceDefinition && name === "SKILLS_LICENSE") {
-      source = join(resolve(pluginDir, "..", "..", sourceDefinition.skillsRepository), "LICENSE");
+      source = join(sharedSkills?.root ?? resolve(pluginDir, "..", "..", sourceDefinition.skillsRepository), "LICENSE");
     }
     if (!existsSync(source)) continue;
     cpSync(source, join(destinationRoot, name), { recursive: true, dereference: true });
@@ -272,8 +271,7 @@ function resolveSkills(plugin, pluginDir) {
   return [...skills.entries()].map(([name, source]) => ({ name, source }));
 }
 
-function resolveSourceSkills(repositoryRoot, sourceDefinition) {
-  const skillsRepository = resolve(repositoryRoot, sourceDefinition.skillsRepository);
+function resolveSourceSkills(repositoryRoot, sourceDefinition, sharedSkillsRoot = null) {
   const skills = new Map();
   const addSkill = (source, label) => {
     const skillPath = join(source, "SKILL.md");
@@ -285,14 +283,7 @@ function resolveSourceSkills(repositoryRoot, sourceDefinition) {
   };
 
   for (const relativeSkill of sourceDefinition.skills) {
-    if (typeof relativeSkill !== "string" || !relativeSkill) {
-      fail(`invalid Skill path in ${sourceDefinition.definitionPath}`);
-    }
-    const source = resolve(skillsRepository, relativeSkill);
-    const pathFromRoot = relative(skillsRepository, source);
-    if (pathFromRoot.startsWith("..") || isAbsolute(pathFromRoot)) {
-      fail(`Skill path escapes its repository root: ${relativeSkill}`);
-    }
+    const source = resolveSkillSource(repositoryRoot, sourceDefinition, relativeSkill, sharedSkillsRoot);
     addSkill(source, sourceDefinition.definitionPath);
   }
 
@@ -798,10 +789,11 @@ function install(options) {
   if (plugin.name !== options.pluginId) {
     fail(`plugin name mismatch: requested ${options.pluginId}, manifest declares ${plugin.name}`);
   }
+  const sharedSkills = prepareSharedSkills(sourceRepositoryRoot, sourceDefinition, options.skills);
   mkdirSync(options.target, { recursive: true });
   const skillInstallMode = sourceDefinition?.skillInstallMode ?? "copy";
   const resolvedSkills = sourceDefinition
-    ? resolveSourceSkills(sourceRepositoryRoot, sourceDefinition)
+    ? resolveSourceSkills(sourceRepositoryRoot, sourceDefinition, sharedSkills?.root)
     : resolveSkills(plugin, pluginDir);
   if (options.overrideSkills) {
     const overridable = /^(repo-|workflow-cp|workflow-doc-templates$)/;
@@ -825,7 +817,7 @@ function install(options) {
   }
 
   const skillRewrites = skillPathRewrites(resolvedSkills, skillsDir);
-  const assets = installPluginAssets(pluginDir, plugin, options.target, sourceDefinition, skillRewrites);
+  const assets = installPluginAssets(pluginDir, plugin, options.target, sourceDefinition, skillRewrites, sharedSkills);
   const installedAgents = installAgents(pluginDir, plugin, options.tool, options.target, assets,
     undefined, skillRewrites);
   const instructions = installInstructions(pluginDir, plugin, options.target, options.tool, assets,
@@ -846,7 +838,10 @@ function install(options) {
     plugin: plugin.name,
     pluginVersion: plugin.version,
     sourcePackage: OPENCODE_PLUGIN_SPEC,
-    source: sourceRoot ? { kind: "repository" } : { kind: "package", package: OPENCODE_PLUGIN_SPEC },
+    source: sourceRoot ? {
+      kind: "repository",
+      revisions: sourceRevisions(sourceRepositoryRoot, sharedSkills),
+    } : { kind: "package", package: OPENCODE_PLUGIN_SPEC },
     tool: options.tool,
     skillInstallMode,
     skills: installedSkills.map((path) => path.slice(options.target.length + 1)),
@@ -878,4 +873,8 @@ function install(options) {
   }
 }
 
-install(parseArgs(process.argv.slice(2)));
+try {
+  install(parseArgs(process.argv.slice(2)));
+} catch (error) {
+  fail(error.message);
+}

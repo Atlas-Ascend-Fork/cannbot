@@ -18,6 +18,59 @@
 
 安装与首次使用见 [QUICKSTART.md](QUICKSTART.md)。
 
+## 安装详解
+
+普通用户推荐在目标工作区使用 `npx` 安装；开发者推荐克隆源码后运行插件的 `init.sh`。两种方式的最短操作步骤见 [快速开始](QUICKSTART.md)。
+
+### 环境要求
+
+需要 Node.js 20.11+、Python 3、PyYAML 和已安装并配置好的 Agent CLI。默认后台启动还需要 tmux；工作流运行依赖支持 `procedure` 字段的 workflow-orchestrator，由安装器一并安装。目前工作流验证的客户端为 OpenCode、Codex、Claude Code；统一安装器还提供 TRAE、DSH 安装选项。
+
+### 安装入口与目标目录
+
+`npx @cannbot-plugin/cannbot install ops-direct-invoke --tool opencode` 默认安装到当前目录，也可通过 `--target /absolute/workspace` 指定目标。npm 安装复制包内完整 Skill 资源，不需要克隆源码或下载 cannbot-skills 子模块。
+
+源码安装在插件目录执行：
+
+```bash
+bash init.sh [project] [opencode|codex|claude|trae|dsh] [install_path] [--skills <SHA|path>]
+```
+
+默认客户端为 opencode；省略 `install_path` 时安装到 cannbot 仓根，而不是当前执行目录。只支持 project 级安装，每次安装一种客户端，多个客户端分别执行。参数帮助见 `bash init.sh --help`。init 调用的统一 CLI 也可在 cannbot 根目录直接使用：
+
+```bash
+node script/bin/cannbot.js install ops-direct-invoke \
+  --source "$PWD" --tool codex --target /absolute/workspace
+```
+
+### 公共 Skills 来源与版本
+
+源码安装默认自动初始化 `vendor/cannbot-skills`，每次从其 `origin` 获取与 cannbot 当前分支同名分支的最新提交及其嵌套子模块。远端没有同名分支，或 cannbot 处于 detached HEAD 时，使用 `master`。不会自动更新 cannbot 主仓。
+
+| init 参数 | 行为 |
+|---|---|
+| 不传 `--skills` | 获取 cannbot-skills 同名分支最新提交，不存在则回退 master |
+| `--skills <SHA>` | 选择指定提交；缺失提交须使用完整 SHA，本地已有提交可使用 7 位以上短 SHA |
+| `--skills /absolute/cannbot-skills` | 直接链接本地 Git 工作树中的 Skills，不联网或更新 vendor 子模块 |
+
+已有路径优先按本地仓识别，必须为含所需 Skills 的 Git 工作树根目录；相对路径以执行命令的目录为基准。本地仓未提交内容会保留，并记录 dirty 标志。显式 `--skills` 跳过默认分支选择。默认或 SHA 模式遇到子模块未提交修改、远端查询或拉取失败、缺少所需 Skill 时停止安装；查询失败不当作分支缺失触发回退。最新依赖与工作流声明不兼容时，可指定兼容 SHA 或本地检出。`--skills` 只适用于声明公共依赖的源码安装，npm 打包安装不接受此参数。
+
+客户端配置目录的 `cannbot-plugin.json`（例如 `.codex/cannbot-plugin.json`）记录 `source.revisions`：主仓 SHA、公共仓实际完整 SHA、选择方式、请求值、dirty 状态及本地来源路径。默认模式记录 `selection: "latest-branch"`，`requested` 为实际选中的分支名（回退时为 `master`）。同一插件重装会更新记录。公共字段定义和跨工作流适用范围见 [统一安装指南](../../script/docs/cannbot-workflows.md#安装方式)。
+
+源码安装使用软链接，指定 SHA 也只固定本次选择；以后修改或更新共享工作树，会影响之前安装的项目。版本记录不是内容快照，dirty 内容不能仅由 SHA 复现。需要多个项目使用不同版本时，用独立 checkout 并分别指定 `--skills <path>`。更新 vendor 后，主仓可能显示子模块 HEAD 与 gitlink 不一致。
+
+### 工作区资产与定制
+
+项目指引写入 `AGENTS.md`（Claude 使用 `CLAUDE.md`），角色与 Skill 路径见安装记录。源码 Skill 的修改会通过软链接生效；项目指引和角色配置是生成文件，修改源文件后需重新安装同步。
+
+子仓可在统一 CLI 命令后添加 `--override-skills /absolute/overrides`，用该目录下的同名实现替换已有 `repo-*` Skills。入口及调度 Skill 不允许覆盖。此参数用于替换仓库知识，`--skills` 用于选择公共 cannbot-skills 仓，两者用途不同。
+
+### 任务输入与恢复
+
+使用 CANNBot-DSL 时明确开发语言，并提供目标 wheel、目标芯片和相关需求资料。PM 先对齐缺失信息，再选择 AscendC basic、独立 feasibility 或 DSL op-dev 流程。
+
+每轮 YAML、日志和交付记录位于 `.cannbot/<任务名>/workflow<序号>/`。恢复同一轮时沿用原 YAML 和工作目录，通过 harness 公开恢复接口执行；新一轮修复使用新目录，不删除或复制旧调度状态。手动组装与启动参数见 [算子流程入口](skills/ops-direct-invoke/SKILL.md)。
+
 ## 设计思想与入口
 
 插件的 [AGENTS.md](AGENTS.md) 是常驻工作区的通用 PM 指引，直接描述需求拆解、子 Agent 协作、工作流启动与多轮交付，不再通过 PM 角色文件转接。初始化时，安装器将其正文写入工作区 `AGENTS.md` 的插件管理区块，保留用户原有内容；Claude 使用 `CLAUDE.md`。重复初始化替换同一管理区块，不重复追加。
@@ -116,7 +169,9 @@ AscendC basic 的范围为本地开发、功能验收与交付文档；DSL op-de
 python3 plugins-official/ops-direct-invoke/skills/ops-direct-invoke-maintain/test/ut/test_all.py
 ```
 
-测试验证引导、组装、变量、DSL 设计与子图生成，以及启动参数和全部模板到 harness 的接口冒烟。harness 作为可信依赖，不在插件中重复测试重试、回滚与反馈状态机；也不固定节点数量、Skill 数量、业务顺序或提示词措辞。测试设计与边界见 [测试体系](skills/ops-direct-invoke-maintain/reference/tests.md)，依赖与安装后运行方式见 [QUICKSTART](QUICKSTART.md#维护后的回归)。测试通过不代表真实 Agent 行为或 NPU 算子验证已通过。
+回归需要 Python 3.9+、PyYAML 和 harness，不调用真实模型或 NPU。安装后可从实际 Skill 目录调用同一入口：默认使用同级安装的 harness，源码仓使用应用仓的 harness；其他布局通过 `--harness-skill /absolute/workflow-orchestrator` 指定。测试在临时目录运行，不需要 tmux，可从任意当前目录启动。
+
+测试验证引导、组装、变量、DSL 设计与子图生成，以及启动参数和全部模板到 harness 的接口冒烟。harness 作为可信依赖，不在插件中重复测试重试、回滚与反馈状态机；也不固定节点数量、Skill 数量、业务顺序或提示词措辞。测试设计与边界见 [测试体系](skills/ops-direct-invoke-maintain/reference/tests.md)。测试通过不代表真实 Agent 行为或 NPU 算子验证已通过。
 
 安装与打包集成测试仍位于应用仓 `script/test/`，不属于本次迁移的插件回归测试。
 

@@ -85,7 +85,9 @@ function installPlugin(plugin, tool, source = "repository") {
     "--target",
     target,
   ];
-  if (source === "repository") args.push("--source", repositoryRoot);
+  if (source === "repository") {
+    args.push("--source", repositoryRoot, "--skills", join(repositoryRoot, "vendor", "cannbot-skills"));
+  }
   const result = spawnSync(process.execPath, args, {
     cwd: target,
     encoding: "utf8",
@@ -108,7 +110,8 @@ function installWithSourceInit(plugin, tool) {
   const sourceDefinition = pluginSourceDefinition(repositoryRoot, plugin);
   const pluginRoot = sourceDefinition?.pluginRoot ?? join(repositoryRoot, "plugins-official", plugin);
   const init = join(pluginRoot, "init.sh");
-  const result = spawnSync("bash", [init, "project", tool, target], {
+  const sourceArgs = sourceDefinition?.skills.length ? ["--skills", join(repositoryRoot, "vendor", "cannbot-skills")] : [];
+  const result = spawnSync("bash", [init, "project", tool, target, ...sourceArgs], {
     cwd: pluginRoot,
     encoding: "utf8",
     env: {
@@ -187,12 +190,14 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
   const entries = new Map(marketplace.plugins.map((plugin) => [plugin.name, plugin]));
   const submodule = readFileSync(join(repositoryRoot, ".gitmodules"), "utf8");
   const skillSourceUrl = submodule.match(/url = (https:\/\/[^\s]+cannbot-skills[^\s]*)/)?.[1];
-  const revision = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: join(repositoryRoot, "vendor", "cannbot-skills"),
+  // Marketplace entries pin the main repository's Gitlink, independently of
+  // the mutable shared checkout used by source installs.
+  const revision = spawnSync("git", ["ls-tree", "HEAD", "vendor/cannbot-skills"], {
+    cwd: repositoryRoot,
     encoding: "utf8",
   });
   assert.equal(revision.status, 0, revision.stderr);
-  const skillCommit = revision.stdout.trim();
+  const skillCommit = revision.stdout.match(/commit ([0-9a-f]+)\t/)?.[1];
   assert.ok(skillSourceUrl, "missing Skill submodule URL");
   assert.match(skillCommit, /^[0-9a-f]{40}$/);
   const expectedPlugins = ["ascendc-st-design", "model-infer-optimize", "ops-direct-invoke"];
@@ -521,6 +526,76 @@ test("source init defaults to the source repository root and reads the manifest 
     "--plugin-dir",
     pluginDir,
   ]);
+
+  const skills = "a25ecb1cda6234d9a95493bf8c913f81b86b55a0";
+  const withSkills = spawnSync("bash", [
+    join(packageRoot, "bin", "source-plugin-init.sh"), pluginDir, "codex", join(sandbox, "target"), "--skills", skills,
+  ], {
+    cwd: pluginDir,
+    encoding: "utf8",
+    env: { ...process.env, CANNBOT_CAPTURE: capture },
+  });
+  assert.equal(withSkills.status, 0, withSkills.stderr || withSkills.stdout);
+  assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), [
+    "install",
+    "fixture-entry",
+    "--tool",
+    "codex",
+    "--target",
+    join(sandbox, "target"),
+    "--source",
+    fixtureRepository,
+    "--plugin-dir",
+    pluginDir,
+    "--skills",
+    skills,
+  ]);
+});
+
+test("source install links a selected local shared Skill repository and records its revision", () => {
+  const sandbox = createSandbox("cannbot-local-skills-");
+  const target = join(sandbox, "project");
+  const skills = join(sandbox, "cannbot-skills");
+  mkdirSync(target);
+  mkdirSync(join(skills, "ops", "ascendc-st-design"), { recursive: true });
+  writeFileSync(join(skills, "LICENSE"), "fixture shared license\n");
+  writeFileSync(join(skills, "ops", "ascendc-st-design", "SKILL.md"), [
+    "---",
+    "name: ascendc-st-design",
+    "description: fixture",
+    "---",
+    "",
+  ].join("\n"));
+  for (const args of [["init"], ["add", "."], ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "fixture"]]) {
+    const result = spawnSync("git", args, { cwd: skills, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  }
+
+  const result = spawnSync(process.execPath, [
+    cli, "install", "ascendc-st-design", "--tool", "codex", "--target", target,
+    "--source", repositoryRoot, "--skills", skills,
+  ], {
+    cwd: target,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: join(sandbox, "home"),
+      XDG_CACHE_HOME: join(sandbox, "cache"),
+      CANNBOT_SKIP_CODEX_PLUGIN_ADD: "1",
+      CANNBOT_SKIP_DEPENDENCY_REPOS: "1",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const record = readPluginRecord(target, "codex", "ascendc-st-design");
+  assert.equal(record.source.revisions["cannbot-skills"].selection, "local-path");
+  assert.equal(record.source.revisions["cannbot-skills"].path, skills);
+  assert.equal(record.source.revisions["cannbot-skills"].commit, spawnSync(
+    "git", ["-C", skills, "rev-parse", "HEAD"], { encoding: "utf8" },
+  ).stdout.trim());
+  assert.equal(realpathSync(join(skillRoot(target, "codex"), "ascendc-st-design")),
+    realpathSync(join(skills, "ops", "ascendc-st-design")));
+  assert.equal(readFileSync(join(target, ".cannbot", "plugins", "ascendc-st-design", "SKILLS_LICENSE"), "utf8"),
+    "fixture shared license\n");
 });
 
 test("source install preserves an existing real Skill directory", () => {
@@ -541,6 +616,8 @@ test("source install preserves an existing real Skill directory", () => {
     target,
     "--source",
     repositoryRoot,
+    "--skills",
+    join(repositoryRoot, "vendor", "cannbot-skills"),
   ], {
     cwd: target,
     encoding: "utf8",

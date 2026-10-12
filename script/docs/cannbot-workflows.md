@@ -9,7 +9,48 @@ cd plugins-official/<plugin>
 bash init.sh
 ```
 
-安装器按需初始化 Skill submodule，并将 Skill 链接到 cannbot 仓库根目录的客户端配置中。
+对声明公共 Skill 依赖的源码插件，统一安装器会初始化 `vendor/cannbot-skills`，每次安装从其 `origin` 获取与 CANNBot 当前分支同名分支的最新提交；远端没有同名分支时回退到 `master`。CANNBot 处于 detached HEAD 时也使用 `master`。Skill 软链接到目标项目，不需要先手动初始化子模块。此操作不更新 CANNBot 主仓；主仓更新仍由用户执行。
+
+统一 CLI 和使用通用入口的插件 `init.sh` 均支持 `--skills <SHA|path>`：
+
+```bash
+# 默认同步 cannbot-skills 同名分支，不存在则使用 master
+node script/bin/cannbot.js install ops-direct-invoke --source "$PWD" --tool codex --target /absolute/project
+
+# 指定完整提交；本地已存在的提交也可使用 7 位以上短 SHA
+bash plugins-official/ops-direct-invoke/init.sh project codex /absolute/project --skills <SHA>
+
+# 使用本地开发仓；相对路径以命令执行目录为基准
+bash plugins-official/ops-direct-invoke/init.sh project codex /absolute/project --skills /absolute/cannbot-skills
+```
+
+已有目录优先按路径识别，要求路径是 Git 工作树根目录且含插件声明的 Skill。路径模式不联网、不修改子模块，保留本地未提交内容。SHA 模式只接受 commit 的十六进制 SHA；远端缺失提交需提供完整 SHA，找不到的短 SHA 会报错。显式 `--skills` 跳过默认分支选择。默认更新和指定 SHA 前会检查子模块工作树，存在未提交修改时停止，不自动清理。远端查询或拉取失败即安装失败，不当作分支缺失触发回退，也不回退旧版本。
+
+公共仓的最新版本可能与某个工作流当前声明的 Skill 名称不一致；缺少声明的 Skill 时安装失败，需通过 `--skills` 选择与该工作流兼容的提交或本地检出。版本记录用于追溯选择，不代替跨仓兼容性验证。
+
+上述行为仅适用于统一 CLI 和使用通用入口的插件 `init.sh`；`ascendc-port-orchestrator/init.sh` 等独立入口未接入，保留原有安装方式。统一安装器对打包安装和不依赖公共 Skill 的插件使用 `--skills` 会明确报错。npm 打包安装仍复制包内资源。
+
+统一安装记录位于 `<目标项目>/<客户端配置目录>/cannbot-plugin.json`，例如 `.codex/cannbot-plugin.json`；同一插件重装会更新记录。`source.revisions` 保存 CANNBot 主仓 SHA，以及 `cannbot-skills` 的完整 SHA、选择模式、原始参数、dirty 标志和本地模式的绝对路径。自动选择时 `selection` 为 `latest-branch`，`requested` 保存实际选中的分支名（回退时为 `master`）。
+
+```json
+{
+  "source": {
+    "kind": "repository",
+    "revisions": {
+      "cannbot": "<主仓完整 SHA>",
+      "cannbot-skills": {
+        "selection": "local-path",
+        "requested": "/absolute/cannbot-skills",
+        "commit": "<公共仓完整 SHA>",
+        "dirty": false,
+        "path": "/absolute/cannbot-skills"
+      }
+    }
+  }
+}
+```
+
+默认更新或指定 SHA 可能使子模块 HEAD 与主仓记录的 Gitlink 不同，主仓状态因此显示子模块版本变化。源码安装的软链接指向可变工作树：以后更新该仓，会影响此前安装的项目（指定 SHA 模式也一样）。记录追溯的是安装当时的版本；dirty 为 true 时，SHA 不包含本地未提交内容。需要冻结多个项目的不同版本时，使用独立检出目录并分别通过 `--skills <path>` 安装。
 
 ## 算子领域
 

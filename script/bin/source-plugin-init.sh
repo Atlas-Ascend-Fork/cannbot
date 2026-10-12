@@ -12,31 +12,42 @@ PLUGIN_ID="$(node -p 'require(process.argv[1]).name' "${PLUGIN_DIR}/.claude-plug
 
 usage() {
   cat >&2 <<EOF
-Usage: bash init.sh [project] [opencode|codex|claude|trae|dsh] [install_path]
+Usage: bash init.sh [project] [opencode|codex|claude|trae|dsh] [install_path] [--skills <SHA|path>]
 
 Installs ${PLUGIN_ID} from this source checkout. The default tool is opencode
 and the default install path is the source repository root.
+Shared Skills follow the source branch, falling back to master if absent (or detached HEAD).
+--skills selects a SHA or local Git worktree root.
 EOF
 }
 
 LEVEL="project"
 TOOL="opencode"
 INSTALL_PATH=""
-for argument in "$@"; do
-  case "${argument}" in
+SKILLS_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --help|-h) usage; exit 0 ;;
+    --skills)
+      if [[ $# -lt 2 || -z "$2" || "$2" == --* || -n "${SKILLS_ARGS[*]}" ]]; then usage; exit 1; fi
+      SKILLS_ARGS=(--skills "$2")
+      shift 2
+      continue
+      ;;
     project) LEVEL="project" ;;
     global) LEVEL="global" ;;
-    opencode|codex|claude|trae|dsh) TOOL="${argument}" ;;
+    opencode|codex|claude|trae|dsh) TOOL="$1" ;;
     cursor|copilot|codearts)
-      echo "cannbot: ${argument} is not supported by the unified installer" >&2
+      echo "cannbot: $1 is not supported by the unified installer" >&2
       exit 1
       ;;
+    --*) usage; exit 1 ;;
     *)
       if [[ -n "${INSTALL_PATH}" ]]; then usage; exit 1; fi
-      INSTALL_PATH="${argument}"
+      INSTALL_PATH="$1"
       ;;
   esac
+  shift
 done
 
 if [[ "${LEVEL}" != "project" ]]; then
@@ -57,4 +68,4 @@ fi
 INSTALL_PATH="${INSTALL_PATH:-${REPOSITORY_ROOT}}"
 
 exec node "${CLI}" install "${PLUGIN_ID}" \
-  --tool "${TOOL}" --target "${INSTALL_PATH}" --source "${REPOSITORY_ROOT}" --plugin-dir "${PLUGIN_DIR}"
+  --tool "${TOOL}" --target "${INSTALL_PATH}" --source "${REPOSITORY_ROOT}" --plugin-dir "${PLUGIN_DIR}" "${SKILLS_ARGS[@]}"
