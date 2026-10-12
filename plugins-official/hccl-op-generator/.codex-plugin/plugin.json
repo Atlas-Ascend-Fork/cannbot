@@ -1,0 +1,33 @@
+{
+  "name": "hccl-op-generator",
+  "version": "1.2.13",
+  "description": "HCCL AICPU 标准通信算子开发 Team。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "hccl",
+    "communication",
+    "collective",
+    "operator",
+    "aicpu",
+    "workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "HCCL 通信算子开发",
+    "shortDescription": "HCCL AICPU 标准通信算子开发工作流",
+    "longDescription": "HCCL AICPU 标准通信算子开发 Team。按环境→设计→基线→开发→检视→候选双轨测试的四 Agent 状态机执行；CCU/AIV/HostDPU 待完善。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "帮我开发一个基于 AICPU 的 AllReduce 算子，使用 fullmesh 算法，支持 float32 数据类型"
+    ]
+  }
+}

@@ -6,6 +6,7 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 
 ### Added
 
+- Added the `hccl-op-generator` plugin for HCCL AICPU standard communication operator development, with four Agent state-machine workflow, from the cannbot-hccl repository. Corresponding Skills are contributed to the [cannbot-skills](https://gitcode.com/cann/cannbot-skills) repository under `communication/`.
 - Community plugin channel: `plugins-community/` is recognised by the bundler and the
   installer, and a community plugin is indexed by its manifest `name`, so its directory
   name is only a storage location. `plugins-official/` keeps the rule that the directory

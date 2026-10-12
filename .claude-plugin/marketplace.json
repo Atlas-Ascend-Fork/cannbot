@@ -218,6 +218,52 @@
         "kernel-evolution"
       ],
       "category": "development"
+    },
+    {
+      "name": "hccl-op-generator-skills",
+      "description": "HCCL AICPU 标准通信算子开发 Skills（8 项）。覆盖 AICPU 算法设计、实现实践、调试、白盒设计、性能优化、环境检查与准备、HCCL-VM 测试工具。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "communication",
+        "sha": "01f6b06830ddc95b1083322dbcbce95defba6168"
+      },
+      "strict": false,
+      "version": "1.2.13",
+      "author": {
+        "name": "CANNBot"
+      },
+      "category": "skills",
+      "skills": [
+        "./hccl-aicpu-design",
+        "./hccl-aicpu-best-practice",
+        "./hccl-aicpu-debug",
+        "./hccl-aicpu-whitebox-design",
+        "./hccl-aicpu-perf-optimize",
+        "./hccl-env-check",
+        "./hccl-env-setup",
+        "./hccl-test-tool-hvm"
+      ]
+    },
+    {
+      "name": "hccl-op-generator",
+      "source": "./plugins-official/hccl-op-generator",
+      "description": "HCCL AICPU 标准通信算子开发 Team。按环境→设计→基线→开发→检视→候选双轨测试的四 Agent 状态机执行；CCU/AIV/HostDPU 待完善。",
+      "version": "1.2.13",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "hccl",
+        "communication",
+        "collective",
+        "operator",
+        "aicpu"
+      ],
+      "category": "development",
+      "dependencies": [
+        "hccl-op-generator-skills"
+      ]
     }
   ]
 }

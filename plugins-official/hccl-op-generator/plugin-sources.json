@@ -1,0 +1,14 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "skills": [
+    "communication/hccl-aicpu-design",
+    "communication/hccl-aicpu-best-practice",
+    "communication/hccl-aicpu-debug",
+    "communication/hccl-aicpu-whitebox-design",
+    "communication/hccl-aicpu-perf-optimize",
+    "communication/hccl-env-check",
+    "communication/hccl-env-setup",
+    "communication/hccl-test-tool-hvm"
+  ]
+}

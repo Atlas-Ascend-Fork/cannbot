@@ -1,0 +1,20 @@
+{
+  "name": "hccl-op-generator",
+  "description": "HCCL AICPU 标准通信算子开发 Team。按环境→设计→基线→开发→检视→候选双轨测试的四 Agent 状态机执行；CCU/AIV/HostDPU 待完善。",
+  "version": "1.2.13",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "dependencies": [
+    "hccl-op-generator-skills"
+  ],
+  "agents": [
+    "./agents/hccl-architect.md",
+    "./agents/hccl-developer.md",
+    "./agents/hccl-reviewer.md",
+    "./agents/hccl-verifier.md"
+  ]
+}

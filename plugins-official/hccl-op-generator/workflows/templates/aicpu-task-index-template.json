@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "task_id": "{task_id}",
+  "engine": "AICPU",
+  "requirement": "{用户原始需求}",
+  "source_repo": "{HCCL 源码仓绝对路径}",
+  "source_branch": "{具名 Git 分支}",
+  "source_head": "{Git HEAD 对象 ID}",
+  "source_worktree": "{CLEAN|DIRTY}",
+  "source_identity": "{当前源码身份}",
+  "external_evidence_roots": [
+    "{由 HCCLBot 预先创建、位于 source_repo 外的本任务 Verifier 证据目录绝对路径}"
+  ],
+  "current_state": "ENV_READY",
+  "repair_round": 0,
+  "pending_action": "NONE",
+  "pending_roles": [],
+  "created_at": "{ISO-8601 时间}",
+  "updated_at": "{ISO-8601 时间}",
+  "artifacts": {
+    "ENVIRONMENT": {
+      "path": "environment.md",
+      "owner": "hcclbot",
+      "status": "PASS",
+      "source_identity": "{目标仓源码身份}",
+      "sha256": "{64 位小写十六进制}",
+      "valid": true
+    }
+  },
+  "dataflow_specs": [],
+  "calls": [],
+  "invalidated_artifacts": []
+}
