@@ -68,25 +68,6 @@
       ]
     },
     {
-      "name": "ascendc-st-design-skills",
-      "description": "Skill used by the Ascend C system test design workflow.",
-      "source": {
-        "source": "git-subdir",
-        "url": "https://gitcode.com/cann/cannbot-skills.git",
-        "path": "ops",
-        "sha": "a25ecb1cda6234d9a95493bf8c913f81b86b55a0"
-      },
-      "strict": false,
-      "version": "1.0.0",
-      "author": {
-        "name": "CANNBot"
-      },
-      "category": "skills",
-      "skills": [
-        "./ascendc-st-design"
-      ]
-    },
-    {
       "name": "model-infer-skills",
       "description": "Skills used by the NPU model inference optimization workflow.",
       "source": {
@@ -146,24 +127,6 @@
         "operator"
       ],
       "category": "development"
-    },
-    {
-      "name": "ascendc-st-design",
-      "source": "./plugins-official/ascendc-st-design",
-      "description": "Ascend C 算子系统测试（ST）设计工作流。",
-      "version": "1.0.0",
-      "author": {
-        "name": "CANNBot"
-      },
-      "keywords": [
-        "ascend-c",
-        "operator-testing",
-        "st-design"
-      ],
-      "category": "development",
-      "dependencies": [
-        "ascendc-st-design-skills"
-      ]
     },
     {
       "name": "model-infer-optimize",

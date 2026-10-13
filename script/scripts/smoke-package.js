@@ -44,7 +44,7 @@ try {
   run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", archive], consumer);
 
   const executable = join(consumer, "node_modules", ".bin", process.platform === "win32" ? "cannbot.cmd" : "cannbot");
-  run(executable, ["install", "ascendc-st-design", "--tool", "dsh", "--target", target], consumer, {
+  run(executable, ["install", "model-infer-optimize", "--tool", "dsh", "--target", target], consumer, {
     ...process.env,
     HOME: join(sandbox, "home"),
     XDG_CACHE_HOME: join(sandbox, "cache"),
@@ -52,9 +52,9 @@ try {
   });
 
   for (const path of [
-    join(target, ".dsh", "skills", "ascendc-st-design", "SKILL.md"),
-    join(target, ".cannbot", "plugins", "ascendc-st-design", "LICENSE"),
-    join(target, ".cannbot", "plugins", "ascendc-st-design", "SKILLS_LICENSE"),
+    join(target, ".dsh", "skills", "model-infer-fusion", "SKILL.md"),
+    join(target, ".cannbot", "plugins", "model-infer-optimize", "LICENSE"),
+    join(target, ".cannbot", "plugins", "model-infer-optimize", "SKILLS_LICENSE"),
   ]) {
     if (!existsSync(path)) throw new Error(`packaged install is missing: ${path}`);
   }

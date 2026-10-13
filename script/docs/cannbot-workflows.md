@@ -105,63 +105,6 @@ opencode
 先分析需求和运行环境，再完成方案设计、代码实现、测试、精度与性能验收。
 ```
 
-### 算子测试
-
-`ascendc-st-design` 的生成脚本需要 Python 3，以及 PyYAML、NumPy 和 pandas。安装插件后可先检查运行环境：
-
-```bash
-python3 -c "import yaml, numpy, pandas"
-```
-
-#### Step 1：一键安装
-
-通过 npm 插件化一键安装。
-
-OpenCode：
-
-```bash
-npx @cannbot-plugin/cannbot install ascendc-st-design --tool opencode
-```
-
-Codex：
-
-```bash
-npx @cannbot-plugin/cannbot install ascendc-st-design --tool codex
-```
-
-Claude Code：
-
-```bash
-npx @cannbot-plugin/cannbot install ascendc-st-design --tool claude
-```
-
-TRAE：
-
-```bash
-npx @cannbot-plugin/cannbot install ascendc-st-design --tool trae
-```
-
-DSH：
-
-```bash
-npx @cannbot-plugin/cannbot install ascendc-st-design --tool dsh
-```
-
-#### Step 2：启动 Agent 客户端
-
-在当前项目根目录启动 Agent 客户端。以 OpenCode 为例：
-
-```bash
-opencode
-```
-
-#### Step 3：提示词样例
-
-```text
-使用 ascendc-st-design skill，为当前项目的 add_rms_norm Ascend C 算子设计 L0/L1/L2 系统测试（ST）用例。
-基于 REQUIREMENTS.md 和 aclnn 接口文档完成参数定义、测试因子提取与约束分析，并在 operators/add_rms_norm/tests/st/ 下生成 L0/L1/L2 用例和覆盖报告。
-```
-
 ## 模型领域
 
 ### 模型迁移与推理优化

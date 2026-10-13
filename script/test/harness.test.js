@@ -519,7 +519,7 @@ test('assembler numbers dependency layers and keeps parallel branch order across
 
 test('explicit plugin selection rejects a mismatched logical name', (t) => {
   const box = sandbox(t);
-  const result = spawnSync(process.execPath, [cli, 'install', 'ascendc-st-design', '--source', repository,
+  const result = spawnSync(process.execPath, [cli, 'install', 'model-infer-optimize', '--source', repository,
     '--plugin-dir', sourceDirectory, '--tool', 'codex', '--target', box.target], { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /plugin name mismatch/);

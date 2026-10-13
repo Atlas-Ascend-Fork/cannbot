@@ -54,6 +54,10 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 - Community plugins are not stamped with a plugin-root licence; each keeps the licence it
   ships with, and `plugins-community/` carries none.
 
+### Removed
+
+- Removed the test-oriented `ascendc-st-design` plugin from `plugins-official/` and its marketplace entry. The `ascendc-st-design` Skill remains available in `cannbot-skills` and is still bundled by `ops-direct-invoke`.
+
 ## 1.3.2 - 2026-08-31
 
 ### Changed

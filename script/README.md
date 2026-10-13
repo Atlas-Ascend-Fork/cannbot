@@ -4,7 +4,7 @@ This directory is the complete npm project for `@cannbot-plugin/cannbot`.
 
 ```bash
 npx @cannbot-plugin/cannbot install ops-direct-invoke --tool opencode
-npx @cannbot-plugin/cannbot install ascendc-st-design --tool codex
+npx @cannbot-plugin/cannbot install model-infer-optimize --tool codex
 ```
 
 The package build reads plugin definitions from `../plugins-official/` and `../plugins-community/` and Skill sources from the `../vendor/cannbot-skills` submodule. `prepack` assembles the selected source trees into `dist/plugins/`, so npm users receive a self-contained package and never clone the source repository. Building a package requires an initialized submodule; package builds keep the checked-out revision rather than fetching master.

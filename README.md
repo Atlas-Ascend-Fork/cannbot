@@ -34,7 +34,6 @@ bash init.sh
 |------|------|
 | [`ops-direct-invoke`](plugins-official/ops-direct-invoke/) | Ascend C 直调算子开发：以 `<<<>>>` 直接调用核函数的方式接入 |
 | [`ops-registry-invoke`](plugins-official/ops-registry-invoke/) | Ascend C 注册算子开发：经 ACLNN / GEIR 接入框架，以标准算子形式调用 |
-| [`ascendc-st-design`](plugins-official/ascendc-st-design/) | Ascend C 算子 L0/L1/L2 ST 用例设计 |
 | [`model-infer-optimize`](plugins-official/model-infer-optimize/) | NPU 模型迁移、精度对齐与推理性能优化 |
 | [`hccl-op-generator`](plugins-official/hccl-op-generator/) | HCCL AICPU 标准通信算子开发，四 Agent 状态机工作流 |
 

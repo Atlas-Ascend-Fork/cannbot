@@ -3,7 +3,6 @@
 This directory contains the official CANNBot plugin definitions and non-Skill files:
 
 - `ops-direct-invoke`
-- `ascendc-st-design`
 - `model-infer-optimize`
 - `hccl-op-generator`
 

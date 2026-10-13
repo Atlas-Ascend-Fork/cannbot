@@ -147,7 +147,7 @@ function assertUnifiedInstall(target, tool, plugin) {
 }
 
 test("repository maps every official plugin to the Skill submodule", () => {
-  for (const plugin of ["ops-direct-invoke", "ascendc-st-design", "model-infer-optimize"]) {
+  for (const plugin of ["ops-direct-invoke", "model-infer-optimize"]) {
     const root = join(repositoryRoot, "plugins-official", plugin);
     assert.equal(existsSync(join(root, ".claude-plugin", "plugin.json")), true);
     assert.equal(existsSync(join(root, ".codex-plugin", "plugin.json")), true);
@@ -177,7 +177,6 @@ test("repository maps every official plugin to the Skill submodule", () => {
   // ops-direct-invoke ships self-contained workflow skills in plugins-official/<id>/skills/;
   // the other two plugins resolve all skills from the submodule only.
   assert.equal(existsSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "skills")), true);
-  assert.equal(existsSync(join(repositoryRoot, "plugins-official", "ascendc-st-design", "skills")), false);
   assert.equal(existsSync(join(repositoryRoot, "plugins-official", "model-infer-optimize", "skills")), false);
   assert.equal(existsSync(join(repositoryRoot, "vendor", "cannbot-skills", ".git")), true);
   for (const removed of ["catalog", "ops", "infra", "model", "plugins"]) {
@@ -200,7 +199,7 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
   const skillCommit = revision.stdout.match(/commit ([0-9a-f]+)\t/)?.[1];
   assert.ok(skillSourceUrl, "missing Skill submodule URL");
   assert.match(skillCommit, /^[0-9a-f]{40}$/);
-  const expectedPlugins = ["ascendc-st-design", "model-infer-optimize", "ops-direct-invoke"];
+  const expectedPlugins = ["hccl-op-generator", "model-infer-optimize", "ops-direct-invoke"];
   // Only bundled plugins have manifests; source-only workflow entries are not packaged.
   const officialPlugins = marketplace.plugins.filter((plugin) =>
     typeof plugin.source === "string" && existsSync(join(packageRoot, "dist", "plugins", plugin.name)));
@@ -282,7 +281,7 @@ test("package bundle includes plugin licenses", () => {
     readFileSync(join(packageRoot, "dist", "plugins", "LICENSE"), "utf8"),
     readFileSync(join(repositoryRoot, "plugins-official", "LICENSE"), "utf8"),
   );
-  for (const plugin of ["ascendc-st-design", "model-infer-optimize", "ops-direct-invoke"]) {
+  for (const plugin of ["model-infer-optimize", "ops-direct-invoke"]) {
     assert.equal(
       readFileSync(join(packageRoot, "dist", "plugins", plugin, "LICENSE"), "utf8"),
       readFileSync(join(repositoryRoot, "plugins-official", "LICENSE"), "utf8"),
@@ -303,23 +302,6 @@ test("package bundle includes plugin licenses", () => {
     readFileSync(join(repositoryRoot, "vendor", "cannbot-skills", "LICENSE"), "utf8"),
   );
 });
-
-for (const source of sources) {
-  for (const tool of tools) {
-    test(`${source} installs ascendc-st-design for ${tool}`, () => {
-      const { target } = installPlugin("ascendc-st-design", tool, source);
-      const installedSkill = join(skillRoot(target, tool), "ascendc-st-design");
-      assert.equal(existsSync(join(installedSkill, "SKILL.md")), true);
-      assertSkillInstallation(installedSkill, source, "ascendc-st-design", "ascendc-st-design");
-      const record = readPluginRecord(target, tool, "ascendc-st-design");
-      assert.equal(record.sourcePackage, sourcePackage);
-      assert.equal(record.source.kind, source);
-      assert.equal(record.skillInstallMode, source === "repository" ? "symlink" : "copy");
-      assert.equal(existsSync(join(target, ".cannbot", "plugins", "ascendc-st-design", "LICENSE")), true);
-      assert.equal(existsSync(join(target, ".cannbot", "plugins", "ascendc-st-design", "SKILLS_LICENSE")), true);
-    });
-  }
-}
 
 for (const source of sources) {
   for (const tool of tools) {
@@ -458,7 +440,7 @@ for (const source of sources) {
   }
 }
 
-for (const plugin of ["ascendc-st-design", "model-infer-optimize"]) {
+for (const plugin of ["model-infer-optimize"]) {
   test(`${plugin} source init delegates to the unified installer`, () => {
     const { target } = installWithSourceInit(plugin, "opencode");
     const record = readPluginRecord(target, "opencode", plugin);
@@ -557,22 +539,25 @@ test("source install links a selected local shared Skill repository and records 
   const target = join(sandbox, "project");
   const skills = join(sandbox, "cannbot-skills");
   mkdirSync(target);
-  mkdirSync(join(skills, "ops", "ascendc-st-design"), { recursive: true });
+  const definition = pluginSourceDefinition(repositoryRoot, "model-infer-optimize");
+  for (const skill of definition.skills) {
+    mkdirSync(join(skills, skill), { recursive: true });
+    writeFileSync(join(skills, skill, "SKILL.md"), [
+      "---",
+      `name: ${skill.split("/").at(-1)}`,
+      "description: fixture",
+      "---",
+      "",
+    ].join("\n"));
+  }
   writeFileSync(join(skills, "LICENSE"), "fixture shared license\n");
-  writeFileSync(join(skills, "ops", "ascendc-st-design", "SKILL.md"), [
-    "---",
-    "name: ascendc-st-design",
-    "description: fixture",
-    "---",
-    "",
-  ].join("\n"));
   for (const args of [["init"], ["add", "."], ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "fixture"]]) {
     const result = spawnSync("git", args, { cwd: skills, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr || result.stdout);
   }
 
   const result = spawnSync(process.execPath, [
-    cli, "install", "ascendc-st-design", "--tool", "codex", "--target", target,
+    cli, "install", "model-infer-optimize", "--tool", "codex", "--target", target,
     "--source", repositoryRoot, "--skills", skills,
   ], {
     cwd: target,
@@ -586,22 +571,22 @@ test("source install links a selected local shared Skill repository and records 
     },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const record = readPluginRecord(target, "codex", "ascendc-st-design");
+  const record = readPluginRecord(target, "codex", "model-infer-optimize");
   assert.equal(record.source.revisions["cannbot-skills"].selection, "local-path");
   assert.equal(record.source.revisions["cannbot-skills"].path, skills);
   assert.equal(record.source.revisions["cannbot-skills"].commit, spawnSync(
     "git", ["-C", skills, "rev-parse", "HEAD"], { encoding: "utf8" },
   ).stdout.trim());
-  assert.equal(realpathSync(join(skillRoot(target, "codex"), "ascendc-st-design")),
-    realpathSync(join(skills, "ops", "ascendc-st-design")));
-  assert.equal(readFileSync(join(target, ".cannbot", "plugins", "ascendc-st-design", "SKILLS_LICENSE"), "utf8"),
+  assert.equal(realpathSync(join(skillRoot(target, "codex"), "model-infer-fusion")),
+    realpathSync(join(skills, "model", "model-infer-fusion")));
+  assert.equal(readFileSync(join(target, ".cannbot", "plugins", "model-infer-optimize", "SKILLS_LICENSE"), "utf8"),
     "fixture shared license\n");
 });
 
 test("source install preserves an existing real Skill directory", () => {
   const sandbox = createSandbox("cannbot-skill-collision-");
   const target = join(sandbox, "project");
-  const destination = join(target, ".agents", "skills", "ascendc-st-design");
+  const destination = join(target, ".agents", "skills", "model-infer-fusion");
   const sentinel = join(destination, "user-content.txt");
   mkdirSync(destination, { recursive: true });
   writeFileSync(sentinel, "keep\n");
@@ -609,7 +594,7 @@ test("source install preserves an existing real Skill directory", () => {
   const result = spawnSync(process.execPath, [
     cli,
     "install",
-    "ascendc-st-design",
+    "model-infer-optimize",
     "--tool",
     "opencode",
     "--target",
