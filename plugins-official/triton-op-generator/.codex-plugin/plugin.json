@@ -1,0 +1,33 @@
+{
+  "name": "triton-op-generator",
+  "version": "1.0.0",
+  "description": "Triton-Ascend 算子代码生成与优化 Team。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "triton",
+    "triton-ascend",
+    "operator",
+    "kernel",
+    "npu",
+    "workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Triton 算子开发",
+    "shortDescription": "Triton-Ascend 算子生成与优化工作流",
+    "longDescription": "Triton-Ascend 算子代码生成与优化 Team。按任务构建→算法设计→代码生成→功能验证→性能优化→报告归档的 Phase 0-7 流程执行；知识卡片由 cannbot-knowledge 知识库自动供给。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "生成一个 Triton-Ascend 框架的 softmax 算子实现"
+    ]
+  }
+}

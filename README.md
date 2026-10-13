@@ -36,6 +36,7 @@ bash init.sh
 | [`ops-registry-invoke`](plugins-official/ops-registry-invoke/) | Ascend C 注册算子开发：经 ACLNN / GEIR 接入框架，以标准算子形式调用 |
 | [`model-infer-optimize`](plugins-official/model-infer-optimize/) | NPU 模型迁移、精度对齐与推理性能优化 |
 | [`hccl-op-generator`](plugins-official/hccl-op-generator/) | HCCL AICPU 标准通信算子开发，四 Agent 状态机工作流 |
+| [`triton-op-generator`](plugins-official/triton-op-generator/) | Triton-Ascend 算子代码生成与优化（Phase 0-7 直接执行模式），知识卡片由 cannbot-knowledge 知识库供给 |
 
 ## 🧩 社区插件
 

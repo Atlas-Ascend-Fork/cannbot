@@ -1,0 +1,15 @@
+{
+  "name": "triton-op-generator",
+  "description": "Triton-Ascend 算子代码生成与优化 Team。直接执行模式（AGENTS.md/CLAUDE.md 主提示词）编排任务构建、算法设计、代码生成、功能验证与性能优化；知识卡片全部由 cannbot-knowledge 知识库供给（安装时自动克隆，无需用户感知）。",
+  "version": "1.0.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "dependencies": [
+    "triton-op-generator-skills",
+    "triton-op-generator-kb-skills"
+  ]
+}

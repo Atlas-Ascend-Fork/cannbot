@@ -199,7 +199,7 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
   const skillCommit = revision.stdout.match(/commit ([0-9a-f]+)\t/)?.[1];
   assert.ok(skillSourceUrl, "missing Skill submodule URL");
   assert.match(skillCommit, /^[0-9a-f]{40}$/);
-  const expectedPlugins = ["hccl-op-generator", "model-infer-optimize", "ops-direct-invoke"];
+  const expectedPlugins = ["hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "triton-op-generator"];
   // Only bundled plugins have manifests; source-only workflow entries are not packaged.
   const officialPlugins = marketplace.plugins.filter((plugin) =>
     typeof plugin.source === "string" && existsSync(join(packageRoot, "dist", "plugins", plugin.name)));
@@ -281,7 +281,7 @@ test("package bundle includes plugin licenses", () => {
     readFileSync(join(packageRoot, "dist", "plugins", "LICENSE"), "utf8"),
     readFileSync(join(repositoryRoot, "plugins-official", "LICENSE"), "utf8"),
   );
-  for (const plugin of ["model-infer-optimize", "ops-direct-invoke"]) {
+  for (const plugin of ["model-infer-optimize", "ops-direct-invoke", "triton-op-generator"]) {
     assert.equal(
       readFileSync(join(packageRoot, "dist", "plugins", plugin, "LICENSE"), "utf8"),
       readFileSync(join(repositoryRoot, "plugins-official", "LICENSE"), "utf8"),

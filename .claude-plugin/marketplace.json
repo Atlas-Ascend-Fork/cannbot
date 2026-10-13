@@ -244,6 +244,73 @@
         "operator"
       ],
       "category": "development"
+    },
+    {
+      "name": "triton-op-generator-skills",
+      "description": "Triton-Ascend 算子生成与优化 Skills（8 项）。覆盖任务构建、草图设计、代码生成、精度验证、性能优化、精度调试、simulator 诊断与 NPU 架构知识。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "ops",
+        "sha": "01f6b06830ddc95b1083322dbcbce95defba6168"
+      },
+      "strict": false,
+      "version": "1.0.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "category": "skills",
+      "skills": [
+        "./triton-task-extractor",
+        "./triton-op-designer",
+        "./triton-op-coding",
+        "./triton-op-verifier",
+        "./triton-latency-optimizer",
+        "./triton-precision-debug",
+        "./triton-simulator-optimizer",
+        "./npu-arch"
+      ]
+    },
+    {
+      "name": "triton-op-generator-kb-skills",
+      "description": "cannbot-knowledge 知识消费 Skills（2 项）：knowledge-query 知识检索、ops-knowledge-ingest 知识沉淀路由。供 triton-op-generator 使用。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "plugins-community/cannbot-knowledge/skills",
+        "sha": "01f6b06830ddc95b1083322dbcbce95defba6168"
+      },
+      "strict": false,
+      "version": "1.0.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "category": "skills",
+      "skills": [
+        "./knowledge-query",
+        "./ops-knowledge-ingest"
+      ]
+    },
+    {
+      "name": "triton-op-generator",
+      "source": "./plugins-official/triton-op-generator",
+      "description": "Triton-Ascend 算子代码生成与优化 Team。直接执行模式（AGENTS.md/CLAUDE.md 主提示词）编排任务构建、算法设计、代码生成、功能验证与性能优化；知识卡片全部由 cannbot-knowledge 知识库供给（安装时自动克隆，无需用户感知）。",
+      "version": "1.0.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "triton",
+        "triton-ascend",
+        "operator",
+        "kernel",
+        "npu"
+      ],
+      "category": "development",
+      "dependencies": [
+        "triton-op-generator-skills",
+        "triton-op-generator-kb-skills"
+      ]
     }
   ]
 }

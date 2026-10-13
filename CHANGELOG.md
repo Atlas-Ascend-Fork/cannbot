@@ -6,6 +6,7 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 
 ### Added
 
+- Added the `triton-op-generator` plugin (migrated from the cannbot-skills repository): Triton-Ascend operator generation and optimization in Phase 0-7 direct-execution mode. Its eight triton Skills plus `knowledge-query`/`ops-knowledge-ingest` are sourced from `vendor/cannbot-skills` via `plugin-sources.json`; the cannbot-knowledge knowledge base is auto-cloned at install time via `plugin-install.json`; the baseline guard hook uses the standard `hooks/hooks.json` layout; all knowledge cards are served from cannbot-knowledge.
 - Added the `hccl-op-generator` plugin for HCCL AICPU standard communication operator development, with four Agent state-machine workflow, from the cannbot-hccl repository. Corresponding Skills are contributed to the [cannbot-skills](https://gitcode.com/cann/cannbot-skills) repository under `communication/`.
 - Community plugin channel: `plugins-community/` is recognised by the bundler and the
   installer, and a community plugin is indexed by its manifest `name`, so its directory
