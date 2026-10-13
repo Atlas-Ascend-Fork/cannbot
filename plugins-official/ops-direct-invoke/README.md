@@ -2,10 +2,15 @@
 
 ## 新特性
 
+### 【2026-10-13】
+
+- 对齐 [cannbot-skills PR1360](https://gitcode.com/cann/cannbot-skills/merge_requests/1360)：六个 `cannbot-dsl-*` Skill 从公共仓的 `ops/` 安装，名称与工作流入口不变；`ops-design-paradigms` 已由 [PR1359](https://gitcode.com/cann/cannbot-skills/merge_requests/1359) 迁入同一正式目录。
+- 方案设计节点显式向设计 Skill 提供规格文件路径、调用与导出契约及范式资料。所选 skills 版本需包含上述迁移；统一 init 默认自动更新，指定 SHA 或本地 skills 仓时由调用方选择兼容版本。
+
 ### 【2026-09-30】
 
 - 新增 **CANNBot-DSL 算子开发支持**：按开发语言选择 DSL 工作流，支持设计、动态实现子图生成、开发与验收。
-- DSL 的环境节点检查环境后生成对应 wheel 的 API 参考；性能优化完成后再生成最终版本的文档。
+- DSL 的环境节点记录环境证据，并使用本轮 `cannbot-dsl/docs` 作为 API 参考；性能优化完成后再生成最终版本的文档。
 - 提供 `ops-direct-invoke-maintain`，按模块记录工作流设计与维护约定。
 - 回归测试随维护 Skill 分发，修改工作流后运行完整测试；检查自身脚本和 harness 调用衔接，不重复验证框架内部调度。
 - 安装与使用统一见 [QUICKSTART.md](QUICKSTART.md)。

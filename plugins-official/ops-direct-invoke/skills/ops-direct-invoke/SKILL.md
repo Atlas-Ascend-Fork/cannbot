@@ -100,7 +100,7 @@ AscendC 过程报告写入 `$WORK_DIR/`；CANNBotDSL 执行与验收过程报告
 
 ## cannbot-dsl 内容引用模板
 
-Skill 源路径统一在插件的 [plugin-sources.json](../../plugin-sources.json) 的 `skills` 列表维护；DSL 能力从 `vendor/cannbot-skills/community/ops/` 与 `vendor/cannbot-skills/ops/`（ops-design-paradigms）导入。安装器按目录名注册 Skill，task 与动态实现子图只引用其 `SKILL.md` 中的名称。迁移 Skill 时同步源路径和调用名称，并确认依赖仓版本已包含这些目录。
+Skill 源路径统一在插件的 [plugin-sources.json](../../plugin-sources.json) 的 `skills` 列表维护；六个 `cannbot-dsl-*` Skill 与 `ops-design-paradigms` 均从 `vendor/cannbot-skills/ops/` 导入。安装器按目录名注册 Skill，task 与动态实现子图只引用其 `SKILL.md` 中的名称。迁移 Skill 时同步源路径，并在名称变化时更新调用名称；确认依赖仓版本已包含这些目录。
 
 [op-dev](workflows/cannbot-dsl/op-dev.yaml) 是完整工作流模板：节点 id、depends_on、executor、verifier、max_retries、on_exhaust、rollback_to 和 subgraph 节点全部留在模板中，语义 id 不参与重新编号；normal 节点通过 `yaml` 键引用 `tasks/cannbot-dsl/` 下的内容 task，task 只含 title、goal、approach、procedure（可选）、acceptance、out_of_scope 六个内容字段，不包含任何调度字段。组装时按模板文件位置解析 task 路径，将内容字段合并进节点后剥离 `yaml` 键；模板与 task 同时定义同一字段、task 缺字段或合并后出现未知字段都会拒绝组装。内容字段为空列表的节点在组装时输出 warning 列出待补字段，不阻断生成。
 - 所有组装输出都使用新文件，拒绝覆盖。恢复使用原完整 YAML 和 work_dir；新一轮使用新目录，保留前轮状态与证据。

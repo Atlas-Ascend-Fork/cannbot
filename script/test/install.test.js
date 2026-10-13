@@ -324,8 +324,10 @@ for (const source of sources) {
       const localSkills = readdirSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "skills"))
         .filter((name) => existsSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "skills", name, "SKILL.md")));
       assert.equal(record.skills.length, configured.skills.length + localSkills.length);
-      for (const name of ["cannbot-dsl-env-check", "cannbot-dsl-op-design", "cannbot-dsl-unit-planner", "cannbot-dsl-test-generator", "cannbot-dsl-best-practice", "cannbot-dsl-code-reviewer"]) {
-        assert.equal(existsSync(join(skillRoot(target, tool), name, "SKILL.md")), true, name);
+      for (const name of ["cannbot-dsl-env-check", "cannbot-dsl-op-design", "cannbot-dsl-unit-planner", "cannbot-dsl-test-generator", "cannbot-dsl-best-practice", "cannbot-dsl-code-reviewer", "ops-design-paradigms"]) {
+        const installedSkill = join(skillRoot(target, tool), name);
+        assert.equal(existsSync(join(installedSkill, "SKILL.md")), true, name);
+        assertSkillInstallation(installedSkill, source, "ops-direct-invoke", name);
       }
       assert.equal(record.agents.length, 3);
       assert.equal(record.sourcePackage, sourcePackage);

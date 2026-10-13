@@ -5,9 +5,9 @@ approach:
 - 读取 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/environment/environment.yaml` 和 `$WORK_DIR/environment/env_selected_soc.yaml`。环境为 `FAIL/blocked` 时按工作流政策停止。
 - '`PASS/full` 时，读取选定 SoC 并结合 `npu-arch` 与运行时证据形成 `$WORK_DIR/environment/soc-info.yaml`；SKU 相关的核数、容量和带宽以实际证据为准。'
 - '`WARNING/compile_only` 时，在设计中说明可设计和编译、不可执行 NPU 验证；按本工作流政策在设计后停止，不编造 SoC 或实测数据。'
-- 消费冻结的 `spec.yaml` 分类和语义，将环境、`$WORK_DIR/cannbot-dsl/docs` 文档目录、SoC 信息作为设计输入提供给 `cannbot-dsl-op-design`；不要求 Skill 接收固定路径、证据 schema 或调用其他 Skill。
 - 加载 `cannbot-dsl-best-practice` 的整体实现参考，提取公开调用与导出契约、共享构建依赖、资源存续范围及产物识别的验收条件，纳入 HostLaunch、API、Validation 和 DevView；具体接口示例注明版本与适用前提，支持的导出变体、Native 收集与产物命中转为后续实现和验证的明确义务。影响正确性、接口或实现可行性的依赖必须在本节点确认；无法确认时记录证据并终止。
 - 加载 `ops-design-paradigms` Skill，提供冻结的 `op.paradigms` 与路由所需的 `dsl`，按 Skill 当前的组合优先、语言适配和按需展开规则获取设计知识；语言声明与匹配记录写入节点报告，资料的算法、能力与约束用于核对方案及其适用前提，沿用规格中的范式。
+- 加载 `cannbot-dsl-op-design`，提供规格文件 `$WORK_DIR/design/doc/spec.yaml`、环境、`$WORK_DIR/cannbot-dsl/docs` 文档目录、SoC 信息，以及本节点获取的调用与导出契约和范式资料，按其要求执行。规格文件路径由本工作流约定，范式资料由本节点提供；不要求设计 Skill 自行调用其他 Skill 或产出范式文档。
 - 设计正文以数学表达式、任务坐标、数据流、资源模型及算法伪代码描述方案；目标语言与 API 资料用于确认执行能力、接口与产物契约，参考代码保留适用范围、来源和抽象占位说明。
 - 指定 `$WORK_DIR/design/doc/` 为设计输出目录，生成 `INDEX.md`、索引列出的主题文件及 `branches/DESIGN-BRANCH-*.md`。设计内容覆盖算法、接口、执行路径、资源、并行与同步、API、精度和边界验证。
 - 在 Kernel 定义阶段调用次数、计算量、各层搬运量及重复次数，推导共用资源负载、串行依赖和预计瓶颈；在 TemplatePartition 代入代表规模比较可行候选，在 LaunchData 核对物理资源，在 Validation 给确认或推翻成本假设的观测。耗时估算与实测分别注明依据。
