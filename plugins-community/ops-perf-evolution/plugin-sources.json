@@ -1,0 +1,13 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "skills": [
+    "community/ops/ascendc-evolution-knowledge",
+    "community/ops/ascendc-evolution-report",
+    "community/ops/ascendc-evolution-strategies",
+    "community/ops/ascendc-evolution-world-model",
+    "community/ops/ascendc-ops-evaluation",
+    "ops/npu-arch",
+    "ops/ops-profiling"
+  ]
+}

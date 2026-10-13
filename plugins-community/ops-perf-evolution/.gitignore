@@ -1,0 +1,10 @@
+
+# Claude project-level generated configs
+.claude/
+CLAUDE.md
+
+# OpenCode / Cursor / Trae / CodeArts project-level generated configs
+.opencode/
+.cursor/
+.trae/
+.codeartsdoer/

@@ -227,6 +227,23 @@
       "dependencies": [
         "hccl-op-generator-skills"
       ]
+    },
+    {
+      "name": "ops-perf-evolution",
+      "source": "./plugins-community/ops-perf-evolution",
+      "description": "Ascend C 算子性能进化优化 Agent Team。对已有 AscendC 内核或 ops 仓库算子进行多轮并行进化优化，含 1 个 Orchestrator Agent 和 4 个路径专用 Subagent。",
+      "version": "1.0.1",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "ascendc",
+        "evolution",
+        "perf-optimize",
+        "kernel",
+        "operator"
+      ],
+      "category": "development"
     }
   ]
 }
