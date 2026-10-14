@@ -124,18 +124,44 @@ class UnitContractTests(unittest.TestCase):
             contracts.validate_units({"U01": unit})
 
     def test_unit_kind_requires_matching_obligation(self):
-        for kind, evidence, missing in (
-            ("minimal_operator", "structural", "numerical"),
-            ("pipeline_framework", "numerical", "structural"),
-        ):
-            unit = unit_fixture("U01")
-            unit["kind"] = kind
-            unit["verification_obligations"][0]["kind"] = evidence
-            with (
-                self.subTest(kind=kind),
-                self.assertRaisesRegex(ValueError, f"lacks {missing}"),
-            ):
-                contracts.validate_units({"U01": unit})
+        unit = unit_fixture("U01")
+        unit["kind"] = "minimal_operator"
+        unit["verification_obligations"][0]["kind"] = "semantic"
+        with self.assertRaisesRegex(ValueError, "lacks numerical"):
+            contracts.validate_units({"U01": unit})
+
+    def test_pipeline_uses_review_evidence_and_executable_behavior(self):
+        unit = unit_fixture("U01")
+        unit["kind"] = "pipeline_framework"
+        with self.assertRaisesRegex(ValueError, "requires structural review_evidence"):
+            contracts.validate_units({"U01": unit})
+        unit["design_constraints"] = [
+            {
+                "source": "Kernel.md#pipeline",
+                "commitment": "producer/consumer ordering",
+                "review_evidence": [
+                    {
+                        "artifact": "compiled kernel and device timeline",
+                        "check": "actual producer/consumer dependency",
+                        "pass_criteria": "matches declared synchronization",
+                    }
+                ],
+            }
+        ]
+        self.assertEqual(contracts.validate_units({"U01": unit}), ["U01"])
+        without_behavior = copy.deepcopy(unit)
+        without_behavior["verification_obligations"] = []
+        with self.assertRaisesRegex(ValueError, "verification_obligations must be a nonempty list"):
+            contracts.validate_units({"U01": without_behavior})
+        unit["design_constraints"][0]["review_evidence"][0].pop("check")
+        with self.assertRaisesRegex(ValueError, "artifact/check/pass_criteria"):
+            contracts.validate_units({"U01": unit})
+
+    def test_structural_obligation_requires_explicit_migration(self):
+        unit = unit_fixture("U01")
+        unit["verification_obligations"][0]["kind"] = "structural"
+        with self.assertRaisesRegex(ValueError, "U01/VO-U01.*migrate.*review_evidence"):
+            contracts.validate_units({"U01": unit})
 
     def test_malformed_declarations_report_contract_errors(self):
         original = unit_fixture("U01")

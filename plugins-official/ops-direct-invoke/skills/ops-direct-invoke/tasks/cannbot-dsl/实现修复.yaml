@@ -3,7 +3,7 @@ goal:
 - 首轮核对 Unit 实现与测试清单；回滚时根据最新集成或检视报告修复实现问题。
 approach:
 - 修改算子源码时，必须加载 `cannbot-dsl-best-practice` Skill，按其中的要求执行。
-- 运行结构用例时，将 `$WORK_DIR` 加入 `PYTHONPATH`，使用 `CANNBOTDSL_PROBE_MODULE=operators.<op>.probe.<op>_probe`，沿用冻结的探针事件断言。
+- 将 `$WORK_DIR` 加入 `PYTHONPATH`，运行公开行为测试并交付 Unit 的 review_evidence。
 - 读取原生 design/units/U*.yaml、testcase.csv、Golden 及已有集成和检视报告；首轮无失败报告时仅完成一致性检查。
 - 有失败报告时逐项定位到 Unit、代码路径和可重现用例，在允许修改的实现代码范围内修复，并记录问题与改动的对应关系。
 - 发生修复时，运行受影响 Unit 的 TDD，并按代码影响覆盖其上游依赖及受影响的下游 Unit 回归；保留原始失败证据，供后续集成复验和检视使用。

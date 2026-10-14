@@ -3,7 +3,7 @@ goal:
 - 将已验收的算子设计拆分为具有依赖关系、可独立验收的最小纵向实现单元。
 approach:
 - 将 `$WORK_DIR/design/doc/spec.yaml`、设计目录和已有实现信息提供给 `cannbot-dsl-unit-planner`；Skill 只读取这些输入并在 `$WORK_DIR/design/units/` 产出 `U01.yaml` 至 `U<n>.yaml`。
-- 向规划 Skill 提供实现路径约定：公开模块为 `operators/<op>/<op>.py`，结构探针为 `operators/<op>/probe/<op>_probe.py`；`<op>` 取 spec.op.name。每个 Unit 填写明确的允许修改文件，结构义务所属 Unit 包含探针文件及必要的包初始化文件；Unit 依赖表达能力或设计先后要求，共享写集的串行关系由实现子图生成器添加。
+- 向规划 Skill 提供实现路径约定：公开模块为 `operators/<op>/<op>.py`；`<op>` 取 spec.op.name。每个 Unit 填写明确的允许修改文件；Unit 依赖表达能力或设计先后要求，共享写集的串行关系由实现子图生成器添加。
 - 将设计中的导出入口和共享编译工厂纳入对应 Unit 的实现范围与可观察验证义务；性能目标保留在设计验证方案，由性能节点实测，不声明为只靠 TDD 验收的 performance 义务。
 - 不设固定 Unit 数量，不发明设计中没有的算法、API、资源数字或测试 Case。设计缺少实现所需事实时记录缺项与来源并终止本节点，由框架处理结果。
 - Unit 的 `design_sources` 记录实际设计文件与章节；具体测试输入、Case ID 和 Golden 留给测试生成节点。

@@ -4,7 +4,7 @@ goal:
 - 保存逐例原始结果和可复核的精度结论；全部必测用例通过后才放行性能与文档节点。
 approach:
 - 核对 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/operators/<op>/test/<op>_golden.py`、`$WORK_DIR/operators/<op>/test/test_<op>.py`、`$WORK_DIR/operators/<op>/test/testcase.csv`、最终算子源码以及实现集成和检视报告；缺失或前序工作未通过时停止。
-- 将 `$WORK_DIR` 加入 `PYTHONPATH`，将 `CANNBOTDSL_OP_MODULE` 设为 `operators.<op>.<op>`；结构用例将 `CANNBOTDSL_PROBE_MODULE` 设为 `operators.<op>.probe.<op>_probe`（`<op>` 取 `spec.op.name`）。公开入口不是 run 时设置 CANNBOTDSL_OP_ENTRY；目标异常未直接暴露 spec 错误代码时，提供并验证 CANNBOTDSL_ERROR_MATCHER。分别以 `--sheet blackbox|whitebox|tdd --device npu --require-accelerator` 运行固定 test_<op>.py；实际设备名可按环境替换，但禁止 CPU 冒充目标设备。结构 TDD 需核验探针的 `reset()/snapshot()` 接口与算子记录的事件一致。三个逻辑分组都必须非空且逐例通过。Golden 的公开接口与当前 spec 一致，精度容差以 spec.yaml 的 numerical_tolerance.per_dtype 为准。
+- 将 `$WORK_DIR` 加入 `PYTHONPATH`，将 `CANNBOTDSL_OP_MODULE` 设为 `operators.<op>.<op>`（`<op>` 取 `spec.op.name`）。公开入口不是 run 时设置 CANNBOTDSL_OP_ENTRY；目标异常未直接暴露 spec 错误代码时，提供并验证 CANNBOTDSL_ERROR_MATCHER。分别以 `--sheet blackbox|whitebox|tdd --device npu --require-accelerator` 运行固定 test_<op>.py；实际设备名可按环境替换，但禁止 CPU 冒充目标设备。三个逻辑分组都必须非空且逐例通过。Golden 的公开接口与当前 spec 一致，精度容差以 spec.yaml 的 numerical_tolerance.per_dtype 为准。
 - 黑盒 case 必须与 CSV 黑盒行及按需重算的覆盖报告对齐；`match_golden_nan` 只在 spec 明示的 NaN 场景采用，`raises_error:<code>` 必须由目标入口实际抛出匹配的错误语义，环境、输入构造或任意异常都不得算作成功。
 - 固定算子实现版本、设备型号、驱动与运行环境、测试框架版本和输入集合；在目标设备上执行全部黑盒、白盒和 TDD 用例，分别保留 test_<op>.py 写入 testcase_output/{blackbox,whitebox,tdd}/ 的逐例结果 CSV、运行命令、退出码、逐例结果和原始日志；如逐例调用则保留带 case_id 的独立结果文件。
 - 对 NaN/Inf、尾块、dtype、shape、layout、边界值与多输出逐项检查；任何失败都保留可重现输入和失败诊断，不删除用例、不修改 Golden、规格或阈值以换取通过。
@@ -13,7 +13,7 @@ approach:
 procedure:
 - 核对 `$WORK_DIR/precision/` 中的执行记录、日志及汇总报告，并读取报告引用的原生逐例结果 CSV；确认全部证据可追溯到冻结用例清单。
 - 核对 blackbox、whitebox、tdd 三组全部必测用例均在目标设备真实执行且通过当前生效的判定规则；不存在跳过、伪造结果、缺失输出或未经解释的覆盖缺口。
-- 核对数值例报告包含实际生效的误差指标与阈值、实测值和 pass/fail；结构例报告包含每项可执行断言及探针事件实测值。
+- 核对数值例报告包含实际生效的误差指标与阈值、实测值和 pass/fail；行为例报告包含每项可执行断言及实际观测结果，结构承诺另有 review_evidence 验收。
 - 核对精度容差以 `spec.yaml` 的 `numerical_tolerance.per_dtype` 为准；`match_golden_nan` 只在 spec 明示的 NaN 场景采用；`raises_error:<code>` 由目标入口实际抛出匹配的错误语义，环境、输入构造或任意异常均未算作成功。
 - 核对失败、超时或环境问题均未被汇总为通过。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。

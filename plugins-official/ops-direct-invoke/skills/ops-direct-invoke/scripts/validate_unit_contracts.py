@@ -104,9 +104,14 @@ def validate_obligations(uid, unit, all_ids):
                 f"{uid}: obligation IDs must be nonempty and globally unique"
             )
         kind = item.get("kind")
+        if kind == "structural":
+            raise ValueError(
+                f"{uid}/{ref}: structural obligations are removed; migrate to "
+                "design_constraints.review_evidence or feasibility_checks.review_evidence, "
+                "retaining design references"
+            )
         if not isinstance(kind, str) or kind not in {
             "numerical",
-            "structural",
             "semantic",
             "device",
         }:
@@ -116,8 +121,6 @@ def validate_obligations(uid, unit, all_ids):
         kinds.add(kind)
     if unit.get("kind") == "minimal_operator" and "numerical" not in kinds:
         raise ValueError(f"{uid}: minimal operator lacks numerical obligation")
-    if unit.get("kind") == "pipeline_framework" and "structural" not in kinds:
-        raise ValueError(f"{uid}: pipeline framework lacks structural obligation")
     return ids
 
 
@@ -180,6 +183,12 @@ def validate_evidence(uid, unit, dependencies, ancestors, native, obligations):
     )
     for label, items, fields in checks:
         validate_check_items(uid, label, items, fields, refs)
+    if unit.get("kind") == "pipeline_framework" and not any(
+        item.get("review_evidence") for _, items, _ in checks for item in items
+    ):
+        raise ValueError(
+            f"{uid}: pipeline framework requires structural review_evidence in design_constraints or feasibility_checks"
+        )
 
 
 def validate_check_items(uid, label, items, fields, refs):

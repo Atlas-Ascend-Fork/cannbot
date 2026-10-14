@@ -2,7 +2,7 @@ title: 单元集成复验｜汇合全部 Unit 实现
 goal:
 - 在全部 Unit 实现及修复完成后，验证组合实现的构建、功能和单元级数值正确性。
 approach:
-- 运行结构用例时，将 `$WORK_DIR` 加入 `PYTHONPATH`，使用 `CANNBOTDSL_PROBE_MODULE=operators.<op>.probe.<op>_probe`，沿用冻结的探针事件断言。
+- 将 `$WORK_DIR` 加入 `PYTHONPATH`，运行公开行为测试并交付 Unit 的 review_evidence。
 - 对照 operators/<op>/test/testcase.csv 和 <op>_golden.py 核对所有 Unit、当前代码与测试资产，禁止只选择已通过的子集。
 - 构建完整实现，运行全部 Unit TDD、Golden、白盒及必要黑盒回归；使用 Skill 生成的测试入口和原生 case CSV，保留执行命令、退出码、逐例结果和失败日志。
 - 按冻结设计验证公开运行与导出共用编译工厂、Native 收集及产物实际命中，覆盖声明的编译变体；将执行命令、产物位置和结果纳入集成报告，失败进入实现修复。

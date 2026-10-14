@@ -4,9 +4,9 @@ goal:
 approach:
 - 核对当前 Unit 的 design_sources、depends_on、verification_obligations、允许修改路径，以及原生 Unit 和 testcase.csv 中的 TDD case 与白盒分支；不以其他 Unit 的文件代替。
 - 新增能力时运行绑定 TDD，确认 Red 来自该能力缺失；环境、用例或 Golden 错误应记录并终止。重试沿用有效的原始 Red；复用已有能力时记录来源与当前验证结果，不为制造 Red 破坏已通过代码。
-- 算子公开实现模块固定为 `$WORK_DIR/operators/<op>/<op>.py`，结构事件记录器固定为 `$WORK_DIR/operators/<op>/probe/<op>_probe.py`；实际包名取自 spec.op.name。仅在 Unit 允许的源码范围内实现能力；生成或修改代码时按 `cannbot-dsl-best-practice` 加载生产代码规范，完整算子与公共结构按其整体实现参考落实设计中的运行、导出及编译工厂；微模块资料按需读取，核对 DESIGN 与目标设备事实。
-- 可按需参考 `$WORK_DIR/cannbot-dsl/samples/` 下的算子官方实现：按各示例目录的 README 定位与当前 Unit 相关的示例，参考其 API 用法、代码组织与结构事件记录写法；数学语义、tile/分块、并行与同步方案仍以冻结 DESIGN 和 `$WORK_DIR/cannbot-dsl/docs` 中的 API 文档为准。实际参考的示例文件与参考点须写入本节点执行记录，未记录来源的示例片段不得进入实现。
-- 结构用例使用 `CANNBOTDSL_PROBE_MODULE=operators.<op>.probe.<op>_probe`，由算子记录实际事件，探针提供 `reset()/snapshot()`；运行前将 `$WORK_DIR` 加入 `PYTHONPATH`。
+- 算子公开实现模块固定为 `$WORK_DIR/operators/<op>/<op>.py`；实际包名取自 spec.op.name。仅在 Unit 允许的源码范围内实现能力；生成或修改代码时按 `cannbot-dsl-best-practice` 加载生产代码规范，完整算子与公共结构按其整体实现参考落实设计中的运行、导出及编译工厂；微模块资料按需读取，核对 DESIGN 与目标设备事实。
+- 可按需参考 `$WORK_DIR/cannbot-dsl/samples/` 下的算子官方实现：按各示例目录的 README 定位与当前 Unit 相关的示例，参考其 API 用法与代码组织；数学语义、tile/分块、并行与同步方案仍以冻结 DESIGN 和 `$WORK_DIR/cannbot-dsl/docs` 中的 API 文档为准。实际参考的示例文件与参考点须写入本节点执行记录，未记录来源的示例片段不得进入实现。
+- 运行测试前将 `$WORK_DIR` 加入 `PYTHONPATH`。
 - 再运行绑定用例直到 Green，并运行依赖闭包与源码改动实际影响的前序能力回归；记录实现版本、命令、退出码和逐例结果，保持后续 Unit 可复用的已通过能力。
 - 读取当前 Unit 的 supported_domain、design_constraints、feasibility_checks 及其义务/review_evidence；先完成首次使用能力所需补证。将每项约束、补证的通过判据、当前版本原始证据与结论写入本节点执行记录，再交付该能力。
 - 设计承诺无法实现或必须改变执行域、数据通路、同步、复杂度等强制要求时，记录失败证据、差异、候选影响及受阻后继，按原生执行协议结束受阻操作；不以数学等价或小输入通过宣告完整实现，不自行改写冻结方案。
@@ -15,10 +15,9 @@ approach:
 procedure:
 - 新增能力核对同一用例的 Red→Green 原因可信；重试或复用核对原始证据、来源与当前结果。当前 Unit 验证义务、补证与受影响能力回归均有真实通过证据。
 - 核对代码改动不越过允许路径，没有从 flash_attn/flash_kda 样例复制数学、固定 tile、架构比例或 Channel 深度。
-- 核对执行记录中声明的示例参考真实存在于 `$WORK_DIR/cannbot-dsl/samples/` 且与当前 Unit 职责相关，参考点限于 API 用法、代码组织或事件记录写法；示例中的数学、固定 tile、架构比例未被带入实现。
+- 核对执行记录中声明的示例参考真实存在于 `$WORK_DIR/cannbot-dsl/samples/` 且与当前 Unit 职责相关，参考点限于 API 用法与代码组织；示例中的数学、固定 tile、架构比例未被带入实现。
 - 核对执行记录中的实现版本、命令、退出码与逐例结果完整、可复核。
 - 逐项核对设计强制承诺与补证证据对应当前实现，输入条件实际触发；源码/编译产物/设备记录符合 review_evidence 的通过判据。仅有关联 ID 或通过自述、缺少承诺证据时判失败。
-- 追溯探针采集代码及原始事件，核对执行域、数据交接、代次与实际顺序来源；静态配置、固定 snapshot 或 Host 按预期拼装的事件不能证明结构完成。数值通过与设计符合性分别判定。
 - 核对受影响前序能力及依赖闭包的回归，无未解释缺口；强制设计承诺改变或关键补证失败保持失败，由既有重试/退出流程处理。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:

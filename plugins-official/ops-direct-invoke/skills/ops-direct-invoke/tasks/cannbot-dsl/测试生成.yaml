@@ -5,19 +5,18 @@ approach:
 - 先运行 `scripts/validate_unit_contracts.py --units-dir "$WORK_DIR/design/units"` 确认规划产物仍满足交接契约；加载 `cannbot-dsl-test-generator` Skill，将 `$WORK_DIR/design/doc/spec.yaml`、汇总的 `$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/design/units/` 和 `$WORK_DIR/operators/<op>/test/` 分别作为规格、设计、检验义务与测试目录传入。黑盒模块先于本节点写入同一 CSV。
 - 按该 Skill 的 Golden 与测试入口模块生成独立 CPU Golden 和固定入口，完成静态校验及 CPU 样例、边界数值复核，保存原始证据。
 - 按该 Skill 的白盒模块，将设计中的执行路径与验证矩阵转换为 whitebox 用例及有依据的排除项，完成校验并保留证据。
-- 按该 Skill 的 TDD 模块为原生 Unit 的每项验证义务生成并校验用例，结构义务提供可执行事件断言；保留义务、用例及白盒分支的关联证据。
-- 结构用例的探针由对应实现 Unit 写入 `operators/<op>/probe/<op>_probe.py`，模块名为 `operators.<op>.probe.<op>_probe`；本节点定义事件断言与接口契约，不提前伪造探针事件。
+- 按该 Skill 的 TDD 模块为原生 Unit 的每项可执行验证义务生成并校验用例；纯结构承诺通过 review_evidence 验收，保留设计承诺、义务、用例及白盒分支的关联证据。
 - 对每项 Unit 验证义务建立到 TDD case 和相关白盒分支的可追溯关系；缺少可区分测试时记录对应验证义务与缺项并终止本节点，由框架处理结果。
 - 使用 `scripts/build_implementation_subgraph.py --output-dir $WORK_DIR --harness-script <workflow-orchestrator/scripts/get_task.py>` 从 Unit 和 testcase.csv 生成 `.workflow/implementation-tasks.yaml`；生成器独立复查 Unit 契约，按能力拓扑排序后为重叠或未知写集添加串行依赖，不依赖文件编号顺序。
 - 全部 Unit 叶子汇入 `implementation-fix`，再进入 `unit-integration` 与 `implementation-review`；回滚目标和重试预算沿用本工作流设置。生成节点展开任务 YAML 内容，并通过 harness 校验子图。
-- 编排层负责将 Unit 的 verification_obligations 交给测试生成，将 design_constraints、feasibility_checks 的 obligation_ids 对应到已覆盖义务，将 review_evidence 的产物、检查方法和通过判据交给实现与检视节点。测试 Skill 只负责检验义务到用例的转换与校验，输入物化与结构事件采集契约须可复核；序列与重复要求使用固定 runner 支持的契约，无法表达时记录具体缺口并终止。
+- 编排层负责将 Unit 的 verification_obligations 交给测试生成，将 design_constraints、feasibility_checks 的 obligation_ids 对应到已覆盖义务，将 review_evidence 的产物、检查方法和通过判据交给实现与检视节点。测试 Skill 只负责检验义务到用例的转换与校验，输入物化与公开行为断言须可复核；序列与重复要求使用固定 runner 支持的契约，无法表达时记录具体缺口并终止。
 - 将节点执行过程写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 procedure:
 - 核对 Golden 独立于待测实现、设计引用有效，静态校验与 CPU 样例及边界数值复核证据齐备；静态通过不能代替数值正确性。
 - 核对白盒分支使用公开输入并覆盖设计中的真实路径、尾块、同步、dtype、shape、layout 与边界。
 - 核对每项 Unit 验证义务对应至少一个可区分的 TDD 用例；黑盒分组在本节点写白盒和 TDD 后逐行不变；三个分组非空、Case ID 唯一，校验记录对应当前 CSV。
 - 用 harness `get_task.py` 核对实现子图无未知依赖、无环、无孤立 Unit，回滚目标为同子图的传递上游。
-- 核对 Unit 能力依赖、证据关联与实际输入条件校验通过；逐项审查 must_distinguish、coverage_axes 与真实取值和判定的对应关系，脚本通过不代替设计符合性。结构事件来源能被后续 verifier 追溯，不能将静态配置视为设备时序证据。
+- 核对 Unit 能力依赖、证据关联与实际输入条件校验通过；逐项审查 must_distinguish、coverage_axes 与真实取值和判定的对应关系，脚本通过不代替设计符合性。纯结构承诺由后续 verifier 按 review_evidence 验收，不以生成用例或静态配置证明设备时序。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`。
 acceptance:
 - Unit 契约校验退出码为 0，记录对应本轮 Unit 文件；设计约束与补证关联无缺项。
