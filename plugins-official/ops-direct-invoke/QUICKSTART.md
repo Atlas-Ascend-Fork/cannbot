@@ -39,6 +39,6 @@ opencode
 
 > 请使用 ops-direct-invoke 开发一个 abs 算子，开发语言为 Ascend C 直调。
 
-按提示补充需求，完成后查看 Agent 的交付说明；运行记录在工作区 `.cannbot/` 下。
+首次按集中问卷补齐需求、使用的 conda/Python 与 CANN 环境，以及允许新建环境或修改依赖的范围；也可在最初请求中直接说明这些选择。后续修复和重试沿用已有任务约定，只有实质变更才补问需求与权限；harness 所需的启动输入确认仍按调度 Skill 执行。完成后查看 Agent 的交付说明；运行记录在工作区 `.cannbot/` 下。
 
 指定 SHA、安装参数、版本记录等完整说明见 [README](README.md#安装详解)。

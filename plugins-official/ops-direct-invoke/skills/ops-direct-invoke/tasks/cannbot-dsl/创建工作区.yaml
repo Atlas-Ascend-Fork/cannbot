@@ -3,7 +3,7 @@ goal:
 - 初始化本轮算子开发工作目录。
 approach:
 - 保留 harness 已创建的 `$WORK_DIR` 及其中的 `.workflow/`，只补齐本轮需要的工作目录，不得清空或覆盖既有运行状态。
-- 浅克隆 DSL 示例仓：`git clone --depth 1 https://gitcode.com/cann/cannbot-dsl.git "$WORK_DIR/cannbot-dsl"`，并在节点执行记录中写明 commit SHA；该仓本轮只读，不修改、不构建、不安装，示例代码仅供设计与实现参考。
+- 优先复用 `$WORK_DIR/cannbot-dsl` 或任务输入明确指定的前轮只读示例仓，记录实际路径、官方 remote 和 commit SHA；需要本轮固定路径时可链接已授权读取的快照。仅在无有效资产时执行 `git clone --depth 1 https://gitcode.com/cann/cannbot-dsl.git "$WORK_DIR/cannbot-dsl"`。已有目录不得清空、覆盖、pull 或切换版本；来源不符则报告冲突。该仓只读，不修改、不构建、不安装。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
 - 核对 `.workflow/` 下的 harness 运行状态未被删除或修改。

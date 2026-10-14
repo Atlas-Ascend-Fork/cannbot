@@ -2,12 +2,14 @@ title: M0｜环境检查（并行分支 A）
 goal:
 - 确认本轮 CANNBotDSL 开发环境，并提供对应的 API 参考。
 approach:
+- 先读取需求与环境记录中的 conda/Python、CANN 选择和修改授权，按固定激活方式进入该环境。若存在已获授权的准备缺口，在指定的新环境或允许修改的环境内补齐并记录命令与结果；无权限则报告阻塞，不更换环境。后续使用选定 Python 的绝对路径，不使用默认解释器；环境准备已由上游完成时直接使用其激活脚本。
 - 必须加载 `cannbot-dsl-env-check` Skill，按其中的要求执行环境探测和证据记录。
 - 以 `$WORK_DIR` 作为 Skill 的 `--output-dir`；不得重命名或改写 Skill 固定生成的文件及 schema。
 - 以 `$WORK_DIR/cannbot-dsl/docs`（创建工作区节点克隆的示例仓文档目录，含 `docs/api/` 接口文档）作为本轮 DSL 文档与 API 参考的唯一来源；核对目录可用，记录其所属 commit SHA 并与创建工作区节点的记录一致；不再提取或生成其他 API 文档产物。
 - 本工作流对 `WARNING/compile_only` 采取更严格的业务政策：仅继续完成方案设计，设计后不进入实现；不得把这一工作流政策写回或伪装成环境 Skill 的原始能力结论。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
+- 核对实际解释器、conda 前缀、CANN 根路径及版本与用户确认一致，准备或安装操作未超出修改授权；所有证据来自同一选定组合，不接受自动切换环境后的通过结果。
 - 验证 `environment.yaml` 与 `env_selected_soc.yaml` 均可被 YAML 解析，且结论与探测证据一致。
 - 核对 `final_status.status` 为 `PASS`、`WARNING` 或 `FAIL` 之一，并与 `compile_gate`、`execution_mode`、允许/禁止动作及各阶段证据一致。
 - '`final_status.status: PASS` 时，确认 `env_selected_soc.yaml` 的 `selection.selection_status` 为 `SELECTED`，且包含唯一、非空的逻辑设备与芯片标识。'
@@ -22,4 +24,4 @@ acceptance:
 - 'test -d "$WORK_DIR/cannbot-dsl/docs/api"'
 - 'find "$WORK_DIR/cannbot-dsl/docs" -name "*.md" -size +0 | grep -q .'
 out_of_scope:
-- 不安装或修改系统环境，不生成算子规格、测试用例或设计方案。
+- 不修改未经授权的既有环境、系统 Python、CANN 或驱动，不擅自切换环境组合；不生成算子规格、测试用例或设计方案。

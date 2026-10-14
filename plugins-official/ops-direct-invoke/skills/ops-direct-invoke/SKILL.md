@@ -9,15 +9,19 @@ description: 根据已确认的需求清单选择直调算子工作流模板，�
 
 ## 启动前置条件
 
-本 Skill 接收调用方已对齐的需求清单 `work_dir/需求分析.md` 和 PM 从仓库级缓存复制的只读环境记录 `work_dir/环境信息.md`。启动前确认内容完整、无待决阻断项，且用户答复覆盖当前版本；已有有效清单与确认可直接复用。仓库级环境结果固定为 `<目标仓>/.cannbot/环境信息.md`，存在通过记录时直接复用，不因新算子重复校验；首次检查与缓存规则由调用方执行。
+本 Skill 接收调用方已对齐的需求清单 `work_dir/需求分析.md` 和只读环境记录 `work_dir/环境信息.md`。需求清单必须覆盖任务级 conda/Python、CANN 环境选择及修改权限；已有有效确认跨重试与 Workflow 复用。仓库级环境结果固定为 `<目标仓>/.cannbot/环境信息.md`，只复用与已选环境组合、语言和依赖范围匹配的通过记录；首次检查与缓存规则由调用方执行。
 
-需求问卷和用户确认在启动前完成；DSL 需求节点只整理已确认输入，环境节点检查本轮环境并生成 API 参考。存在未答问卷或缺失信息时，将缺项报告给调用方，不组装或启动工作流，不用 silent 或默认选项代替用户拍板。
+需求、环境与修改授权集中在启动前对齐；DSL 需求节点只整理已确认输入。已知缺依赖、新环境待创建或输入访问问题先落实授权内准备动作，优先作为同图前置节点或环境节点的工作，准备验收通过后再执行依赖节点；未修复前不能宣称环境通过。必须确认的选择与权限仍缺失时不启动，不用默认选项代替用户拍板。
 
 ## 运行输入
 
-沿用用户已经提供的目标代码仓绝对路径、算子名、原始需求、目标芯片、相关资料路径、已明确的架构选择与确认记录。把这些业务信息和已确认需求清单、环境检查记录的绝对路径、版本及确认摘要组织成传给 harness 的原始任务 prompt，不增加运行时私有输入文件或环境变量。任务提示中引用文件时使用绝对路径。
+沿用用户已经提供的目标代码仓绝对路径、算子名、原始需求、目标芯片、相关资料路径、已明确的架构选择与确认记录。把这些信息、需求与环境记录的绝对路径、版本、环境选择和授权摘要组织成任务 prompt。输入与所需外部环境路径须在子 Agent 权限范围内；必要时启动前固化只读规格副本，不把所有 work_dir 外访问一概禁止。
 
-确认 provider、work_dir 和所选 workflow 模板的绝对路径。缺少启动所需信息时先向用户询问。work_dir 必须设为目标仓下 `.cannbot/<任务名>/workflow<序号>/` 的绝对路径，目录由调用方按任务与执行轮次分配。除仓库级环境缓存与首次检查日志外，所有本轮开发中间产物（需求、设计、报告、日志、临时探针、构建临时文件和框架状态）必须放在此目录下；AscendC 的代码、测试和使用文档等交付件写入目标代码仓约定目录；DSL 的本轮实现与验证先按 task 写入 `$WORK_DIR/operators/`、`documentation/` 等暂存目录，最终交付节点按下述冻结位置发布交付清单中的文件，由 `DELIVERY.md` 提供索引。使用独立工作目录及 checkout 隔离不同任务，避免覆盖已有运行。
+由 PM 根据任务与当前客户端准备 provider、work_dir 和模板路径，启动输入按 `workflow-orchestrator` Skill 的契约确认，不追加额外的总启动批准。work_dir 必须设为目标仓下 `.cannbot/<任务名>/workflow<序号>/` 的绝对路径，目录由调用方分配。除仓库级环境缓存与检查日志外，本轮中间产物（需求、设计、报告、临时构建和框架状态）放在此目录下；AscendC 交付件写入目标仓约定目录；DSL 实现与验证先写入 `$WORK_DIR/operators/`、`documentation/` 等暂存目录，最终交付节点按冻结位置发布并生成 `DELIVERY.md`。不同任务隔离，同一轮中断恢复复用原目录和有效 checkout。
+
+PM 按已确认环境生成 `$WORK_DIR/运行环境.sh`，只包含获准的 conda 激活、CANN 环境脚本加载以及 `PYTHON`（选定解释器绝对路径）等环境导出，不包含安装、升级或修复命令。用 `run_workflow.py --env-script <绝对路径>` 在同一进程环境中激活后启动 harness；启动器显式提供 `WORK_DIR` 与 `USER_PROMPT`，不把提示词中的变量说明当作 shell 已设置。节点需要重新开 shell 时沿用该激活脚本与 `$PYTHON`，不得自行改用默认解释器或另一套 CANN。
+
+若新环境尚未创建，启动脚本只加载当前可用且已确认的准备环境；环境准备节点按授权创建后验证目标组合，并生成其激活脚本作为明确交付件，后续依赖节点必须在命令中加载该脚本。不能在环境不存在时先激活导致整个 workflow 无法启动。环境准备改变版本后重新验证受影响证据，不影响仍有效的规格、设计和只读参考资产。
 
 DSL 交付位置由 `repo-requirement` 写入已确认需求清单，作为交付节点输入；恢复任务沿用该位置，不随内部工作目录变化重新推导。
 
@@ -27,7 +31,7 @@ PM 仅在启动前确定输入与清单、整轮退出后读取结果并处理�
 
 ## 先生成引导，再选择调度模板
 
-**每轮编排前先运行 [generate_workflow_guide.py](scripts/generate_workflow_guide.py)，将引导文件生成到当前 work_dir；读取其中的模板文件名和调用时机，再打开匹配的 workflow 模板。** 不使用旧引导或凭记忆选模板，也不直接把 tasks 文件全部拼起来。脚本失败时先处理错误，不继续使用旧文件。
+**每轮编排前先运行 [generate_workflow_guide.py](scripts/generate_workflow_guide.py)，将引导文件生成到当前 work_dir；读取模板文件名和调用时机，再打开匹配模板。** 不凭记忆选模板，也不直接拼接全部 tasks；脚本失败时先处理错误，不继续使用旧文件。恢复中断的同一轮不属于重新编排，沿用原引导和完整 YAML，不重新生成或覆盖。
 
 ```bash
 python3 scripts/generate_workflow_guide.py \
@@ -187,7 +191,7 @@ nodes:
 
 失败反馈由 harness 传递；摘要与报告路径的提交、返工处理分别遵循 [verifier](../../agents/ops-direct-invoke-verifier.md)、[architect](../../agents/ops-direct-invoke-architect.md) 和 [developer](../../agents/ops-direct-invoke-developer.md) 的角色约定，不在各 task 重复。正式交付仍要求当前版本的全量测试证据。
 
-已知规则冲突等确定性阻塞条件未变时，执行者仅记录复核与条件缺口，验收者保持失败，不重复完整调查。当前公开接口只有 pass/fail，此约定不会跳过 harness 的重试；默认仍最多重试 3 次，耗尽后由 PM 处理，不新增失败类型或私有调度器。
+已知规则冲突、缺依赖或输入权限等确定性阻塞，应在启动前消除或明确本轮授权内的修复路径，不把原样重试当成修复。运行中条件未变时仅记录复核与缺口，不重复调查；当前公开接口只有 pass/fail，仍由 harness 按预算处理，耗尽后由 PM 处理，不新增失败类型或私有调度器。
 
 ## 文档模板
 
@@ -214,12 +218,13 @@ python3 scripts/run_workflow.py \
   --template ascendc/basic.yaml \
   --work-dir /absolute/operator-repo/.cannbot/abs/workflow1 --provider codex \
   --harness-skill /absolute/installed-skills/workflow-orchestrator \
+  --env-script /absolute/operator-repo/.cannbot/abs/workflow1/运行环境.sh \
   --prompt-file /absolute/operator-repo/.cannbot/abs/workflow1/original-task.txt
 ```
 
 `--template` 相对本 Skill 的 workflows/，与当前目录无关；只能指向该目录内的引用模板。引用模板通过组装脚本展开，harness 始终收到完整 YAML。模板不因启动而修改，输出文件已存在时拒绝覆盖，并提示使用 `--yaml` 恢复。
 
-使用本轮自定义引用图时先组装，再启动；恢复同一轮也使用 `--yaml` 指向已经生成的完整文件：
+每轮使用自定义引用图时先组装，再启动；恢复中断的同一轮只运行下面的启动命令，不重做组装，使用 `--yaml` 指向原文件，并省略 `--prompt-file` 复用已保存输入：
 
 ```bash
 python3 scripts/assemble_workflow.py \
@@ -229,6 +234,7 @@ python3 scripts/run_workflow.py \
   --yaml /absolute/operator-repo/.cannbot/abs/workflow1/workflow1.yaml \
   --work-dir /absolute/operator-repo/.cannbot/abs/workflow1 --provider codex \
   --harness-skill /absolute/installed-skills/workflow-orchestrator \
+  --env-script /absolute/operator-repo/.cannbot/abs/workflow1/运行环境.sh \
   --prompt-file /absolute/operator-repo/.cannbot/abs/workflow1/original-task.txt
 ```
 
@@ -236,15 +242,19 @@ python3 scripts/run_workflow.py \
 
 `--prompt-file` 的 UTF-8 内容原样作为 harness 的 `--prompt` 参数传递，也可直接使用 `--prompt '任务内容'`，二者互斥。首次运行必须提供原始任务；再次调用已有运行时可省略，由 harness 决定恢复行为。省略 prompt 不会清除耗尽状态。
 
+`--env-script` 为可选的 Bash 激活脚本；本流程按已确认环境提供，旧调用省略时保持继承环境的行为。脚本在实际子进程中加载，前台、tmux 后台及恢复均生效，不依赖 tmux server 的旧环境。激活失败不启动 harness。恢复时传入同一脚本，不重新选环境，不在其中安装或修改依赖。
+
 `--harness-skill` 默认取启动脚本调用路径所在安装 Skill 的同级 workflow-orchestrator 目录；直接从源码目录调用或布局不同时显式指定。脚本只调用该目录下公开的 orchestrator.py CLI，不读取或修改内部实现。
 
-默认使用 tmux 后台启动，返回会话名及 work_dir/orchestrator.log。启动成功不代表任务执行成功：用脚本打印的 tmux has-session 命令检查会话，结束后完整回传日志及其中的 exit status。同一 work_dir 使用固定会话名，已有活动会话时启动失败，不覆盖其运行。
+默认使用 tmux 后台启动，返回会话名及 work_dir/orchestrator.log；日志追加写入，恢复时保留前次退出记录。启动成功不代表任务执行成功：用脚本打印的 tmux has-session 命令检查会话，结束后完整回传日志及其中的 exit status。同一 work_dir 使用固定会话名，已有活动会话时启动失败，不覆盖其运行。
 
 加 `--foreground` 可前台运行，直接输出 harness 日志并返回其退出码；加 `--dry-run` 透传原 harness 的模拟执行选项。启动脚本不自行重试或读写调度状态。
 
 每个普通节点先由 executor 执行，再由 verifier 核对 acceptance 交付件并按 procedure 审查内容与证据。harness 把 goal、acceptance 和 out_of_scope 发给两者，把 approach 仅发给 executor，把 procedure 仅发给 verifier。executor 据共享标准交付，负责构建与本阶段规定的测试范围（穿刺为代表用例，正式交付为全量），按测试执行模板保存命令、退出码、源码/测试/构建产物哈希、加载路径及逐用例原始结果。verifier 只读核对证据有效性及交付物质量，并独立检视代码；不重复构建或测试，不接受只有通过自述的证据。验收报告只由 verifier 交付。执行与验收结果遵循 harness 注入的当前协议；verifier 须按框架提示调用公开裁决命令，文本回复不能代替裁决；调度、同节点重试和耗尽处理均使用框架原生机制。
 
-整轮退出后，PM 读取日志、退出结果和真实产物，汇总已完成步骤及阻塞证据。交付目标未满足时，使用 workflow2 等新目录规划下一轮必要的修复与验收；前轮确认有效的输入可复制到本轮固定路径并记录来源，前轮状态不得复制或重置。Codex CLI 替身黑盒探测覆盖当前 harness 将裁决失败原因传给下一次 executor。失败摘要及完整报告路径随裁决回传，执行者可按引用读取详细意见；报告仍是普通任务产物，不参与调度状态。该测试不证明真实模型一定遵守读取指令。DSL 实现子图已声明集成、检视失败回滚至实现修复，调度与下游失效由 harness 处理。接口回归不证明真实 Agent 的回滚修复效果；用户待答恢复仍需通过公开协议处理，不另写状态机或调度脚本。
+整轮退出后，PM 读取日志、退出结果和真实产物，汇总已完成步骤及阻塞证据。交付目标未满足时，使用 workflow2 等新目录，根据已完成任务、有效产物与剩余目标重新编排本轮 YAML，安排必要的修复与验收；复用产物不要求沿用前轮任务图。同一轮中断恢复则沿用原 YAML、work_dir 和环境脚本。需求、环境选择与修改授权按整个任务继承，启动输入确认仍遵循调度 Skill 的契约。
+
+新轮引用或复制有效输入、只读示例仓、代码和证据，记录原路径、版本与适用范围，不复制 `.workflow/` 或修改通过状态；需要固定文件名时映射到本轮约定位置，只有输入、实现或环境变化影响的证据才重做。失败摘要及报告路径仍由 harness 回传；DSL 子图回滚仍使用原生机制。接口回归不证明真实 Agent 的修复效果，不另写状态机或无界重试脚本。
 
 入口由工作区 PM 在当前用户会话中承接；PM 不进入调度图。节点角色仅使用 ops-direct-invoke-architect（方案）、ops-direct-invoke-developer（代码、调试与文档）及 ops-direct-invoke-verifier（验收与检视）。角色信息由安装后的客户端角色配置和 executor/verifier 名称衔接，不在任务里额外要求读取 agents 文件。真实 provider 的角色和 Skill 加载仍需验证，模拟执行通过不代表角色权限或 NPU 实测通过。
 
