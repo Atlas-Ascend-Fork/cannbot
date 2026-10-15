@@ -5,7 +5,7 @@ approach:
 - 先读取需求与环境记录中的 conda/Python、CANN 选择和修改授权，按固定激活方式进入该环境。若存在已获授权的准备缺口，在指定的新环境或允许修改的环境内补齐并记录命令与结果；无权限则报告阻塞，不更换环境。后续使用选定 Python 的绝对路径，不使用默认解释器；环境准备已由上游完成时直接使用其激活脚本。
 - 必须加载 `cannbot-dsl-env-check` Skill，按其中的要求执行环境探测和证据记录。
 - 以 `$WORK_DIR` 作为 Skill 的 `--output-dir`；不得重命名或改写 Skill 固定生成的文件及 schema。
-- 以 `$WORK_DIR/cannbot-dsl/docs`（创建工作区节点克隆的示例仓文档目录，含 `docs/api/` 接口文档）作为本轮 DSL 文档与 API 参考的唯一来源；核对目录可用，记录其所属 commit SHA 并与创建工作区节点的记录一致；不再提取或生成其他 API 文档产物。
+- 以 `$WORK_DIR/cannbot-dsl/docs/` 为本轮 DSL 文档与 API 参考的唯一来源；通过 README、文档索引和目录检索定位实际开发指南与 API 正文，不限定子目录层级或语言布局。将实际入口、正文位置及所属 commit SHA 写入本节点执行记录，版本沿用创建工作区节点的记录；不再提取或生成其他 API 文档产物。
 - 本工作流对 `WARNING/compile_only` 采取更严格的业务政策：仅继续完成方案设计，设计后不进入实现；不得把这一工作流政策写回或伪装成环境 Skill 的原始能力结论。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
@@ -15,13 +15,12 @@ procedure:
 - '`final_status.status: PASS` 时，确认 `env_selected_soc.yaml` 的 `selection.selection_status` 为 `SELECTED`，且包含唯一、非空的逻辑设备与芯片标识。'
 - '`final_status.status: WARNING` 时，确认 `final_status.execution_mode` 为 `compile_only`、编译门禁通过且 NPU 运行环境失败。'
 - 确认 `PASS` 与 `WARNING` 的原生语义及本工作流的额外限制均被准确记录、未被混写；`FAIL` 不得被验收为通过。
-- 核对 `$WORK_DIR/cannbot-dsl/docs` 存在且 `docs/api/` 下接口文档内容非空，文档所属 commit SHA 与创建工作区节点的记录一致。
-- 核对节点记录已声明 `$WORK_DIR/cannbot-dsl/docs` 为本轮文档与 API 参考的唯一来源，未生成或引用其他 API 提取产物。
+- 在 `$WORK_DIR/cannbot-dsl/docs/` 内查阅开发指南与 API 文档，依据 API 索引及正文中的接口定义、参数说明或使用约束，确认正确找到 DSL API 文档后才能通过文档验收，不能仅凭文件可读取判定通过。执行记录中的路径不准确时，自行在该根目录内重新定位，并在验收报告中记录确认的 API 文档位置与依据；不因子目录改名、层级调整或语言目录变化要求返工。根目录不存在或找不到实际文档时不通过，空目录、空索引或翻译占位说明不能代替 API 正文。
+- 核对文档来自本轮固定版本的 `$WORK_DIR/cannbot-dsl/docs/`，所属 commit SHA 与创建工作区节点的记录一致，未生成或引用其他 API 提取产物。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
 - 'test -s "$WORK_DIR/environment/environment.yaml"'
 - 'test -s "$WORK_DIR/environment/env_selected_soc.yaml"'
-- 'test -d "$WORK_DIR/cannbot-dsl/docs/api"'
-- 'find "$WORK_DIR/cannbot-dsl/docs" -name "*.md" -size +0 | grep -q .'
+- 'test -d "$WORK_DIR/cannbot-dsl/docs"'
 out_of_scope:
 - 不修改未经授权的既有环境、系统 Python、CANN 或驱动，不擅自切换环境组合；不生成算子规格、测试用例或设计方案。

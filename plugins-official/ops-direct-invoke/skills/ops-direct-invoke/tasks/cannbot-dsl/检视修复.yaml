@@ -11,7 +11,7 @@ approach:
 - 执行中断时先排查原因，保持本轮源码不变并补齐验证；不能把中断、结果缺失或环境错误当作完整功能失败，也不能混用其他提交的结果。
 - 本轮出现完整功能失败时，在交给验收者前自行用 Git 恢复 baseline 提交，处理本轮新增的 helper 与 Native 产物，确认当前源码和测试资产与冻结基线一致。保留本轮失败提交及全部证据，在修复报告中明确整改 FAIL；恢复成功不表示本轮修复通过，是否重试或托底由验收者按 core 的实际预算判断。
 - 按实际交付版本写入 $WORK_DIR/review-fix/selected.json，记录 mode（repaired 或 baseline_fallback）、commit、function_status、运行入口与功能证据路径；选定版本或证据失效时及时更新，不能继续引用旧记录。Git 提交、恢复与版本选择均由执行者完成，不交给基线检查脚本。
-- 将执行与修复记录写入 $WORK_DIR/review-fix/fix-report.md，保留各轮提交与原始证据路径，列出逐项处置、选定版本及功能/整改结论；执行过程写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID。不覆盖上轮失败证据。
+- 将执行与修复记录写入 $WORK_DIR/review-fix/fix-report.md，保留各轮提交与原始证据路径，列出逐项处置、选定版本及功能/整改结论；执行过程写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID，并记录最终交付版本对应的 CANNBOTDSL_CACHE_DIR 绝对路径供后续复用，无可复用缓存时如实说明。不覆盖上轮失败证据。
 procedure:
 - 只读读取 $WORK_DIR/.workflow/status.json 中验收回调命令所指定完整 task-id 的 retries，并从本轮落盘工作流定位同一节点的 max_retries；retries + 1 <= max_retries 表示本次返回失败后 core 仍会重试，否则为最后一轮。以 core 状态及配置为准，不按 Git 提交数量推定预算，不修改状态或次数；预算信息无法核实时不按托底放行。
 - 对照 baseline.json、Git 历史与实际源码核对提交号、冻结资产及当前选定版本；逐组读取原始 CSV，核对 case ID、设备、逐例结果、命令与退出码。尚无有效 selected.json 或证据不完整时不通过，失败反馈引用本轮结果和验收报告路径。

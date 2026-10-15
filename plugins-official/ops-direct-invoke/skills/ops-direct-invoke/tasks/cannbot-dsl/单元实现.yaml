@@ -5,7 +5,7 @@ approach:
 - 核对当前 Unit 的 design_sources、depends_on、verification_obligations、允许修改路径，以及原生 Unit 和 testcase.csv 中的 TDD case 与白盒分支；不以其他 Unit 的文件代替。
 - 新增能力时运行绑定 TDD，确认 Red 来自该能力缺失；环境、用例或 Golden 错误应记录并终止。重试沿用有效的原始 Red；复用已有能力时记录来源与当前验证结果，不为制造 Red 破坏已通过代码。
 - 算子公开实现模块固定为 `$WORK_DIR/operators/<op>/<op>.py`；实际包名取自 spec.op.name。仅在 Unit 允许的源码范围内实现能力；生成或修改代码时按 `cannbot-dsl-best-practice` 加载生产代码规范，完整算子与公共结构按其整体实现参考落实设计中的运行、导出及编译工厂；微模块资料按需读取，核对 DESIGN 与目标设备事实。
-- 可按需参考 `$WORK_DIR/cannbot-dsl/samples/` 下的算子官方实现：按各示例目录的 README 定位与当前 Unit 相关的示例，参考其 API 用法与代码组织；数学语义、tile/分块、并行与同步方案仍以冻结 DESIGN 和 `$WORK_DIR/cannbot-dsl/docs` 中的 API 文档为准。实际参考的示例文件与参考点须写入本节点执行记录，未记录来源的示例片段不得进入实现。
+- 可按需参考 `$WORK_DIR/cannbot-dsl/samples/` 下的算子官方实现：按各示例目录的 README 定位与当前 Unit 相关的示例，参考其 API 用法与代码组织；数学语义、tile/分块、并行与同步方案仍以冻结 DESIGN 和 `$WORK_DIR/cannbot-dsl/docs/` 中的 API 文档为准。沿用环境节点执行记录中的文档入口及验收报告的更正，在根目录内按需查阅。实际参考的示例文件与参考点须写入本节点执行记录，未记录来源的示例片段不得进入实现。
 - 运行测试前将 `$WORK_DIR` 加入 `PYTHONPATH`。
 - 再运行绑定用例直到 Green，并运行依赖闭包与源码改动实际影响的前序能力回归；记录实现版本、命令、退出码和逐例结果，保持后续 Unit 可复用的已通过能力。
 - 读取当前 Unit 的 supported_domain、design_constraints、feasibility_checks 及其义务/review_evidence；先完成首次使用能力所需补证。将每项约束、补证的通过判据、当前版本原始证据与结论写入本节点执行记录，再交付该能力。

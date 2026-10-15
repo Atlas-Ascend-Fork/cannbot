@@ -3,11 +3,11 @@ goal:
 - 基于冻结的算子规格与环境事实形成分文件方案，明确数学语义、任务时序、资源与成本依据，并提供一份汇总文档供后续工作流使用。
 approach:
 - 读取 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/environment/environment.yaml` 和 `$WORK_DIR/environment/env_selected_soc.yaml`。环境为 `FAIL/blocked` 时按工作流政策停止。
-- '`PASS/full` 时，读取选定 SoC 并结合 `npu-arch` 与运行时证据形成 `$WORK_DIR/environment/soc-info.yaml`；SKU 相关的核数、容量和带宽以实际证据为准。'
+- '`PASS/full` 时，读取选定 SoC 并结合 `npu-arch` 与运行时证据形成 `$WORK_DIR/environment/soc-info.yaml`；记录设备型号/SKU、架构号、Cube/Vector 核数、容量、各计算单元额定频率、主存峰值带宽，以及按计算单元、精度和稠密/稀疏口径区分的峰值算力，供后续性能计算直接使用。数值注明单位、来源与适用范围，SKU 参数与选定设备对应，未知项明确标记，不编造。'
 - '`WARNING/compile_only` 时，在设计中说明可设计和编译、不可执行 NPU 验证；按本工作流政策在设计后停止，不编造 SoC 或实测数据。'
 - 加载 `cannbot-dsl-best-practice` 的整体实现参考，提取公开调用与导出契约、共享构建依赖、资源存续范围及产物识别的验收条件，纳入 HostLaunch、API、Validation 和 DevView；具体接口示例注明版本与适用前提，支持的导出变体、Native 收集与产物命中转为后续实现和验证的明确义务。影响正确性、接口或实现可行性的依赖必须在本节点确认；无法确认时记录证据并终止。
 - 加载 `ops-design-paradigms` Skill，提供冻结的 `op.paradigms` 与路由所需的 `dsl`，按 Skill 当前的组合优先、语言适配和按需展开规则获取设计知识；语言声明与匹配记录写入节点报告，资料的算法、能力与约束用于核对方案及其适用前提，沿用规格中的范式。
-- 加载 `cannbot-dsl-op-design`，提供规格文件 `$WORK_DIR/design/doc/spec.yaml`、环境、`$WORK_DIR/cannbot-dsl/docs` 文档目录、SoC 信息，以及本节点获取的调用与导出契约和范式资料，按其要求执行。规格文件路径由本工作流约定，范式资料由本节点提供；不要求设计 Skill 自行调用其他 Skill 或产出范式文档。
+- 加载 `cannbot-dsl-op-design`，提供规格文件 `$WORK_DIR/design/doc/spec.yaml`、环境、`$WORK_DIR/cannbot-dsl/docs/` 文档根目录、SoC 信息，以及本节点获取的调用与导出契约和范式资料，按其要求执行。沿用环境节点执行记录中的文档入口及验收报告的更正，在根目录内按需查阅。规格文件路径由本工作流约定，范式资料由本节点提供；不要求设计 Skill 自行调用其他 Skill 或产出范式文档。
 - 设计正文以数学表达式、任务坐标、数据流、资源模型及算法伪代码描述方案；目标语言与 API 资料用于确认执行能力、接口与产物契约，参考代码保留适用范围、来源和抽象占位说明。
 - 指定 `$WORK_DIR/design/doc/` 为设计输出目录，生成 `INDEX.md`、索引列出的主题文件及 `branches/DESIGN-BRANCH-*.md`。设计内容覆盖算法、接口、执行路径、资源、并行与同步、API、精度和边界验证。
 - 在 Kernel 定义阶段调用次数、计算量、各层搬运量及重复次数，推导共用资源负载、串行依赖和预计瓶颈；在 TemplatePartition 代入代表规模比较可行候选，在 LaunchData 核对物理资源，在 Validation 给确认或推翻成本假设的观测。耗时估算与实测分别注明依据。
@@ -21,7 +21,7 @@ procedure:
 - 核对阶段成本、候选选择、资源预算与性能观测一致；阶段耗时缺少依据时保留工作量推导及采集计划，按实际存在的共享资源、状态依赖和流水开销分析。
 - 流水方案核对时序表与伪代码使用相同工作项及阶段偏移，覆盖短任务、实际槽复用和排空；首次/末次来自所属任务的有效范围，每个等待有对应发布，复用发生在最后读完成之后。
 - 核对范式消费记录已声明 `dsl`，遵循 Skill 当前路由规则，命中或兜底理由与冻结规格相符，资料来源可追溯。
-- '`PASS/full` 时，核对 `soc-info.yaml` 与选定 SoC 一致；`WARNING/compile_only` 时核对设计未写入虚构的 NPU 实测事实。'
+- '`PASS/full` 时，核对 `soc-info.yaml` 与选定 SoC 一致，核数、容量、额定频率、主存峰值带宽及分计算单元/精度/稠密或稀疏的峰值算力均有记录，单位、来源和适用范围清楚，未知项未伪装为已知值；`WARNING/compile_only` 时核对设计未写入虚构的 NPU 实测事实。'
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`。
 acceptance:
 - 'test -s "$WORK_DIR/design/doc/INDEX.md"'
