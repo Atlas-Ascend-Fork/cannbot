@@ -1,0 +1,96 @@
+# A2/A3 (NpuArch 2201, e.g. Ascend 910B) operator development workflow.
+# Selected by the workflow-bootstrap skill when the local NPU arch is 2201;
+# arch >= 3510 (A5 and newer) is served by op-develop.yaml instead.
+#
+# This workflow is a thin bootstrap and is fully independent from op-develop.yaml:
+# it does not reference, reuse, or share any task, skill, agent, or artifact of
+# the A5+ workflow. Task 1 installs the A2/A3 ops-registry-invoke plugin into
+# $WORK_DIR (project level), gives $WORK_DIR its own project boundary (own git
+# root on a main branch with an initial commit, so CLI skill discovery stops
+# there and the plugin's git checkpoints — which require main and commits —
+# never touch or fail on an ancestor repository), and wires the resource paths
+# that plugin's workflow expects; Task 2 hands the user prompt to that plugin's
+# ops-registry-invoke-workflow skill, which owns the whole development process
+# including its gate policy. When the plugin repository migrates, only Task 1
+# changes.
+#
+# Provider scope: tasks run through an OpenCode-layout project configuration
+# (.opencode/skills, .opencode/agents), which serves OpenCode-protocol
+# compatible CLIs (opencode, cannbot); other provider layouts are not adapted
+# by this workflow. Provider selection follows the workflow-orchestrator
+# skill's normal input confirmation; this workflow adds no restriction of
+# its own.
+#
+# Gate policy: this workflow only routes, installs, and invokes the plugin's
+# skill. It does not set, override, or answer the plugin's gate level or
+# confirmation points (CP1–CP5); autonomy_level stays whatever the installed
+# plugin AGENTS.md carries, and confirmations are surfaced, never self-answered.
+workflow: a2-a3-op-develop
+max_parallel: 1
+system_prompt: Work only inside $WORK_DIR. The .git repository at $WORK_DIR is this run's own workspace repository — never run git against an ancestor repository, and never modify the cannbot-skills clone's tracked sources. The A2/A3 workflow you drive keeps its own state (development log, checkpoints); never restart it from scratch when it can be resumed. The project configuration under $WORK_DIR is owned by the A2/A3 plugin; never re-link or import configuration from any other plugin.
+nodes:
+  - id: install-a23-plugin
+    task_type: normal
+    title: Install the A2/A3 ops-registry-invoke plugin at project level in the workflow directory
+    executor: general-executor
+    verifier: general-verifier
+    depends_on: []
+    goal:
+      - "Clone the cannbot-skills repository into $WORK_DIR and install its ops-registry-invoke plugin at project level, so that $WORK_DIR afterwards is a self-contained project: its own git root (main branch, initial commit), exactly this plugin's project configuration (skills, agents, AGENTS.md), the resource paths that plugin's workflow commands expect, and isolation that survives workflow resumes and this task's own retries — while any configuration not created by this workflow is protected, never overwritten."
+    approach:
+      - "Guard existing configuration FIRST, before writing any marker of your own: for each of .opencode .claude .codex .pi .agents .trae .trae-cn .traecli .marscode .dsh .cursor .github .codeartsdoer AGENTS.md CLAUDE.md under $WORK_DIR, note every entry that exists and is NOT a symlink. Also note whether $WORK_DIR carries its own repository: test -e $WORK_DIR/.git (a .git directory or gitfile). An ancestor repository found through git rev-parse's upward search does NOT count — the default work_dir suggestion ($START_DIR/<name>) lives inside the cloned startup project, and this workflow deliberately gives the work_dir its own independent git root in a later step. Then: (a) no non-symlink entries and no $WORK_DIR/.git — fresh directory, proceed; (b) non-symlink entries or a work_dir-owned .git exist and $WORK_DIR/.a23-bootstrap/INSTANCE does NOT exist — foreign configuration or repository: the task fails immediately (the installer replaces .opencode/skills and .opencode/agents wholesale); report the conflicting entries and instruct the user to restart with a fresh work_dir; (c) $WORK_DIR/.a23-bootstrap/INSTANCE exists — a retry of this very task: verify the INSTANCE record's work_dir path matches $WORK_DIR's realpath (a marker copied from elsewhere does not authorize anything), record the pre-existing entries in the install report, and proceed — the steps below are idempotent (clone skipped when present, installer relinks, mkdir -p and ln -sfn overwrite cleanly)."
+      - "Persist the instance marker only after the guard passes: write $WORK_DIR/.a23-bootstrap/INSTANCE (create the directory first) recording owner-workflow, the realpath of $WORK_DIR, and the creation time. This file is what a later retry's guard will verify."
+      - "Give $WORK_DIR its own complete git workspace (the plugin's workflow checkpoints branch, commit, and finally merge into main, so the repository must exist, be rooted exactly at $WORK_DIR, carry a main branch, and have at least one commit): run git init -q -b main $WORK_DIR (on older git without init -b, fall back to git init -q $WORK_DIR followed by git -C $WORK_DIR branch -m main) — this creates the work_dir's own .git even when an ancestor repository exists above it — then create the initial commit: git -C $WORK_DIR commit --allow-empty -m \"chore: initialize A2/A3 operator development workspace\". The initial commit is required, not best-effort: if it fails for a missing git identity (Author identity unknown), the task fails — report that a git user.name/user.email must be configured (globally, or repo-local for $WORK_DIR) and that this task never changes global configuration. State the recovery truth precisely: the orchestrator retries this task within its retry budget, so an identity configured during that window lets a retry succeed; once the retries are exhausted the run is terminal (a fail-exhausted task is not redispatched on resume), and the user must configure the identity and start over with a fresh work_dir — noting that a repo-local identity configured on the failed directory does not carry over to the new one (a global configuration does), so verify the identity resolves in the fresh work_dir before restarting. On a retry whose repository was created by this workflow, verify git -C $WORK_DIR rev-parse --verify --quiet main and rev-parse --verify HEAD both succeed and repair (branch -m main, or the empty commit) when a previous attempt died halfway."
+      - "Locate the dispatching plugin's root, without hardcoding paths: WORKFLOW_YAML=$(python3 -c \"import json; print(json.load(open('$WORK_DIR/.workflow/status.json'))['workflow'])\") ; PLUGIN_DIR=$(dirname \"$(dirname \"$WORKFLOW_YAML\")\"). The two orchestrator agents used by this workflow live at $PLUGIN_DIR/agents/."
+      - "Stage the orchestrator agents: cp -L \"$PLUGIN_DIR/agents/general-executor.md\" \"$PLUGIN_DIR/agents/general-verifier.md\" $WORK_DIR/.a23-bootstrap/."
+      - "Clone the A2/A3 plugin repository (idempotent): if $WORK_DIR/cannbot-skills/.git exists, skip the clone; otherwise run git clone --depth 1 https://gitcode.com/cann/cannbot-skills.git $WORK_DIR/cannbot-skills. The plugin is the subdirectory cannbot-skills/plugins-official/ops-registry-invoke; its installer needs the whole repository (shared skills live under the repository root), so clone the repository, not the subdirectory alone."
+      - "Remove the project-configuration symlinks the orchestrator linked into $WORK_DIR at startup: for each of .opencode .claude .codex .pi .agents .trae .trae-cn .traecli .marscode .dsh .cursor .github .codeartsdoer AGENTS.md CLAUDE.md under $WORK_DIR, remove it only if it is a symlink (test -L); deleting a symlink removes the link only, never its target. This keeps the two plugin generations from mixing their same-named skills (e.g. npu-arch, ops-spec-gen) in one project."
+      - "Install the A2/A3 plugin at project level: bash $WORK_DIR/cannbot-skills/plugins-official/ops-registry-invoke/init.sh project opencode $WORK_DIR. The installer links the plugin's skills and agents into $WORK_DIR/.opencode/, installs its AGENTS.md at $WORK_DIR/AGENTS.md (leave its autonomy_level exactly as the plugin ships it — this workflow never edits the gate policy), and clones the reference repositories the plugin's workflow needs."
+      - "Make the isolation survive resumes across every startup configuration entry the orchestrator's linker knows (not just the three this machine happens to have): create empty real directories $WORK_DIR/.claude $WORK_DIR/.codex $WORK_DIR/.agents $WORK_DIR/.trae $WORK_DIR/.trae-cn $WORK_DIR/.traecli $WORK_DIR/.marscode $WORK_DIR/.dsh (mkdir -p) and an empty real file $WORK_DIR/CLAUDE.md (touch). The linker skips entries that already exist, so a later resume cannot re-link any of them to the dispatching project's configuration; .opencode and AGENTS.md are already real entries created by the installer."
+      - "Wire the resource paths the plugin's workflow commands use relative to the project root (they are written relative to the plugin directory and would not resolve from $WORK_DIR otherwise): ln -sfn $WORK_DIR/cannbot-skills/plugins-official/ops-registry-invoke/workflow $WORK_DIR/workflow ; ln -sfn $WORK_DIR/cannbot-skills/ops $WORK_DIR/ops ; ln -sfn $WORK_DIR/cannbot-skills/plugins-official/ops-registry-invoke/reference $WORK_DIR/reference. These cover the workflow's own resources (workflow/resources/*.py), its shared skills' scripts (ops/*/scripts/*.py), and the reference library tree (reference/cann/asc-devkit/...)."
+      - "Restore the orchestrator agents into the new configuration: cp $WORK_DIR/.a23-bootstrap/general-executor.md $WORK_DIR/.a23-bootstrap/general-verifier.md $WORK_DIR/.opencode/agents/."
+      - "Write $WORK_DIR/.a23-bootstrap/install-report.md recording: the cloned cannbot-skills commit (git -C $WORK_DIR/cannbot-skills rev-parse HEAD), the guard outcome (fresh install vs verified retry, pre-existing entries), the git workspace state (root, branch, initial commit), the removed symlink list, the skills and agents now present under $WORK_DIR/.opencode/, the placeholder directories and resource symlinks created, and the installer's exit status."
+    acceptance:
+      - "The clone is present: test -d $WORK_DIR/cannbot-skills/.git."
+      - "The instance marker exists and is bound to this directory: test -s $WORK_DIR/.a23-bootstrap/INSTANCE and its recorded work_dir path equals $WORK_DIR's realpath."
+      - "$WORK_DIR is its own complete git workspace: git -C $WORK_DIR rev-parse --show-toplevel outputs a path whose realpath equals $WORK_DIR's realpath (not an ancestor, not the cannbot-skills clone), git -C $WORK_DIR rev-parse --verify --quiet main succeeds (the plugin's final checkpoint merges into main), and git -C $WORK_DIR rev-parse --verify HEAD succeeds (an initial commit exists)."
+      - "The workflow skill is installed and named correctly: test -f $WORK_DIR/.opencode/skills/ops-registry-invoke-workflow/SKILL.md and its frontmatter declares name: ops-registry-invoke-workflow."
+      - "The plugin's operator-development agents are installed: ls $WORK_DIR/.opencode/agents/ascendc-ops-*.md matches at least one file."
+      - "The orchestrator agents are restored: test -s $WORK_DIR/.opencode/agents/general-executor.md && test -s $WORK_DIR/.opencode/agents/general-verifier.md, and neither is a dangling symlink."
+      - "The project configuration is owned by the A2/A3 plugin with its gate policy untouched: test -f $WORK_DIR/AGENTS.md && ! test -L $WORK_DIR/AGENTS.md && grep -q ops-registry-invoke-workflow $WORK_DIR/AGENTS.md, and its autonomy_level line is exactly the value the plugin ships (unchanged by this workflow)."
+      - "No startup configuration entry remains a symlink and the isolation survives resumes: every one of .claude .codex .agents .trae .trae-cn .traecli .marscode .dsh CLAUDE.md under $WORK_DIR exists and is a real (non-symlink) file or directory, .opencode and AGENTS.md likewise, and none of .pi .cursor .github .codeartsdoer exists as a symlink; symlinks the A2/A3 installer itself creates at $WORK_DIR (e.g. asc-devkit, ops-tensor) are expected and out of this check."
+      - "The plugin's resource paths resolve from $WORK_DIR: cd $WORK_DIR && python3 workflow/resources/validate_checklist.py --help exits 0, and test -f $WORK_DIR/ops/ops-spec-gen/scripts/validate_spec.py && test -d $WORK_DIR/reference/cann/asc-devkit."
+      - "The cloned repository's tracked sources are untouched: git -C $WORK_DIR/cannbot-skills status --porcelain -- plugins-official/ops-registry-invoke/skills plugins-official/ops-registry-invoke/agents plugins-official/ops-registry-invoke/workflow plugins-official/ops-registry-invoke/AGENTS.md prints nothing (untracked dependency directories the installer manages under the plugin, e.g. reference/ and ops-tensor/, are its own behavior and excluded)."
+      - "The install report exists and is non-empty: test -s $WORK_DIR/.a23-bootstrap/install-report.md."
+    out_of_scope:
+      - "Do not modify any git-tracked source file inside $WORK_DIR/cannbot-skills/ (skills/, agents/, workflow/, AGENTS.md, scripts); dependency directories the installer itself creates and manages under the plugin (reference/, ops-tensor/, caches) are the installer's own behavior and are not part of this restriction."
+      - "Do not touch any file outside $WORK_DIR; in particular the unlink step must never follow a symlink or delete a symlink's target, and no git command may run against a repository outside $WORK_DIR."
+      - "Do not edit the installed AGENTS.md's gate policy (autonomy_level) or any other configuration the plugin ships — install, do not adapt."
+      - "Do not start any operator development work; that belongs to the next task."
+      - "Do not install into any directory other than $WORK_DIR (no global-level installs), and never change global git configuration."
+    max_retries: 2
+    on_exhaust: exit
+  - id: run-a23-op-workflow
+    task_type: normal
+    title: Run the A2/A3 ops-registry-invoke workflow for the user prompt
+    executor: general-executor
+    verifier: general-verifier
+    depends_on:
+      - install-a23-plugin
+    goal:
+      - "Acting as the primary agent of the A2/A3 ops-registry-invoke plugin now installed at project level in $WORK_DIR, load its ops-registry-invoke-workflow skill and drive the operator development it defines — requirements and design, iterative development, acceptance, and upstream preparation — for the requirement in $USER_PROMPT, either to completion or, when the plugin's process reaches a user confirmation this unattended run cannot deliver, to a clean handover at that stopping point."
+    approach:
+      - "Read the requirement from $USER_PROMPT; if it names a file, read that file for the full requirement text. Pass the requirement to the workflow verbatim, without narrowing or rewriting it."
+      - "Load the ops-registry-invoke-workflow skill (project level, $WORK_DIR/.opencode/skills/ops-registry-invoke-workflow/SKILL.md) and follow it as the single process authority: its stages, its gate policy (read the autonomy_level from $WORK_DIR/AGENTS.md exactly as the skill defines), its checkpoint and confirmation rules, its subagent dispatch parameters (resources/task-prompts.md), and its artifact layout (operators/<operator_name>/ under $WORK_DIR). Dispatch subagents exactly as the skill prescribes."
+      - "Never answer a user confirmation on the user's behalf: this workflow only routes, installs, and invokes the plugin's skill — its CP confirmations belong to the user. When the skill reaches a confirmation this run cannot surface to a human, do not pick a default and do not proceed silently. Instead, stop cleanly and make that stopping point the task's outcome: record in the development log and the final task report (a) what the skill asks the user to confirm, (b) what the process will do next once confirmed, and (c) the takeover instructions — open an opencode or cannbot session in $WORK_DIR (the installed plugin, its gate policy, the development log, and the git checkpoints are all in place there) and continue per the skill's own task-resume rules (the user states they want to continue developing the operator). Also write $WORK_DIR/HANDOVER.md at this fixed path — the handover notice the user reads after the run, stating plainly that this was a handover, not a completion — carrying: the handover nature (the operator development is NOT finished), the pending confirmation (what the skill asks, what happens next once confirmed), the development-log location, and the concrete takeover steps. Do not treat the stopping point as a failure to retry away: a retry would reach the same confirmation. This stopping point is a legitimate terminal state for this task, judged by the Verifier alongside completion."
+      - "On the completion path, remove a stale $WORK_DIR/HANDOVER.md left behind by an earlier handover of the same run (resumed and finished after takeover): the run has now completed, and a leftover handover notice would contradict that completed state."
+      - "Resume, never restart: if the development log already exists under $WORK_DIR (operators/<operator_name>/docs/LOG.md) and its current stage is not completed, follow the skill's task-resume mapping instead of rebuilding from scratch."
+      - "Keep every artifact inside $WORK_DIR, and run every git operation against $WORK_DIR's own repository only."
+    acceptance:
+      - "The run reached one of the two legitimate terminal states. Either completion: $WORK_DIR/operators/ contains a directory for the operator named in the requirement holding at least the op_host/ and op_kernel/ subtrees, its docs/LOG.md exists, is non-empty, records completion (its current-stage field, 当前开发状态.当前阶段, reads 已完成), its original-requirement field (用户原始需求) carries the $USER_PROMPT requirement content, and no $WORK_DIR/HANDOVER.md remains. Or clean handover: the development log exists and is non-empty at the stopping stage, $WORK_DIR/HANDOVER.md exists, is non-empty, and carries the pending confirmation point (what the skill asks, what happens next) together with the concrete takeover instructions (work in $WORK_DIR with the installed plugin, continue per the skill's task-resume rules), and the final task report states the same handover."
+    out_of_scope:
+      - "Do not modify $WORK_DIR/cannbot-skills/ tracked sources, $WORK_DIR/.a23-bootstrap/, $WORK_DIR/.opencode/, or any workflow YAML — the process may only produce the artifacts the skill defines, plus the HANDOVER.md handover notice this workflow itself prescribes (an artifact of this adaptation layer, not of the plugin's skill)."
+      - "Do not load or invoke any skill, task, or template of the A5-and-newer (NpuArch >= 3510) workflow; the A2/A3 plugin's own skills are the only toolset."
+      - "Do not set, override, or bypass the skill's gate policy or its checkpoint/confirmation rules, and never self-answer a user confirmation."
+    max_retries: 1
+    on_exhaust: exit
