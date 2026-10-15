@@ -259,9 +259,10 @@ class ReviewFixTests(unittest.TestCase):
 
     def test_subgraph_is_frozen_for_assembly_and_never_overwritten(self):
         source = WORKFLOWS / "cannbot-dsl/op-dev.yaml"
-        definition = assemble_template(source)
+        children = {}
+        definition = assemble_template(source, children)
         output = self.work / "workflow.yaml"
-        write_workflow(definition, output)
+        write_workflow(definition, output, children)
         child = self.work / "review-fix/workflow.yaml"
         before = child.read_bytes()
         frozen_graph = yaml.safe_load(before)
@@ -271,7 +272,7 @@ class ReviewFixTests(unittest.TestCase):
         self.assertTrue(all("yaml" not in node for node in nodes))
         self.assertEqual(nodes[-1]["max_retries"], 1)
         with self.assertRaises(FileExistsError):
-            write_workflow(definition, output)
+            write_workflow(definition, output, children)
         self.assertEqual(child.read_bytes(), before)
 
     def test_child_uses_standard_assembly_interface(self):
@@ -297,8 +298,15 @@ class ReviewFixTests(unittest.TestCase):
                 }
             ],
         }
+        children = {
+            Path("review-fix/workflow.yaml"): {
+                "nodes": assemble_template(WORKFLOWS / "cannbot-dsl/review-fix.yaml")[
+                    "nodes"
+                ]
+            }
+        }
         output = self.work / "workflow.yaml"
-        write_workflow(graph, output)
+        write_workflow(graph, output, children)
         child = self.work / "review-fix/workflow.yaml"
         before = child.read_bytes()
         result = subprocess.run(
@@ -326,7 +334,8 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual(child.read_bytes(), before)
 
     def test_main_publish_failure_can_resume_without_overwriting_child(self):
-        definition = assemble_template(WORKFLOWS / "cannbot-dsl/op-dev.yaml")
+        children = {}
+        definition = assemble_template(WORKFLOWS / "cannbot-dsl/op-dev.yaml", children)
         output = self.work / "workflow.yaml"
         import os
 
@@ -339,23 +348,24 @@ class ReviewFixTests(unittest.TestCase):
 
         with patch("assemble_workflow.os.link", side_effect=interrupt_main):
             with self.assertRaises(OSError):
-                write_workflow(definition, output)
+                write_workflow(definition, output, children)
         self.assertFalse(output.exists())
         child = self.work / "review-fix/workflow.yaml"
         frozen = child.read_bytes()
-        write_workflow(definition, output)
+        write_workflow(definition, output, children)
         self.assertEqual(child.read_bytes(), frozen)
         self.assertEqual(yaml.safe_load(output.read_text()), definition)
         self.assertFalse(list(self.work.rglob(".workflow-*")))
 
     def test_conflicting_child_is_preserved_and_blocks_main(self):
-        definition = assemble_template(WORKFLOWS / "cannbot-dsl/op-dev.yaml")
+        children = {}
+        definition = assemble_template(WORKFLOWS / "cannbot-dsl/op-dev.yaml", children)
         child = self.work / "review-fix/workflow.yaml"
         child.parent.mkdir()
         child.write_text("nodes: []\n")
         output = self.work / "workflow.yaml"
         with self.assertRaises(FileExistsError):
-            write_workflow(definition, output)
+            write_workflow(definition, output, children)
         self.assertEqual(child.read_text(), "nodes: []\n")
         self.assertFalse(output.exists())
 

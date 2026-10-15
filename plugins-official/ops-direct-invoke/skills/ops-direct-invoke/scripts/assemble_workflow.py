@@ -464,11 +464,8 @@ def validate_dsl_roles(nodes):
                 )
 
 
-def assemble_template(path):
-    """Expand a reference graph, or freeze a complete workflow, by the template's own shape."""
-    template = load_yaml(path)
-    if not is_reference_template(template):
-        return assemble_complete_workflow(template, path.parent)
+def assemble_reference_template(template, path):
+    """Expand a graph of positional task references."""
     if not isinstance(template, dict) or set(template) - {"use_when"} != {
         "workflow",
         "max_parallel",
@@ -511,6 +508,51 @@ def assemble_template(path):
     return definition
 
 
+def assemble_static_child(node, path, children, ancestors):
+    """Compile a declared child; source paths and runtime destinations are independent."""
+    if node.get("task_type") != "subgraph":
+        raise ValueError("template is only supported on subgraph nodes")
+    source, destination = node["template"], node.get("file")
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("subgraph template must be a nonempty path")
+    if not isinstance(destination, str) or not destination.strip():
+        raise ValueError("static subgraph file must be a nonempty relative path")
+    target = Path(destination)
+    if target.is_absolute() or not target.parts or ".." in target.parts:
+        raise ValueError("static subgraph file must stay within the work directory")
+    child = assemble_template(path.parent / source, children, ancestors)
+    payload = {"nodes": child["nodes"]}
+    if target in children and children[target] != payload:
+        raise ValueError(f"conflicting static subgraph destination: {target}")
+    children[target] = payload
+    return {key: value for key, value in node.items() if key != "template"}
+
+
+def assemble_template(path, children=None, ancestors=()):
+    """Compile a template; collect static child outputs separately from harness data."""
+    path = path.resolve(strict=True)
+    if path in ancestors:
+        raise ValueError(f"recursive subgraph template: {path}")
+    if children is None:
+        children = {}
+    template = load_yaml(path)
+    if isinstance(template, dict) and isinstance(template.get("nodes"), list):
+        template["nodes"] = [
+            assemble_static_child(node, path, children, (*ancestors, path))
+            if isinstance(node, dict) and "template" in node
+            else node
+            for node in template["nodes"]
+        ]
+    if is_reference_template(template):
+        definition = assemble_reference_template(template, path)
+    else:
+        definition = assemble_complete_workflow(template, path.parent)
+    if definition["workflow"] == "op-dev":
+        for child in children.values():
+            validate_dsl_roles(child["nodes"])
+    return definition
+
+
 def publish_workflow(definition, output, reuse=False):
     """Publish a fully written YAML exclusively; reuse only an identical frozen child."""
     rendered = yaml.safe_dump(
@@ -534,28 +576,29 @@ def publish_workflow(definition, output, reuse=False):
         temporary.unlink(missing_ok=True)
 
 
-def write_workflow(definition, output):
+def write_workflow(definition, output, children=None):
     """Freeze main and child inputs; interrupted assembly may reuse an identical child."""
     if output.exists():
         raise FileExistsError(f"workflow already exists: {output}")
+    targets = {output.parent / name: child for name, child in (children or {}).items()}
+    if output in targets:
+        raise ValueError("static subgraph file conflicts with the main workflow")
     if any(
-        node.get("id") == "review-fix"
-        and node.get("file") == "review-fix/workflow.yaml"
-        for node in definition["nodes"]
+        not target.resolve().is_relative_to(output.parent.resolve())
+        for target in targets
     ):
-        source = (
-            Path(__file__).absolute().parents[1]
-            / "workflows/cannbot-dsl/review-fix.yaml"
-        )
-        child = assemble_template(source)
-        validate_dsl_roles(child["nodes"])
-        # harness child inputs accept only nodes; discovery metadata belongs to the source template.
-        publish_workflow(
-            {"nodes": child["nodes"]},
-            output.parent / "review-fix/workflow.yaml",
-            reuse=True,
-        )
+        raise ValueError("static subgraph file must stay within the work directory")
+    for target, child in targets.items():
+        publish_workflow(child, target, reuse=True)
     publish_workflow(definition, output)
+
+
+def write_template(source, output):
+    """Compile all templates before publishing any workflow inputs."""
+    children = {}
+    definition = assemble_template(source, children)
+    write_workflow(definition, output, children)
+    return definition
 
 
 def main():
@@ -587,20 +630,20 @@ def main():
     )
     args = parser.parse_args()
     try:
+        output = args.output.absolute()
         if args.template is not None:
             if args.tasks or args.depends_on or args.max_retries is not None:
                 raise ValueError(
                     "--template cannot be combined with task paths, --depends-on or --max-retries"
                 )
-            definition = assemble_template(args.template.resolve(strict=True))
+            definition = write_template(args.template, output)
         else:
             if args.max_retries is None:
                 raise ValueError("--max-retries is required with task paths")
             definition = assemble(
                 args.tasks, args.depends_on, [args.max_retries] * len(args.tasks)
             )
-        output = args.output.absolute()
-        write_workflow(definition, output)
+            write_workflow(definition, output)
     except (OSError, ValueError, yaml.YAMLError) as error:
         parser.error(str(error))
     LOGGER.info("%s (%s tasks)", output, len(definition["nodes"]))

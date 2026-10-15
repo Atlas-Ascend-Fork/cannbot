@@ -12,6 +12,7 @@
 """Regression tests for our task assembly, references and input validation."""
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).absolute().parents[1]))
-from support import SCRIPTS, load_yaml, run_tests, task_fixture
+from support import HARNESS_SKILL, SCRIPTS, load_yaml, run_tests, task_fixture
 
 
 class WorkflowGenerationTests(unittest.TestCase):
@@ -451,6 +452,188 @@ class WorkflowGenerationTests(unittest.TestCase):
         else:
             self.assertIn("procedure", result.stderr)
             self.assertFalse(output.exists())
+
+
+class StaticSubgraphTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        self.output = self.root / "work/main.yaml"
+        node = {**task_fixture(), "id": "work", "depends_on": [], "max_retries": 0}
+        self.child = {
+            "use_when": "test",
+            "workflow": "child",
+            "max_parallel": 1,
+            "nodes": [node],
+        }
+        self.write("child.yaml", self.child)
+
+    def write(self, name, definition):
+        (self.source / name).write_text(yaml.safe_dump(definition))
+
+    def assemble(self, nodes):
+        self.write(
+            "parent.yaml",
+            {
+                "use_when": "test",
+                "workflow": "fixture",
+                "max_parallel": 1,
+                "nodes": nodes,
+            },
+        )
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "assemble_workflow.py"),
+                "--template",
+                str(self.source / "parent.yaml"),
+                "--output",
+                str(self.output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_arbitrary_names_and_dynamic_child_remain_independent(self):
+        fixed = {
+            "id": "arbitrary-stage",
+            "task_type": "subgraph",
+            "template": "child.yaml",
+            "file": "renamed/frozen.yaml",
+            "depends_on": [],
+        }
+        dynamic = {
+            "id": "runtime-stage",
+            "task_type": "subgraph",
+            "file": "runtime/generated.yaml",
+            "depends_on": ["arbitrary-stage"],
+        }
+        result = self.assemble([fixed, dynamic])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = {key: value for key, value in fixed.items() if key != "template"}
+        self.assertEqual(load_yaml(self.output)["nodes"], [expected, dynamic])
+        self.assertEqual(
+            load_yaml(self.output.parent / fixed["file"]),
+            {"nodes": self.child["nodes"]},
+        )
+        self.assertFalse((self.output.parent / "runtime").exists())
+
+    def test_nested_static_templates_use_work_directory_destinations(self):
+        nested = {
+            "id": "nested",
+            "task_type": "subgraph",
+            "template": "leaf.yaml",
+            "file": "leaves/frozen.yaml",
+            "depends_on": ["work"],
+        }
+        self.write("leaf.yaml", self.child)
+        self.write(
+            "child.yaml", {**self.child, "nodes": [*self.child["nodes"], nested]}
+        )
+        result = self.assemble(
+            [
+                {
+                    "id": "outer",
+                    "task_type": "subgraph",
+                    "template": "child.yaml",
+                    "file": "outer/child.yaml",
+                    "depends_on": [],
+                }
+            ]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            load_yaml(self.output.parent / "leaves/frozen.yaml"),
+            {"nodes": self.child["nodes"]},
+        )
+        child = load_yaml(self.output.parent / "outer/child.yaml")
+        self.assertNotIn("template", child["nodes"][-1])
+        self.assertEqual(child["nodes"][-1]["file"], "leaves/frozen.yaml")
+
+    def test_invalid_templates_publish_no_files(self):
+        fixed = {
+            "id": "fixed",
+            "task_type": "subgraph",
+            "template": "child.yaml",
+            "file": "fixed.yaml",
+            "depends_on": [],
+        }
+        for change in (
+            {"template": "missing.yaml"},
+            {"template": "parent.yaml"},
+            {"file": "../escape.yaml"},
+            {"task_type": "normal"},
+            {"file": "main.yaml"},
+        ):
+            with self.subTest(change=change):
+                result = self.assemble([fixed, {**fixed, "id": "invalid", **change}])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.output.parent.exists(), result.stderr)
+
+    def test_conflicting_static_destinations_publish_no_files(self):
+        self.write(
+            "other.yaml",
+            {**self.child, "nodes": [{**self.child["nodes"][0], "id": "other"}]},
+        )
+        nodes = [
+            {
+                "id": name,
+                "task_type": "subgraph",
+                "template": source,
+                "file": "shared.yaml",
+                "depends_on": [],
+            }
+            for name, source in (("first", "child.yaml"), ("second", "other.yaml"))
+        ]
+        result = self.assemble(nodes)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("conflicting static subgraph", result.stderr)
+        self.assertFalse(self.output.parent.exists())
+
+    def test_template_launcher_publishes_children_for_public_harness_cli(self):
+        node = {
+            "id": "arbitrary-stage",
+            "task_type": "subgraph",
+            "template": "child.yaml",
+            "file": "renamed/frozen.yaml",
+            "depends_on": [],
+        }
+        result = self.assemble([node])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        work = self.root / "launch"
+        scripts = self.root / "plugin/scripts"
+        scripts.mkdir(parents=True)
+        for name in ("run_workflow.py", "assemble_workflow.py"):
+            shutil.copy2(SCRIPTS / name, scripts / name)
+        shutil.copytree(self.source, scripts.parent / "workflows")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(scripts / "run_workflow.py"),
+                "--template",
+                "parent.yaml",
+                "--work-dir",
+                str(work),
+                "--harness-skill",
+                str(HARNESS_SKILL),
+                "--provider",
+                "codex",
+                "--prompt",
+                "UT simulation only",
+                "--foreground",
+                "--dry-run",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("template", load_yaml(work / "launch.yaml")["nodes"][0])
+        self.assertEqual(load_yaml(work / node["file"]), {"nodes": self.child["nodes"]})
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import yaml
 
-from assemble_workflow import assemble_template, write_workflow
+from assemble_workflow import write_template
 
 LOGGER = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ def launch(args):
     orchestrator = (harness / "scripts/orchestrator.py").resolve(strict=True)
     if not orchestrator.is_file():
         raise ValueError("workflow-orchestrator CLI not found; specify --harness-skill")
-    definition = assemble_template(workflow) if args.template is not None else None
+    template = workflow if args.template is not None else None
     prompt = args.prompt
     if args.prompt_file:
         prompt = args.prompt_file.read_text(encoding="utf-8")
@@ -157,11 +157,11 @@ def launch(args):
                 "tmux is required for background execution; use --foreground to run directly"
             )
         tmux = str(Path(executable).resolve(strict=True))
-    if definition is not None:
+    if template is not None:
         workflow = work / f"{work.name}.yaml"
         if workflow.exists():
             raise ValueError(f"workflow already exists; resume with --yaml {workflow}")
-        write_workflow(definition, workflow)
+        write_template(template, workflow)
     command = [
         sys.executable,
         str(orchestrator),

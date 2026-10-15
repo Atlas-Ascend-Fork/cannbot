@@ -105,6 +105,7 @@ nodes:
   on_exhaust: exit
 - id: review-fix
   task_type: subgraph
+  template: review-fix.yaml
   file: review-fix/workflow.yaml
   depends_on:
   - precision-validation
