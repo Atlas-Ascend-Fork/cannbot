@@ -204,6 +204,7 @@
       <span class="tag" id="wfpath">-</span></div>
     <div class="usewhen" id="usewhen"></div>
     <div class="metaline" id="meta"></div>
+    <div class="metaline" id="graph-nav"></div>
   </div>
   <div class="spacer"></div>
   <div class="side">
@@ -239,7 +240,7 @@
 <div id="toast"></div>
 
 <script>
-const state = { graph: null, cards: new Map(), hover: null, selected: null, zoom: 1, editing: null };
+const state = { graph: null, rootGraph: null, route: [], views: [], cards: new Map(), hover: null, selected: null, zoom: 1, editing: null };
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2, 3];
 const num = value => { const n = parseFloat(value); return Number.isFinite(n) ? n : 0; };
 
@@ -451,10 +452,52 @@ function gotoTag(id) {
   return `<span class="tag${exists ? ' goto' : ''}" ${exists ? `data-goto="${esc(id)}"` : ''} title="${exists ? '查看该节点' : '该节点不在图中'}">${esc(id)}</span>`;
 }
 
+function currentGraph() {
+  let graph = state.rootGraph;
+  let validDepth = 0;
+  for (const id of state.route) {
+    const child = graph.nodes.find(node => node.id === id)?.subgraph?.graph;
+    if (!child) break;
+    graph = child;
+    validDepth++;
+  }
+  if (validDepth !== state.route.length) {
+    state.route.length = validDepth;
+    state.views.length = validDepth;
+    closePanel();
+  }
+  return graph;
+}
+
+function openSubgraph(node) {
+  if (!node.subgraph?.graph) return;
+  state.views.push({ selected: node.id, scrollTop: $('canvas').scrollTop, scrollLeft: $('canvas').scrollLeft, zoom: state.zoom });
+  state.route.push(node.id);
+  closePanel();
+  state.hover = null;
+  render(currentGraph());
+  requestAnimationFrame(() => { $('canvas').scrollTop = 0; $('canvas').scrollLeft = 0; });
+}
+
+function returnToParent() {
+  if (!state.route.length) return;
+  const previous = state.views.pop();
+  state.route.pop();
+  closePanel();
+  state.hover = null;
+  if (previous) { state.zoom = previous.zoom; updateZoomLabel(); }
+  render(currentGraph());
+  if (previous?.selected) select(previous.selected);
+  requestAnimationFrame(() => {
+    $('canvas').scrollTop = previous?.scrollTop || 0;
+    $('canvas').scrollLeft = previous?.scrollLeft || 0;
+  });
+}
+
 function buildCard(node) {
   const el = document.createElement('article');
   const preview = node.subgraph && node.subgraph.preview;
-  el.className = 'card' + (node.in_cycle ? ' cyc' : '') + (node.prompt || preview ? '' : ' miss');
+  el.className = 'card' + (node.in_cycle ? ' cyc' : '') + (node.prompt || preview || node.subgraph?.graph ? '' : ' miss');
   el.dataset.id = node.id;
   el.title = '点击在右侧查看提示词详情';
 
@@ -484,7 +527,7 @@ function buildCard(node) {
       <span class="nid">${esc(node.id)}</span>
       <span class="tag ${node.task_type === 'subgraph' ? 'subg' : ''}">${esc(node.task_type)}</span>
       ${node.in_cycle ? '<span class="tag err">依赖环</span>' : ''}
-      ${preview ? '<span class="tag subg">运行时生成</span>' : (node.prompt ? '' : '<span class="tag err">提示词缺失</span>')}
+      ${preview ? '<span class="tag subg">规划预览</span>' : (node.subgraph?.graph ? '<span class="tag subg">真实子图</span>' : (node.prompt ? '' : '<span class="tag err">提示词缺失</span>'))}
     </div>
     <div class="ctitle">${esc(title)}</div>
     <div class="chips">${chips.join('')}</div>
@@ -514,6 +557,7 @@ function renderPanel(node) {
       ? node.subgraph.preview.runtime_file : node.subgraph.declared });
     rows.push({ key: '子图状态', value: node.subgraph.exists ? `存在，含 ${node.subgraph.child_count} 个节点` : (node.subgraph.preview ? '运行时生成；当前展示规划结构' : '不存在') });
   }
+  if (state.graph.view_kind) rows.push({ key: '图来源', value: state.graph.view_kind === 'planned' ? '规划预览；非实际运行节点' : '真实子图文件；非执行状态' });
 
   const prompt = node.prompt;
   const preview = node.subgraph && node.subgraph.preview;
@@ -541,14 +585,16 @@ function renderPanel(node) {
       <code class="nid">${esc(node.id)}</code>
       <span class="tag ${node.task_type === 'subgraph' ? 'subg' : ''}">${esc(node.task_type)}</span>
       ${node.in_cycle ? '<span class="tag err">依赖环</span>' : ''}
-      ${preview ? '<span class="tag subg">运行时生成</span>' : (node.prompt ? '' : '<span class="tag err">提示词缺失</span>')}
+      ${preview ? '<span class="tag subg">规划预览</span>' : (node.subgraph?.graph ? '<span class="tag subg">真实子图</span>' : (node.prompt ? '' : '<span class="tag err">提示词缺失</span>'))}
       <span class="spacer"></span>
-      ${prompt && node.ref && node.ref.exists ? '<button id="p-edit" title="编辑该节点的提示词并写回 task YAML">编辑</button>' : ''}
+      ${prompt && node.ref && node.ref.exists && node.prompt_editable ? '<button id="p-edit" title="编辑该节点的提示词并写回 task YAML">编辑</button>' : ''}
       <button id="p-close" title="关闭（Esc）">关闭</button>
     </div>
     <h2 class="p-title">${esc(prompt && prompt.title ? prompt.title : (preview ? preview.title : (node.subgraph ? '（子图引用）' : '（无标题）')))}</h2>
     <div class="p-file" title="${esc(node.ref ? node.ref.path : (node.subgraph ? node.subgraph.path : ''))}">${esc(preview && preview.runtime_file ? preview.runtime_file : (node.ref ? node.ref.rel : (node.subgraph ? node.subgraph.rel : '')))}</div>
     <div class="p-meta">${kvRows(rows)}</div>
+    ${node.subgraph?.graph ? `<div class="p-rule"></div><button id="p-expand">展开子图 · ${node.subgraph.graph.view_kind === 'planned' ? '规划预览' : '真实结构'}</button><div class="hint" style="margin-top:8px">在画布查看节点、依赖及回滚关系，点击子节点查看提示词；可返回上级。</div>` : ''}
+    ${node.subgraph?.error ? `<div class="hint">${esc(node.subgraph.error)}</div>` : ''}
     <div class="p-deps"><span class="lbl">依赖</span>${node.depends_on.length ? node.depends_on.map(gotoTag).join('') : '<span class="hint">无（根节点）</span>'}</div>
     <div class="p-deps"><span class="lbl">被依赖</span>${node.dependents.length ? node.dependents.map(gotoTag).join('') : '<span class="hint">无（终点节点）</span>'}</div>
     ${body}
@@ -556,6 +602,8 @@ function renderPanel(node) {
   $('p-close').addEventListener('click', closePanel);
   const editBtn = $('p-edit');
   if (editBtn) editBtn.addEventListener('click', () => { state.editing = node.id; renderEditPanel(node); });
+  const expandBtn = $('p-expand');
+  if (expandBtn) expandBtn.addEventListener('click', () => openSubgraph(node));
 }
 
 function select(id) {
@@ -1222,6 +1270,11 @@ function updateHeader(graph) {
   $('wfname').textContent = wf.name || '-';
   $('wfpath').textContent = wf.rel || '';
   $('usewhen').textContent = wf.use_when || '';
+  const nav = $('graph-nav');
+  nav.innerHTML = state.route.length
+    ? `<button id="graph-back">← 返回${state.route.length === 1 ? '主图' : '上级'}</button> <b>${esc(state.route.join(' → '))}</b> · <span class="tag ${graph.view_kind === 'planned' ? 'subg' : ''}">${graph.view_kind === 'planned' ? '规划预览 · 非实际运行图' : '真实子图文件'}</span><div class="hint">${esc(graph.view_note || '')}</div>`
+    : '<span class="hint">主图 · 点击子图节点，在详情面板展开子图</span>';
+  if ($('graph-back')) $('graph-back').addEventListener('click', returnToParent);
   const s = graph.stats || {};
   const extras = [];
   if (wf.max_parallel !== null && wf.max_parallel !== undefined) extras.push(`并发上限 <b>${wf.max_parallel}</b>`);
@@ -1277,7 +1330,8 @@ async function load(reason) {
       showBanner(`${graph.parsed_at} 解析失败（显示的是上一次成功的结果）：\n${graph.error || '未知错误'}`);
       return;
     }
-    render(graph);
+    state.rootGraph = graph;
+    render(currentGraph());
     if (reason) toast(reason);
   } catch (error) {
     showBanner('请求 /api/graph 失败：' + error);

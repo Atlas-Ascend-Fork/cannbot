@@ -5,6 +5,43 @@ subgraphs:
     runtime_file: $WORK_DIR/.workflow/implementation-tasks.yaml
     summary: 按原生 Unit 与 TDD/Golden 逐步实现，并遵循 cannbot-dsl-best-practice 生产代码规范；集成或检视失败回到修复节点，通过后进入全量精度测试。
     note: 这里展示生成规则。真实 implement-Uxx 节点数量与依赖由原生 units/Uxx.yaml、testcase.csv 确定；test-generator 执行阶段生成并校验 implementation-tasks.yaml，验收通过后调度子图。回滚次数由主工作流 max_rollbacks 限制。
+    nodes:
+    - id: implement-Uxx
+      task_type: normal
+      title: Unit 实现 × N（规划占位）
+      goal:
+      - 每个 Unit 通过单元 Red → Green；实际数量与依赖在运行时生成，当前节点表示 Unit 集合，不表示只有一个 Unit。
+      approach:
+      - 绑定原生 Unit、TDD case、Golden 和允许修改范围；Unit 内部依赖及重叠写集按生成器串行约束处理。
+      depends_on: []
+      executor: ops-direct-invoke-developer
+      verifier: ops-direct-invoke-verifier
+    - id: implementation-fix
+      task_type: normal
+      yaml: ../../tasks/cannbot-dsl/实现修复.yaml
+      depends_on: [implement-Uxx]
+      executor: ops-direct-invoke-developer
+      verifier: ops-direct-invoke-verifier
+      max_retries: 2
+      on_exhaust: exit
+    - id: unit-integration
+      task_type: normal
+      yaml: ../../tasks/cannbot-dsl/单元集成复验.yaml
+      depends_on: [implementation-fix]
+      executor: ops-direct-invoke-developer
+      verifier: ops-direct-invoke-verifier
+      max_retries: 0
+      on_exhaust: rollback
+      rollback_to: implementation-fix
+    - id: implementation-review
+      task_type: normal
+      yaml: ../../tasks/cannbot-dsl/实现检视.yaml
+      depends_on: [unit-integration]
+      executor: ops-direct-invoke-verifier
+      verifier: ops-direct-invoke-verifier
+      max_retries: 0
+      on_exhaust: rollback
+      rollback_to: implementation-fix
     stages:
     - title: implement-Uxx × N
       description: 每个节点绑定原生 units/Uxx.yaml、TDD case、<op>_golden.py 与允许修改范围；按 cannbot-dsl-best-practice 生产代码规范实现，微模块知识按需读取，重叠写集串行。
@@ -16,3 +53,16 @@ subgraphs:
       description: 汇合全部 Unit，实现全量单元 TDD、Golden、白盒及必要黑盒回归；失败回滚到 implementation-fix。
     - title: implementation-review ↩ implementation-fix
       description: 检视实现及完整测试证据；发现问题回滚到 implementation-fix，复验通过后 Agent Loop 才完成并进入全量精度测试。
+  review-fix:
+    title: 可读性检视与修复
+    runtime_file: $WORK_DIR/review-fix/workflow.yaml
+    workflow_file: review-fix.yaml
+    summary: 保存已通过的 Git 基线与冻结 case，检视一次，修复并全量回归；验收失败按 core 预算重试，本轮功能失败先恢复基线，最后一轮验收基线托底。
+    note: 固定三节点子图在主图组装时落盘。正常验收要求原全量 case 通过及置信度 ≥80 的有效意见落实；托底仅表示已恢复功能可靠的基线，整改结论仍为 FAIL。
+    stages:
+    - title: baseline
+      description: 提交已验证实现，冻结测试资产和 case 集合，保存原始全量结果。
+    - title: review
+      description: 实际阅读算子，产生可读性报告及带固定 ID、置信度与真实位置的意见清单。
+    - title: fix · 原生重试
+      description: 修复 HIGH 意见并执行全部黑盒、白盒、TDD case；验收失败由 harness 按预算重试。本轮功能失败先恢复 baseline，有预算时返回失败，最后一轮验收基线托底；性能、文档和交付统一消费验收通过的选定版本。

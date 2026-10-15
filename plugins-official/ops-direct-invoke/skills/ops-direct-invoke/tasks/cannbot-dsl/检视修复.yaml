@@ -1,0 +1,27 @@
+title: 检视修复｜落实高置信度意见并保持全量功能
+goal:
+- 按 harness 的节点重试预算修复高置信度可读性问题并保持已验证功能；最后一轮仍功能失败时验收恢复的基线作为托底。
+approach:
+- 每次派发只完成本轮修复与全量回归；若已有修复报告或验收失败反馈，先读取上轮提交、问题与原始证据。是否重试及执行次数由 harness core 决定，不在节点内自行循环或另建工作流规避预算。
+- 读取 $WORK_DIR/review-fix/baseline.json 和 review-report.md；修改算子时加载 cannbot-dsl-best-practice，仅在本轮算子目录的非测试 Python 源码中落实置信度不低于 80 且判定为 FAIL 的有效意见。
+- 保持冻结的算法、接口、分块、同步、搬运、布局和导出契约；只调整命名、注释、格式及保持求值阶段和值不变的常量表达。低置信度意见按需处理，不改变原检视报告。
+- 在 $WORK_DIR/review-fix/fix-report.md 按原意见编号逐项记录已修复、豁免或未落实，并给出实际修改位置与证据或理由；豁免必须有真实依据，由验收者确认。零发现也明确说明。
+- 执行本轮回归前，核对待交付 Native 产物对应实际源码；失败修复的产物不得作为基线产物交付，版本失效的导出产物按已有构建契约重新生成并保存证据。
+- 自行管理本轮修复 Git 提交并记录提交号，沿用 baseline.json 中的运行入口、错误匹配器和设备环境，使用已有 test/test_<op>.py 入口分别运行 --sheet blackbox、whitebox、tdd，并传入 --device <原设备> --require-accelerator。按 baseline.json 的 runtime 设置 CANNBOTDSL_OP_MODULE、CANNBOTDSL_OP_ENTRY、CANNBOTDSL_ERROR_MATCHER，PYTHONPATH 包含 $WORK_DIR；为本轮提交使用独立 CANNBOTDSL_CACHE_DIR。执行前移除旧结果，将逐例 CSV、完整命令、退出码及日志按提交分别保存在 $WORK_DIR/review-fix/ 下。零发现也执行全量回归。
+- 执行中断时先排查原因，保持本轮源码不变并补齐验证；不能把中断、结果缺失或环境错误当作完整功能失败，也不能混用其他提交的结果。
+- 本轮出现完整功能失败时，在交给验收者前自行用 Git 恢复 baseline 提交，处理本轮新增的 helper 与 Native 产物，确认当前源码和测试资产与冻结基线一致。保留本轮失败提交及全部证据，在修复报告中明确整改 FAIL；恢复成功不表示本轮修复通过，是否重试或托底由验收者按 core 的实际预算判断。
+- 按实际交付版本写入 $WORK_DIR/review-fix/selected.json，记录 mode（repaired 或 baseline_fallback）、commit、function_status、运行入口与功能证据路径；选定版本或证据失效时及时更新，不能继续引用旧记录。Git 提交、恢复与版本选择均由执行者完成，不交给基线检查脚本。
+- 将执行与修复记录写入 $WORK_DIR/review-fix/fix-report.md，保留各轮提交与原始证据路径，列出逐项处置、选定版本及功能/整改结论；执行过程写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID。不覆盖上轮失败证据。
+procedure:
+- 只读读取 $WORK_DIR/.workflow/status.json 中验收回调命令所指定完整 task-id 的 retries，并从本轮落盘工作流定位同一节点的 max_retries；retries + 1 <= max_retries 表示本次返回失败后 core 仍会重试，否则为最后一轮。以 core 状态及配置为准，不按 Git 提交数量推定预算，不修改状态或次数；预算信息无法核实时不按托底放行。
+- 对照 baseline.json、Git 历史与实际源码核对提交号、冻结资产及当前选定版本；逐组读取原始 CSV，核对 case ID、设备、逐例结果、命令与退出码。尚无有效 selected.json 或证据不完整时不通过，失败反馈引用本轮结果和验收报告路径。
+- repaired 模式必须原全量 case 均通过；验收者对照 review-report.md、fix-report.md 和本轮提交差异，逐项确认置信度不低于 80 的有效 FAIL 意见已实际修复，独立核实修改与豁免依据。意见未落实时节点验收不通过，不能凭报告自述放行。不重新展开全面风格检视，不重复运行测试。
+- baseline_fallback 模式必须有本轮完整功能失败及原始证据，核实失败来自修复改动而非环境、导入、输入构造或用例错误，且已恢复与 baseline 一致的源码和测试资产。若 core 仍有重试预算，返回失败并给出本轮问题与证据，让 core 重派；只有最后一轮才可复用原全量通过证据验收恢复的基线，明确整改未通过。功能通过但 HIGH 未落实、运行未验证或冻结资产被修改时不得托底放行。
+- 核对实际加载路径、设备及选定源码/导出版本，三个分组的 case 集合完全一致，无停用、跳过、修改 Golden 或阈值；不接受只有通过自述的记录。
+- 将最终验收与豁免判定写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID；托底通过表示已恢复可交付基线，不表示风格整改通过。
+acceptance:
+- test -s "$WORK_DIR/review-fix/fix-report.md"
+- test -s "$WORK_DIR/review-fix/selected.json"
+out_of_scope:
+- 不修改冻结测试、Golden、规格、设计、原检视报告或验收者报告，不做算法与性能优化，不操作 harness 状态。
+- 正常放行要求冻结全量 case 全部通过及置信度 ≥80 的有效 FAIL 意见全部落实；最后一轮修复功能失败后的 baseline_fallback 仅允许交付恢复且证据有效的基线，不得声称整改通过。返回失败后的重试或退出由 core 执行，不等待预算耗尽退出后再次派发恢复任务。

@@ -2,6 +2,11 @@
 
 ## 新特性
 
+### 【2026-10-14】
+
+- DSL 全量精度验证后新增 [review-fix 子图](skills/ops-direct-invoke/workflows/cannbot-dsl/review-fix.yaml)：由 Agent 管理独立 Git 基线、候选提交与恢复，脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并复跑全部 case；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可验收恢复的基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
+- 固定子图随主图组装到本轮目录；性能摸底、文档和交付统一使用修复后通过的版本或恢复的基线。安装、启动与恢复命令不变。
+
 ### 【2026-10-13】
 
 - 对齐 [cannbot-skills PR1360](https://gitcode.com/cann/cannbot-skills/merge_requests/1360)：六个 `cannbot-dsl-*` Skill 从公共仓的 `ops/` 安装，名称与工作流入口不变；`ops-design-paradigms` 已由 [PR1359](https://gitcode.com/cann/cannbot-skills/merge_requests/1359) 迁入同一正式目录。
@@ -10,7 +15,7 @@
 ### 【2026-09-30】
 
 - 新增 **CANNBot-DSL 算子开发支持**：按开发语言选择 DSL 工作流，支持设计、动态实现子图生成、开发与验收。
-- DSL 的环境节点记录环境证据，并使用本轮 `cannbot-dsl/docs` 作为 API 参考；性能优化完成后再生成最终版本的文档。
+- DSL 的环境节点记录环境证据，并使用本轮 `cannbot-dsl/docs` 作为 API 参考；性能摸底完成后再生成最终版本的文档。
 - 提供 `ops-direct-invoke-maintain`，按模块记录工作流设计与维护约定。
 - 回归测试随维护 Skill 分发，修改工作流后运行完整测试；检查自身脚本和 harness 调用衔接，不重复验证框架内部调度。
 - 安装与使用统一见 [QUICKSTART.md](QUICKSTART.md)。
@@ -162,7 +167,7 @@ Skill 正文及 references 仅包含自身职责，不互相调用或路由；�
 
 本仓 `repo-*` 知识按 CANN Bench 的直调工程与评测契约组织，包含需求、环境、接口、模板、构建、测试和编码规则。初始化会获取 `cann-bench` 到 `.cannbot/dependencies/ops-direct-invoke/cann-bench/`，实际运行记录所用 commit；已有 checkout 可作为任务输入复用。跨仓定制继续通过同名 `repo-*` Skill 覆写，不将仓库知识复制进 task。
 
-AscendC basic 的范围为本地开发、功能验收与交付文档；DSL op-dev 还包含性能采集、优化及回归。两者均不包含 PR、外部 CI 或合并。需求阶段仍需如实记录性能诉求；用户要求的硬门槛超出当前执行范围时，先对齐交付安排，不能承诺本流程已验证性能。引用业务知识时不启用其中遗留的 PM 派发、状态维护或回退指令。
+AscendC basic 的范围为本地开发、功能验收与交付文档；DSL op-dev 还包含可读性整改、全量回归及性能摸底。两者均不包含 PR、外部 CI 或合并。需求阶段仍需如实记录性能诉求；用户要求的硬门槛超出当前执行范围时，先对齐交付安排，不能承诺本流程已验证性能。引用业务知识时不启用其中遗留的 PM 派发、状态维护或回退指令。
 
 ## 维护与验证
 

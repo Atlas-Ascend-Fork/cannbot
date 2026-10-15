@@ -103,11 +103,16 @@ nodes:
   verifier: ops-direct-invoke-verifier
   max_retries: 2
   on_exhaust: exit
+- id: review-fix
+  task_type: subgraph
+  file: review-fix/workflow.yaml
+  depends_on:
+  - precision-validation
 - id: performance
   task_type: normal
   yaml: ../../tasks/cannbot-dsl/性能优化.yaml
   depends_on:
-  - precision-validation
+  - review-fix
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
   max_retries: 3
@@ -121,21 +126,11 @@ nodes:
   verifier: ops-direct-invoke-verifier
   max_retries: 2
   on_exhaust: exit
-- id: code-review
-  task_type: normal
-  yaml: ../../tasks/cannbot-dsl/代码检视.yaml
-  depends_on:
-  - documentation
-  - performance
-  executor: ops-direct-invoke-verifier
-  verifier: ops-direct-invoke-verifier
-  max_retries: 2
-  on_exhaust: exit
 - id: delivery
   task_type: normal
   yaml: ../../tasks/cannbot-dsl/交付.yaml
   depends_on:
-  - code-review
+  - documentation
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
   max_retries: 1

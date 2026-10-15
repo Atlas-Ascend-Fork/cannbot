@@ -109,6 +109,8 @@ AscendC 过程报告写入 `$WORK_DIR/`；CANNBotDSL 执行与验收过程报告
 Skill 源路径统一在插件的 [plugin-sources.json](../../plugin-sources.json) 的 `skills` 列表维护；六个 `cannbot-dsl-*` Skill 与 `ops-design-paradigms` 均从 `vendor/cannbot-skills/ops/` 导入。安装器按目录名注册 Skill，task 与动态实现子图只引用其 `SKILL.md` 中的名称。迁移 Skill 时同步源路径，并在名称变化时更新调用名称；确认依赖仓版本已包含这些目录。
 
 [op-dev](workflows/cannbot-dsl/op-dev.yaml) 是完整工作流模板：节点 id、depends_on、executor、verifier、max_retries、on_exhaust、rollback_to 和 subgraph 节点全部留在模板中，语义 id 不参与重新编号；normal 节点通过 `yaml` 键引用 `tasks/cannbot-dsl/` 下的内容 task，task 只含 title、goal、approach、procedure（可选）、acceptance、out_of_scope 六个内容字段，不包含任何调度字段。组装时按模板文件位置解析 task 路径，将内容字段合并进节点后剥离 `yaml` 键；模板与 task 同时定义同一字段、task 缺字段或合并后出现未知字段都会拒绝组装。内容字段为空列表的节点在组装时输出 warning 列出待补字段，不阻断生成。
+
+DSL 主图组装时，通过标准组装接口将 [review-fix 子图](workflows/cannbot-dsl/review-fix.yaml) 展开到本轮 review-fix/workflow.yaml；其检视意见是修复输入，清单验收不表示源码已整改。修复节点每次派发只完成本轮修复与回归，验收失败由 harness 按配置预算重试，正常放行要求原全量 case 通过，验收者对照检视报告、修复报告和源码确认有效 HIGH 意见落实；本轮功能失败先恢复基线；验收者只读核对 core 的已用次数与节点预算，有重试预算时返回失败，最后一轮才可验收恢复的基线托底，报告保留整改 FAIL。性能及交付引用 review-fix/selected.json 指定的版本。主图组装中断后可重试，只复用内容完全一致的已落盘子图；已开始运行时恢复使用冻结的主图和子图，不重新组装。Git 初始化、提交、候选管理、基线恢复与交付版本选择均由执行 Agent 完成；review_fix.py 仅只读核对基线提交并返回冻结信息。功能回归使用已有测试入口，由验收 Agent 核对原始结果；中断时保持候选源码不变并补齐验证，不计作完整功能失败。
 - 所有组装输出都使用新文件，拒绝覆盖。恢复使用原完整 YAML 和 work_dir；新一轮使用新目录，保留前轮状态与证据。
 
 ## task 提示词变量
@@ -258,4 +260,4 @@ python3 scripts/run_workflow.py \
 
 入口由工作区 PM 在当前用户会话中承接；PM 不进入调度图。节点角色仅使用 ops-direct-invoke-architect（方案）、ops-direct-invoke-developer（代码、调试与文档）及 ops-direct-invoke-verifier（验收与检视）。角色信息由安装后的客户端角色配置和 executor/verifier 名称衔接，不在任务里额外要求读取 agents 文件。真实 provider 的角色和 Skill 加载仍需验证，模拟执行通过不代表角色权限或 NPU 实测通过。
 
-范围以所选工作流为准：AscendC basic 包含本地开发与功能交付，DSL op-dev 还包含性能采集、优化与回归；均不包含 PR、外部 CI 和合并。Skill 正文和参考资料只描述自身职责，不调用或路由到其他 Skill；跨 Skill 的组合由 Agent 或 task 的 approach/procedure 显式声明。
+范围以所选工作流为准：AscendC basic 包含本地开发与功能交付，DSL op-dev 还包含可读性整改、全量回归与性能摸底；均不包含 PR、外部 CI 和合并。Skill 正文和参考资料只描述自身职责，不调用或路由到其他 Skill；跨 Skill 的组合由 Agent 或 task 的 approach/procedure 显式声明。

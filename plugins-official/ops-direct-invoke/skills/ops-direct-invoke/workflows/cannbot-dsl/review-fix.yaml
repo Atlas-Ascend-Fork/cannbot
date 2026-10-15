@@ -1,0 +1,31 @@
+# CANNBot-DSL 全量精度验证后的可读性检视与修复子图
+use_when: 已完成全量精度验证的 CANNBotDSL 算子，在性能摸底前检视并修复可读性
+workflow: review-fix
+max_parallel: 1
+nodes:
+- id: baseline
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/检视基线.yaml
+  depends_on: []
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 0
+  on_exhaust: exit
+- id: review
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/代码检视.yaml
+  depends_on:
+  - baseline
+  executor: ops-direct-invoke-verifier
+  verifier: ops-direct-invoke-verifier
+  max_retries: 0
+  on_exhaust: exit
+- id: fix
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/检视修复.yaml
+  depends_on:
+  - review
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: exit

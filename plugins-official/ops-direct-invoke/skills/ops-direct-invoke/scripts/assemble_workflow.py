@@ -13,8 +13,10 @@
 
 import argparse
 import logging
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -509,14 +511,51 @@ def assemble_template(path):
     return definition
 
 
-def write_workflow(definition, output):
-    """Freeze a complete harness input without overwriting an existing run."""
+def publish_workflow(definition, output, reuse=False):
+    """Publish a fully written YAML exclusively; reuse only an identical frozen child."""
     rendered = yaml.safe_dump(
         definition, allow_unicode=True, sort_keys=False, width=110
     )
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x", encoding="utf-8") as stream:
-        stream.write(rendered)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=output.parent, prefix=".workflow-", delete=False
+    ) as stream:
+        temporary = Path(stream.name)
+    try:
+        temporary.write_text(rendered, encoding="utf-8")
+        try:
+            os.link(temporary, output)
+        except FileExistsError:
+            if not reuse or output.read_text(encoding="utf-8") != rendered:
+                raise FileExistsError(
+                    f"workflow already exists or differs: {output}"
+                ) from None
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_workflow(definition, output):
+    """Freeze main and child inputs; interrupted assembly may reuse an identical child."""
+    if output.exists():
+        raise FileExistsError(f"workflow already exists: {output}")
+    if any(
+        node.get("id") == "review-fix"
+        and node.get("file") == "review-fix/workflow.yaml"
+        for node in definition["nodes"]
+    ):
+        source = (
+            Path(__file__).absolute().parents[1]
+            / "workflows/cannbot-dsl/review-fix.yaml"
+        )
+        child = assemble_template(source)
+        validate_dsl_roles(child["nodes"])
+        # harness child inputs accept only nodes; discovery metadata belongs to the source template.
+        publish_workflow(
+            {"nodes": child["nodes"]},
+            output.parent / "review-fix/workflow.yaml",
+            reuse=True,
+        )
+    publish_workflow(definition, output)
 
 
 def main():

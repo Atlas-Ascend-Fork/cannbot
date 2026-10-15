@@ -169,6 +169,11 @@ def extract_prompt(path: Path, root: Path | None) -> dict:
     data = load_yaml_file(path)
     if not isinstance(data, dict):
         raise GraphError(f"提示词文件顶层不是映射: {display_path(path, root)}")
+    return prompt_from_data(data, path.stat().st_size)
+
+
+def prompt_from_data(data: dict, size: int = 0) -> dict:
+    """文件引用和组装后内联的 task 使用相同的详情结构。"""
     prompt_keys = [key for key in data if key not in NON_PROMPT_KEYS and key != "title"]
     prompt_keys.sort(
         key=lambda key: (
@@ -188,23 +193,25 @@ def extract_prompt(path: Path, root: Path | None) -> dict:
                 "items": to_items(data[key]),
             }
         )
-    meta = [
-        {
-            "key": str(key),
-            "value": yaml.safe_dump(
-                data[key], allow_unicode=True, default_flow_style=True
-            ).strip(),
-        }
-        for key in data
-        if key in NON_PROMPT_KEYS
-        and key not in ("yaml", "yaml_file", "task", "file", "template", "id")
-    ]
+    meta = []
+    excluded_refs = {"yaml", "yaml_file", "task", "file", "template", "id"}
+    for key in data:
+        if key not in NON_PROMPT_KEYS or key in excluded_refs:
+            continue
+        meta.append(
+            {
+                "key": str(key),
+                "value": yaml.safe_dump(
+                    data[key], allow_unicode=True, default_flow_style=True
+                ).strip(),
+            }
+        )
     title = data.get("title")
     return {
         "title": title.strip() if isinstance(title, str) else "",
         "sections": sections,
         "meta": meta,
-        "size": path.stat().st_size if path.exists() else 0,
+        "size": size,
     }
 
 
@@ -280,6 +287,8 @@ def graph_preview(workflow_path: Path) -> tuple[Path, dict]:
                 for stage in stages
             ],
             "source": path.as_posix(),
+            "nodes": item.get("nodes"),
+            "workflow_file": str(item.get("workflow_file") or ""),
         }
     return path, previews
 
@@ -299,17 +308,23 @@ def node_content(item, node_id, node_type, base, root, previews):
         if not subgraph["exists"] and node_id in previews:
             subgraph["preview"] = previews[node_id]
 
-    prompt = None
-    prompt_error = None
+    prompt, prompt_error = node_prompt(item, node_type, ref, subgraph, root)
+    return ref, subgraph, prompt, prompt_error
+
+
+def node_prompt(item, node_type, ref, subgraph, root):
+    if node_type == "subgraph":
+        return None, None  # 子图 YAML 是调度图，不作为 task 提示词展示。
     if ref is not None and ref["exists"]:
         try:
-            prompt = extract_prompt(Path(ref["path"]), root)
+            return extract_prompt(Path(ref["path"]), root), None
         except GraphError as error:
-            prompt_error = str(error)
-    elif ref is not None and not (subgraph and subgraph.get("preview")):
-        prompt_error = f"提示词文件不存在: {ref['rel']}"
-
-    return ref, subgraph, prompt, prompt_error
+            return None, str(error)
+    if ref is not None and not (subgraph and subgraph.get("preview")):
+        return None, f"提示词文件不存在: {ref['rel']}"
+    if any(key in item for key in SECTION_ORDER):
+        return prompt_from_data(item), None
+    return None, None
 
 
 def node_extra(item):
@@ -437,7 +452,10 @@ def graph_stats(nodes, edges, layers):
             1
             for node in nodes
             if node["prompt"] is None
-            and not (node["subgraph"] and node["subgraph"].get("preview"))
+            and not (
+                node["subgraph"]
+                and (node["subgraph"].get("preview") or node["subgraph"]["exists"])
+            )
         ),
     }
     return stats
@@ -474,13 +492,75 @@ def workflow_info(workflow_path, root, data):
     }
 
 
-def build_graph(workflow_path: Path) -> dict:
+def build_graph(workflow_path: Path, ancestors: tuple[Path, ...] = ()) -> dict:
     """重新解析工作流 YAML 及其节点提示词，返回前端需要的完整结构。"""
     workflow_path = workflow_path.expanduser()
     workflow_path = workflow_path.resolve() if workflow_path.exists() else workflow_path
+    if workflow_path in ancestors or len(ancestors) >= 12:
+        raise GraphError(f"子图引用循环或超过 12 层: {workflow_path}")
     root = find_root(workflow_path)
     data = load_yaml_file(workflow_path)
     _, previews = graph_preview(workflow_path)
+    graph = graph_from_data(workflow_path, root, data, previews)
+    for node in graph["nodes"]:
+        node["prompt_editable"] = bool(
+            not ancestors
+            and node["task_type"] != "subgraph"
+            and any(
+                isinstance(item, dict)
+                and item.get("id") == node["id"]
+                and any(item.get(key) for key in PROMPT_REF_KEYS)
+                for item in data["nodes"]
+            )
+        )
+        subgraph = node["subgraph"]
+        if not subgraph:
+            continue
+        try:
+            child = build_child_graph(subgraph, workflow_path, root, ancestors)
+            if child is None:
+                continue
+            subgraph["graph"] = child
+            subgraph["child_node_ids"] = [item["id"] for item in child["nodes"]]
+            subgraph["child_count"] = len(child["nodes"])
+        except GraphError as error:
+            subgraph["error"] = str(error)
+            graph["warnings"].append(f"子图 {node['id']}: {error}")
+    return graph
+
+
+def build_child_graph(subgraph, workflow_path, root, ancestors):
+    child_ancestors = (*ancestors, workflow_path)
+    if subgraph["exists"]:
+        child = build_graph(Path(subgraph["path"]), child_ancestors)
+        child["view_kind"] = "actual"
+        child["view_note"] = "真实子图文件；显示已生成节点及依赖，不表示执行状态。"
+        return child
+    preview = subgraph.get("preview")
+    if not preview:
+        return None
+    if preview["workflow_file"]:
+        target = resolve_ref(workflow_path.parent, preview["workflow_file"])
+        child = build_graph(target, child_ancestors)
+    elif preview["nodes"]:
+        child = graph_from_data(
+            workflow_path,
+            root,
+            {"workflow": preview["title"], "nodes": preview["nodes"]},
+            {},
+        )
+    else:
+        return None  # 兼容仅包含阶段说明的旧预览。
+    child["view_kind"] = "planned"
+    child["workflow"]["name"] = preview["title"]
+    child["view_note"] = preview["note"] or "规划结构，实际运行文件尚未生成。"
+    for child_node in child["nodes"]:
+        child_node["prompt_editable"] = False
+    return child
+
+
+def graph_from_data(workflow_path, root, data, previews):
+    """复用同一解析、分层及边构建逻辑处理主图与规划子图。"""
     if not isinstance(data, dict):
         raise GraphError(f"工作流顶层不是映射: {display_path(workflow_path, root)}")
     nodes_raw = data.get("nodes")
@@ -583,6 +663,25 @@ def watch_spec(workflow_path: Path) -> tuple[list[Path], list[Path]]:
             target = resolve_ref(base, ref)
             files.append(Path(target))
             dirs.append(Path(target).parent)
+    try:
+        graph = build_graph(workflow_path)
+    except GraphError:
+        return files, dirs
+
+    def collect(current):
+        files.append(Path(current["workflow"]["file"]))
+        for node in current["nodes"]:
+            if node["ref"]:
+                target = Path(node["ref"]["path"])
+                files.append(target)
+                dirs.append(target.parent)
+            subgraph = node["subgraph"]
+            if subgraph and subgraph.get("preview"):
+                files.append(Path(subgraph["preview"]["source"]))
+            if subgraph and subgraph.get("graph"):
+                collect(subgraph["graph"])
+
+    collect(graph)
     return files, dirs
 
 

@@ -1,0 +1,21 @@
+title: 检视基线｜保存已验证实现与冻结用例
+goal:
+- 保存功能已通过的算子版本，为风格修复提供固定回归依据和可恢复基线。
+approach:
+- 直接使用全量精度验证节点已验收的实现和证据，在 $WORK_DIR/operators/<spec.op.name> 开发目录自行管理 Git，元数据独立存放在 $WORK_DIR/review-fix/git；提交全部源码与测试资产并保留 baseline 标记，不纳入缓存与测试输出，不操作宿主仓库暂存区。
+- 从精度执行记录沿用 CANNBOTDSL_OP_ENTRY 与 CANNBOTDSL_ERROR_MATCHER（未设置时分别使用 run 与空值），运行本 Skill 的 scripts/review_fix.py baseline --work-dir "$WORK_DIR"。脚本只读核对 baseline 提交与当前源码、测试资产一致及原通过证据完整；通过后将输出的提交号、资产哈希、case 清单、设备与运行入口保存为 $WORK_DIR/review-fix/baseline.json，不覆盖已冻结记录。
+- 自行将原全量结果复制到 $WORK_DIR/review-fix/baseline-results，避免后续 runner 覆盖基线证据；基线与冻结资产在整个检视修复阶段保持不变。
+- 将节点执行记录写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID。
+procedure:
+- 核对 baseline 提交、baseline.json 和 baseline-results 对应上游已通过版本，Git 元数据位于本轮 review-fix/git；源码与测试资产均已纳入基线，缓存和测试输出未混入提交。
+- 运行相同的只读基线检查命令，核对输出与 baseline.json 及保存的原始结果一致；脚本不负责 Git 提交或恢复。
+- 核对冻结清单包含规格、设计、用例、Golden、测试入口与辅助模块，三个分组原始结果覆盖冻结的 case；不重复执行上游全量测试。
+- 将验收结论与证据写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID。
+acceptance:
+- test -s "$WORK_DIR/review-fix/baseline.json"
+- test -s "$WORK_DIR/review-fix/git/HEAD"
+- test -s "$WORK_DIR/review-fix/baseline-results/blackbox/verify_result_blackbox.csv"
+- test -s "$WORK_DIR/review-fix/baseline-results/whitebox/verify_result_whitebox.csv"
+- test -s "$WORK_DIR/review-fix/baseline-results/tdd/verify_result_tdd.csv"
+out_of_scope:
+- 不修改算子、规格、设计或测试资产，不重跑测试，不覆盖已有基线或操作宿主仓库。

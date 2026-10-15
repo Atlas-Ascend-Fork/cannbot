@@ -1,7 +1,7 @@
 title: 全量精度验证｜冻结用例与阈值的设备实测
 goal:
 - 在实现与检视 Agent Loop 完全通过后，用最终算子源码运行已接入的黑盒、白盒和 TDD 用例，依据已校验的独立 <op>_golden.py 完成全量精度验证。
-- 保存逐例原始结果和可复核的精度结论；全部必测用例通过后才放行性能与文档节点。
+- 保存逐例原始结果和可复核的精度结论，交给检视修复子图保存基线和冻结用例。
 approach:
 - 核对 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/operators/<op>/test/<op>_golden.py`、`$WORK_DIR/operators/<op>/test/test_<op>.py`、`$WORK_DIR/operators/<op>/test/testcase.csv`、最终算子源码以及实现集成和检视报告；缺失或前序工作未通过时停止。
 - 将 `$WORK_DIR` 加入 `PYTHONPATH`，将 `CANNBOTDSL_OP_MODULE` 设为 `operators.<op>.<op>`（`<op>` 取 `spec.op.name`）。公开入口不是 run 时设置 CANNBOTDSL_OP_ENTRY；目标异常未直接暴露 spec 错误代码时，提供并验证 CANNBOTDSL_ERROR_MATCHER。分别以 `--sheet blackbox|whitebox|tdd --device npu --require-accelerator` 运行固定 test_<op>.py；实际设备名可按环境替换，但禁止 CPU 冒充目标设备。三个逻辑分组都必须非空且逐例通过。Golden 的公开接口与当前 spec 一致，精度容差以 spec.yaml 的 numerical_tolerance.per_dtype 为准。
