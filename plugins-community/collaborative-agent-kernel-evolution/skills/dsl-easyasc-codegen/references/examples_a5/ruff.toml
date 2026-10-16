@@ -1,0 +1,41 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# 本目录下的 .py 是 easyasc DSL 程序，用途是复现 DSL 的实际写法与生成器的实际产物。
+#
+# ── 不参与 ruff format ────────────────────────────────────────────────────
+# 这些文件是 easyasc `OpExec` 与算子作者写出的原样代码，重排会使其与实际产物
+# 漂移，理由与仓库根 .clang-format 排除 kb/ 相同。force-exclude 使排除对
+# pre-commit 显式传入的文件路径同样生效。
+force-exclude = true
+
+[format]
+exclude = ["*.py"]
+
+# ── 逐条豁免的检查规则，不豁免其他任何规则 ────────────────────────────────
+#   F403  `from easyasc.a2 import *` used
+#   F405  name may be undefined, or defined from star imports
+#         星号导入是 easyasc 的既定写法：算子内核在 DSL 命名空间中直接书写
+#         kernel / GMTensor / Tensor / Var / DT / Position / auto_sync /
+#         CeilDiv / matmul 等符号。改成具名导入会改变这些示例所演示的写法，
+#         且 ffn_silu.py 依赖星号导入前后的名字遮蔽顺序（导入前捕获内建 range）。
+#
+#   F841  local variable is assigned to but never used
+#         DSL 的缓冲区声明（Tensor(...) / split_workspace(...) 等）以调用产生
+#         效果，返回值绑定到局部名只是书写习惯；ruff 按纯 Python 数据流判定。
+#
+#   F401  imported but unused
+#         生成器按固定模板写出导入行，不按单个算子实际用到的符号裁剪。
+#
+#   E741  ambiguous variable name
+#         矩阵乘的维度名 M/K/N/O 沿用数学记法，`O` 与 `M`、`K` 同族
+#         （rms_matmul_scale.py: weight[K,O]、out[M,O]）。
+[lint.per-file-ignores]
+"*.py" = ["E741", "F401", "F403", "F405", "F841"]

@@ -1,0 +1,18 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# 本目录是算子工程改造的前后对照示例。before_op_host/ 与 before_op_kernel/ 是
+# easyasc `OpExec(simulator=False)` 的原样输出，after_op_host/ 与 after_op_kernel/
+# 是 `scripts/transform.py` 对其处理后的输出；README.md 逐条列出两侧的 token 替换。
+# 这些文件的用途是复现生成器的实际产物，重排会使其与生成器输出漂移，
+# 与仓库根 .clang-format 对 kb/ 的排除理由相同。实测按仓库根样式重排会改动
+# 333 行中的 112 行，并使 op_kernel 两侧的差异从 2 行增至 4 行。
+DisableFormat: true
+SortIncludes: Never
