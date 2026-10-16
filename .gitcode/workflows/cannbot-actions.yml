@@ -25,6 +25,9 @@ env:
   TARGET_BRANCH: ${{ atomgit.base_ref }}
   SOURCE_BRANCH: ${{ atomgit.head_ref }}
   obs_path: "${{ env.org_name }}/${{ env.repo_name }}/ci/package/${{ env.MERGE_ID }}"
+  # RDV 报告（md）本地暂存根目录：**按仓隔离**——runner 与 cannbot-skills 同机共享 /tmp，
+  # 不隔离会让同名 PR 号在两仓之间互相覆盖、并被 upload 的 glob 一起上传
+  ci_report_dir: "/tmp/cannbot-ci-reports/${{ env.repo_name }}/${{ env.MERGE_ID }}"
   online: ${{ vars.APPLY_LABEL }}
 
 stages:
@@ -60,6 +63,51 @@ stages:
         with:
           precommit_image_version: ${{ jobs.JOB_image.outputs.precommit }}
           codecheck_image_version: ${{ jobs.JOB_image.outputs.codecheck }}
+    pre:
+    - type: auto
+    fail-fast: false
+  stage3:
+    name: Security_content_Scan
+    jobs:
+      # 聚合静态门禁：单 Job 一次 POST /api/pr-vet 跑完 Sift 差分 / SkillSpector 风险分 /
+      # Bandit / Semgrep / 内容审查（advisory），等价于 cannbot-skills 的 JOB_static_vet
+      # （详见 cannbot-skills-rdv/docs/pr-vet-aggregate.md）
+      JOB_static_vet:
+        name: Static_Vet
+        steps:
+          - name: check_static_vet_script
+            run: |
+              test -f /opt/cannbot-skills-rdv/scripts/ci-pr-vet.sh \
+                || { echo "❌ runner 上未找到 ci-pr-vet.sh，请先部署 cannbot-skills-rdv" >&2; exit 3; }
+              # Step Summary 共享库：缺失时摘要与 md 报告落盘会**静默失效**（退出码不变、
+              # 日志只有 command not found），所以与主脚本一样前置 fail-closed 拦下。
+              test -f /opt/cannbot-skills-rdv/scripts/lib/ci-summary.sh \
+                || { echo "❌ runner 上未找到 lib/ci-summary.sh，请先部署 cannbot-skills-rdv" >&2; exit 3; }
+          - name: run_static_vet
+            env:
+              ATOMGIT_RUN_ATTEMPT: ${{ atomgit.run_attempt }}
+              ADMIN_PASSWORD: ${{ secrets.ST_PLATFORM_ADMIN_PASSWORD }}
+              CI_REPORT_DIR: "${{ env.ci_report_dir }}/static-vet"
+            run: |
+              bash /opt/cannbot-skills-rdv/scripts/ci-pr-vet.sh \
+                --pr-number "${{ env.MERGE_ID }}" \
+                --gitcode-repo cann/cannbot \
+                --timeout 1800
+          # 完整 md 报告上传 OBS（`always()`：门禁未通过也上传；`continue-on-error`：上传异常不染红）
+          - name: upload_static_vet_report
+            if: ${{ always() }}
+            continue-on-error: true
+            uses: obs-upload
+            with:
+              endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+              bucket: "ascend-ci"
+              access-key: ${{ secrets.AK }}
+              secret-key: ${{ secrets.SK }}
+              artifact-path: "${{ env.ci_report_dir }}/static-vet/*.md"
+              object-prefix: ${{ env.obs_path }}/
+        runs-on:
+          - self-hosted
+          - runner_name=A5_skill_tester_02
     pre:
     - type: auto
     fail-fast: false
