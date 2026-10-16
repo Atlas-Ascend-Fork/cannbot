@@ -342,10 +342,24 @@ function installAgents(pluginDir, plugin, tool, target, assets, agentsDirOverrid
 
 function installInstructions(pluginDir, plugin, target, tool, assets, skillRewrites) {
   const source = join(pluginDir, "AGENTS.md");
-  if (!existsSync(source)) return null;
+  const markers = instructionMarkers(plugin.name);
+  if (!existsSync(source)) {
+    // Retired instructions can remain in either file after switching clients.
+    for (const filename of ["AGENTS.md", "CLAUDE.md"]) {
+      const path = join(target, filename);
+      if (!existsSync(path)) continue;
+      const current = readFileSync(path, "utf8");
+      const block = new RegExp(`${escapeRegExp(markers.start)}[\\s\\S]*?${escapeRegExp(markers.end)}`, "g");
+      const cleaned = current.replace(block, "");
+      if (cleaned === current) continue;
+      const temporary = `${path}.${process.pid}.tmp`;
+      writeFileSync(temporary, cleaned);
+      renameSync(temporary, path);
+    }
+    return null;
+  }
   const destination = join(target, tool === "claude" ? "CLAUDE.md" : "AGENTS.md");
   const current = existsSync(destination) ? readFileSync(destination, "utf8") : "";
-  const markers = instructionMarkers(plugin.name);
   const withoutOldBlock = current
     .replace(new RegExp(`${markers.start}[\\s\\S]*?${markers.end}\\s*`, "g"), "")
     .trimEnd();

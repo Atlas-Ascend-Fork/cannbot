@@ -622,13 +622,13 @@ test("source install preserves an existing real Skill directory", () => {
 });
 
 test("reinstall preserves user instructions and keeps one managed block", () => {
-  const { sandbox, target } = installPlugin("ops-direct-invoke", "dsh", "package");
+  const { sandbox, target } = installPlugin("model-infer-optimize", "dsh", "package");
   const instructionsPath = join(target, "AGENTS.md");
   writeFileSync(instructionsPath, `user instructions\n\n${readFileSync(instructionsPath, "utf8")}`);
   const result = spawnSync(process.execPath, [
     cli,
     "install",
-    "ops-direct-invoke",
+    "model-infer-optimize",
     "--tool",
     "dsh",
     "--target",
@@ -646,7 +646,7 @@ test("reinstall preserves user instructions and keeps one managed block", () => 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const instructions = readFileSync(instructionsPath, "utf8");
   assert.match(instructions, /^user instructions/m);
-  assert.equal(instructions.match(/<!-- cannbot:ops-direct-invoke:start -->/g)?.length, 1);
+  assert.equal(instructions.match(/<!-- cannbot:model-infer-optimize:start -->/g)?.length, 1);
 });
 
 test("multiple plugins keep independent instructions and install records", () => {
@@ -672,15 +672,14 @@ test("multiple plugins keep independent instructions and install records", () =>
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   const instructions = readFileSync(join(first.target, "AGENTS.md"), "utf8");
-  assert.equal(instructions.match(/<!-- cannbot:ops-direct-invoke:start -->/g)?.length, 1);
+  assert.doesNotMatch(instructions, /<!-- cannbot:ops-direct-invoke:start -->/);
   assert.equal(instructions.match(/<!-- cannbot:model-infer-optimize:start -->/g)?.length, 1);
-  const directInvokeHeading = readFileSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "AGENTS.md"), "utf8").split("\n")[0];
-  assert.ok(instructions.includes(directInvokeHeading));
   assert.match(instructions, /^# NPU 模型推理优化入口$/m);
 
   const registry = JSON.parse(readFileSync(join(first.target, ".dsh", "cannbot-plugin.json"), "utf8"));
   assert.equal(registry.schemaVersion, 2);
   assert.deepEqual(registry.plugins.map((plugin) => plugin.plugin), ["model-infer-optimize", "ops-direct-invoke"]);
+  assert.equal(registry.plugins.find((plugin) => plugin.plugin === "ops-direct-invoke").instructions, null);
   assert.equal(existsSync(join(skillRoot(first.target, "dsh"), "ascendc-env-check", "SKILL.md")), true);
   assert.equal(existsSync(join(skillRoot(first.target, "dsh"), "model-infer-migrator", "SKILL.md")), true);
 });

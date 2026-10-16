@@ -24,7 +24,7 @@
 
 `ops-direct-invoke` 提供直调算子的需求对齐、方案设计、实现、功能验收、代码检视和交付文档流程。插件名称、安装 ID 与入口 Skill 名称统一为 `ops-direct-invoke`。
 
-**调度交给 harness，知识交给 Skill，Workflow 专注于流程。** 工作区 PM 按用户的实际目标规划子 Agent 合作，通过 harness 执行 workflow YAML。算子需求对齐时必须加载 `repo-requirement` Skill，按其中的要求执行；算子开发时必须加载 `ops-direct-invoke` Skill，按其中的要求执行。每个 task 同时声明执行与验收；运行期派发、并行及同节点重试使用框架原生机制。
+**调度交给 harness，知识交给 Skill，Workflow 专注于流程。** 主会话通过 `ops-direct-invoke` Skill 承担 PM 职责，对齐需求并规划子 Agent 合作，通过 harness 执行 workflow YAML。每个 task 同时声明执行与验收；运行期派发、并行及同节点重试使用框架原生机制。
 
 安装与首次使用见 [QUICKSTART.md](QUICKSTART.md)。
 
@@ -71,7 +71,7 @@ node script/bin/cannbot.js install ops-direct-invoke \
 
 ### 工作区资产与定制
 
-项目指引写入 `AGENTS.md`（Claude 使用 `CLAUDE.md`），角色与 Skill 路径见安装记录。源码 Skill 的修改会通过软链接生效；项目指引和角色配置是生成文件，修改源文件后需重新安装同步。
+PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装记录。源码 Skill 的修改会通过软链接生效；角色配置是生成文件，修改源文件后需重新安装同步。
 
 子仓可在统一 CLI 命令后添加 `--override-skills /absolute/overrides`，用该目录下的同名实现替换已有 `repo-*` Skills。入口及调度 Skill 不允许覆盖。此参数用于替换仓库知识，`--skills` 用于选择公共 cannbot-skills 仓，两者用途不同。
 
@@ -83,9 +83,9 @@ node script/bin/cannbot.js install ops-direct-invoke \
 
 ## 设计思想与入口
 
-插件的 [AGENTS.md](AGENTS.md) 是常驻工作区的通用 PM 指引，直接描述需求拆解、子 Agent 协作、工作流启动与多轮交付，不再通过 PM 角色文件转接。初始化时，安装器将其正文写入工作区 `AGENTS.md` 的插件管理区块，保留用户原有内容；Claude 使用 `CLAUDE.md`。重复初始化替换同一管理区块，不重复追加。
+插件的 [ops-direct-invoke Skill](skills/ops-direct-invoke/SKILL.md) 是主会话按算子任务加载的 PM 入口，负责需求对齐、流程编排与交付组织。PM 职责作用于承接完整任务的主会话，节点职责由子 Agent 角色和 task 定义。
 
-算子开发任务由 PM 加载 `ops-direct-invoke` Skill，按其中的要求执行。所有子 Agent 必须在 Workflow YAML 落盘后由 harness 拉起。`agents/` 只保留 `ops-direct-invoke-architect`、`ops-direct-invoke-developer`、`ops-direct-invoke-verifier` 三个真实 Agent，分别安装为 Codex 的 TOML 或 OpenCode、Claude 的 Markdown 角色配置。CANNBot-DSL 的“环境检查”“需求分析”“黑盒设计”“代码检视”等是节点职责，不是独立 Agent；静态工作流与动态实现子图的 `executor`/`verifier` 必须引用上述三个完整角色名，未知角色会在生成时拒绝。
+主会话从用户的原始算子需求进入该 Skill，完成需求与环境对齐后编排工作流。子 Agent 在 Workflow YAML 落盘后由 harness 拉起，按自身角色和节点任务执行，按需读取模板或脚本资源。`agents/` 定义 `ops-direct-invoke-architect`、`ops-direct-invoke-developer`、`ops-direct-invoke-verifier` 三个角色，分别安装为 Codex 的 TOML 或 OpenCode、Claude 的 Markdown 角色配置。CANNBot-DSL 的“环境检查”“需求分析”“黑盒设计”“代码检视”等节点按工作性质分配给这些角色。
 
 每个任务、每轮 Workflow 独立存放 YAML 和运行记录：
 
@@ -132,12 +132,12 @@ flowchart TD
 
 | 角色 | 职责 |
 |---|---|
-| [工作区 PM](AGENTS.md) | 理解用户目标、规划协作与多轮交付；不进入 task 图 |
+| [主会话 PM](skills/ops-direct-invoke/SKILL.md) | 理解用户目标、规划协作与多轮交付；不进入 task 图 |
 | [ops-direct-invoke-architect](agents/ops-direct-invoke-architect.md) | 需求、规格、黑盒设计、方案、实现规划与任务拆分 |
 | [ops-direct-invoke-developer](agents/ops-direct-invoke-developer.md) | 工作区、环境、代码实现与修复、精度和性能验证、文档及交付 |
 | [ops-direct-invoke-verifier](agents/ops-direct-invoke-verifier.md) | 需求/规格/方案/设计与通用验收，以及代码检视；不重复构建或运行测试 |
 
-节点通过 `executor` / `verifier` 名称引用安装后的客户端角色，不在 prompt 中额外读取角色文件。工作区常驻指引与运行期子 Agent 派发是两个层次；实际 provider 是否正确加载角色、Skill 和权限仍需真实调用验证。
+节点通过 `executor` / `verifier` 名称引用安装后的客户端角色，不在 prompt 中额外读取角色文件。主会话的 PM 入口与运行期子 Agent 派发是两个层次；实际 provider 是否正确加载角色、Skill 和权限仍需真实调用验证。
 
 执行者提供原始构建日志、本阶段测试结果（穿刺代表用例、正式交付全量）、源码/测试/构建产物哈希及实际加载路径，使用 [测试执行记录模板](skills/ops-direct-invoke/templates/测试执行记录.md)。验收者核对证据是否真实、完整、对应当前版本并独立检视代码；证据不足则失败，不代跑测试补证据。所有节点均按 [验收报告模板](skills/ops-direct-invoke/templates/验收报告.md) 生成 `<节点ID>-验收报告.md`，其中记录结论及具体修改意见。共享 acceptance 只列执行者交付件；验收报告由 verifier 在 procedure 中生成并检查，executor 根据回传反馈按需读取详情，不代写或等待它。
 
@@ -145,7 +145,7 @@ flowchart TD
 
 报告保留关键结论和证据路径，每次真实执行的输入/版本清单、原始日志与用例明细只存一份；后续节点引用并核对差异，每个验收者仍独立出具本阶段报告。返工依据 harness 回传的失败摘要，按需读取所引用报告的未解决项，并补充变更证据；版本变化使旧证据失效时重新验证。确定性阻塞未变时只记录条件复核，当前 harness 仍按预算重试，不能凭报告自动跳过重试。
 
-固定绑定采用与当前节点契约兼容的仓库能力：工程骨架由 `repo-op-templates` 承担，白盒方法由 `repo-test-develop` 承担。`ascendc-direct-invoke-template` 和 `ascendc-whitebox-design` 不再是默认任务的固定项；安装可用不等于必须调用。PM 为补充项核对完整契约，不向禁止交互和派发的节点绑定仍要求这些操作的 Skill，也不靠局部豁免后强行调用。
+固定绑定采用与当前节点契约兼容的仓库能力：工程骨架由 `repo-op-templates` 承担，白盒方法由 `repo-test-develop` 承担。PM 按任务需要选择补充 Skill，并核对其完整契约与节点的交互、派发及权限边界兼容。
 
 公共 Skill 的规则由来源仓维护；本插件只调整绑定与流程，不复制或覆盖其规则。已知 Ascend 950 路由组合问题见 [cannbot-skills #688](https://gitcode.com/cann/cannbot-skills/issues/688)。
 
@@ -161,7 +161,7 @@ flowchart TD
 
 ## 知识与范围
 
-Skill 正文及 references 仅包含自身职责，不互相调用或路由；跨 Skill 组合由 PM 或 task 的 approach/procedure 显式声明。引用处只保留加载条件、Skill 名称及按其要求执行，不复制内部步骤或规则。节点输入、产物路径和验收结果由 task 声明；资源目录引用用于定位文件，不代表调用其所属 Skill。公共领域 Skill 来自 vendor，harness 和统一安装器作为公共基础设施使用。
+PM 入口负责跨 Skill 的流程编排，task 的 approach/procedure 声明节点所需能力；仓库知识和领域 Skill 只维护自身职责，不承担 PM 调度或复制其他 Skill 的内部规则。节点输入、产物路径和验收结果由 task 声明；资源目录引用用于定位文件，不代表调用其所属 Skill。公共领域 Skill 来自 vendor，harness 和统一安装器作为公共基础设施使用。
 
 角色、task、脚本、仓库知识及交付模板均由本插件独立维护，安装与运行使用本目录声明的资产及公共依赖。
 
@@ -183,13 +183,12 @@ python3 plugins-official/ops-direct-invoke/skills/ops-direct-invoke-maintain/tes
 
 测试验证引导、组装、变量、DSL 设计与子图生成，以及启动参数和全部模板到 harness 的接口冒烟。harness 作为可信依赖，不在插件中重复测试重试、回滚与反馈状态机；也不固定节点数量、Skill 数量、业务顺序或提示词措辞。测试设计与边界见 [测试体系](skills/ops-direct-invoke-maintain/reference/tests.md)。测试通过不代表真实 Agent 行为或 NPU 算子验证已通过。
 
-安装与打包集成测试仍位于应用仓 `script/test/`，不属于本次迁移的插件回归测试。
+应用仓 `script/test/` 负责安装与打包集成测试，维护 Skill 内的 `test/ut/` 负责工作流回归。
 
 ## 目录与接口
 
 ```text
 ops-direct-invoke/
-├── AGENTS.md                       # 工作区 PM 的通用指引
 ├── README.md                       # 新特性、设计与功能
 ├── QUICKSTART.md                   # 安装与使用
 ├── agents/                         # architect / developer / verifier
@@ -206,7 +205,7 @@ ops-direct-invoke/
     │   ├── SKILL.md
     │   └── references/requirement-checklist.md
     ├── ops-direct-invoke/
-    │   ├── SKILL.md                 # 先生成引导，再选用模板
+    │   ├── SKILL.md                 # 主会话 PM 入口与算子流程
     │   ├── scripts/
     │   │   ├── generate_workflow_guide.py
     │   │   ├── assemble_workflow.py

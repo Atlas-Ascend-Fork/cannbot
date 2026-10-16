@@ -1,6 +1,6 @@
 ---
 name: ops-direct-invoke-maintain
-description: 维护 ops-direct-invoke 工作流的架构与设计思想。修改用户项目中的 AGENTS.md 或 CLAUDE.md 插件指引、客户端 agents 目录中的 ops-direct-invoke-* 角色、Skill 目录（.agents/skills/ 或客户端配置目录下的 skills/）中的 ops-direct-invoke、workflow-orchestrator 及本工作流关联 Skill、.cannbot/plugins/ops-direct-invoke/ 插件资产，以及维护 Skill 内的 test/、插件 README、QUICKSTART 等文档、安装与调度集成时，必须加载本 Skill。普通算子代码开发、任务产物和单轮工作流编排不触发。
+description: 维护 ops-direct-invoke 工作流的架构与设计思想。修改 ops-direct-invoke Skill 中的 PM 入口、客户端 agents 目录中的 ops-direct-invoke-* 角色、Skill 目录（.agents/skills/ 或客户端配置目录下的 skills/）中的本工作流关联 Skill、.cannbot/plugins/ops-direct-invoke/ 插件资产，以及维护 Skill 内的 test/、插件 README、QUICKSTART 等文档、安装迁移与 harness 调度集成时，必须加载本 Skill。普通算子代码开发、任务产物和单轮工作流编排不触发。
 ---
 
 # ops-direct-invoke 工作流维护
@@ -13,10 +13,9 @@ description: 维护 ops-direct-invoke 工作流的架构与设计思想。修改
 
 ```text
 <工作区>/
-├── AGENTS.md 或 CLAUDE.md           # 最外层 Agent 的 PM 指引
 ├── <Skill目录>/
 │   ├── ops-direct-invoke-maintain/  # 本维护 Skill
-│   ├── ops-direct-invoke/           # 流程入口、tasks、workflows、scripts、templates
+│   ├── ops-direct-invoke/           # 主会话 PM 入口、tasks、workflows、scripts、templates
 │   ├── workflow-orchestrator/       # harness 调度接口与执行能力
 │   ├── repo-*/                      # 仓库约定与工程能力
 │   └── <公共 Skill>/               # DSL、AscendC 等领域能力
@@ -29,9 +28,9 @@ description: 维护 ops-direct-invoke 工作流的架构与设计思想。修改
     └── <任务名>/workflow<序号>/     # 单轮输入、产物与运行状态
 ```
 
-Skill 目录可能是 `.agents/skills/`，也可能是客户端配置目录下的 `skills/`；角色配置由安装器按客户端要求生成。安装记录列出插件的指引、角色、Skill 和资产路径，用它定位实际文件，不假定固定扩展名或单一客户端布局。源码安装时 Skill 目录可能是软链接，打包安装时则可能是副本。
+Skill 目录可能是 `.agents/skills/`，也可能是客户端配置目录下的 `skills/`；角色配置由安装器按客户端要求生成。安装记录列出角色、Skill 和资产路径，用它定位实际文件，不假定固定扩展名或单一客户端布局。源码安装时 Skill 目录可能是软链接，打包安装时则可能是副本。
 
-下文用 `AGENTS.md` 指代插件的 PM 指引设计；客户端使用其他入口文件名时，同样适用。
+主会话通过已安装的 `ops-direct-invoke/SKILL.md` 加载 PM 职责，子 Agent 通过客户端角色配置承接节点任务。
 
 ## 整体架构
 
@@ -39,25 +38,24 @@ Skill 目录可能是 `.agents/skills/`，也可能是客户端配置目录下�
 
 | 模块 | 职责 |
 |---|---|
-| 项目指引（`AGENTS.md` 或 `CLAUDE.md`） | 最外层 Agent 的 PM 入口，负责需求对齐、任务规划和交付组织 |
 | 子 Agent 角色 | 仅定义架构师、开发者、验收者的身份、职责与权限，不绑定具体 Skill |
-| `ops-direct-invoke` Skill | 算子开发流程入口，组织 task、workflow 模板及组装与启动脚本 |
+| `ops-direct-invoke` Skill | 主会话的 PM 入口，负责需求对齐、任务规划和交付组织，组织 task、workflow 模板及组装与启动脚本 |
 | `repo-*` 与公共 Skill | 提供仓库约定、工作方法和领域能力 |
 | harness / `workflow-orchestrator` | 下发子 Agent 任务并执行工作流 |
 | 维护 Skill 内的 `test/` | 工作流维护后的脚本与接口回归验证 |
 | `README.md` / `QUICKSTART.md` | README 介绍结构、职责和设计意图；QUICKSTART 介绍安装与使用 |
-| 安装与来源配置 | 将指引、角色和 Skill 安装到项目中，维护能力来源与路径映射 |
+| 安装与来源配置 | 将角色和 Skill 安装到项目中，维护能力来源与路径映射，同步插件配置 |
 
 ## 基础设计思想
 
-- **PM 入口保持薄层。** 最外层 Agent 加载项目指引并承担需求对齐、规划和交付组织，具体工程工作交给子 Agent。
-- **工作区承接多种任务。** 完整算子开发只是其中一种。非算子开发需求由 PM 自由规划 Skill 和流程；算子开发需求必须加载 `ops-direct-invoke` Skill，严格按其要求组织。
-- **子 Agent 统一通过 harness 调度。** 无论任务类型如何，都不绕过 harness 直接拉起子 Agent。
+- **PM 按任务加载。** 主会话通过 `ops-direct-invoke` Skill 承接用户的算子任务，负责需求对齐、规划和交付组织；PM 职责仅在承接完整任务的主会话中生效。
+- **入口与节点隔离。** 非算子任务不受本插件的 PM 规则约束。已派发节点按自己的角色和 task 工作，读取入口目录下的模板或脚本不等于调用 PM 入口。
+- **本工作流的子 Agent 统一通过 harness 调度。** 不绕过 harness 直接拉起子 Agent，PM 不进入调度图。
 - **各层分工明确。** 角色定义职责与权限，Skill 提供工作方法，task 描述具体任务和交付契约，workflow 组织依赖关系，harness 负责执行调度。详细规则由对应模块维护，避免在 PM 入口重复展开。
 
 ### 分层与依赖方向
 
-分层的目的是让组件可以独立理解、复用和替换。PM 组织任务，workflow 组织依赖，task 组合角色与能力，角色和 Skill 不依赖自己被哪个阶段、哪个调用方使用。仓内知识文档不承担 Agent 调度职责；同层组件通过公开契约合作，不依赖彼此的内部步骤。
+分层的目的是让组件可以独立理解、复用和替换。PM 入口组织任务，workflow 组织依赖，task 组合角色与能力；子 Agent 角色和知识 Skill 不依赖自己被哪个阶段使用。PM 入口承载流程编排，仓内知识文档不承担 Agent 调度职责；各组件通过公开契约合作，不依赖彼此的内部步骤。
 
 工作流依赖能力名称和输入输出契约，不依赖某份 Skill 的章节、内部资源布局或具体仓库实现。详细的单一职责、扩展与替换原则见 [repo-* Skills](reference/repo-skills.md)。维护 Skill 需要理解跨模块关系以判断变更影响，因此可以引用各层设计；这种跨层视野不应注入普通执行任务。
 
@@ -65,13 +63,13 @@ Skill 目录可能是 `.agents/skills/`，也可能是客户端配置目录下�
 
 确定性的转换、输入检查和权限边界优先使用脚本、框架接口或客户端已有机制，避免仅靠 Agent 记住提示词。业务判断和设计理由由文档表达，不为难以机械判断的语义堆叠拦截器。harness 已提供的机制直接使用，不在工作流中重复实现或测试。
 
-原则用于保护职责和契约，不用于锁死实现。设计需要调整时，明确调整理由及对调用方的影响，同步相关模块资料；不要把旧版的文件名、挂载方式或检查清单当成永久限制。
+原则用于保护职责和契约，具体文件名、挂载方式与检查方法按设计需要调整。调整时明确理由及对调用方的影响，同步相关模块资料。
 
 ## 通用维护要求
 
 先检查相关 Skill 的软链接目标，并按需读取客户端配置目录中的 `cannbot-plugin.json` 确认插件归属和安装方式。源码安装下，编辑 Skill 链接中的文件会影响其源目录及使用该源码的其他工作区。
 
-项目指引文件的管理区块、客户端角色配置与插件资产是安装生成的文件，不等同于 Skill 软链接。维护可复用规则时定位其源文件和生成逻辑，不只修改安装副本；用户明确要求工作区局部调整时保留该范围。更新 PM 指引时保留管理区块之外的用户内容。安装记录用于定位，不靠手改记录完成同步。
+客户端角色配置与插件资产是安装生成的文件，不等同于 Skill 软链接。维护可复用规则时定位其源文件和生成逻辑，不只修改安装副本；用户明确要求工作区局部调整时保留该范围。安装器清理项目指引时只移除本插件的完整管理区块，保留区块外用户内容和其他插件指引，不删除整个项目文件。安装记录用于定位，不靠手改记录完成同步。
 
 新增 Skill 或在 task 中引用新 Skill 时，按来源处理：
 
@@ -104,7 +102,7 @@ python3 /absolute/skills/ops-direct-invoke-maintain/test/ut/test_all.py
 
 | 模块及涉及的修改 | 详细资料 |
 |---|---|
-| `AGENTS.md`：PM 入口、职责边界与任务分流 | [PM 入口](reference/agents-entry.md) |
+| `skills/ops-direct-invoke/SKILL.md`：PM 入口、职责边界与安装行为 | [PM 入口](reference/agents-entry.md) |
 | `agents/`：architect、developer、verifier 三个子 Agent 的职责、权限与协作 | [子 Agent](reference/subagents.md) |
 | `skills/ops-direct-invoke-maintain/test/`：维护回归、覆盖范围与完整运行方式 | [测试体系](reference/tests.md) |
 | `README.md`、`QUICKSTART.md`：文档分工与每次维护的一致性检查 | [文档](reference/documentation.md) |

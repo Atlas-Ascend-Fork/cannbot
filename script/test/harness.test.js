@@ -42,12 +42,13 @@ function install(box, tool, source, extra = []) {
 
 for (const source of ['repository', 'package']) {
   for (const tool of ['codex', 'opencode', 'claude']) {
-    test(`harness installs ${source} for ${tool} with workspace instructions and without a PM subagent`, (t) => {
+    test(`harness installs ${source} for ${tool} with a skill entry and without global PM instructions`, (t) => {
       const box = sandbox(t);
       const skills = install(box, tool, source);
       const clientDirectory = tool === 'codex' ? '.codex' : tool === 'opencode' ? '.opencode' : '.claude';
       const installedRegistry = JSON.parse(readFileSync(join(box.target, clientDirectory, 'cannbot-plugin.json'), 'utf8'));
       assert.deepEqual(installedRegistry.plugins.map((item) => item.plugin), [plugin]);
+      assert.equal(installedRegistry.plugins[0].instructions, null);
       assert.deepEqual(readdirSync(join(box.target, '.cannbot/plugins')), [plugin]);
       for (const name of [entry, 'workflow-orchestrator', ...localKnowledge,
         'ascendc-simt-tiling-design', 'ascendc-mc2-best-practice', 'cann-env-setup']) {
@@ -104,17 +105,9 @@ for (const source of ['repository', 'package']) {
       const extension = tool === 'codex' ? '.toml' : '.md';
       assert.deepEqual(readdirSync(agents).filter((name) => name.startsWith('ops-direct-invoke-')).sort(),
         ['architect', 'developer', 'verifier'].map((name) => `ops-direct-invoke-${name}${extension}`));
-      const instructionsPath = join(box.target, tool === 'claude' ? 'CLAUDE.md' : 'AGENTS.md');
-      const instructions = readFileSync(instructionsPath, 'utf8');
-      const sourceInstructions = readFileSync(join(repository, sourceDirectory, 'AGENTS.md'), 'utf8').trim();
-      assert.ok(instructions.includes(sourceInstructions));
-      assert.doesNotMatch(instructions, /ops-direct-invoke-pm/);
-      writeFileSync(instructionsPath, `user instructions\n\n${instructions}`);
+      for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(existsSync(join(box.target, name)), false);
       install(box, tool, source);
-      const reinstalled = readFileSync(instructionsPath, 'utf8');
-      assert.match(reinstalled, /^user instructions\n/);
-      assert.equal(reinstalled.split(sourceInstructions).length, 2);
-      assert.doesNotMatch(reinstalled, /ops-direct-invoke-pm/);
+      for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(existsSync(join(box.target, name)), false);
       if (source === 'package') {
         assert.equal(existsSync(join(skills, 'workflow-orchestrator/scripts/__pycache__')), false);
       }
@@ -126,6 +119,47 @@ for (const source of ['repository', 'package']) {
     });
   }
 }
+
+function legacyInstructions(box, tool) {
+  const block = `<!-- cannbot:${plugin}:start -->\nLegacy PM instructions\n<!-- cannbot:${plugin}:end -->`;
+  const other = '<!-- cannbot:other:start -->\nOther plugin\n<!-- cannbot:other:end -->';
+  const prefix = `用户自己的 PM 说明\r\n${other}\n\n`;
+  const suffix = '\n用户尾部内容  \n\n';
+  writeFileSync(join(box.target, 'AGENTS.md'), prefix + block + suffix + block);
+  writeFileSync(join(box.target, 'CLAUDE.md'), block);
+  const client = tool === 'codex' ? '.codex' : tool === 'claude' ? '.claude' : `.${tool}`;
+  const registryPath = join(box.target, client, 'cannbot-plugin.json');
+  const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
+  registry.plugins[0].instructions = tool === 'claude' ? 'CLAUDE.md' : 'AGENTS.md';
+  writeFileSync(registryPath, JSON.stringify(registry));
+  return { registryPath, expected: prefix + suffix };
+}
+
+for (const source of ['repository', 'package']) {
+  for (const tool of ['codex', 'opencode', 'claude', 'trae', 'dsh']) {
+    test(`upgrade ${source} for ${tool} retires only managed PM blocks in both instruction files`, (t) => {
+      const box = sandbox(t);
+      install(box, tool, source);
+      const { registryPath, expected } = legacyInstructions(box, tool);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        install(box, tool, source);
+        assert.equal(readFileSync(join(box.target, 'AGENTS.md'), 'utf8'), expected);
+        assert.equal(readFileSync(join(box.target, 'CLAUDE.md'), 'utf8'), '');
+        const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
+        assert.equal(registry.plugins[0].instructions, null);
+      }
+    });
+  }
+}
+
+test('upgrade preserves unmarked or incomplete user instructions', (t) => {
+  const box = sandbox(t);
+  const instructions = '<!-- cannbot:ops-direct-invoke:start -->\nUser-maintained PM instructions\n';
+  writeFileSync(join(box.target, 'AGENTS.md'), instructions);
+  install(box, 'codex', 'repository');
+  assert.equal(readFileSync(join(box.target, 'AGENTS.md'), 'utf8'), instructions);
+  assert.equal(existsSync(join(box.target, 'CLAUDE.md')), false);
+});
 
 test('harness knowledge overrides preserve the source and cannot replace scheduling', (t) => {
   const box = sandbox(t);
@@ -461,7 +495,9 @@ test('discovered workflow templates reproduce from tasks and reference installed
     for (const [index, node] of expected.nodes.entries()) {
       const ref = reference.nodes[index];
       if (!('yaml' in ref)) {
-        assert.deepEqual(node, ref);
+        const { template: childTemplate, ...frozen } = ref;
+        assert.deepEqual(node, frozen);
+        if (childTemplate) assert.ok(existsSync(resolve(dirname(output), ref.file)));
         continue;
       }
       const task = yamlValue(resolve(dirname(path), ref.yaml));
