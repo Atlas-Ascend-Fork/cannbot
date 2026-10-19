@@ -14,6 +14,7 @@ skills:
   - npu-arch
   - knowledge-query
   - ops-knowledge-ingest
+  - triton-mfu-analyzer
 permission:
   edit: allow
   bash: allow
@@ -35,7 +36,9 @@ permission:
 - **framework**: `torch`
 - **dsl**: `triton_ascend`
 - **backend**: `ascend`
-- **target_speedup**: 目标几何平均加速比，默认 `5`（同 config.json），可被 `triton_op_generator.config.json` 的 `target_speedup` 字段覆盖。
+- **metric_mode**: Phase 4 优化指标模式（`speedup` / `mfu`），Phase 0 按用户提示词判定（见「优化指标模式判定」节），决定 Phase 4 走加速比流程还是 MFU 流程。默认 `speedup`，可被 `triton_op_generator.config.json` 的 `metric_mode` 字段覆盖。
+- **target_speedup**: 目标几何平均加速比（`metric_mode==speedup` 时生效），默认 `5`（同 config.json），可被 `triton_op_generator.config.json` 的 `target_speedup` 字段覆盖。
+- **target_mfu**: 目标 MFU（%）（`metric_mode==mfu` 时生效），默认 `60`（同 config.json），可被 `triton_op_generator.config.json` 的 `target_mfu` 字段覆盖；口径为 **dtype 修正实测峰值**（`mfu_decompose.json` 的 `mfu_achievable_pct`）。
 - **npu_preflight**: `min_free_mb=49152`、`smi_timeout_seconds=5`（同 config.json，同规则覆盖）。
 
 ---
@@ -92,6 +95,15 @@ Phase 6: 会话导出          (session.jsonl + session.md)
   - 若用户显式提供，直接使用
   - 否则，从描述文件所在目录开始**向上级目录递归查找** `gpu_perf.csv`（最多向上 3 级）
   - 找不到 → 告警并在报告中注明"未找到 GPU 性能基线"
+
+### 优化指标模式判定（metric_mode，强制）
+
+- 提示词已含明确指标 → 直接采纳，不再询问：
+  - 含「优化到 xx_perf.json 性能的 X 倍 / 加速比 / 提速 / speedup」→ `metric_mode = "speedup"`；句中带数值倍数时提取为 `user_target_speedup`（优先级高于 config.json）
+  - 含「MFU / 算力利用率 / 优化到 X% MFU」→ `metric_mode = "mfu"`；句中带百分比数值时提取为 `user_target_mfu`（优先级高于 config.json，与 target_speedup 的覆盖规则对称）
+- 提示词无任何指标 → **必须使用 question/AskUserQuestion 工具让用户选择**（选项：speedup 加速比 / mfu 算力利用率），禁止替用户默认、禁止猜测
+- 无交互环境（批跑）且提示词无指标 → **B 类终止并报错**（metric_mode 无法判定），不降级不默认
+- `metric_mode` 写入 `{工作目录}/metric_mode.txt` 供 Phase 4/5 引用；Phase 0-3 两模式流程完全一致
 
 ### 工作目录创建
 
@@ -521,9 +533,13 @@ while iteration < max_iterations:
 
 ---
 
-## Phase 4: 性能优化与验证（迭代循环）
+## Phase 4: 性能优化与验证（迭代循环，按 metric_mode 分流）
 
 ⚠️ **Phase 4 是必须执行的阶段，禁止跳过。** Phase 3 验证通过后，无论性能数据如何，都必须进入 Phase 4 尝试优化。
+
+⚠️ **本阶段优化目标由 metric_mode 决定，且是该模式下唯一的优化目标、采纳判定与退出判据：**
+- **speedup 模式**：几何平均加速比，4.3.A 用 benchmark.py 测定。
+- **mfu 模式**：固定极限 case 的 MFU（`mfu_achievable_pct`），4.3.B 用 `triton-mfu-analyzer` skill 测定，全程不调用 benchmark.py（加速比只在 Phase 3.5 测一次，仅供报告引用）。
 
 ### 状态变量
 
@@ -541,13 +557,19 @@ excluded = []                 # 【版本作用域】本 code_version 下已判�
 fail_count = {}               # 【跨版本】各点累计"命中但无提升"次数；>=3 永久禁用
 banned_points = []            # 永久禁用编号；与 excluded 合并后作为 exclude_points 传入
 scan_complete = false         # 从 cursor=1 走完一整趟仍无命中 → true
-target_speedup = <从 config.json 读取> # 目标几何平均加速比⚠️重要指标
+target_speedup = <从 config.json 读取> # 目标几何平均加速比（metric_mode==speedup 生效）⚠️重要指标
+target_mfu = <config.json 读取>        # 目标 MFU（%，metric_mode==mfu 生效，dtype 修正实测峰值口径）⚠️重要指标
+baseline_mfu = None                    # 4.0b 测定的基线 MFU（Phase 3 代码在极限 case 上的 mfu_achievable_pct；仅 mfu 模式）
+best_mfu = 0.0                         # mfu 模式历史最佳 MFU
+# ── 统一判定量（4.4/4.6 一律用别名，按 metric_mode 取义）──
+# speedup 模式:  optimized_metric = optimized_speedup；best_metric = best_speedup；target_metric = target_speedup
+# mfu 模式:      optimized_metric = optimized_mfu（mfu_decompose 的 mfu_achievable_pct）；best_metric = best_mfu；target_metric = target_mfu
 best_code = ""
 best_speedup = 0.0
 baseline_code = Phase 3 产出的 generated_code.py
 phase3_last_iter = Phase 3 最后一次验证通过的 iter 编号 # 见 3.3 的记录
 improvement_made = false
-target_reached = false # 是否达到目标加速比
+target_reached = false # 是否达到目标指标（speedup 模式 best_speedup>=target_speedup / mfu 模式 best_mfu>=target_mfu）
 
 # IR 多轮迭代相关变量
 # 优化点 31（IR 分析）允许跨多个 Phase 4 轮次重复命中；其他优化点（1-30）单轮即过。
@@ -598,6 +620,20 @@ while opt_iteration < max_opt_iterations:
 ```
 
 ---
+
+### 4.0b MFU 基线测定（Phase 4 开始时执行一次，强制；仅 metric_mode==mfu）
+
+`speedup` 模式跳过本节，直接进入迭代循环。
+
+**执行方式**：调用 `triton-mfu-analyzer` skill（脚本参数、六步流程、五道闸细节以该 skill 的 SKILL.md 与 `$KB_ROOT/ops/triton/guides/tooling/` 参考为准，不在本文档重复）。本节只规定编排层的裁剪差异与判定门。
+
+1. **目录适配**：prepare_op_dir 把 `{工作目录}/output/iter_{phase3_last_iter}/` 下的 ref / impl / cases 落为 `model.py` / `model_new_ascendc.py` / 用例。
+2. **(case, 倍率) 极限搜索**：max_shape_probe 五道闸选出候选排序 → `mfu_grid.json`；取极限 case 写入 `extreme_case.jsonl` + `mfu_extreme_case`（case 号、倍率、shape）。
+3. **flops.py 编写 + 自检**：flops_generator 初稿 → 人工 review → `check_flops.py` 自检通过（tracer 对拍比值 ∈ [0.5,2]）→ `flops_checked = true`，**全 Phase 4 冻结禁止再改**；修复重试最多 2 次，仍失败 → 写 `failure_phase: "mfu_baseline"` 的 summary.json 终止。
+4. **峰值标定**：peak_calib 按 dtype 出 `peak.json`（冻结）。
+5. **基线测定**：mfu_decompose 对 Phase 3 代码在极限 case 上测 `baseline_mfu`；写 `mfu_baseline_log.md`。
+
+**结构性失败处理**（输出 shape 不符 / NaN 结构性错位等"少算工作"证据，典型形态：实现把算子宽度硬编码，放大 shape 上静默截断 K/N）：该 case 的 MFU 数字作废，禁止作为 baseline。回到 `mfu_grid.json` 候选排序，用 `check_scaled_point.py` 逐点校验，取**下一个通过正确性校验的点**重选极限 case（更新 `extreme_case.jsonl` / `mfu_extreme_case`，在 `mfu_baseline_log.md` 标注重选原因）后重测；全部 s>1 点非法 → 落回 s=1 原始宽度最优点。
 
 ### 4.1 代码分析 + 优化策略 + 代码重写
 
@@ -699,7 +735,7 @@ while opt_iteration < max_opt_iterations:
 
 ---
 
-### 4.3 性能测试（基线复用 + 优化侧单次执行）
+### 4.3.A 性能测试——speedup 模式（基线复用 + 优化侧单次执行）
 
 **前置断言（强制）**：
 
@@ -750,6 +786,11 @@ while opt_iteration < max_opt_iterations:
   集合相同，可直接对比。若出现集合不一致（兼容路径），应直接判优化失败，不写入比较数值。
 
   ── 4.4 结果判定 ──────────────────────────────────
+  **统一判定量（按 metric_mode 取义，本节与 4.6 一律用别名）**：
+  下文 `optimized_metric` / `best_metric` / `baseline_metric` / `target_metric` 分别为——
+    speedup 模式: optimized_speedup / best_speedup / baseline_speedup / target_speedup
+    mfu 模式:     optimized_mfu（mfu_decompose.json 的 mfu_achievable_pct）/ best_mfu / baseline_mfu / target_mfu
+  本节所有 `optimized_speedup > baseline_speedup` 判断在 mfu 模式下即 `optimized_mfu > baseline_mfu`。
   **前置检查**：
   - 若 `{current_iter_dir}/optimized_perf_result.json` 不存在或读取失败
     （通常意味着 4.3 被 L1 拒绝、benchmark 未实际产出 JSON），跳过本步骤直接
@@ -786,7 +827,7 @@ while opt_iteration < max_opt_iterations:
 
   ── 4.5 分析决策 (验证失败时) ─────────────────────
   A 类 (优化引入逻辑错误) → 回退，调整策略，普通轮 / simulator 轮 opt_iteration++（IR 轮 ir_iteration 已在 4.1 自增），continue
-  B 类 (环境错误) → 终止
+  B 类 (环境错误，含 NPU 不可用、benchmark/msprof 崩溃、triton-mfu-analyzer skill 缺失、metric_mode 无法判定) → 终止
   C 类 (无法继续) → 终止
 
   普通轮 / simulator 轮：opt_iteration++；IR 轮：ir_iteration 已在 4.1 自增
@@ -835,6 +876,18 @@ while opt_iteration < max_opt_iterations:
   → 优化失败（做完所有尝试 + simulator 采集后没有效果），break，进入 Phase 5（最终代码 = Phase 3 基线）
 
 ````
+
+### 4.3.B MFU 测定——mfu 模式（固定极限 case，每轮执行）
+
+进入条件：`metric_mode == "mfu"`。**前置断言（强制）**：进入前重新读取 `verify_result_optimized.json`，确认 `passed_cases == total_cases > 0`（4.2 优化侧全 case 闸）；另外还必须通过 4.2 的「MFU 极限 case 精度验证」闸（当前轮 `optimized_code.py` 在 `extreme_case.jsonl` 的极限 case 上 `passed == total == 1`）。
+
+**执行方式**：调用 `triton-mfu-analyzer` skill 对固定极限 case 测定 MFU（采集/拆解的脚本参数以该 skill 的 SKILL.md 为准）。**禁止在本步骤调用 benchmark.py**。编排层传入的裁剪约束：
+
+- 工作目录 `{工作目录}/output/{current_iter_dir}/mfu/{op_name}/`：ref = torch 参考，**cases = 4.0b 固定的 `extreme_case.jsonl`（单 case）**，impl = 当轮 `optimized_code.py`。
+- **复用 4.0b 冻结产物**：flops.py（`flops_checked==true` 后禁止重写）、peak.json——分子与峰值变了 MFU 不可比。
+- **本轮指标 `optimized_mfu` = `mfu_decompose.json` 中该 case 的 `mfu_achievable_pct`**（dtype 修正实测峰值口径，与 `target_mfu` 同口径，作 4.4 判定与 4.6 退出门的唯一数值）。
+
+**基线可比性**：`baseline_mfu` 由 4.0b Step 5 用**同一脚本链 + 同一份 peak.json / flops.py / extreme_case.jsonl** 对 Phase 3 代码测出，口径一致可直接对比。
 
 ### Phase 4 终局处理
 
@@ -897,6 +950,7 @@ while opt_iteration < max_opt_iterations:
   "gen_iterations": 2,
   "opt_iterations": 1,
   "optimized": true,
+  "metric_mode": "speedup",
   "target_speedup": 2.0,
   "target_reached": true,
   "best_speedup": 2.15,
@@ -940,9 +994,13 @@ while opt_iteration < max_opt_iterations:
 
 **字段说明**：
 
-- `target_speedup`: 目标几何平均加速比，读取自 `config.json` 的 `target_speedup` 字段
-- `target_reached`: 是否达到目标加速比（optimized_speedup >= target_speedup）
-- `best_speedup`: Phase 4 历史最佳几何平均加速比
+- `metric_mode`: 本任务的优化指标模式（`speedup` / `mfu`），透传自 `{工作目录}/metric_mode.txt`，决定 4.6/5 的目标与达标判据口径
+- `target_speedup`: 目标几何平均加速比，读取自 `config.json` 的 `target_speedup` 字段（`metric_mode==speedup` 时生效）
+- `target_mfu`: 目标 MFU（%），读取自 `config.json` 的 `target_mfu` 字段；口径为 dtype 修正实测峰值（`mfu_decompose.json` 的 `mfu_achievable_pct`）(`metric_mode==mfu` 时生效)
+- `target_reached`: 是否达到目标指标（speedup 模式 optimized_speedup >= target_speedup / mfu 模式 optimized_mfu >= target_mfu）
+- `best_speedup`: Phase 4 历史最佳几何平均加速比（speedup 模式）
+- `best_mfu`: Phase 4 历史最佳 MFU（%）（mfu_decompose 的 `mfu_achievable_pct`，mfu 模式）
+- `baseline_mfu`: 4.0b 测定的基线 MFU（%）（mfu 模式，用于评估优化幅度）
 - `speedup_vs_torch`: **几何平均**聚合 = `(∏ s_i)^(1/n)`（仅对通过且 `s_i` 为有限正数的 shape）；全部异常时为 `null`
 - `speedup_vs_baseline`: Phase 4 时 = `optimized.speedup_vs_torch / baseline.speedup_vs_torch`（两个几何平均之比）
 - `passed_cases` / `failed_cases`: 多 shape 时的通过 / 失败计数（策略 A 成功时应为 total / 0）

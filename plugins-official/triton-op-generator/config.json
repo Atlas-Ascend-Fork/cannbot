@@ -1,5 +1,6 @@
 {
   "target_speedup": 5,
+  "target_mfu": 60,
   "npu_preflight": {
     "min_free_mb": 49152,
     "smi_timeout_seconds": 5
