@@ -19,10 +19,14 @@ created_at: "{ISO-8601 时间}"
 | 字段 | 值 | 说明 |
 |------|-----|------|
 | HCCL_ROOT | | HCCL 源码路径（需含 src/ops/） |
+| HCOMM_CODE_HOME | | HCOMM 源码根（HVM 位于 test/hccl_vm） |
+| HCCL_CODE_HOME | | HVM 构建时显式设置为已确认的 HCCL_ROOT |
+| HCCL_VM_PATH | | 固定为 ${HCOMM_CODE_HOME}/test/hccl_vm |
+| build_pkg.sh | | AICPU 候选统一构建安装部署入口 |
 | HCOMM_DOCS | | HCOMM 文档路径（需含 comm_op_dev_guide/） |
 | CANN_HOME | | CANN Toolkit 安装路径 |
 | src/ops 目录 | | src/ops/ 是否存在（标准算子开发目录） |
-| build.sh | | HCCL 仓 build.sh 是否存在（编译入口） |
+| build.sh | | HCCL 仓 build.sh 是否存在（由 HVM build_pkg.sh 内部调用） |
 
 ## 检查结果
 

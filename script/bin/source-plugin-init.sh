@@ -6,6 +6,35 @@
 
 set -euo pipefail
 
+# Keep this requirement in sync with package.json engines.node.
+MIN_NODE_MAJOR=20
+
+node_error() {
+  printf 'cannbot: %s\n' "$1" >&2
+  printf '请安装 Node.js >=%s，确保 node 在当前终端的 PATH 中可用，并运行 node --version 确认后重试。\n' "$MIN_NODE_MAJOR" >&2
+  printf '安装指引：https://nodejs.org/en/download\n' >&2
+  exit 1
+}
+
+check_node() {
+  local version major
+  if ! command -v node >/dev/null 2>&1; then
+    node_error "未找到 Node.js，安装器要求 Node.js >=${MIN_NODE_MAJOR}。"
+  fi
+  if ! version="$(node --version 2>&1)"; then
+    node_error "无法运行 Node.js：${version}"
+  fi
+  if [[ ! "$version" =~ ^v([0-9]+)\. ]]; then
+    node_error "无法识别 Node.js 版本：${version}"
+  fi
+  major="${BASH_REMATCH[1]}"
+  if (( 10#$major < MIN_NODE_MAJOR )); then
+    node_error "当前 Node.js 版本为 ${version}，安装器要求 Node.js >=${MIN_NODE_MAJOR}。"
+  fi
+}
+
+check_node
+
 PLUGIN_DIR="$(cd "${1:?plugin directory is required}" && pwd)"
 shift
 PLUGIN_ID="$(node -p 'require(process.argv[1]).name' "${PLUGIN_DIR}/.claude-plugin/plugin.json")"

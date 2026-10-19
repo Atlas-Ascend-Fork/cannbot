@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
+# -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms of the
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 """Unit tests for the AICPU task artifact gate."""
 
 from __future__ import annotations
@@ -205,7 +211,9 @@ class TaskFixture:
         )
         self.write_doc("DEVELOPMENT_LOG", fields)
 
-    def write_doc(self, name: str, fields: dict[str, object], body: str = "evidence recorded") -> None:
+    def write_doc(
+        self, name: str, fields: dict[str, object], body: str = "evidence recorded"
+    ) -> None:
         self.docs[name] = fields
         path = self.task_dir / GATE.ARTIFACTS[name].path
         path.write_text(frontmatter(fields, body), encoding="utf-8")
@@ -248,8 +256,16 @@ class TaskFixture:
         for name, fields in self.docs.items():
             path = self.task_dir / GATE.ARTIFACTS[name].path
             identity = GATE.Validator.artifact_identity(name, fields)
-            owner = fields.get("latest_owner") if name == "HANDOFF_LOG" else fields.get("owner")
-            status = fields.get("latest_status") if name == "HANDOFF_LOG" else fields.get("status")
+            owner = (
+                fields.get("latest_owner")
+                if name == "HANDOFF_LOG"
+                else fields.get("owner")
+            )
+            status = (
+                fields.get("latest_status")
+                if name == "HANDOFF_LOG"
+                else fields.get("status")
+            )
             artifacts[name] = {
                 "path": GATE.ARTIFACTS[name].path,
                 "owner": owner,
@@ -301,7 +317,48 @@ class TaskFixture:
         )
         self.write_doc("REVIEW", fields)
 
+    def write_estimate(self) -> Path:
+        directory = self.external_evidence_root / "estimate"
+        directory.mkdir(exist_ok=True)
+        files = {}
+        for key in (
+            "candidate_package",
+            "cluster",
+            "test_log",
+            "plugin_log",
+            "profiling",
+            "trace",
+        ):
+            path = directory / key
+            path.write_text(f"synthetic {key} evidence\n", encoding="utf-8")
+            files[key] = {"path": str(path), "sha256": sha256(path)}
+        data = {
+            "schema_version": 1,
+            "status": "SUCCESS",
+            "source_identity": self.current_identity,
+            "operator": "allreduce",
+            "dtype": "int32",
+            "comm_domain": "112",
+            "expected_algorithm": "InsAllReduceExample",
+            "observed_algorithm": "InsAllReduceExample",
+            "makespan_us": 2500.5,
+            "parameters": {
+                "np": 1,
+                "begin": "1G",
+                "end": "1G",
+                "warmup": 0,
+                "iterations": 1,
+                "check": 0,
+            },
+            "exit_codes": {"start": 0, "mock_comm": 0, "mpirun": 0, "estimate": 0},
+            "files": files,
+        }
+        path = directory / "estimate.json"
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return path
+
     def write_test_report(self) -> None:
+        estimate = self.write_estimate()
         fields = self._common("TEST_REPORT", "hccl-verifier")
         fields.update(
             status="PASS",
@@ -317,56 +374,64 @@ class TaskFixture:
             identity_match=True,
             environment_clean=True,
             test_failure_count=0,
+            estimate_status="SUCCESS",
+            estimate_source_identity=self.current_identity,
+            estimate_comm_domain="112",
+            estimate_evidence_path=str(estimate),
+            estimate_evidence_sha256=sha256(estimate),
             created_at="2026-09-15T13:00:00+08:00",
         )
         self.write_doc("TEST_REPORT", fields)
 
     def _build_calls(self) -> list[dict[str, object]]:
-        return [
-            self.call(
+        stages = (
+            (
                 "architect-1",
                 "hccl-architect",
                 "DESIGN_READY",
-                CallEvidence(
-                    self.design_identity,
-                    self.task_outputs(
-                        "TASK_SPEC.md",
-                        "DATAFLOW_SPEC.md",
-                        "DESIGN.md",
-                        "PLAN.md",
-                        "TEST_PLAN.md",
-                        "HANDOFF.md",
-                    ),
+                self.design_identity,
+                self.task_outputs(
+                    "TASK_SPEC.md",
+                    "DATAFLOW_SPEC.md",
+                    "DESIGN.md",
+                    "PLAN.md",
+                    "TEST_PLAN.md",
+                    "HANDOFF.md",
                 ),
             ),
-            self.call(
+            (
                 "verifier-baseline-1",
                 "hccl-verifier",
                 "BASELINE_READY",
-                CallEvidence(self.design_identity, self.task_outputs("BASELINE_REPORT.md", "HANDOFF.md")),
+                self.design_identity,
+                self.task_outputs("BASELINE_REPORT.md", "HANDOFF.md"),
             ),
-            self.call(
+            (
                 "developer-1",
                 "hccl-developer",
                 "IMPLEMENTED",
-                CallEvidence(
-                    self.current_identity,
-                    self.task_outputs("LOG.md", "HANDOFF.md")
-                    + ["src/ops/all_reduce/template/aicpu/new.cc"],
-                ),
+                self.current_identity,
+                self.task_outputs("LOG.md", "HANDOFF.md")
+                + ["src/ops/all_reduce/template/aicpu/new.cc"],
             ),
-            self.call(
+            (
                 "reviewer-1",
                 "hccl-reviewer",
                 "REVIEW_PASS",
-                CallEvidence(self.current_identity, self.task_outputs("REVIEW.md", "HANDOFF.md")),
+                self.current_identity,
+                self.task_outputs("REVIEW.md", "HANDOFF.md"),
             ),
-            self.call(
+            (
                 "verifier-test-1",
                 "hccl-verifier",
                 "TEST_PASS",
-                CallEvidence(self.current_identity, self.task_outputs("TEST_REPORT.md", "HANDOFF.md")),
+                self.current_identity,
+                self.task_outputs("TEST_REPORT.md", "HANDOFF.md"),
             ),
+        )
+        return [
+            self.call(call_id, role, state, CallEvidence(identity, outputs))
+            for call_id, role, state, identity, outputs in stages
         ]
 
     def _common(self, artifact: str, owner: str) -> dict[str, object]:
@@ -430,7 +495,6 @@ class ArtifactGateTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertTrue(json.loads(result.stdout)["ok"])
 
-
     def test_complete_task_passes(self) -> None:
         fixture = TaskFixture(self.root)
         validator = self.validate(fixture, "COMPLETE")
@@ -489,7 +553,9 @@ class ArtifactGateTests(unittest.TestCase):
             with self.subTest(invalid_root=invalid_root):
                 index = json.loads(index_path.read_text(encoding="utf-8"))
                 index["external_evidence_roots"] = [invalid_root]
-                index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+                index_path.write_text(
+                    json.dumps(index, indent=2) + "\n", encoding="utf-8"
+                )
                 validator = GATE.Validator(fixture.task_dir)
                 validator.load_index()
                 self.assertIn("INDEX_EXTERNAL_ROOT", self.codes(validator))
@@ -504,7 +570,9 @@ class ArtifactGateTests(unittest.TestCase):
     def test_index_hash_mismatch_is_rejected(self) -> None:
         fixture = TaskFixture(self.root)
         path = fixture.task_dir / "environment.md"
-        path.write_text(path.read_text(encoding="utf-8") + "changed\n", encoding="utf-8")
+        path.write_text(
+            path.read_text(encoding="utf-8") + "changed\n", encoding="utf-8"
+        )
         validator = self.validate(fixture, "COMPLETE")
         self.assertIn("INDEX_HASH", self.codes(validator))
 
@@ -515,7 +583,9 @@ class ArtifactGateTests(unittest.TestCase):
 
     def test_missing_agent_call_is_rejected(self) -> None:
         fixture = TaskFixture(self.root)
-        fixture.calls = [call for call in fixture.calls if call["target_state"] != "REVIEW_PASS"]
+        fixture.calls = [
+            call for call in fixture.calls if call["target_state"] != "REVIEW_PASS"
+        ]
         fixture.write_index()
         validator = self.validate(fixture, "COMPLETE")
         self.assertIn("CALL_REQUIRED", self.codes(validator))
@@ -554,7 +624,9 @@ class ArtifactGateTests(unittest.TestCase):
     def test_stale_reports_must_be_explicitly_invalidated(self) -> None:
         fixture = TaskFixture(self.root)
         fixture.current_identity = "main@candidate-2+diff:5678"
-        fixture.rewrite_doc("DEVELOPMENT_LOG", output_source_identity=fixture.current_identity)
+        fixture.rewrite_doc(
+            "DEVELOPMENT_LOG", output_source_identity=fixture.current_identity
+        )
         fixture.calls.append(
             fixture.call(
                 "developer-2",
@@ -573,11 +645,168 @@ class ArtifactGateTests(unittest.TestCase):
 
         fixture.invalidated = [
             {"artifact": "REVIEW", "path": "REVIEW.md", "reason": "source changed"},
-            {"artifact": "TEST_REPORT", "path": "TEST_REPORT.md", "reason": "source changed"},
+            {
+                "artifact": "TEST_REPORT",
+                "path": "TEST_REPORT.md",
+                "reason": "source changed",
+            },
         ]
         fixture.write_index({"REVIEW": False, "TEST_REPORT": False})
         validator = self.validate(fixture, "IMPLEMENTED")
         self.assertEqual([], validator.problems)
+
+    def change_estimate(self, fixture: TaskFixture, **updates: object) -> None:
+        path = Path(fixture.docs["TEST_REPORT"]["estimate_evidence_path"])
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.update(updates)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        fixture.rewrite_doc("TEST_REPORT", estimate_evidence_sha256=sha256(path))
+        fixture.write_index()
+
+    def test_estimate_is_required_for_test_pass_and_complete(self) -> None:
+        for state in ("TEST_PASS", "COMPLETE"):
+            for status in ("FAILED", "NOT_RUN"):
+                with self.subTest(state=state, status=status):
+                    fixture = TaskFixture(self.root / f"{state}-{status}")
+                    fixture.set_state(state)
+                    fixture.rewrite_doc("TEST_REPORT", estimate_status=status)
+                    fixture.write_index()
+                    self.assertIn(
+                        "ESTIMATE_STATUS", self.codes(self.validate(fixture, state))
+                    )
+
+    def test_old_report_without_estimate_cannot_complete(self) -> None:
+        fixture = TaskFixture(self.root)
+        fields = {
+            key: value
+            for key, value in fixture.docs["TEST_REPORT"].items()
+            if not key.startswith("estimate_")
+        }
+        fixture.write_doc("TEST_REPORT", fields)
+        fixture.write_index()
+        codes = self.codes(self.validate(fixture, "COMPLETE"))
+        self.assertIn("ARTIFACT_FIELD", codes)
+        self.assertIn("ESTIMATE_STATUS", codes)
+
+    def test_stale_estimate_is_rejected_even_with_current_test_identity(self) -> None:
+        fixture = TaskFixture(self.root)
+        self.change_estimate(fixture, source_identity=fixture.design_identity)
+        self.assertIn(
+            "ESTIMATE_IDENTITY", self.codes(self.validate(fixture, "COMPLETE"))
+        )
+
+    def test_estimate_report_identity_must_be_current(self) -> None:
+        fixture = TaskFixture(self.root)
+        fixture.rewrite_doc(
+            "TEST_REPORT", estimate_source_identity=fixture.design_identity
+        )
+        fixture.write_index()
+        self.assertIn(
+            "ESTIMATE_IDENTITY", self.codes(self.validate(fixture, "COMPLETE"))
+        )
+
+    def test_estimate_algorithm_mismatch_is_rejected(self) -> None:
+        fixture = TaskFixture(self.root)
+        self.change_estimate(fixture, observed_algorithm="OtherAlgorithm")
+        self.assertIn(
+            "ESTIMATE_ALGORITHM", self.codes(self.validate(fixture, "COMPLETE"))
+        )
+
+    def test_user_selected_estimate_domain_is_allowed_with_np_one(self) -> None:
+        fixture = TaskFixture(self.root)
+        fixture.rewrite_doc("TEST_REPORT", estimate_comm_domain="122")
+        self.change_estimate(fixture, comm_domain="122")
+        self.assertEqual([], self.validate(fixture, "COMPLETE").problems)
+
+    def test_estimate_domain_must_match_report(self) -> None:
+        fixture = TaskFixture(self.root)
+        self.change_estimate(fixture, comm_domain="122")
+        self.assertIn("ESTIMATE_COMM", self.codes(self.validate(fixture, "COMPLETE")))
+
+    def test_estimate_fixed_parameters_and_exit_codes_are_enforced(self) -> None:
+        fixture = TaskFixture(self.root)
+        path = Path(fixture.docs["TEST_REPORT"]["estimate_evidence_path"])
+        original = json.loads(path.read_text(encoding="utf-8"))
+        for key, value in {
+            "np": 2,
+            "begin": "1M",
+            "end": "2G",
+            "warmup": 1,
+            "iterations": 2,
+            "check": 1,
+        }.items():
+            with self.subTest(parameter=key):
+                self.change_estimate(
+                    fixture, parameters={**original["parameters"], key: value}
+                )
+                self.assertIn(
+                    "ESTIMATE_PARAMETERS",
+                    self.codes(self.validate(fixture, "COMPLETE")),
+                )
+        self.change_estimate(fixture, parameters=original["parameters"])
+        for key in original["exit_codes"]:
+            with self.subTest(exit_code=key):
+                self.change_estimate(
+                    fixture, exit_codes={**original["exit_codes"], key: 1}
+                )
+                self.assertIn(
+                    "ESTIMATE_EXIT", self.codes(self.validate(fixture, "COMPLETE"))
+                )
+
+    def test_invalid_estimate_times_are_rejected(self) -> None:
+        fixture = TaskFixture(self.root)
+        invalid_values = (
+            None,
+            True,
+            False,
+            "2500",
+            [],
+            {},
+            0,
+            -1,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        )
+        for value in invalid_values:
+            with self.subTest(makespan=value):
+                self.change_estimate(fixture, makespan_us=value)
+                self.assertIn(
+                    "ESTIMATE_TIME", self.codes(self.validate(fixture, "COMPLETE"))
+                )
+
+    def test_positive_finite_estimate_times_are_allowed(self) -> None:
+        fixture = TaskFixture(self.root)
+        for value in (1, 0.25, 10**400):
+            with self.subTest(makespan=value):
+                self.change_estimate(fixture, makespan_us=value)
+                self.assertEqual([], self.validate(fixture, "COMPLETE").problems)
+
+    def test_missing_estimate_manifest_is_rejected(self) -> None:
+        fixture = TaskFixture(self.root)
+        Path(fixture.docs["TEST_REPORT"]["estimate_evidence_path"]).unlink()
+        self.assertIn(
+            "ESTIMATE_MISSING", self.codes(self.validate(fixture, "COMPLETE"))
+        )
+
+    def test_missing_or_tampered_estimate_raw_evidence_is_rejected(self) -> None:
+        fixture = TaskFixture(self.root)
+        directory = fixture.external_evidence_root / "estimate"
+        (directory / "plugin_log").write_text("altered\n", encoding="utf-8")
+        (directory / "profiling").unlink()
+        codes = self.codes(self.validate(fixture, "COMPLETE"))
+        self.assertIn("ESTIMATE_HASH", codes)
+        self.assertIn("ESTIMATE_MISSING", codes)
+
+    def test_estimate_evidence_cannot_escape_external_roots(self) -> None:
+        fixture = TaskFixture(self.root)
+        path = Path(fixture.docs["TEST_REPORT"]["estimate_evidence_path"])
+        data = json.loads(path.read_text(encoding="utf-8"))
+        outside = self.root / "outside.log"
+        outside.write_text("evidence\n", encoding="utf-8")
+        data["files"]["test_log"] = {"path": str(outside), "sha256": sha256(outside)}
+        self.change_estimate(fixture, files=data["files"])
+        self.assertIn("ESTIMATE_PATH", self.codes(self.validate(fixture, "COMPLETE")))
 
     def test_unresolved_template_placeholder_is_rejected(self) -> None:
         fixture = TaskFixture(self.root)
@@ -600,6 +829,7 @@ class ArtifactGateTests(unittest.TestCase):
         validator = GATE.Validator(fixture.task_dir)
         validator.validate_state(state)
         return validator
+
 
 if __name__ == "__main__":
     unittest.main()

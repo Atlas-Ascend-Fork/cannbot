@@ -38,7 +38,7 @@ HCCLBot 负责引擎判定、角色调度、状态检查、回退和最终汇报
 
 ## 工作目录
 
-本项目工作目录是用户启动客户端的项目目录。HCCL 和 HCOMM 源码仓由 `hccl-env-setup` 准备，算子源码位于 `${HCCL_ROOT}/src/ops/{op_type}/`。
+本项目工作目录是用户启动客户端的项目目录。优先复用用户已确认的 HCCL、HCOMM 源码仓和 CANN 安装，仅在依赖缺失时按需准备。算子源码位于 `${HCCL_ROOT}/src/ops/{op_type}/`。
 
 - AICPU 任务文档：`${HCCL_ROOT}/src/ops/{op_type}/docs/{task_id}/`
 - `init.sh` 只安装 Plugin、Skills 和 Agents，不探测或修改 HCCL 运行环境。
@@ -67,10 +67,11 @@ HCCLBot 必须使用 [流程策略校验器](workflows/scripts/workflow_policy.p
 
 AICPU 任务必须先完成环境门禁：
 
-1. 加载 `hccl-env-setup`，按其约束准备 HCCL/HCOMM/CANN；任何下载、安装、拉取或覆盖都遵守用户授权。
-2. 从环境准备结果取得 `{env_file}` 并加载；不得猜测 HCCL、HCOMM 或 CANN 路径。
-3. 加载 `hccl-env-check`，把检查结果写入任务的 `environment.md`。
-4. 确认目标 HCCL 目录是 Git 仓、处于具名分支，并记录 HEAD 与工作区状态。detached HEAD 或非 Git 目录必须明确记录。
+1. 优先取得用户明确提供的路径、已确认的环境文件或已加载的环境变量。输入缺失或相互冲突时返回具体缺项，不猜测 HCCL、HCOMM 或 CANN 路径，不扫描家目录或系统安装位置。
+2. 加载已确认的 `{env_file}`；若只有已确认路径，则据此设置环境变量并生成供后续 Agent 加载的环境文件。环境工作目录 `WORKSPACE` 必须显式确认，不默认等于插件安装目录。
+3. 加载 `hccl-env-check` 执行只读检查，把实际路径、命令、退出码和结果写入任务的 `environment.md`。已有环境满足要求时直接复用，不重复 clone、pull 或安装；CANN 的 workspace 路径约束按 Skill 的非阻塞 `WARNING` 处理。
+4. 只有检查确认依赖缺失时，才按需使用 `hccl-env-setup` 补齐；下载、安装、拉取或覆盖遵守用户授权。其脚本采用 `${WORKSPACE}/hccl`、`${WORKSPACE}/hcomm` 和 `${WORKSPACE}/Ascend` 布局，已有路径不符合该布局时不得为套用脚本而额外 clone 或切换仓库，应保留已确认路径并只补缺项。
+5. 补齐后从准备结果取得实际 `{env_file}`，重新加载并复检；各 Agent 在独立 Shell 中执行时也须加载该文件。确认目标 HCCL 目录是 Git 仓、处于具名分支，并记录 HEAD 与工作区状态。detached HEAD 或非 Git 目录必须明确记录。
 
 只有环境记录明确通过才能进入后续阶段；失败时报告证据并停止。
 
@@ -99,7 +100,7 @@ AICPU 必须完整读取并执行 [aicpu-multi-agent-workflow.md](workflows/aicp
 | `DESIGN_READY` | Verifier：旧包保全与基线 | `BASELINE_READY` |
 | `BASELINE_READY` | Developer：实现 | `IMPLEMENTED` |
 | `IMPLEMENTED` | Reviewer：独立检视 | `REVIEW_PASS` |
-| `REVIEW_PASS` | Verifier：候选构建与双轨测试 | `TEST_PASS` |
+| `REVIEW_PASS` | Verifier：候选构建、双轨测试与 estimate 性能估算 | `TEST_PASS` |
 | `TEST_PASS` | HCCLBot：同身份门禁复核 | `COMPLETE` |
 
 HCCLBot 必须读取产物内容和身份字段，并执行流程策略校验与自动产物门禁后再推进状态，不能只检查文件存在。每次调用保留不可复用的调用 ID 和实际 changed paths；失败流转、三轮上限、共享环境串行约束和完成条件完全遵循 AICPU 工作流文件。
@@ -129,6 +130,8 @@ HCCLBot 必须读取产物内容和身份字段，并执行流程策略校验与
 
 最终汇报至少包含引擎、任务 ID、源码身份、代码路径、各阶段状态、有效报告和原始证据路径、失败/阻塞项及未验证范围。
 
+必须呈现 `TEST_REPORT.md` 中的“算法性能估算”：目标算法、实际组网（默认 112，继承用户指定需求）、数据类型/数据量、估算算法耗时、主要观察、适用范围与证据路径。未执行、失败或未命中时明确报告原因并保持阻塞，不能遗漏估算后宣布完成。estimate 是仿真估算，完成估算不等于性能收益 PASS；执行细节由 `hccl-test-tool-hvm` 提供，HCCLBot 不自行执行。
+
 ## 参考入口
 
 | 用途 | 入口 |
@@ -139,4 +142,4 @@ HCCLBot 必须读取产物内容和身份字段，并执行流程策略校验与
 | AICPU 产物模板 | [workflows/templates/](workflows/templates/) |
 | AICPU 技术能力 | `hccl-aicpu-design`、`hccl-aicpu-best-practice`、`hccl-aicpu-debug`、`hccl-aicpu-perf-optimize`、`hccl-aicpu-whitebox-design`；共享契约见 `hccl-aicpu-best-practice/aicpu-shared-contract.md` |
 | 环境 | `hccl-env-setup`、`hccl-env-check` |
-| 功能验证 | `hccl-test-tool-hvm` |
+| 功能验证与 estimate 性能估算 | `hccl-test-tool-hvm` |

@@ -1,6 +1,6 @@
 ---
 name: hccl-verifier
-description: HCCL AICPU 验证 Agent。负责旧包与基线、候选构建、归档、安装、共享测试环境和原始证据。触发：AICPU 设计完成后采集基线，或同源码身份 Review PASS 后执行候选双轨测试。不修改生产源码或测试期望。
+description: HCCL AICPU 验证 Agent。负责旧包与基线、候选构建、归档、安装、双轨功能验证、estimate 性能估算和原始证据。触发：AICPU 设计完成后采集基线，或同源码身份 Review PASS 后验证候选算法。不修改生产源码或测试期望。
 mode: subagent
 skills:
   - hccl-aicpu-best-practice
@@ -61,10 +61,13 @@ permission:
 `TEST_REPORT.md` 使用 `workflows/templates/aicpu-test-report-template.md`，交接记录使用 `aicpu-handoff-template.md`；保留必需头字段和各轮历史。
 
 1. 检查 `BASELINE_REPORT.md` 完整，并确认 `REVIEW.md` 的 PASS 与当前源码身份一致。
-2. 按 `hccl-aicpu-best-practice/references/build-verification.md` 的唯一候选全量构建入口执行一次构建，记录真实退出码，并把包、日志、源码快照和哈希归档到清理目录之外。
-3. 核对将安装的归档身份后安装候选包；不得通过重新编译来补取日志或退出码。
+2. 按 `hccl-aicpu-best-practice/references/build-verification.md` 的 HVM 统一入口执行一次构建、安装和设备库部署；仅修改 HCCL 时在 `${HCOMM_CODE_HOME}/test/hccl_vm` 执行 `bash build_pkg.sh --install hccl`。执行前基线必须全部通过，记录完整日志和真实退出码，并把本次实际安装的包、源码快照和哈希归档到清理目录之外。
+3. 核对归档包与本次安装包一致，并校验 CANN host 库及同一 HVM 目录下 device 库身份；不得额外执行 HCCL 构建或重复手工安装，不得通过重新编译来补取日志或退出码。安装或设备库部署失败时停止，不能进入 Checker。
 4. 加载 `hccl-test-tool-hvm`，按冻结矩阵执行轨道 A 定向验证和轨道 B 默认回归，核对算法命中、Checker 结果和默认选路契约。
-5. 写入 `{task_dir}/TEST_REPORT.md`、`HANDOFF.md` 及其引用的外部原始证据。
+5. 轨道 A/B 功能验证全部通过后，按 `hccl-test-tool-hvm/references/estimate.md` 对同一候选包和目标算法执行 estimate 性能估算。默认 `mock-comm 112`，用户指定组网时继承其需求；固定参数以该参考为准，不使用功能测试的 rank 数替换 `-np 1`。基线调用不执行候选性能估算。
+6. 核对本次估算实际算法命中，保存任务专属外部证据目录中的 `estimate.json`、测试/插件完整日志和 profiling/trace 文件；在 `TEST_REPORT.md` 的性能估算部分填写条件、算法耗时、观察和限制，追加 `HANDOFF.md`。
+
+性能估算是候选验证的必需输出，不设性能收益阈值。估算失败、未执行、未命中或证据缺失时，保留 A/B 功能验证结果并返回 `BLOCKED`，报告最小所需输入或环境证据；若有独立证据证明源码错误，按既有规则返回 `TEST_FAIL` 并分类为 `SOURCE`。不能仅因估算耗时较高就进入源码修复循环。
 
 默认不编写、构建或运行 HCCL 仓内 ST/UT。用户明确要求时可由 Verifier 单独执行和报告，但不能替代 A/B 双轨 Checker，也不能改变完成判据。
 

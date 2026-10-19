@@ -89,7 +89,7 @@ HCCL 仓：{source_repo}
 仅当报告绑定的源码身份与当前身份一致且没有阻塞问题时返回 PASS；否则返回 REVIEW_FAIL 或 BLOCKED。
 ```
 
-## Verifier：候选构建与双轨测试
+## Verifier：候选构建、双轨测试与性能估算
 
 ```text
 任务 ID：{task_id}
@@ -107,7 +107,10 @@ HCCL 仓：{source_repo}
 使用 `workflows/templates/aicpu-test-report-template.md` 和 `aicpu-handoff-template.md`，保留必需头字段并替换全部占位符。
 Verifier 独占构建、归档、安装、配置切换、Checker 和共享内存清理。只写 {task_dir}/TEST_REPORT.md、HANDOFF.md 和 {external_evidence_root} 下由任务文档引用的外部原始证据；禁止修改生产源码、设计、基线或测试期望，也不得写其他外部目录。
 
-按 Skill 的单一候选全量构建入口和 A/B 双轨契约执行。默认不运行 HCCL ST/UT；用户明确要求时单列结果，但不得替代 Checker。
+按 Skill 的 HVM 统一构建安装部署入口和 A/B 双轨契约执行；不得再单独构建 HCCL 或重复手工安装候选包。默认不运行 HCCL ST/UT；用户明确要求时单列结果，但不得替代 Checker。
+双轨功能验证全部通过后，必须按 hccl-test-tool-hvm/references/estimate.md 对同一候选包和目标算法执行 estimate 性能估算。默认 mock-comm 112，用户有组网需求时继承原始需求并记录实际参数；不改变功能验证的冻结矩阵。
+核对本次估算算法命中，按该参考的证据格式将 estimate.json、测试/插件日志与 profiling/trace 归档到 {external_evidence_root} 的本轮唯一目录，并在 TEST_REPORT.md 填写估算状态、源码/包身份、组网条件、算法耗时、观察、限制及路径/哈希。不得把软件运行耗时当作算法耗时。
+估算失败、未执行、未命中或证据缺失时保留双轨结果并返回 BLOCKED；只有独立证据证明源码问题时才走 SOURCE 修复。估算完成不表示性能收益通过，不设耗时阈值。
 记录构建命令、真实退出码、包/源码身份、逐用例算法命中、原始日志和环境清理状态。任何真实 FAIL、缺证据或身份不一致均不得返回 PASS。
 返回 PASS、TEST_FAIL 或 BLOCKED。
 ```

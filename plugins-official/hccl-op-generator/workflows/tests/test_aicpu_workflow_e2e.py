@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
+# -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms of the
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 """End-to-end dry-runs for the AICPU multi-Agent workflow.
 
 The scenarios use a temporary Git repository and synthetic build/test evidence.
@@ -69,11 +75,13 @@ class AicpuDryRun:
             self.task_outputs("task-index.json", "environment.md"),
         )
         if environment_ok:
-            self._gate_state("ENV_READY")
+            self.gate_state("ENV_READY")
         else:
-            failed = self._gate_state("ENV_READY", expect_ok=False)
+            failed = self.gate_state("ENV_READY", expect_ok=False)
             codes = {item["code"] for item in failed["errors"]}
-            if not codes.intersection({"ARTIFACT_NOT_READY", "ARTIFACT_STATUS", "PASS_INVARIANT"}):
+            if not codes.intersection(
+                {"ARTIFACT_NOT_READY", "ARTIFACT_STATUS", "PASS_INVARIANT"}
+            ):
                 raise AssertionError(f"environment failure was not rejected: {failed}")
             self.fixture.pending_action = "BLOCKED"
             self._sync_index(self.task_outputs("task-index.json"))
@@ -82,7 +90,9 @@ class AicpuDryRun:
     def _expect(payload: dict[str, Any], **expected: object) -> None:
         for key, value in expected.items():
             if payload.get(key) != value:
-                raise AssertionError(f"expected {key}={value!r}, got {payload.get(key)!r}: {payload}")
+                raise AssertionError(
+                    f"expected {key}={value!r}, got {payload.get(key)!r}: {payload}"
+                )
 
     @staticmethod
     def _run_json(
@@ -113,15 +123,17 @@ class AicpuDryRun:
     def baseline(self) -> None:
         self.fixture.write_baseline()
         outputs = self.task_outputs("BASELINE_REPORT.md", "HANDOFF.md")
-        self._normal_pass("hccl-verifier", "BASELINE_READY", outputs, self.base_identity)
+        self._normal_pass(
+            "hccl-verifier", "BASELINE_READY", outputs, self.base_identity
+        )
 
     def complete(self) -> None:
         decision = self._transition("hcclbot", "PASS")
         self._expect(decision, action="ADVANCE", next_state="COMPLETE")
-        self._gate_state("COMPLETE")
+        self.gate_state("COMPLETE")
         self._apply_decision(decision)
         self._sync_index(self.task_outputs("task-index.json"))
-        self._gate_state("COMPLETE")
+        self.gate_state("COMPLETE")
 
     def design(self) -> None:
         self.fixture.write_design_inputs(dataflow_required=False)
@@ -175,9 +187,11 @@ class AicpuDryRun:
         )
         self._apply_decision(decision)
         self._sync_index(self.task_outputs("task-index.json"))
-        rejected = self._gate_state("REVIEW_PASS", expect_ok=False)
+        rejected = self.gate_state("REVIEW_PASS", expect_ok=False)
         if "PENDING_ACTION" not in {item["code"] for item in rejected["errors"]}:
-            raise AssertionError(f"active review recovery passed the state gate: {rejected}")
+            raise AssertionError(
+                f"active review recovery passed the state gate: {rejected}"
+            )
 
     def fail_source_test(self) -> None:
         self.fixture.write_test_report()
@@ -211,24 +225,33 @@ class AicpuDryRun:
         )
         self._apply_decision(decision)
         self._sync_index(self.task_outputs("task-index.json"))
-        rejected = self._gate_state("TEST_PASS", expect_ok=False)
+        rejected = self.gate_state("TEST_PASS", expect_ok=False)
         if "PENDING_ACTION" not in {item["code"] for item in rejected["errors"]}:
-            raise AssertionError(f"active test recovery passed the state gate: {rejected}")
+            raise AssertionError(
+                f"active test recovery passed the state gate: {rejected}"
+            )
+
+    def gate_state(self, state: str, expect_ok: bool = True) -> dict[str, Any]:
+        return self._run_json(
+            ARTIFACT_GATE,
+            "--task-dir",
+            str(self.fixture.task_dir),
+            "--target-state",
+            state,
+            "--json",
+            expect_ok=expect_ok,
+        )
 
     def repair_after_review_failure(self) -> None:
         self._change_source("repair review finding")
         self.fixture.invalidated.append(
-            {"artifact": "REVIEW", "path": "REVIEW.md", "reason": "source changed during review repair"}
+            {
+                "artifact": "REVIEW",
+                "path": "REVIEW.md",
+                "reason": "source changed during review repair",
+            }
         )
-        self.fixture.write_development_log()
-        self.fixture.rewrite_doc("DEVELOPMENT_LOG", round=self.fixture.repair_round + 1)
-        developer_outputs = self.task_outputs("LOG.md", "HANDOFF.md") + [SOURCE_REL.as_posix()]
-        self._recovery_pass(
-            "hccl-developer",
-            "IMPLEMENTED",
-            developer_outputs,
-            valid_overrides={"REVIEW": False},
-        )
+        self._repair_development({"REVIEW": False})
 
         self.fixture.write_review()
         self.fixture.rewrite_doc("REVIEW", round=self.fixture.repair_round + 1)
@@ -239,25 +262,25 @@ class AicpuDryRun:
             reviewer_outputs,
         )
         self._expect(decision, action="RECOVERY_COMPLETE", next_state="REVIEW_PASS")
-        self._gate_state("REVIEW_PASS")
+        self.gate_state("REVIEW_PASS")
 
     def repair_after_source_test_failure(self) -> None:
         self._change_source("repair source test failure")
         self.fixture.invalidated.extend(
             (
-                {"artifact": "REVIEW", "path": "REVIEW.md", "reason": "source changed after test"},
-                {"artifact": "TEST_REPORT", "path": "TEST_REPORT.md", "reason": "source changed after test"},
+                {
+                    "artifact": "REVIEW",
+                    "path": "REVIEW.md",
+                    "reason": "source changed after test",
+                },
+                {
+                    "artifact": "TEST_REPORT",
+                    "path": "TEST_REPORT.md",
+                    "reason": "source changed after test",
+                },
             )
         )
-        self.fixture.write_development_log()
-        self.fixture.rewrite_doc("DEVELOPMENT_LOG", round=self.fixture.repair_round + 1)
-        developer_outputs = self.task_outputs("LOG.md", "HANDOFF.md") + [SOURCE_REL.as_posix()]
-        self._recovery_pass(
-            "hccl-developer",
-            "IMPLEMENTED",
-            developer_outputs,
-            valid_overrides={"REVIEW": False, "TEST_REPORT": False},
-        )
+        self._repair_development({"REVIEW": False, "TEST_REPORT": False})
 
         self.fixture.write_review()
         self.fixture.rewrite_doc("REVIEW", round=self.fixture.repair_round + 1)
@@ -278,7 +301,7 @@ class AicpuDryRun:
             verifier_outputs,
         )
         self._expect(decision, action="RECOVERY_COMPLETE", next_state="TEST_PASS")
-        self._gate_state("TEST_PASS")
+        self.gate_state("TEST_PASS")
 
     def review(self) -> None:
         self.fixture.write_review()
@@ -303,7 +326,9 @@ class AicpuDryRun:
             self.fixture.current_identity,
         )
 
-    def write_handoff(self, actor: str, status: str, identity: str | None = None) -> None:
+    def write_handoff(
+        self, actor: str, status: str, identity: str | None = None
+    ) -> None:
         self.sequence += 1
         self.fixture.write_handoff(
             actor,
@@ -348,17 +373,6 @@ class AicpuDryRun:
             "--json",
         )
 
-    def _gate_state(self, state: str, expect_ok: bool = True) -> dict[str, Any]:
-        return self._run_json(
-            ARTIFACT_GATE,
-            "--task-dir",
-            str(self.fixture.task_dir),
-            "--target-state",
-            state,
-            "--json",
-            expect_ok=expect_ok,
-        )
-
     def _git(self, *args: str) -> str:
         return self._git_run(*args).stdout.strip()
 
@@ -373,7 +387,9 @@ class AicpuDryRun:
 
     def _init_git_repo(self) -> None:
         self.source_file.parent.mkdir(parents=True)
-        self.source_file.write_text("// tracked AICPU source fixture\n", encoding="utf-8")
+        self.source_file.write_text(
+            "// tracked AICPU source fixture\n", encoding="utf-8"
+        )
         self._git_run("init")
         self._git_run("config", "user.name", "HCCL Workflow Dry Run")
         self._git_run("config", "user.email", "hccl-workflow@example.invalid")
@@ -394,7 +410,7 @@ class AicpuDryRun:
 
         decision = self._transition(actor, "PASS")
         self._expect(decision, action="ADVANCE", next_state=target_state)
-        self._gate_state(target_state)
+        self.gate_state(target_state)
         self._apply_decision(decision)
         self._sync_index(self.task_outputs("task-index.json"))
 
@@ -455,6 +471,14 @@ class AicpuDryRun:
         self._sync_index(self.task_outputs("task-index.json"), valid_overrides)
         return decision
 
+    def _repair_development(self, valid_overrides: dict[str, bool]) -> None:
+        self.fixture.write_development_log()
+        self.fixture.rewrite_doc("DEVELOPMENT_LOG", round=self.fixture.repair_round + 1)
+        outputs = self.task_outputs("LOG.md", "HANDOFF.md") + [SOURCE_REL.as_posix()]
+        self._recovery_pass(
+            "hccl-developer", "IMPLEMENTED", outputs, valid_overrides=valid_overrides
+        )
+
     def _sync_index(
         self,
         hcclbot_changed: list[str],
@@ -503,7 +527,6 @@ class AicpuWorkflowEndToEndDryRunTests(unittest.TestCase):
         self.assertEqual([], run.fixture.calls)
         self.assertEqual({"ENVIRONMENT"}, set(run.fixture.docs))
 
-
     def test_happy_path_reaches_complete_through_public_clis(self) -> None:
         run = AicpuDryRun(self.root)
         run.design()
@@ -515,10 +538,14 @@ class AicpuWorkflowEndToEndDryRunTests(unittest.TestCase):
 
         self.assertEqual("COMPLETE", run.fixture.current_state)
         self.assertEqual("NONE", run.fixture.pending_action)
-        index = json.loads((run.fixture.task_dir / "task-index.json").read_text(encoding="utf-8"))
+        index = json.loads(
+            (run.fixture.task_dir / "task-index.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(run.branch, index["source_branch"])
         self.assertEqual(run.head, index["source_head"])
-        self.assertTrue(index["source_identity"].startswith(f"{run.branch}@{run.head}+diff:"))
+        self.assertTrue(
+            index["source_identity"].startswith(f"{run.branch}@{run.head}+diff:")
+        )
         self.assertEqual(
             [
                 "hccl-architect",
@@ -544,6 +571,19 @@ class AicpuWorkflowEndToEndDryRunTests(unittest.TestCase):
         self.assertEqual(1, run.fixture.repair_round)
         self.assertIn("REVIEW", {item["artifact"] for item in run.fixture.invalidated})
 
+    def test_complete_gate_blocks_missing_estimate_through_public_cli(self) -> None:
+        run = AicpuDryRun(self.root)
+        run.design()
+        run.baseline()
+        run.develop()
+        run.review()
+        run.verify()
+        Path(run.fixture.docs["TEST_REPORT"]["estimate_evidence_path"]).unlink()
+
+        rejected = run.gate_state("COMPLETE", expect_ok=False)
+        self.assertIn("ESTIMATE_MISSING", {item["code"] for item in rejected["errors"]})
+        self.assertEqual("TEST_PASS", run.fixture.current_state)
+
     def test_source_test_failure_replays_full_quality_chain(self) -> None:
         run = AicpuDryRun(self.root)
         run.design()
@@ -560,6 +600,7 @@ class AicpuWorkflowEndToEndDryRunTests(unittest.TestCase):
             {"REVIEW", "TEST_REPORT"},
             {item["artifact"] for item in run.fixture.invalidated},
         )
+
 
 if __name__ == "__main__":
     unittest.main()

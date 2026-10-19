@@ -96,10 +96,12 @@ BLOCKED      → HCCLBot 汇报证据与未完成范围
 | `BASELINE_READY` | Verifier | 冻结的测试计划、旧包 | `BASELINE_REPORT.status=PASS` 且绑定冻结 `TEST_PLAN` 哈希；旧包、矩阵、算法名/次数、原始日志和就绪证据完整 |
 | `IMPLEMENTED` | Developer | 冻结设计、基线报告 | `LOG.status=PASS`；生产源码/CMake 变更、静态证据和新的可恢复源码身份已记录 |
 | `REVIEW_PASS` | Reviewer | 原始需求、设计、当前源码身份 | `REVIEW.status=PASS`，且 `source_identity` 与当前源码一致；文件或状态字段单独存在不算通过 |
-| `TEST_PASS` | Verifier | 同身份 Review PASS、基线、测试计划 | `TEST_REPORT.status=PASS`，且 `source_identity=review_source_identity=当前源码身份`；唯一候选全量构建、归档、安装、双轨和环境清理满足 Skill 判据 |
+| `TEST_PASS` | Verifier | 同身份 Review PASS、基线、测试计划 | `TEST_REPORT.status=PASS`，且 `source_identity=review_source_identity=estimate_source_identity=当前源码身份`；HVM 统一候选构建安装部署、归档、双轨、estimate 和环境清理满足 Skill 判据，估算状态为 `SUCCESS` 且原始证据完整 |
 | `COMPLETE` | HCCLBot | Review/Test 报告 | Review PASS 与 Test PASS 绑定同一源码身份，且没有未解决阻塞项 |
 
 HCCLBot 只在检查门禁证据后更新 `task-index.json`。Agent 自报“完成”或产物文件存在，都不能单独推进状态。
+
+候选 Verifier 在 A/B 功能验证全部通过后必须执行 estimate，基线阶段不追加候选估算。默认 `mock-comm 112`，用户指定组网时继承其需求；执行参数和结果解释以 `hccl-test-tool-hvm/references/estimate.md` 为真源。性能估算写入既有 `TEST_REPORT.md`，原始证据和 `estimate.json` 归档到本轮任务专属外部证据目录。`TEST_PASS` 和 `COMPLETE` 门禁检查估算状态、当前源码身份、算法命中、固定参数、有限正数耗时、真实退出码及证据文件哈希；缺少估算的旧报告不能继续通过门禁。估算成功只表示得到可信仿真结果，不设性能收益阈值。
 
 ### 3.1 自动流转策略
 
@@ -195,6 +197,7 @@ python3 "$HCCL_AICPU_WORKFLOW_DIR/scripts/validate_aicpu_artifacts.py" \
 | Reviewer 返回 `REVIEW_FAIL` | Developer 定向修复；源码身份更新后 Reviewer 独立复审 |
 | Verifier 返回 `TEST_FAIL` 且定位为源码问题 | 固化失败证据，Developer 定向修复，再 Reviewer 复审和 Verifier 重验 |
 | Verifier 返回环境阻塞 | 保持失败事实；只在有新环境证据时由 Verifier 做最小区分实验，不调用 Developer 猜修源码 |
+| 双轨已通过但 estimate 失败、未执行、未命中或缺证据 | 保留功能验证结果并返回 `BLOCKED`；报告实际限制与下一项所需输入。只有独立证据证明源码问题时才按 `SOURCE` 修复，不因估算值较高自动修复 |
 | Agent 结论冲突 | HCCLBot 对齐输入版本和对象身份，调用对应角色用最小证据区分；不投票、不改写报告 |
 
 Review/Test 修复使用同一个 `repair_round`，合计最多 3 轮：初始为 0，每次策略返回 `REPAIR` 时加 1；值为 3 后再次失败必须进入 `BLOCKED`。达到上限仍未通过时报告原始证据、已验证范围和下一项所需输入。相同条件没有新证据时不得循环重试到 PASS。
@@ -218,8 +221,10 @@ Review/Test 修复使用同一个 `repair_round`，合计最多 3 轮：初始�
 
 1. 设计和测试矩阵已冻结，基线证据完整。
 2. Reviewer 对当前源码身份给出 PASS。
-3. Verifier 对同一源码身份完成唯一候选全量构建和 A/B 双轨 Checker，全部满足 `hccl-aicpu-best-practice/aicpu-shared-contract.md` 的客观判据。
+3. Verifier 对同一源码身份完成 HVM 统一候选构建安装部署和 A/B 双轨 Checker，全部满足 `hccl-aicpu-best-practice/aicpu-shared-contract.md` 的客观判据。
 4. 默认选路变化没有超出用户批准范围；任何 FAIL、SKIP 或未验证项均被如实列出且不冒充 PASS。
 5. 没有遗留后台测试、临时配置覆盖或共享环境清理项。
+6. Verifier 对同一候选包、源码身份和目标算法完成 estimate，`estimate_status=SUCCESS`；算法命中、估算条件、算法耗时、原始日志与 profiling/trace 证据已归档，并在 `TEST_REPORT.md` 中明确记录观察和限制。
 
 最终汇报区分已验证行为、独立检视结论和未验证范围，不用“流程已走完”替代证据。
+最终汇报必须包含“算法性能估算”，从有效 `TEST_REPORT.md` 呈现实际算法、组网、数据量/类型、估算耗时、观察和证据路径；明确其为该条件下的仿真估算。失败或未执行时呈现原因和阻塞状态，不省略本节或复用示例数值。
