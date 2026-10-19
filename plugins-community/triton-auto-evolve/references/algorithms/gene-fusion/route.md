@@ -5,7 +5,7 @@ description: triton-auto-evolve 的 Gene-Fusion Route Worker 规范。每个 rou
 > **本文件是 Gene-Fusion Route Worker 的权威执行规范。**
 > - 由 gene-fusion worker 在 D0 阶段通过 `dispatch_parallel.py` 启动。
 > - 每个 route 子 CLI 上下文**仅包含**：本文件、`task_manifest.json`（含 `fusion_plan` + `optimization_genes`）、当前 `work_dir`（`route-{N}/`）、标准 skill/reference。
-> - Route 子 CLI 禁止：读取其他 route 的产物、读取 `round_index.json`、做停止判定、更新 template。
+> - Route 子 CLI 禁止：读取其他 route 的产物、读取 `round_index.json`、做停止判定、更新项目级经验模板。
 > - **本文件定义了完整的 triton-ascend-kernel 内部流程**，包括内部轮次迭代、知识编码演化、profiling 驱动收敛。原 triton-ascend-kernel SKILL.md 的外部文档引用已内联。
 
 ---
@@ -94,7 +94,7 @@ Phase: 报告输出 + 会话导出 + 产物校验
       "gene_id": "G001",
       "category": "tiling",
       "description": "沿 M 维度分块，块大小 128",
-      "source": "develop_guide",
+      "source": "kb_guides",
       "code_target": "grid / block size 参数",
       "params": {"block_size_m": 128},
       "status": "active"
@@ -104,7 +104,7 @@ Phase: 报告输出 + 会话导出 + 产物校验
       "gene_id": "G002",
       "category": "memory",
       "description": "使用 tl.dot 替代逐元素乘加，利用 TensorCore",
-      "source": "develop_guide",
+      "source": "kb_guides",
       "code_target": "核心计算循环",
       "params": {},
       "status": "active"
@@ -360,7 +360,7 @@ Phase: 报告输出 + 会话导出 + 产物校验
 | 阶段 | 错误 | 处理 |
 |------|------|------|
 | Phase A | 环境不可用 | 终止 route，返回 failed |
-| Phase C | 无法锁定有效知识编码 | 最小化编码（只用 develop_guide 中的基本模板） |
+| Phase C | 无法锁定有效知识编码 | 最小化编码（只用 kb_guides 约束卡中的基本模板） |
 | E2-R1 | 编译 5 次失败 | 标记 encoding 为不可行，返回 failed |
 | E2-R1 | 精度 5 次失败 | 同编译失败处理 |
 | E2-R1 | msprof 不可用 | 告警，使用 benchmark.py 数据作为替代 |

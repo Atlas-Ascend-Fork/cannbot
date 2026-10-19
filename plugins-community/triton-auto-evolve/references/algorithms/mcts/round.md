@@ -58,7 +58,7 @@ description: triton-auto-evolve 的 MCTS 算法 Per-Round Worker 规范。子 Cl
 
 ### 可选：读取 MCTS 树状态
 
-子 agent 可以通过 `skills/triton-agent-loop/scripts/strategies/mcts/mcts_tree.py` 加载当前 MCTS 树状态（若需要更完整的搜索记忆）。
+子 agent 可以通过 `.claude/skills/triton-agent-loop/scripts/strategies/mcts/mcts_tree.py`（相对 work_dir） 加载当前 MCTS 树状态（若需要更完整的搜索记忆）。
 树状态保存在算子目录级别，而不是当前 round 目录内：
 
 ```python

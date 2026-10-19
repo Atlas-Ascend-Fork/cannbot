@@ -1,12 +1,12 @@
 ---
-description: triton-auto-evolve 的 Naive 算法 Per-Round Worker 规范。子 Claude Code CLI 在独立上下文中执行单个 round 的 Phase 0-8，本 round 的 direction / hypothesis / baseline 由 Orchestrator 通过 naive strategy 提前选定并写入 task_manifest.json。子 agent 只需按给定 direction 执行，不自主切换方向。本文件流程与 Triton 算子生成单 agent 工作流规范的 Phase 0-7 对齐（含知识库检索与摄入），Phase 8 替换为 round contract 校验，并保留 multi-agent 上下文隔离边界。
+description: triton-auto-evolve 的 Naive 算法 Per-Round Worker 规范。子 Claude Code CLI 在独立上下文中执行单个 round 的 Phase 0-8，本 round 的 direction / hypothesis / baseline 由 Orchestrator 通过 naive strategy 提前选定并写入 task_manifest.json。子 agent 只需按给定 direction 执行，不自主切换方向。本文件流程与 Triton 算子生成单 agent 工作流规范的 Phase 0-7 对齐（含知识库检索与写回），Phase 8 替换为 round contract 校验，并保留 multi-agent 上下文隔离边界。
 ---
 
 > **本文件是 Naive 算法子 Per-Round Worker Agent 的权威执行规范。**
 > - 子 agent 由主 Orchestrator Agent 通过 `dispatch_round.py` 启动。
 > - 子 agent 的上下文**仅包含**：本文件、`task_manifest.json`、当前 `work_dir`、`baseline_dir`、标准 skill/reference。
 > - 子 agent 可读取 `task_manifest.json` 中提供的 `lineage_summary`、`experience_file`、`global_baseline_dir` 作为参考，但**禁止修改**这些文件/目录。
-> - 子 agent **禁止**读取历史 `round_index.json`、禁止做跨 round 停止/继续判定、禁止更新 template、禁止修改 `.triton-agent/state-{op_name}-{algorithm}-{run_tag}.json`。
+> - 子 agent **禁止**读取历史 `round_index.json`、禁止做跨 round 停止/继续判定、禁止更新项目级经验模板、禁止修改 `.triton-agent/state-{op_name}-{algorithm}-{run_tag}.json`。
 > - 子 CLI 的启动工作目录为当前 round 的 **`work_dir`**（由 `dispatch_round.py` 设置）。`dispatch_round.py` 在启动前会把插件根目录的 `.claude/skills`、`.claude/template`、`.claude/references` 以及 `.claude/settings.json` 复制到 `work_dir/.claude/` 中，因此本文件中的 `.claude/...` 相对路径均解析为 `work_dir/.claude/...` 下的本地副本，同时本地 `.claude/settings.json` 中的 PreToolUse hooks 会生效。所有文件写入操作必须使用 manifest 中提供的绝对 `work_dir`，禁止在插件根目录随意写入。
 > - 所有路径若无特别说明，均为相对当前 `work_dir`（即 `work_dir/.claude/...` 与 `work_dir` 下的产物目录）。
 
@@ -28,7 +28,7 @@ description: triton-auto-evolve 的 Naive 算法 Per-Round Worker 规范。子 C
 - 读取除 `baseline_dir` 以外的其他 round 目录内容。
 - 执行 C1/C2/C3/D4 停止/继续判定。
 - 调用 `transition_next_round.py`。
-- 更新 `.claude/template/{category}.md`。
+- 更新项目级经验模板（跨 round 经验沉淀由 Orchestrator 统一写回 `$KB_ROOT`；子 agent 仅可在 Phase 6 按规范写回本轮经验卡）。
 - 修改 `.triton-agent/state-{op_name}-{algorithm}-{run_tag}.json`。
 - **忽略或改写 manifest 中给定的 `direction` 和 `hypothesis`**。
 
@@ -39,16 +39,16 @@ description: triton-auto-evolve 的 Naive 算法 Per-Round Worker 规范。子 C
 ```
 Phase 0: 参数确认 + 工作目录就绪验证
 Phase 1: 任务构建          (triton-task-extractor / GPU Kernel 模式自建，含 freeze_baseline)
-Phase 2: 算法设计          (triton-op-designer, 内部自行调用 triton-knowledge-retrieval codegen_init)
-Phase 3: 代码生成与验证    (triton-op-coding + triton-op-verifier, 迭代，子 Skill 自行调用知识库检索)
-Phase 4: 性能优化与验证    (triton-latency-optimizer + triton-op-verifier, 迭代，含 IR 多轮迭代与 simulator 采集驱动分支)
+Phase 2: 算法设计          (triton-op-designer, 设计前经 knowledge-query 检索 KB 约束卡)
+Phase 3: 代码生成与验证    (triton-op-coding + triton-op-verifier, 迭代，检索 KB 诊断/调试卡)
+Phase 4: 性能优化与验证    (triton-latency-optimizer + triton-op-verifier, 迭代，检索 KB runbooks 经验卡)
 Phase 5: 输出报告
-Phase 6: 知识库摄入与维护   (新增)
+Phase 6: 知识库写回         (按 ops-knowledge-ingest 规范写回 cannbot-knowledge)
 Phase 7: 会话导出
 Phase 8: Round Contract 校验 + 写入 round_result.json
 ```
 
-> **知识库副作用路径**：子 Agent 在工作过程中会通过子 Skill 读取/写入 `.claude/skills/triton-knowledge-retrieval/` 下的 `knowledge/cache/`、`log.md`、`knowledge/raw/experiences/`。该目录是唯一允许跨任务共享副作用的路径，其余写入操作必须限制在 `work_dir` 内。
+> **知识库（KB）**：知识内容唯一来源是 cannbot-knowledge 仓的知识卡片目录（安装时克隆到 `<项目>/.cannbot/dependencies/triton-auto-evolve/cannbot-knowledge/knowledge/`，下称 `$KB_ROOT`；解析顺序见 Phase 0）。检索（读）经 `knowledge-query` skill；写回经 Phase 6 按 `ops-knowledge-ingest` 红线执行。**任何 skill 目录都不存知识**；除 `$KB_ROOT` 写回外，其余写入操作必须限制在 `work_dir` 内。本文件等 `references/` 下的多轮调度规范随插件仓分发，**不属于知识库内容**，知识卡片只从 `$KB_ROOT` 读取。
 
 每轮内部**全程自主执行**，禁止向用户提问、征求意见或暂停等待。
 
@@ -156,6 +156,29 @@ Phase 8: Round Contract 校验 + 写入 round_result.json
 
 加速比统一以 `global_baseline_dir` 中的实现为基准（`global_baseline_speedup = 1.0`）。`baseline_dir` 中的父 round 代码仅作为本轮优化的起始代码，不作为加速比基准。
 
+### 3.8 知识库自举（KB bootstrap）
+
+知识内容唯一来源是 **cannbot-knowledge 仓**的知识卡片目录。本阶段解析并固定 `KB_ROOT`（后续所有 Phase 复用该结果）：
+
+1. 环境变量 `CANNBOT_KNOWLEDGE_ROOT`（已设置且目录存在）；
+2. 从当前 `work_dir` 及其至多 6 级祖先探测 `.cannbot/dependencies/*/cannbot-knowledge/knowledge`（glob 取第一个匹配；`init.sh` 安装时已克隆）；
+3. 运行 knowledge-query 的 `discover` 取 `selected.path`（脚本随 skill 安装在 `.claude/` 内，相对当前 `work_dir`；其他工具对应其配置目录，如 opencode 为 `.opencode/skills/`）：
+
+```bash
+python3 .claude/skills/knowledge-query/scripts/knowledge_query.py discover
+```
+
+解析成功后做索引懒构建（`$KB_ROOT/search/okf.index.json` 缺失或过期时自动 build，失败不致命）：
+
+```bash
+python3 .claude/skills/knowledge-query/scripts/knowledge_query.py --knowledge-root "$KB_ROOT" build || true
+```
+
+- **就绪判据**：`$KB_ROOT/ops/triton/guides/constraints/index.md` 可读。
+- **KB 不可用**（`kb_unavailable`，克隆失败/离线安装）：Phase 2/3/4 的检索步骤跳过，Phase 6 写回整体跳过并在盒装输出标注 `kb_unavailable`；其余 Phase 不受影响（骨架模式）。
+- 卡片用 Read 工具按 `$KB_ROOT/<doc-id>` 直接读取（doc-id = 相对 knowledge 根的 `.md` 路径）。
+- **禁止**把知识内容写入任何 skill 目录；KB 写回仅允许发生在 Phase 6、目标 `$KB_ROOT` 内部，且遵循 cannbot-knowledge 仓自身规范（见 9.2）。
+
 ---
 
 ## 四、Phase 1：任务构建
@@ -258,7 +281,7 @@ python3 .claude/skills/triton-task-extractor/scripts/validate_task.py \
 
 **传入**：`op_name`、`task_desc`（任务文件完整内容）、`arch`、`user_requirements`（如有）、`gpu_kernel_ref`（优先级 1 场景下用户提供）、`template_path`（显式路径，必传）、`matched_patterns`。
 
-**说明**：`triton-op-designer` 会在设计草图前**自行调用** `triton-knowledge-retrieval`（`query_type=codegen_init`，Step 0–2）获取硬件约束、算子分类和 API 知识单元。子 Agent 无需预检索，也无需通过 `conductor_suggestion` 传递 `kkb_hints`。
+**说明**：`triton-op-designer` 在产出设计草图前，子 Agent 先经 `knowledge-query` 检索 `$KB_ROOT`（`preflight --task "<op_name> <op_category> 设计约束 已知坑"`，再按需 `search`/`get`）获取对应 `guides/constraints/{op_category}_constraints.md` 约束卡与算子分类/API 知识卡。KB 不可用（`kb_unavailable`）时跳过检索直接设计。检索结果不塞进 `conductor_suggestion`，由子 Agent 在设计时直接消化。
 
 **产出**：`{work_dir}/sketch.txt`。
 
@@ -309,7 +332,7 @@ while iteration < max_iterations:
 - 首次（`iteration == 0`）：`op_name`, `task_desc`, `arch`, `sketch`, `user_requirements`, `gpu_kernel_ref`（如有）
 - 重试（`iteration > 0`）：上述 + `previous_code` + `verifier_error` + `conductor_suggestion`
 
-**说明**：`triton-op-coding` 会在生成代码前**自行调用** `triton-knowledge-retrieval`（`query_type=codegen_init`，Step 0–6 全量）获取完整知识单元；迭代修复（编译错误、精度失败）时自行调用 `compile_error` / `precision_debug` 检索。子 Agent 只需要按原有方式传递 `previous_code`、`verifier_error`、`conductor_suggestion`，不要额外预检索或把检索结果塞进 `conductor_suggestion`。
+**说明**：`triton-op-coding` 生成代码前，子 Agent 先经 `knowledge-query` 检索 `$KB_ROOT` 中该算子分类的 API 语义/实现样例卡（`preflight` + `get --section`）；迭代修复（编译错误、精度失败）时用 `grep`/`search` 检索诊断与调试卡（对应历史 `compile_error` / `precision_debug` 检索面）。子 Agent 只需要按原有方式传递 `previous_code`、`verifier_error`、`conductor_suggestion`，不要把检索结果塞进 `conductor_suggestion`。
 
 **产物**：`{work_dir}/output/iter_{iteration}/generated_code.py`
 
@@ -491,7 +514,7 @@ while opt_iteration < max_opt_iterations:
 
 **输入参数**：`baseline_code`（或上一轮优化后的代码）、`opt_iteration`、`task_desc`、`arch`、`user_requirements`。
 
-**说明**：`triton-latency-optimizer` 会在每轮优化前**自行调用** `triton-knowledge-retrieval`（`query_type=perf_tuning`）获取瓶颈→优化点映射和 Top-3 调优经验，并结合自身优化点 1–30 的命中检查优先尝试 KKB 指向的高收益优化点。
+**说明**：`triton-latency-optimizer` 每轮优化前，子 Agent 先经 `knowledge-query` 检索 `$KB_ROOT/ops/triton/runbooks/performance/` 与相似算子经验卡（对应历史 `perf_tuning` 检索面），获取瓶颈→优化点映射和 Top-3 调优经验，并结合自身优化点 1–30 的命中检查优先尝试知识卡指向的高收益优化点。
 
 **产物**：`{work_dir}/output/{current_iter_dir}/optimized_code.py`
 
@@ -743,61 +766,46 @@ Phase 4 入口断言失败：
 
 ---
 
-## 九、Phase 6：知识库摄入与维护
+## 九、Phase 6：知识库写回
 
-> 注：Phase 6 依赖可选的 `triton-knowledge-retrieval` skill（本仓库默认不安装）。skill 不存在时跳过知识摄入步骤（含 9.2/9.3 的写入与维护），其余 Phase 不受影响；本阶段仍按 9.4 输出盒装摘要并在各栏标注"未触发 (skill 未安装)"。
+> 知识内容唯一来源是 cannbot-knowledge 仓：读经 Phase 2/3/4 的 `knowledge-query` 检索，写经本阶段按 `ops-knowledge-ingest` 红线写回 `$KB_ROOT`。KB 不可用（`kb_unavailable`，见 3.8）时跳过本阶段全部写入，其余 Phase 不受影响；仍按 9.3 输出盒装摘要并在各栏标注"未触发 (kb_unavailable)"。
 
 **必须在 Phase 5 完成后、Phase 7 会话导出之前执行**。
 
-子 Agent 依据本次运行中的事件日志，自动从本次运行中提取知识写回知识库。各子 Skill 在执行过程中产生 F1–F5 事件记录在各自上下文中，子 Agent 在此阶段统一收集并完成摄入。
+子 Agent 依据本次运行中的事件与产物，把验证过的经验**蒸馏**后写回 `$KB_ROOT`（cannbot-knowledge 本地克隆草稿）。只写增量、不改既有结论；**禁止 `git push`**，上游合并由人完成。
 
 ### 9.1 触发条件检查
 
-逐条评估三种来源的触发条件：
+逐条评估三种来源的触发条件（沿用原 Source B/C/D 判定，作为"是否写回"的门槛）：
 
-| Source | 触发条件 | 写入目标 |
+| Source | 触发条件 | 写回内容性质 |
 |--------|---------|---------|
-| **Source B**（成功经验） | 同时满足三项：(1) Phase 3 精度全过（`passed_cases == total_cases`）(2) `summary.json.perf_data.speedup_vs_torch ≥ 1.1`(3) Phase 4 有有效 profiling 改进 | `.claude/skills/triton-knowledge-retrieval/knowledge/raw/experiences/<op_category>/` |
-| **Source C**（调试经验） | 存在完整事件对：F1(fail) → F1(success) 或 F2(fail) → F2(pass)（同一 session_id） | `.claude/skills/triton-knowledge-retrieval/knowledge/raw/experiences/general_debug/` 或 `general_stability/` |
-| **Source D**（性能洞察） | F3.bottleneck_actual 与 bottleneck_predicted 类型不同，**或**同类型但 high_impact_units 的贡献度偏差 > 20% | `.claude/skills/triton-knowledge-retrieval/knowledge/raw/experiences/general_perf/` 或 `<op_category>/` |
+| **Source B**（成功经验） | 同时满足三项：(1) Phase 3 精度全过（`passed_cases == total_cases`）(2) `summary.json.perf_data.speedup_vs_torch ≥ 1.1`(3) Phase 4 有有效 profiling 改进 | 已验证的性能优化方法 |
+| **Source C**（调试经验） | 存在完整事件对：F1(fail) → F1(success) 或 F2(fail) → F2(pass)（同一 session_id） | 故障处置流程 / 调试经验 |
+| **Source D**（性能洞察） | F3.bottleneck_actual 与 bottleneck_predicted 类型不同，**或**同类型但 high_impact_units 的贡献度偏差 > 20% | 性能瓶颈分析方法 |
 
-若**三种全部不满足** → 输出 `[Phase 6] 无需摄入，跳过`。
+具体落盘路径不在此处硬编码，**按 cannbot-knowledge 仓规范路由**（见 9.2）。
 
-### 9.2 摄入步骤（任一触发即执行）
+若**三种全部不满足** → 输出 `[Phase 6] 无需写回，跳过`。
 
-详细步骤见 `.claude/skills/triton-knowledge-retrieval/builder/auto_ingestion.md`。Agent 必须按目录约定生成 YAML 文件：
+### 9.2 写回步骤（任一触发即执行）
 
-```
-exp_<cat>_<seq>_<YYYYMMDD>.yaml   # Source B
-exp_debug_<seq>_<YYYYMMDD>.yaml   # Source C
-exp_perf_<seq>_<YYYYMMDD>.yaml    # Source D
-```
+写回限制与路径**以 cannbot-knowledge 仓自身规范为准**：`CONTRIBUTING.md`（贡献流程）与 `governance/specs/`（paths/frontmatter/schemas），`ops-knowledge-ingest` skill 是其规则载体（红线：一概念一卡、蒸馏非照搬、snake_case 命名、逐层 index.md 同步）。
 
-写入步骤：
-1. 新建 YAML 文件到目标目录
-2. 在 `raw/experiences/_index.yaml` 追加一行
-3. append `INGESTION` 事件到 `.claude/skills/triton-knowledge-retrieval/log.md`
+1. **先检索再定策略**（CONTRIBUTING 3.1）：用 `knowledge-query` 搜索同主题，判定 `create` / `update` / `merge` / `split` / `deprecate` / `defer`；不得仅因标题不同就建新卡，不得用自动覆盖替代对原卡的完整审阅。
+2. **按语义路由选路径**（governance/specs/paths.md）：性能方法进 `optimizations/`，处置流程进 `runbooks/`（受控问题域），任务型教程进 `guides/`，接口事实进 `apis/`；`slug` 用小写 `snake_case`，frontmatter 八个公共必选字段齐全，`type` 由路径 Profile 的 `okf_type` 决定。
+3. **蒸馏与溯源**：从本次运行产物提炼可复用结论（不复制过程叙述）；卡内保留 doc-id、来源算子与 round 标识（`{op_name}-{algorithm}-{run_tag}`）、关键数据（speedup、profiling 摘要）。
+4. **同步索引与自检**：新增/删除/移动卡片时同步受影响的每一级 `index.md`；写回后 Read 复查 frontmatter 与索引一致，确认未触碰既有卡片结论。
+5. **只写本地克隆草稿，禁止 `git push`**（上游合并由人完成）。
 
-### 9.3 定期维护检查
-
-统计 `.claude/skills/triton-knowledge-retrieval/log.md` 中 `event_type: F3` 总数 `N`：
-
-- 若 `N > 0` 且 `N mod 10 == 0` → 触发正常维护：Task 1（质量重评）+ Task 2（冲突检测）+ Task 3（缓存失效）+ Task 4（覆盖统计），完成后 append `MAINTENANCE_REPORT` 事件到 log.md
-- 紧急触发（任一满足立即执行 Task 1 + Task 2）：
-  - `_index.yaml` 中 deprecated 条目 > 20%
-  - review 条目 > 30
-  - 同一 experience_id 在 ≥ 3 条 F5 事件中
-
-详细步骤见 `.claude/skills/triton-knowledge-retrieval/maintenance/periodic_tasks.md`。
-
-### 9.4 终端输出（强制盒装格式）
+### 9.3 终端输出（强制盒装格式）
 
 ```
-┌─ KKB 知识摄入 [Phase 6] ─────────────────────────────
-│ Source B (生成经验): <已写入 raw/experiences/<cat>/<file>.yaml / 未触发 (<原因>)>
-│ Source C (调试记录): <已写入 raw/experiences/general_debug|stability/<file>.yaml / 未触发 (<原因>)>
-│ Source D (Profiling): <已写入 raw/experiences/general_perf|<cat>/<file>.yaml / 未触发 (<原因>)>
-│ 定期维护: <已执行 Task 1-4 / 未触发 (F3 总数=<N>，N mod 10 = <值>)>
+┌─ KB 知识写回 [Phase 6] ──────────────────────────────
+│ Source B (成功经验): <已写入 runbooks/performance/<file>.md / 未触发 (<原因>)>
+│ Source C (调试经验): <已写入 runbooks/<cat>/<file>.md / 未触发 (<原因>)>
+│ Source D (性能洞察): <已写入 runbooks/performance/<file>.md / 未触发 (<原因>)>
+│ KB 状态: <已写回 $KB_ROOT / kb_unavailable (跳过)>
 └────────────────────────────────────────────────────
 ```
 
@@ -829,12 +837,12 @@ fi
 
 ## 十一、Phase 8：Round Contract 校验 + round_result.json
 
-> 注意：官方单 agent 版本的 Phase 7 是“会话导出”，Phase 6 是“知识库摄入与维护”；在 multi-agent 架构中，知识库摄入由子 Agent 在每轮 Phase 6 完成，经验沉淀（`.claude/template/{category}.md` 更新）由 Orchestrator 在所有 round 结束后统一完成。子 agent 的 Phase 8 只负责单轮产物校验与结果上报。
+> 注意：官方单 agent 版本的 Phase 7 是“会话导出”，Phase 6 是“知识库写回”；在 multi-agent 架构中，知识库写回由子 Agent 在每轮 Phase 6 完成（写入 `$KB_ROOT`），跨 round 的约束卡汇总与全局经验归档由 Orchestrator 在所有 round 结束后统一完成（同样写回 `$KB_ROOT`）。子 agent 的 Phase 8 只负责单轮产物校验与结果上报。
 
 ### 11.1 执行 submit_round.py
 
 ```bash
-python3 skills/triton-agent-loop/scripts/submit_round.py \
+python3 .claude/skills/triton-agent-loop/scripts/submit_round.py \
     --round-dir {work_dir} \
     --current-round {round_index} \
     --final-round {max_rounds} \
@@ -912,7 +920,7 @@ python3 skills/triton-agent-loop/scripts/submit_round.py \
   - reusable: boundary-mask pattern for tail rows
   ```
 
-**禁止修改项目级 `.claude/template/{category}.md`**（该文件由 `init.sh` 按项目复制，仅影响当前项目）。
+**禁止修改项目级经验模板**（跨 round 经验沉淀由 Orchestrator 统一写回 `$KB_ROOT`，见第九节）。
 
 ### 11.4 退出
 
@@ -965,16 +973,16 @@ python3 skills/triton-agent-loop/scripts/submit_round.py \
 | Phase 4 基线复用 | 7.2/7.3 基线侧 verify/perf 文件必须从 Phase 3 `iter_{phase3_last_iter}` 复制，禁止对基线代码重跑 |
 | A 类连续上限 | 同一子类型连续 ≥ 3 次 → 自动终止当前 round |
 | 禁止 PyTorch 退化 | forward() 中禁止 torch._ / F._ 计算操作 |
-| 文件操作范围 | 限制在 `work_dir` 内；只读 `baseline_dir` 与 `global_baseline_dir`；唯一例外是 `.claude/skills/triton-knowledge-retrieval/`（`knowledge/cache/`、`log.md`、`knowledge/raw/experiences/`），其副作用按集成规范跨任务累积 |
+| 文件操作范围 | 限制在 `work_dir` 内；只读 `baseline_dir` 与 `global_baseline_dir`；唯一例外是 Phase 6 按 `ops-knowledge-ingest` 规范写回 `$KB_ROOT`（cannbot-knowledge 本地克隆），跨任务累积发生在知识库仓内而非任何 skill 目录 |
 | 验证方式 | 必须调用 triton-op-verifier skill 的脚本，禁止自创测试 |
 | 性能数据真实性 | 严禁编造、估算、模拟 benchmark 数据；所有数值必须从 `perf_result.json` 读取 |
 | 性能基准 | 加速比统一以 `global_baseline_dir` 中的用户参考实现为基准 |
 | Benchmark 超时降级 | benchmark.py 超时或被 kill 时，必须自动降低 `--repeats` 值重试（50→20→10→5） |
-| 知识库检索归属 | 检索（读）由 `triton-op-designer` / `triton-op-coding` / `triton-latency-optimizer` 自主触发；摄入（写）由子 Agent Phase 6 统一完成 |
-| 知识库反馈事件 | F1–F5 事件在子 Skill 执行过程中产生，子 Agent Phase 6 统一收集写入 `.claude/skills/triton-knowledge-retrieval/log.md` |
-| 知识库路径 | 固定使用 `work_dir/.claude/skills/triton-knowledge-retrieval/`（实际指向跨任务共享知识库），其下 `cache/`、`log.md`、`raw/experiences/` 副作用跨任务累积 |
+| 知识库检索归属 | 检索（读）经 `knowledge-query` 在 Phase 2/3/4 对应节点执行；写回由子 Agent Phase 6 按 `ops-knowledge-ingest` 红线统一完成 |
+| 知识库内容来源 | 唯一来源为 cannbot-knowledge 仓克隆（`$KB_ROOT`，解析见 3.8）；任何 skill 目录不存知识、不作知识来源 |
+| 知识库路径 | `$KB_ROOT` = `<项目>/.cannbot/dependencies/triton-auto-evolve/cannbot-knowledge/knowledge`（或 `CANNBOT_KNOWLEDGE_ROOT`）；写回限制与路径遵循 cannbot-knowledge 仓自身规范（`CONTRIBUTING.md` + `governance/specs/`，经 `ops-knowledge-ingest`），只写本地克隆草稿 |
 | 只做当前 round | 不读取历史 `round_index.json`，不做跨轮判定 |
-| 禁止更新 template | 经验沉淀由 Orchestrator 完成；子 agent 仅可追加 `experience_file` |
+| 禁止更新项目级经验模板 | 跨 round 经验沉淀由 Orchestrator 统一写回 `$KB_ROOT`；子 agent 仅可追加 `experience_file` 与 Phase 6 本轮写回 |
 | 禁止修改 `state-{op_name}-{algorithm}-{run_tag}.json` | 状态文件由 Orchestrator 独占写 |
 | 禁止修改 `global_baseline/` | 全局基线目录中的文件仅用于加速比计算 |
 | 禁止调用 transition_next_round.py | 子 agent 只产出当前 round 结果 |

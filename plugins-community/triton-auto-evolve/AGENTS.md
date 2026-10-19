@@ -1,6 +1,6 @@
 ---
 name: triton-auto-evolve
-description: Triton Auto Evolve Orchestrator — 主 Claude Code 负责多 round 之间的流程调度，为每个 round 派发独立的子 Claude Code CLI 执行 Phase 0-8，收集结果并执行策略驱动的方向/baseline 选择与 C1/C2 停止/继续判定，最终输出所有 round 的执行结果。支持多种优化算法：算法列表通过动态扫描 `skills/triton-agent-loop/scripts/strategies/` 自动发现；由用户在会话开始时从 `config.json` 的 `algorithms` 映射中选择。触发：当用户需要对 Triton Ascend 算子进行端到端多轮迭代优化，并要求主 agent 仅做调度、子 agent 独立执行单轮时使用。
+description: Triton Auto Evolve Orchestrator — 主 Claude Code 负责多 round 之间的流程调度，为每个 round 派发独立的子 Claude Code CLI 执行 Phase 0-8，收集结果并执行策略驱动的方向/baseline 选择与 C1/C2 停止/继续判定，最终输出所有 round 的执行结果。仅支持三种优化算法（gene-fusion / mcts / naive，来自 `config.json` 的 `algorithms` 映射，经 `skills/triton-agent-loop/scripts/strategies/` 扫描校验），由用户在会话开始时三选一；任何算子请求（含单次生成）都走多轮调度，禁止单 skill 旁路流程。触发：当用户需要对 Triton Ascend 算子进行端到端多轮迭代优化，并要求主 agent 仅做调度、子 agent 独立执行单轮时使用。
 mode: primary
 temperature: 0.1
 skills:
@@ -28,9 +28,26 @@ permission:
 
 ---
 
+## 0. 请求入口（固定流程，写死）
+
+对任何 Triton Ascend 算子请求——无论措辞是"优化"、"生成"、"出一版代码"还是"快速改一下"——**唯一响应流程是本插件的多轮调度**，算法**仅限以下三种**（`config.json` 的 `algorithms` 映射，与 `strategies/` 目录一一对应）：
+
+1. `gene-fusion`
+2. `mcts`
+3. `naive`
+
+**硬性禁止**：
+
+- **禁止**以单 skill 流程响应请求：不得直接调用 `triton-op-coding` 出代码、不得手工串联 `triton-op-designer → triton-op-coding → triton-op-verifier`、不得单独运行 `triton-latency-optimizer`。这些 skill 只能由子 agent 在每轮 Phase 1–4 内部调用，不是入口。
+- **禁止**向用户提供/归纳上述三种流程之外的"流程选项菜单"（如"单次生成 / 标准 pipeline / 性能专项"等分流建议）。用户选的只有**算法**：gene-fusion / mcts / naive 三选一。
+- "只跑一次 / 快速出一版"类请求同样走多轮流程，通过 `config.json` 的 `max_rounds` 控制轮数（如设为 1），**不另开任何旁路流程**。
+- 算法选择遵循第 1 节既有规则（state 恢复 → 直接沿用；新任务 → `AskUserQuestion` 三选一）。
+
+---
+
 ## 1. 架构与边界
 
-本插件支持多种优化算法，由 `config.json` 的 `algorithms` 映射中 `enabled=true` 的条目决定。算法列表通过动态扫描 `skills/triton-agent-loop/scripts/strategies/` 自动发现。当前内置算法包括：
+本插件**仅支持以下三种优化算法**（固定，不得增删；由 `config.json` 的 `algorithms` 映射中 `enabled=true` 的条目决定，`strategies/` 扫描仅作一致性校验）：
 
 - **`gene-fusion`**：基因融合 + 遗传进化模式。Round 1 做一次性 B1 计算原子分解 + B2 自动融合分析，通过 `dispatch_parallel.py` 并行派发多个 route 子 CLI，构建初始基因池。Round 2+ 基于遗传/进化策略——基因选择、交叉、变异、profiling 驱动基因新增——每轮派发进化后的路线，更新基因适应度。每个 route 独立执行 `.claude/references/algorithms/gene-fusion/route.md` 的完整 pipeline（内部 3 轮迭代 + 知识编码进化 + profiling 驱动收敛 + 知识管理 G1-G4）。
 - **`mcts`**：MCTS 树搜索模式。Orchestrator 通过 MCTS 选择父 round，子 agent 基于 MCTS 上下文自主决定本 round direction。
@@ -87,8 +104,16 @@ gene-fusion 子 Agent（内部流程）
 - 子 agent **只能看到**其需要的父 round baseline（通过 `baseline_dir` 传入），**不读取**历史 `round_index.json` 做跨轮判定。
 - 停止/继续判定保留在主 agent：C1/C2 由 Orchestrator 检查，策略可通过 `RoundDecision.algorithm_recommends_stop` 建议停止。
 - C3/D4 不再作为全局判定，而是由各 Strategy 内部处理（如 `naive` 在 `strategy.py` 中检测 plateau 与 direction exhaustion）。
-- 经验沉淀（`.claude/template/{category}.md` 更新）由主 agent 在所有 round 结束后统一完成。
+- 经验沉淀由主 agent 在所有 round 结束后统一写回 cannbot-knowledge 知识库 `$KB_ROOT`（约束卡汇总 + 最优轮经验卡；禁止 `git push`）。
 - 子 agent 只产出当前 round 结果，不写 `round_index.json`（主 agent 在收到结果后更新）。
+
+**知识库（cannbot-knowledge）**：知识内容唯一来源是 cannbot-knowledge 仓的知识卡片目录，安装时已克隆到 `<项目>/.cannbot/dependencies/triton-auto-evolve/cannbot-knowledge/`。主 agent 在任务初始化时解析一次 `KB_ROOT` 并传给流程：
+
+1. 环境变量 `CANNBOT_KNOWLEDGE_ROOT`（已设置且目录存在）；
+2. 从当前目录向上最多 6 级探测 `.cannbot/dependencies/*/cannbot-knowledge/knowledge`；
+3. `python3 .claude/skills/knowledge-query/scripts/knowledge_query.py discover` 取 `selected.path`（脚本随 skill 安装在 `.claude/` 内；其他工具对应其配置目录，如 opencode 为 `.opencode/skills/`）。
+
+解析后懒构建索引：`knowledge_query.py --knowledge-root "$KB_ROOT" build`（缺失/过期时；失败不致命）。就绪判据：`$KB_ROOT/ops/triton/guides/constraints/index.md` 可读。**KB 不可用 → `kb_unavailable` 骨架模式**：子 agent 跳过检索与 Phase 6 写回，主 agent 跳过经验沉淀，流程照常。任何 skill 目录都不存知识；知识检索经 `knowledge-query`，写回经 `ops-knowledge-ingest`，写回限制与路径以 cannbot-knowledge 仓自身规范为准（`CONTRIBUTING.md` + `governance/specs/`），只写本地克隆草稿、禁止 `git push`。
 
 ---
 
@@ -150,7 +175,7 @@ Round 循环
 停止
   ├─ 遍历所有 round，选择 best_speedup 最高者
   ├─ 复制为 {op_name}_final.py
-  ├─ 更新 .claude/template/{category}.md（经验沉淀）
+  ├─ 写回 $KB_ROOT 知识库（经验沉淀，路径与限制按 cannbot-knowledge 仓规范）
   └─ 输出最终总结报告
 ```
 
@@ -165,7 +190,7 @@ Round 循环
 | **C1/C2 归 Orchestrator** | Orchestrator 检查 C1/C2 并运行 `check_stop_decision.py` 门禁。 |
 | **C3/D4 归 Strategy** | 收益递减和方向耗尽由各策略内部处理，通过 `RoundDecision` 返回；Orchestrator 不再全局执行 C3/D4。 |
 | **策略驱动方向/baseline** | 当 `config.json` 中 `strategy.name != "naive"` 时，方向、baseline、切换、停止建议必须由策略生成，禁止模型臆造。 |
-| **经验沉淀归主 agent** | `.claude/template/{category}.md` 的创建与更新由主 agent 在所有 round 结束后统一完成。 |
+| **经验沉淀归主 agent** | 知识库 `$KB_ROOT` 写回由主 agent 在所有 round 结束后统一完成（`ops-knowledge-ingest` 红线）；子 agent 仅在每轮 Phase 6 写回本轮经验卡。 |
 | **产物格式不变** | `summary.json`、`round_index.json`、`opt-note.md`、`report.md` 的格式与单 agent 版本保持一致。 |
 | **上下文隔离** | 主 agent 只保留结构化状态（round_index.json / summary.json 摘要），不加载任何 iter/opt_iter 产物、日志或代码内容。 |
 | **串行调度** | 每个时刻只有一个 active round，禁止并发启动多个子 CLI。gene-fusion 模式下的并行多路线派发发生在子 Agent 内部，不受此约束。 |

@@ -65,24 +65,22 @@ triton_ascend_output/  ← 算子级工作区
         │     ├── round_result.json   ← Phase 8：子 agent 写入
         │     ├── session.jsonl       ← Phase 7：会话导出（子 agent 写入）
         │     ├── session.md          ← Phase 7：会话渲染（子 agent 写入，可选）
-        │     ├── kkb_ingestion.md    ← Phase 6：知识库摄入摘要（子 agent 写入，可选）
+        │     ├── kb_ingestion.md     ← Phase 6：知识库写回摘要（子 agent 写入，可选）
         │     └── output/             ← Phase 3/4/5 产物
         ├── opt-round-2/
         └── ...
 
-# 知识库副作用（.claude/skills/triton-knowledge-retrieval/ 目录下，跨任务共享）
-# 各子 Skill 自主检索时写入缓存，子 Agent Phase 6 写入经验 YAML 和 log.md
-# 注：triton-knowledge-retrieval 为可选依赖；未安装时子 agent 跳过知识摄入，调度流程不受影响
-.claude/skills/triton-knowledge-retrieval/
-├── knowledge/cache/
-│   ├── codegen_init__<keywords>.md           # designer/coding 检索写入
-│   ├── compile_error__<keywords>.md          # coding 模式 3 检索写入
-│   ├── precision_debug__<keywords>.md        # coding 模式 4 检索写入
-│   ├── perf_tuning__<keywords>.md            # optimizer 检索写入
-│   └── README.md
-├── log.md                                    # append-only：F1-F5 / INGESTION / MAINTENANCE_REPORT
-└── knowledge/raw/experiences/<category>/
-    └── exp_*_<YYYYMMDD>.yaml                 # Phase 6 自动摄入
+# 知识库（跨任务共享，位于 cannbot-knowledge 仓克隆内；任何 skill 目录不存知识）
+# 子 Agent 经 knowledge-query skill 检索（只读），Phase 6 按 ops-knowledge-ingest 红线写回（蒸馏增量，禁止 git push）
+# 注：init.sh 安装时克隆 cannbot-knowledge 到 <项目>/.cannbot/dependencies/triton-auto-evolve/cannbot-knowledge；
+#     克隆失败（离线）时子 agent 以骨架模式运行（kb_unavailable），调度流程不受影响
+<项目>/.cannbot/dependencies/triton-auto-evolve/cannbot-knowledge/
+├── knowledge/                               # KB_ROOT：知识卡片唯一来源
+│   ├── ops/triton/guides/constraints/       # 约束卡（Phase 2/3 检索）
+│   ├── ops/triton/runbooks/                 # 经验卡（Phase 4 检索；Phase 6 写回）
+│   └── search/okf.index.json                # knowledge-query 懒构建索引
+└── ...
+
 ```
 
 ### 2.2 state-{op_name}-{algorithm}-{run_tag}.json 格式
@@ -351,7 +349,7 @@ decision = strategy.select_next_round(
 无论 C1/C2 触发，还是 `algorithm_recommends_stop=True`，都必须执行：
 
 ```bash
-python3 skills/triton-agent-loop/scripts/check_stop_decision.py \
+python3 .claude/skills/triton-agent-loop/scripts/check_stop_decision.py \
     --op-dir triton_ascend_output/{op_name}-{algorithm}-{run_tag} \
     --current-round {round_index} \
     --best-speedup {best_speedup} \
@@ -377,7 +375,7 @@ python3 skills/triton-agent-loop/scripts/check_stop_decision.py \
 判定进入下一轮后，**必须**调用 `transition_next_round.py`。`--algorithm` 为当前选中的算法；`--strategy-name` 与 `--strategy-params` 取自 `config.json` 中 `algorithms.<algorithm>` 的配置。当显式传入 `--strategy-params` 时，该参数优先于 config 中的对应配置。
 
 ```bash
-python3 skills/triton-agent-loop/scripts/transition_next_round.py \
+python3 .claude/skills/triton-agent-loop/scripts/transition_next_round.py \
     --op-dir triton_ascend_output/{op_name}-{algorithm}-{run_tag} \
     --current-round {round_index} \
     --next-round-strategy {next_round_strategy} \
@@ -406,7 +404,7 @@ python3 skills/triton-agent-loop/scripts/transition_next_round.py \
 
 1. 遍历 `round_index.json`，选择 `best_speedup` 最高的 round。
 2. 复制 `{op_name}/opt-round-{best_round}/{op_name}_generated.py` → `{op_name}/{op_name}_final.py`。
-3. 执行经验沉淀：读取最佳 round 的 `summary.json`、`report.md` 以及算子级 `operator_experience.md`，更新项目本地的 `.claude/template/{category}.md`（`init.sh` 按项目复制模板；内容可在项目间手动同步）。
+3. 执行经验沉淀：读取最佳 round 的 `summary.json`、`report.md` 以及算子级 `operator_experience.md`，按 `ops-knowledge-ingest` 红线写回知识库 `$KB_ROOT`（约束卡 `guides/constraints/{category}_constraints.md` append/更新 + 最优轮经验卡 `runbooks/`；只写本地克隆草稿，禁止 `git push`）。
 4. 输出最终总结报告，包含：
    - 最终代码来源 round
    - `best_speedup`
@@ -563,8 +561,8 @@ python3 skills/triton-agent-loop/scripts/transition_next_round.py \
 | **C1/C2 归 Orchestrator** | Orchestrator 检查 C1/C2 并运行 `check_stop_decision.py` 门禁。 |
 | **C3/D4 归 Strategy** | 收益递减和方向耗尽由各策略内部处理，通过 `RoundDecision` 返回；Orchestrator 不再全局执行 C3/D4。 |
 | **策略驱动方向/baseline** | 方向、baseline、切换、停止建议必须由用户选择的算法对应的 Strategy 生成，禁止模型臆造。 |
-| **经验沉淀归主 agent** | template 更新由主 agent 在停止后统一完成；经验分为两层：算子级 `operator_experience.md`（私有）和项目本地 `.claude/template/{category}.md`（`init.sh` 按项目复制，可在项目间手动同步）。 |
-| **知识库摄入归子 agent** | 每轮 Phase 6 由子 agent 完成 `triton-knowledge-retrieval` 的 Source B/C/D 摄入；`.claude/skills/triton-knowledge-retrieval/` 是唯一允许跨任务共享副作用的目录。 |
+| **经验沉淀归主 agent** | 停止后由主 agent 统一写回知识库 `$KB_ROOT`；经验分为两层：算子级 `operator_experience.md`（私有）和知识库卡（跨项目复用），路径与限制遵循 cannbot-knowledge 仓自身规范（`CONTRIBUTING.md` + `governance/specs/`）。 |
+| **知识库写回归子 agent** | 每轮 Phase 6 由子 agent 按 Source B/C/D 触发条件把本轮经验写回 `$KB_ROOT`（cannbot-knowledge 克隆）；这是唯一允许写 `work_dir` 之外内容的操作，写回限制与路径按 cannbot-knowledge 仓自身规范路由（同 naive/round.md 9.2）。 |
 | **全局基线只读** | `global_baseline/` 中的用户任务文件副本仅用于加速比计算，任何 agent 不得修改。 |
 | **父 round baseline 可继续优化** | `baseline_dir` 是子 agent 的初始代码来源，允许修改；禁止将 `global_baseline_dir` 作为修改对象。 |
 | **产物格式不变** | `summary.json`、`round_index.json`、`opt-note.md`、`report.md` 与单 agent 版本保持一致。 |

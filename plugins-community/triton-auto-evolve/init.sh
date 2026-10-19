@@ -26,7 +26,6 @@ step() { echo -e "${DIM}$*${NC}"; }
 
 PLUGIN_ID="triton-auto-evolve"
 VERSION="0.5.0"
-INCLUDED_SKILLS="triton-task-extractor triton-op-designer triton-op-coding triton-op-verifier triton-latency-optimizer triton-simulator-optimizer npu-arch triton-precision-debug triton-agent-loop"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$SCRIPT_DIR"
@@ -48,33 +47,13 @@ detect_trae_variant() {
 LOCAL_CTRL_SKILLS_DIR="$PLUGIN_ROOT/skills"
 
 find_ops_root() {
-    local candidate
-    # 1) Shared ops directory (sibling in source tree)
-    #    Operator skills (triton-op-coding, etc.) live in repo root ops/
-    for candidate in "$PLUGIN_ROOT/../../ops" "$PLUGIN_ROOT/../../../ops"; do
-        if [ -d "$candidate" ]; then
-            cd "$candidate" && pwd
-            return 0
-        fi
-    done
-
-    local dependency_root="$PLUGIN_ROOT/../triton-op-generator-skills"
-    if [ -d "$dependency_root" ]; then
-        candidate="$(find "$dependency_root" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1)"
-        if [ -n "$candidate" ]; then
-            cd "$candidate" && pwd
-            return 0
-        fi
+    # Shared ops directory lives in the vendor/cannbot-skills submodule,
+    # resolved relative to the repository root so any clone location works.
+    local candidate="$PLUGIN_ROOT/../../vendor/cannbot-skills/ops"
+    if [ -d "$candidate" ]; then
+        cd "$candidate" && pwd
+        return 0
     fi
-
-    local search_dir="$PLUGIN_ROOT"
-    for _ in 1 2 3 4 5; do
-        search_dir="$(dirname "$search_dir")"
-        if [ -d "$search_dir/ops" ]; then
-            cd "$search_dir/ops" && pwd
-            return 0
-        fi
-    done
     return 1
 }
 
@@ -112,6 +91,7 @@ Examples:
 
 Installed content:
   Skills:     triton-task-extractor, triton-op-designer, triton-op-coding, triton-op-verifier, triton-latency-optimizer, triton-simulator-optimizer, npu-arch, triton-precision-debug
+  Knowledge:  knowledge-query / ops-knowledge-ingest tool skills + cannbot-knowledge card repo cloned to <project>/.cannbot/dependencies/triton-auto-evolve/cannbot-knowledge
   Control:    triton-agent-loop (Multi-Agent round dispatch and orchestration)
   Template:   Index computation, math compute, normalization, object detection, quantization, tensor transform, transformer inference (copied per project)
   Hooks:      SessionStart/SessionEnd/PreToolUse
@@ -141,8 +121,51 @@ done
 
 OPS_SKILL_ROOT="$(find_ops_root || true)"
 if [ -z "$OPS_SKILL_ROOT" ] || [ ! -d "$OPS_SKILL_ROOT" ]; then
-    err "Cannot find shared ops/ directory. Please run init.sh from the cannbot source tree."
+    # A fresh clone ships an empty vendor/cannbot-skills submodule; populate it once.
+    if [ -f "$PLUGIN_ROOT/../../.gitmodules" ] \
+       && grep -q "vendor/cannbot-skills" "$PLUGIN_ROOT/../../.gitmodules"; then
+        info "Initializing vendor/cannbot-skills submodule (first run only)..."
+        if git -C "$PLUGIN_ROOT/../.." submodule update --init --depth 1 vendor/cannbot-skills; then
+            OPS_SKILL_ROOT="$(find_ops_root || true)"
+        fi
+    fi
+fi
+if [ -z "$OPS_SKILL_ROOT" ] || [ ! -d "$OPS_SKILL_ROOT" ]; then
+    err "Cannot find shared ops/ directory. Please run init.sh from the cannbot source tree,"
+    err "or run 'git submodule update --init' at the repository root first."
     exit 1
+fi
+
+# Skill 清单单一来源：plugin-sources.json（与统一安装器同源）。
+#   ops/ 条目                                → INCLUDED_SKILLS（vendor/cannbot-skills/ops 软链）
+#   plugins-community/cannbot-knowledge 条目 → KB_SKILLS（知识库工具 skill，源在 KB_SKILL_ROOT）
+# 知识内容（卡片）不在此列：卡片由 install_knowledge_base() 克隆 cannbot-knowledge 仓提供。
+SKILLS_REPO_ROOT="$(dirname "$OPS_SKILL_ROOT")"
+KB_SKILL_ROOT="$SKILLS_REPO_ROOT/plugins-community/cannbot-knowledge/skills"
+INCLUDED_SKILLS=""
+KB_SKILLS=""
+if [ -f "$PLUGIN_ROOT/plugin-sources.json" ] && command -v python3 >/dev/null 2>&1; then
+    parsed="$(python3 - "$PLUGIN_ROOT/plugin-sources.json" <<'PY'
+import json, sys
+from pathlib import Path
+
+sources = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+ops, kb = [], []
+for entry in sources.get("skills", []):
+    name = entry.rstrip("/").rsplit("/", 1)[-1]
+    if entry.startswith("plugins-community/cannbot-knowledge/skills/"):
+        kb.append(name)
+    else:
+        ops.append(name)
+print("|".join([" ".join(ops), " ".join(kb)]))
+PY
+)" && { INCLUDED_SKILLS="${parsed%%|*}"; KB_SKILLS="${parsed#*|}"; } || { INCLUDED_SKILLS=""; KB_SKILLS=""; }
+fi
+# Fallback：plugin-sources.json 缺失或解析失败时的静态清单（与 plugin-sources.json 保持一致）。
+if [ -z "$INCLUDED_SKILLS" ]; then
+    warn "plugin-sources.json missing or unparsable; using built-in skill list"
+    INCLUDED_SKILLS="triton-task-extractor triton-op-designer triton-op-coding triton-op-verifier triton-latency-optimizer triton-simulator-optimizer npu-arch triton-precision-debug"
+    KB_SKILLS="knowledge-query ops-knowledge-ingest"
 fi
 
 if [ "$LEVEL" = "project" ]; then
@@ -242,6 +265,94 @@ install_control_skill_links() {
         count=$((count + 1))
     done
     ok "Control skills: $count linked"
+}
+
+install_kb_skill_links() {
+    # knowledge-query / ops-knowledge-ingest 只是操作知识库的工具 skill（内部无任何知识卡片），
+    # 与算子 skill 一样从 cannbot-skills vendor 树软链。
+    local target_root="$1"
+    [ -n "$KB_SKILLS" ] || return 0
+    if [ ! -d "$KB_SKILL_ROOT" ]; then
+        warn "Knowledge tool skills root not found: $KB_SKILL_ROOT"
+        return 0
+    fi
+    mkdir -p "$target_root"
+    local count=0 skill src target
+    for skill in $KB_SKILLS; do
+        src="$KB_SKILL_ROOT/$skill"
+        target="$target_root/$skill"
+        if [ ! -d "$src" ]; then
+            warn "Knowledge tool skill not found: $skill"
+            continue
+        fi
+        if [ -e "$target" ] || [ -L "$target" ]; then
+            rm -rf "$target"
+        fi
+        ln -sfn "$(realpath "$src")" "$target"
+        count=$((count + 1))
+    done
+    ok "Knowledge tool skills: $count linked"
+}
+
+install_knowledge_base() {
+    # 知识内容（卡片）唯一来源：cannbot-knowledge 仓的 knowledge/ 目录。
+    # 克隆到 <项目>/.cannbot/dependencies/<plugin>/<name>，与统一安装器
+    # （cannbot.js provisionDependencies）的路径约定一致；仓库地址等均从
+    # plugin-install.json 读取，不在脚本里硬编码。
+    KB_DEP_ROOT=""
+    if [ "${CANNBOT_SKIP_DEPENDENCY_REPOS:-0}" = "1" ]; then
+        info "Skipping knowledge base clone (CANNBOT_SKIP_DEPENDENCY_REPOS=1)"
+        return 0
+    fi
+    if [ "$LEVEL" != "project" ]; then
+        info "Global install: knowledge base not provisioned (project-level only)"
+        return 0
+    fi
+    local dep_json="$PLUGIN_ROOT/plugin-install.json"
+    if [ ! -f "$dep_json" ] || ! command -v python3 >/dev/null 2>&1; then
+        warn "plugin-install.json unavailable; skip knowledge base clone"
+        return 0
+    fi
+    local dep_line
+    dep_line="$(python3 - "$dep_json" <<'PY'
+import json, sys
+from pathlib import Path
+
+for d in json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("dependencies", []):
+    if d.get("name") and d.get("repository"):
+        print(f'{d["name"]}\t{d["repository"]}\t{d.get("ref", "")}')
+        break
+PY
+)"
+    if [ -z "$dep_line" ]; then
+        warn "No valid dependency in plugin-install.json; skip knowledge base clone"
+        return 0
+    fi
+    local name repository ref dep_parent
+    name="$(printf '%s' "$dep_line" | cut -f1)"
+    repository="$(printf '%s' "$dep_line" | cut -f2)"
+    ref="$(printf '%s' "$dep_line" | cut -f3)"
+    dep_parent="$INSTALL_BASE/.cannbot/dependencies/$PLUGIN_ID"
+    KB_DEP_ROOT="$dep_parent/$name"
+    if [ -d "$KB_DEP_ROOT/.git" ]; then
+        if git -C "$KB_DEP_ROOT" pull --ff-only >/dev/null 2>&1; then
+            ok "Knowledge base updated: $KB_DEP_ROOT"
+        else
+            warn "Knowledge base update failed; using existing checkout: $KB_DEP_ROOT"
+        fi
+    elif [ -e "$KB_DEP_ROOT" ]; then
+        warn "Knowledge base path exists but is not a Git checkout; clone skipped: $KB_DEP_ROOT"
+    else
+        mkdir -p "$dep_parent"
+        local clone_args=(clone --depth 1)
+        [ -n "$ref" ] && clone_args+=(--branch "$ref")
+        if git "${clone_args[@]}" "$repository" "$KB_DEP_ROOT" >/dev/null 2>&1; then
+            ok "Knowledge base cloned: $KB_DEP_ROOT"
+        else
+            warn "Knowledge base clone failed (offline?); agent runs in skeleton mode"
+            KB_DEP_ROOT=""
+        fi
+    fi
 }
 
 install_template_links() {
@@ -410,11 +521,11 @@ PY
 
 write_manifest() {
     local manifest="$CONFIG_ROOT/cannbot-manifest.json"
-    local skills_json agents_json hooks_json
+    local skills_json agents_json hooks_json deps_json
 
-    # Combine operator skills from INCLUDED_SKILLS with plugin-local control skills
+    # Combine operator skills + knowledge tool skills with plugin-local control skills
     local combined_skills=""
-    for s in $INCLUDED_SKILLS; do combined_skills="$combined_skills $s"; done
+    for s in $INCLUDED_SKILLS $KB_SKILLS; do combined_skills="$combined_skills $s"; done
     if [ -d "$LOCAL_CTRL_SKILLS_DIR" ]; then
         local name
         for entry in "$LOCAL_CTRL_SKILLS_DIR"/*; do
@@ -428,6 +539,10 @@ write_manifest() {
 
     agents_json="[]"
     hooks_json=$(find "$LOCAL_HOOK_ROOT" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null || echo "[]")
+    deps_json="[]"
+    if [ -n "$KB_DEP_ROOT" ] && [ -d "$KB_DEP_ROOT" ]; then
+        deps_json="[\".cannbot/dependencies/$PLUGIN_ID/$(basename "$KB_DEP_ROOT")\"]"
+    fi
     cat > "$manifest" << EOF
 {
   "brand": "CANNBot",
@@ -438,6 +553,7 @@ write_manifest() {
   "installed_skills": $skills_json,
   "installed_agents": $agents_json,
   "installed_hooks": $hooks_json,
+  "dependencies": $deps_json,
   "brand_dir": "$CONFIG_ROOT",
   "install_time": "$(date -u +%Y%m%dT%H%M%SZ)"
 }
@@ -458,18 +574,23 @@ if [ "$TOOL" = "trae" ]; then
     echo ""
 fi
 
-step "[1/5] Installing operator skills..."
+step "[1/6] Installing operator skills..."
 mkdir -p "$CANNBOT_DIR"
 install_skill_links "$CANNBOT_DIR/skills"
+install_kb_skill_links "$CANNBOT_DIR/skills"
 echo ""
 
-step "[2/5] Installing control skills, template and references..."
+step "[2/6] Installing control skills, template and references..."
 install_control_skill_links "$CANNBOT_DIR/skills"
 install_template_links "$CANNBOT_DIR"
 install_references_links "$CANNBOT_DIR"
 echo ""
 
-step "[3/5] Installing hooks..."
+step "[3/6] Installing knowledge base (cannbot-knowledge)..."
+install_knowledge_base
+echo ""
+
+step "[4/6] Installing hooks..."
 install_hook_links "$CANNBOT_DIR/hooks"
 activate_hooks_settings
 
@@ -513,11 +634,11 @@ else
 fi
 echo ""
 
-step "[4/5] Installing configuration..."
+step "[5/6] Installing configuration..."
 install_config
 echo ""
 
-step "[5/5] Writing manifest..."
+step "[6/6] Writing manifest..."
 write_manifest
 echo ""
 
@@ -526,6 +647,10 @@ health_ok=true
 [ -d "$CANNBOT_DIR/skills" ] || { err "skills/ missing"; health_ok=false; }
 [ -d "$CANNBOT_DIR/hooks" ] || { err "hooks/ missing"; health_ok=false; }
 [ -d "$CANNBOT_DIR/template" ] || warn "template/ missing (optional, skip)"
+if [ "$LEVEL" = "project" ] && [ "${CANNBOT_SKIP_DEPENDENCY_REPOS:-0}" != "1" ]; then
+    [ -d "$INSTALL_BASE/.cannbot/dependencies/$PLUGIN_ID/cannbot-knowledge/knowledge" ] \
+        || warn "knowledge base missing (.cannbot/dependencies/$PLUGIN_ID/cannbot-knowledge); agent runs in skeleton mode"
+fi
 [ -f "$CONFIG_ROOT/cannbot-manifest.json" ] || { err "manifest missing"; health_ok=false; }
 if [ "$LEVEL" = "project" ]; then
     [ -f "$INSTALL_BASE/$CONFIG_FILE_NAME" ] || { err "$CONFIG_FILE_NAME missing in project directory"; health_ok=false; }

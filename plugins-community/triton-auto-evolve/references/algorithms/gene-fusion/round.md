@@ -5,7 +5,7 @@ description: triton-auto-evolve 的 Gene-Fusion 算法 Per-Round Worker 规范�
 > **本文件是 Gene-Fusion 算法子 Per-Round Worker Agent 的权威执行规范。**
 > - 由主 Orchestrator Agent 通过 `dispatch_round.py` 每轮启动 1 个 gene-fusion 子 CLI。
 > - 子 Agent 上下文**仅包含**：本文件、`task_manifest.json`、当前 `work_dir`、`baseline_dir`、标准 skill/reference。
-> - 子 Agent **禁止**读取历史 `round_index.json`、禁止做跨 round 停止/继续判定、禁止更新 template、禁止修改 `.triton-agent/state-{op_name}-{algorithm}-{run_tag}.json`。
+> - 子 Agent **禁止**读取历史 `round_index.json`、禁止做跨 round 停止/继续判定、禁止更新项目级经验模板、禁止修改 `.triton-agent/state-{op_name}-{algorithm}-{run_tag}.json`。
 > - 子 Agent 内部通过 `dispatch_parallel.py` 并行启动多个 **route 子 CLI**，每个 route 子 CLI 使用 `.claude/references/algorithms/gene-fusion/route.md` 作为参考规范。
 
 ---
@@ -25,8 +25,8 @@ Orchestrator 每轮派发 1 个 gene-fusion 子 Agent
 │  │ Phase 2 (B2): 融合方案分析 → 选唯一最优方案              │  │
 │  │              → fusion_plan.json（只有一个）              │  │
 │  │ Phase 2.5 (C0): 基因编码空间设计                         │  │
-│  │   ┌─ 从 develop_guide / expert_experiences /              │  │
-│  │   │  加载知识编码 → 构建基因池                             │  │
+│  │   ┌─ 从 $KB_ROOT 约束卡(kb_guides) /                       │  │
+│  │   │  runbooks 经验卡(kb_runbooks) 加载知识编码 → 基因池      │  │
 │  │   └─ 路线 = 单一融合方案 × 不同基因组合:                  │  │
 │  │      所有路线的融合方案相同，只有基因组合不同               │  │
 │  │ Phase 3 (D0): dispatch_parallel.py 并行派发所有路线       │  │
@@ -54,7 +54,7 @@ Orchestrator 每轮派发 1 个 gene-fusion 子 Agent
 
 **核心循环逻辑**：
 
-- **Round 1**：baseline = 原始代码 → B1 原子分解 → B2 融合方案分析（**只选 1 个最优方案**）→ **C0 基因编码空间设计**（从 develop_guide / expert_experiences 加载知识编码作为基因）→ 同一融合方案 × 不同基因组合 → 生成多条路线 → D0 并行派发 → 实测性能赋值基因 fitness → 选出最优
+- **Round 1**：baseline = 原始代码 → B1 原子分解 → B2 融合方案分析（**只选 1 个最优方案**）→ **C0 基因编码空间设计**（经 knowledge-query 从 `$KB_ROOT` 加载约束卡/经验卡知识编码作为基因）→ 同一融合方案 × 不同基因组合 → 生成多条路线 → D0 并行派发 → 实测性能赋值基因 fitness → 选出最优
 
 - **Round 2+**：baseline = 上一轮最优 → 从基因池中做选择/交叉/变异 → profiling 驱动新增基因 → 进化后的基因组合 × **同一融合方案**（不变）→ 生成路线 → 并行派发 → 更新基因适应度 → 选最优
 
@@ -90,7 +90,7 @@ Orchestrator 每轮派发 1 个 gene-fusion 子 Agent
 1. 读取 `task_manifest.json`。
 2. 执行 Phase 0 → Phase 1 (B1) → Phase 2 (B2) → Phase 2.5 (C0) → Phase 3 (D0) → Phase 4 → Phase 5 → Phase 6 → Phase 7。
 3. **B2**：选出唯一最优融合方案。
-4. **C0**：从 develop_guide / expert_experiences 加载知识编码构建基因池。所有路线共用同一融合方案，差异仅在基因组合。
+4. **C0**：经 knowledge-query 从 `$KB_ROOT` 加载知识编码（约束卡 + runbooks 经验卡）构建基因池。所有路线共用同一融合方案，差异仅在基因组合。
 5. 在 Phase 3 并行启动所有 route 子 CLI。
 6. 收集结果，为基因赋初始 fitness，选出最优。
 7. 写入 `round_result.json`，退出。
@@ -104,7 +104,7 @@ Orchestrator 每轮派发 1 个 gene-fusion 子 Agent
 - 读取 `triton_ascend_output/{op_name}-{algorithm}-{run_tag}/round_index.json` 以外的历史信息。
 - 执行 C1/C2/C3/D4 停止/继续判定（交给主 Orchestrator）。
 - 调用 `transition_next_round.py`。
-- 更新 `.claude/template/{category}.md`。
+- 更新项目级经验模板（跨 round 经验沉淀由 Orchestrator 统一写回 `$KB_ROOT`）。
 - 修改 `.triton-agent/state-{op_name}-{algorithm}-{run_tag}.json`。
 - **在 B2 阶段或基因选择阶段向用户提问或等待用户确认**（全自动）。
 
@@ -232,7 +232,7 @@ Round 1 通过 `npu-smi info` 检测，失败则用默认 `ascend910b1`。Round 
 
 ### 5-2.1 目标
 
-从外部知识源加载知识编码构建基因池。所有路线共用同一融合方案，差异仅在基因组合。
+从 cannbot-knowledge 知识库（`$KB_ROOT`，解析顺序同 naive/round.md 3.8）加载知识编码构建基因池。所有路线共用同一融合方案，差异仅在基因组合。
 
 **基因 = 知识编码（优化技术）**。每个基因是一个可追踪到代码动作的优化项（tiling 策略、内存访问模式、计算原语选择、向量化方式等）。
 
@@ -240,12 +240,14 @@ Round 1 通过 `npu-smi info` 检测，失败则用默认 `ascend910b1`。Round 
 
 ### 5-2.2 加载知识编码 -> 构建基因池
 
-按优先级从知识源加载：
+经 knowledge-query（`preflight --task "<op_name> <op_category> 优化技术 约束 经验"` → `search`/`get`）按优先级从 `$KB_ROOT` 加载：
 
-| 优先级 | 知识源 | 示例基因 |
-|--------|--------|---------|
-| 1 (最高) | `develop_guide` | "使用 tl.dot 利用 TensorCore"、"沿 M 维分块 block_size=128" |
-| 2 | `expert_experiences` | "对 reduction 轴使用 multiple-pipeline" |
+| 优先级 | 知识源 | 位置 | 示例基因 |
+|--------|--------|------|---------|
+| 1 (最高) | `kb_guides`（约束卡） | `$KB_ROOT/ops/triton/guides/constraints/{op_category}_constraints.md` | "使用 tl.dot 利用 TensorCore"、"沿 M 维分块 block_size=128" |
+| 2 | `kb_runbooks`（经验卡） | `$KB_ROOT/ops/triton/runbooks/` 相似算子经验 | "对 reduction 轴使用 multiple-pipeline" |
+
+KB 不可用（`kb_unavailable`）时退化为仅用融合方案自带的默认基因组合。
 
 对每个加载的知识项，构造一个基因：
 
@@ -255,7 +257,7 @@ Round 1 通过 `npu-smi info` 检测，失败则用默认 `ascend910b1`。Round 
   "ku_id": "K1",
   "category": "tiling",
   "description": "沿 M 维度分块，块大小 128",
-  "source": "develop_guide",
+  "source": "kb_guides",
   "source_priority": 1,
   "code_target": "grid / block size 参数",
   "params": {"block_size_m": 128, "block_size_n": 64},
@@ -273,7 +275,7 @@ Round 1 通过 `npu-smi info` 检测，失败则用默认 `ascend910b1`。Round 
 
 **路线生成策略**：
 1. **多样性原则**：生成多种不同的基因组合
-2. **总路线数控制**：总数 <= `max_routes`（默认 3）。超出时优先选取高优先级知识源（develop_guide）基因组成的路线
+2. **总路线数控制**：总数 <= `max_routes`（默认 3）。超出时优先选取高优先级知识源（kb_guides）基因组成的路线
 3. **全覆盖原则**：保证不同类别（tiling/memory/compute/pipeline）的基因都有机会被验证
 
 **示例**（max_routes=3，融合方案 F1）：
@@ -295,10 +297,10 @@ F1 x [G001, G004]              -> route-3  (变种: tiling+pipeline)
   "generation": 1,
   "fusion_plan": {"fusion_id": "F1", "description": "融合 reduce + broadcast + eltwise"},
   "genes": [
-    {"gene_id": "G001", "category": "tiling",    "source": "develop_guide",      "params": {"block_size_m": 128}, "fitness": null},
-    {"gene_id": "G002", "category": "memory",     "source": "develop_guide",      "params": {}, "fitness": null},
-    {"gene_id": "G003", "category": "tiling",     "source": "expert_experiences", "params": {"block_size_m": 256}, "fitness": null},
-    {"gene_id": "G004", "category": "pipeline",   "source": "expert_experiences", "params": {"num_stages": 3}, "fitness": null}
+    {"gene_id": "G001", "category": "tiling",    "source": "kb_guides",      "params": {"block_size_m": 128}, "fitness": null},
+    {"gene_id": "G002", "category": "memory",     "source": "kb_guides",      "params": {}, "fitness": null},
+    {"gene_id": "G003", "category": "tiling",     "source": "kb_runbooks", "params": {"block_size_m": 256}, "fitness": null},
+    {"gene_id": "G004", "category": "pipeline",   "source": "kb_runbooks", "params": {"num_stages": 3}, "fitness": null}
   ],
   "route_assignments": [
     {"route_id": "route-1", "gene_ids": ["G001", "G002"]},
@@ -361,7 +363,7 @@ F1 x [G001, G004]              -> route-3  (变种: tiling+pipeline)
 ### 6.2 调用 dispatch_parallel.py
 
 ```bash
-python3 skills/triton-agent-loop/scripts/dispatch_parallel.py \
+python3 .claude/skills/triton-agent-loop/scripts/dispatch_parallel.py \
     --manifests route-1/.task_manifest.json route-2/.task_manifest.json route-3/.task_manifest.json \
     --timeout {route_timeout}
 ```
@@ -464,7 +466,7 @@ Gene pool: 4 genes, fitness assigned from profiling
 
 1. **参数变异**：`block_size 128->256` 等（+-50%）
 2. **基因替换/删除/新增**：低概率操作
-3. `develop_guide` 来源基因变异率减半
+3. `kb_guides` 来源基因变异率减半
 
 ### Step G4：Profiling 驱动基因新增
 
@@ -599,7 +601,7 @@ fi
 ### 11.1 执行 submit_round.py
 
 ```bash
-python3 skills/triton-agent-loop/scripts/submit_round.py \
+python3 .claude/skills/triton-agent-loop/scripts/submit_round.py \
     --round-dir {work_dir} --current-round {round_index} \
     --final-round {max_rounds} --op-dir triton_ascend_output/{op_name}-{algorithm}-{run_tag}
 ```

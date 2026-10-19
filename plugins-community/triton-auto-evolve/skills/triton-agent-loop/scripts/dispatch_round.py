@@ -96,58 +96,59 @@ def resolve_plugin_dir() -> Path:
     return script_path.parents[3]
 
 
-def resolve_knowledge_base_root(
-    plugin_dir: Path,
-    claude_root: Path | None = None,
-) -> Path | None:
-    """Return the real directory of the shared triton-knowledge-retrieval skill.
+def resolve_kb_root(start_dir: Path) -> Path | None:
+    """Return the knowledge-card root of the cloned cannbot-knowledge repo.
 
-    The skill may be installed as a symlink under ``claude_root/skills/`` or
-    ``plugin_dir/.claude/skills/``, or it may live in the repository-level
-    ``ops/`` directory.  We follow symlinks to find the real path so the worker
-    can share the same knowledge base across tasks.
+    Knowledge content lives ONLY in the cannbot-knowledge checkout (never
+    inside a skill directory).  Resolution order mirrors
+    ``plugins-official/triton-op-generator``:
+
+    1. ``CANNBOT_KNOWLEDGE_ROOT`` environment variable (must exist),
+    2. probing ``.cannbot/dependencies/*/cannbot-knowledge/knowledge`` from
+       ``start_dir`` and up to six ancestor directories (the path written by
+       ``init.sh`` / the unified installer),
+    3. ``None`` — the worker then runs in skeleton mode (warn only).
     """
-    candidates: list[Path] = []
-    if claude_root is not None:
-        candidates.append(claude_root / "skills" / "triton-knowledge-retrieval")
-    candidates.append(plugin_dir / ".claude" / "skills" / "triton-knowledge-retrieval")
-
-    for candidate in candidates:
-        if candidate.is_symlink():
-            real = candidate.resolve()
-            if real.is_dir():
-                return real
+    env_root = os.environ.get("CANNBOT_KNOWLEDGE_ROOT", "")
+    if env_root:
+        candidate = Path(env_root)
         if candidate.is_dir():
             return candidate
 
-    # Fallback: look in the repository-level ops/ directory
-    repo_root = plugin_dir.parents[1]
-    ops_candidate = repo_root / "ops" / "triton-knowledge-retrieval"
-    if ops_candidate.is_dir():
-        return ops_candidate
-
-    # Search upward for ops/
-    search_dir = plugin_dir
-    for _ in range(5):
+    search_dir = start_dir.resolve()
+    for _ in range(7):  # start_dir itself plus six ancestors
+        for candidate in sorted(search_dir.glob(".cannbot/dependencies/*/cannbot-knowledge/knowledge")):
+            if candidate.is_dir():
+                return candidate
+        if search_dir.parent == search_dir:
+            break
         search_dir = search_dir.parent
-        ops_candidate = search_dir / "ops" / "triton-knowledge-retrieval"
-        if ops_candidate.is_dir():
-            return ops_candidate
 
     return None
 
 
 def resolve_claude_root(plugin_dir: Path, work_dir: Path) -> Path:
-    """Find the installed ``.claude`` resource root used by this project.
+    """Find the resource root used by this project.
 
-    ``init.sh`` may install resources into the plugin root (self-install) or
-    into the target project directory.  The worker needs that resource tree, so
-    we look for a complete installation near ``work_dir`` first, then fall back
-    to the plugin root.
+    The ``references`` directory is the completeness anchor: it holds the
+    plugin's own scheduling specs (``orchestrator-loop.md``, per-algorithm
+    ``round.md``) and ships WITH the plugin — it is *not* knowledge content.
+    Knowledge cards live solely in the cannbot-knowledge checkout and resolve
+    separately via :func:`resolve_kb_root`.
+
+    Candidates:
+
+    1. ``.claude`` under work_dir ancestors — the project install written by
+       ``init.sh`` (its ``references`` is a symlink to the plugin's specs);
+    2. ``.claude`` under the current working directory;
+    3. the plugin root itself — a bare source checkout carries ``skills/`` and
+       ``references/`` at its root, so a worker can run straight from the repo
+       even when ``plugin_dir/.claude`` was never populated (init.sh only
+       writes ``settings.json`` there).
     """
     candidates: list[Path] = []
 
-    # 1) Walk up from work_dir (covers both project-directory and self-install).
+    # 1) Walk up from work_dir (covers project-directory installs).
     resolved_work = work_dir.resolve()
     for parent in resolved_work.parents:
         candidates.append(parent / ".claude")
@@ -155,8 +156,8 @@ def resolve_claude_root(plugin_dir: Path, work_dir: Path) -> Path:
     # 2) Current working directory (e.g. when work_dir is a temporary path).
     candidates.append(Path.cwd() / ".claude")
 
-    # 3) Plugin root as final fallback.
-    candidates.append(plugin_dir / ".claude")
+    # 3) Plugin root as final fallback (bare checkout: resources at the root).
+    candidates.append(plugin_dir)
 
     for candidate in candidates:
         if candidate.is_dir() and (candidate / "references").exists():
@@ -175,9 +176,10 @@ def prepare_isolated_claude(work_dir: Path, plugin_dir: Path) -> Path:
     ``.claude/`` subtree keeps it isolated: it does not need write access to
     the plugin root and any accidental modifications only affect the copy.
 
-    One exception: ``triton-knowledge-retrieval`` is symlinked instead of
-    copied because its ``knowledge/cache/``, ``log.md`` and
-    ``knowledge/raw/experiences/`` are designed to accumulate across tasks.
+    Knowledge cards are not part of this copy: they live in the shared
+    cannbot-knowledge checkout under ``.cannbot/dependencies/`` (resolved via
+    :func:`resolve_kb_root`), so nothing accumulates inside the worker's
+    resource tree.
     """
     src_claude = resolve_claude_root(plugin_dir, work_dir)
     dst_claude = work_dir / ".claude"
@@ -192,21 +194,13 @@ def prepare_isolated_claude(work_dir: Path, plugin_dir: Path) -> Path:
             shutil.rmtree(dst, ignore_errors=True)
         shutil.copytree(src, dst, symlinks=False)
 
-    # Knowledge base is the one exception to isolation: its cache, log.md,
-    # and raw experiences must accumulate across tasks.  Replace the copied
-    # directory with a symlink to the real shared knowledge base.
-    kkb_dst = dst_claude / "skills" / "triton-knowledge-retrieval"
-    kkb_src = resolve_knowledge_base_root(plugin_dir, claude_root=src_claude)
-    if kkb_src is not None:
-        if kkb_dst.exists() or kkb_dst.is_symlink():
-            shutil.rmtree(kkb_dst, ignore_errors=True)
-        kkb_dst.parent.mkdir(parents=True, exist_ok=True)
-        kkb_dst.symlink_to(kkb_src.resolve(), target_is_directory=True)
-    else:
-        # Warn but do not fail: the worker can still run without KB sharing.
+    # Warn but do not fail: the worker can still run without the knowledge
+    # base (skeleton mode, round docs mark phases as kb_unavailable).
+    if resolve_kb_root(work_dir) is None:
         logger.warning(
-            "triton-knowledge-retrieval not found; "
-            "knowledge base will not be shared across tasks"
+            "cannbot-knowledge checkout not found near %s; "
+            "workers run in skeleton mode (kb_unavailable)",
+            work_dir,
         )
 
     settings_src = src_claude / "settings.json"
