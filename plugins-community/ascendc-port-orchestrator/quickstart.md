@@ -1,12 +1,14 @@
 # ascendc-port-orchestrator 快速入门
 
-本插件提供两个入口：
+本插件提供三个入口：
 
 - `ascendc-cross-gen-port`：将 **arch22** AscendC 算子移植到 **arch35 / A5**。
 - `ascendc-backward-gen`：由可微 PyTorch 正向规格生成反向 AscendC 算子。
-- `ascendc-cross-gen-port-light`：无 golden 时的轻量迁移入口——agent 逆向源码自合成标杆并与 A5 实测互检，免交互，不经引擎。Skill 本体在 cannbot-skills 仓 `ops/ascendc-cross-gen-port-light`，随安装经 `vendor/cannbot-skills` 子模块链接。
+- `ascendc-cross-gen-port-light`（Lite，跨代际移植推荐优先使用）：无 golden 时也可使用的轻量迁移入口——agent 逆向源码自合成标杆并与 A5 实测互检，免交互，不经引擎。Skill 本体在 cannbot-skills 仓 `ops/ascendc-cross-gen-port-light`，随安装经 `vendor/cannbot-skills` 子模块链接。
 
-可在 **Claude Code** 或 **OpenCode** 中运行；两者的入口名相同，但安装步骤不同。
+**Lite 用户请先阅读 [README「推荐使用 Lite」](README.md#推荐使用-lite)**：Lite 无法拦截 Agent 在 reward ranking 过程中绕过真实验证的行为，结果需由用户独立验证；缺少完整版本的反馈环，生成失败、精度不对齐或性能未达标时，应显式提高编译、精度对齐、性能优化各阶段的迭代次数，或执行手头已有的 debug 工具、脚本或技能后继续修复验证。
+
+下文介绍**完整编排器**（`ascendc-cross-gen-port` / `ascendc-backward-gen`）的上手路径，其 golden 要求、引擎依赖、安全网、续跑和产物约定不应直接套用于 Lite；Lite 的具体步骤以其 Skill 为准。完整编排器可在 **Claude Code** 或 **OpenCode** 中运行；两者的入口名相同，但安装步骤不同。
 
 ## 0. 开始前确认
 

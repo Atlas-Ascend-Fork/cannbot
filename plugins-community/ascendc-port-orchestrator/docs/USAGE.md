@@ -1,11 +1,13 @@
 # ascendc-port-orchestrator — 使用说明
 
-本插件提供两项能力：
+本文介绍完整编排器的两项能力：
 
 1. `ascendc-cross-gen-port`：将 arch22 AscendC 源算子移植到 arch35 / A5。
 2. `ascendc-backward-gen`：从可微 PyTorch 正向规格生成反向 AscendC 算子。
 
 两个入口都能在 Claude Code 与 OpenCode 中使用，且都通过同一个启动器进入 `engine/` 中的确定性编排器。
+
+**跨代际移植推荐优先使用 Lite 入口 `ascendc-cross-gen-port-light`**，使用示例和两项限制见 [README「推荐使用 Lite」](../README.md#推荐使用-lite)。Lite 不经本文的引擎流水线：Agent 在 reward ranking 过程中绕过真实验证的行为无法被 Lite 拦截，用户需独立验证结果；Lite 也缺少完整版本的反馈环，生成失败、精度不对齐或性能未达标时，应显式提示 Agent 提高编译、精度对齐、性能优化各阶段的迭代次数，或执行已有 debug 工具、脚本或技能继续排障。本文的 golden 要求、引擎依赖、门禁、续跑和产物约定适用于完整编排器，Lite 的具体步骤以其 Skill 为准。
 
 **术语速览**：
 

@@ -1,10 +1,51 @@
 # ascendc-port-orchestrator
 
-面向 AscendC 算子的社区编排插件。两个入口共享同一条确定性流水线、安全网和双层知识库：
+面向 AscendC 算子的社区编排插件。**跨代际移植推荐优先使用 Lite 版本 `ascendc-cross-gen-port-light`**，尤其适合基于已有 A2/A3 算子快速迁移、尚未准备 KernelBench 风格 golden 的场景。Lite 按阶段推进迁移；需要确定性编排、安全网和双层知识库反馈环时，可选择完整版本 `ascendc-cross-gen-port`。
+
+本插件提供三个入口，其中前两个共享完整编排器，Lite 独立执行：
 
 1. **`ascendc-cross-gen-port` — 跨代际移植**：把 arch22 源算子移植到 **arch35 / A5**（如 Ascend910C/V220 → Ascend950PR/V300）。目标架构用自然语言指定，来源架构由代码分析自动识别。
 2. **`ascendc-backward-gen` — 正向→反向生成**：由可微 PyTorch 正向规格生成并验证 AscendC 反向（梯度）算子。
 3. **`ascendc-cross-gen-port-light` — 轻量迁移**：`ascendc-cross-gen-port` 的轻量入口。无 KernelBench 风格的 golden 输入，或希望基于已有的 A2/A3 算子修改后快速迁移时使用：按阶段门禁完成 910b/910_93→950/arch35 算子迁移，全程免交互自动推进；精度标杆由 agent 逆向源码自合成并与 A5 实测双向互检。**不经上述编排流水线（设计如此）**。Skill 本体由 cannbot-skills 仓 [`ops/ascendc-cross-gen-port-light`](https://gitcode.com/cann/cannbot-skills/tree/master/ops/ascendc-cross-gen-port-light) 维护，安装时经 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块链接，本插件作统一入口。
+
+## 推荐使用 Lite
+
+安装并加载轻量入口后，可直接向 Agent 提出任务：
+
+```text
+/ascendc-cross-gen-port-light 把 <已有 A2/A3 算子目录> 移植到 A5。
+目标环境为 <CANN 路径、SoC、可用 NPU 等信息>，请完成编译、精度对齐和性能优化，
+保留代码、测试输入、运行命令和原始日志，供我独立验证。
+```
+
+Lite 不要求预先准备 KernelBench 风格的 golden，但仍需要可用的目标 NPU 环境。使用时有两项直接影响结果可信度和失败处理的限制：
+
+1. **无法拦截 Agent 在 reward ranking 过程中为追求分数而绕过真实验证的行为，需要用户独立验证。**
+   Lite 不具备完整编排器的强制安全网；Agent 自合成的标杆、互检结果或成功报告不能替代独立验收。
+   请使用独立准备或复核的参考实现与测试用例，在目标 NPU 上重新验证精度，并按一致的输入、计时范围和运行环境复测性能；核对原始日志和实际执行的算子代码后再采信结果。
+2. **缺少完整版本的反馈环，生成失败、精度不对齐或性能未达标时，需要主动指定后续动作。**
+   完整版本中依靠反馈环“再跑一遍”的处理方式，不能直接套用到 Lite。可选择以下任一种方式：
+   显式提示 Agent 分别提高**编译、精度对齐、性能优化**阶段的迭代次数，并根据失败证据继续修复；
+   或执行手头已有的 **debug 工具、脚本或技能**，定位问题后继续修复与验证。
+
+例如，选择增加迭代次数时，可以这样提示（次数按任务需要调整，不是 Lite 的默认配置）：
+
+```text
+继续当前 Lite 移植任务：将编译修复、精度对齐、性能优化各阶段的迭代上限，
+分别在当前基础上增加 5、5、10 轮。每轮根据编译报错、精度差异或性能测量结果修复；
+保持参考实现、精度阈值和性能目标不变，达到上限仍未通过时，保留失败日志并报告阻塞原因。
+```
+
+也可提示 Agent 调用已有 debug 能力：
+
+```text
+使用我已有的 <debug 工具、脚本或技能及其路径/名称>，结合 <失败日志和当前算子目录>
+定位本次生成失败、精度不对齐或性能未达标的原因，修复后重新编译并验证精度和性能。
+```
+
+增加迭代次数或执行 debug 后，仍需完成上述独立验证。
+
+以下输入、golden 模式、运行底座、依赖与知识库说明面向**完整编排器**（`ascendc-cross-gen-port` / `ascendc-backward-gen`，其中 golden 约定仅用于跨代移植）。Lite 的具体准备和执行步骤以其 Skill 为准，不继承完整编排器的引擎门禁与反馈环保证。
 
 ## 输入：待移植实现 + golden（统一格式）
 
