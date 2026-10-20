@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve()
-sys.path.insert(0, str(_HERE.parent.parent))
+sys.path.insert(0, str(_HERE.parents[2]))
 
 from finalize_pipeline import _is_harness_internal  # noqa: E402
 
@@ -109,7 +109,7 @@ def test_user_facing_files_not_routed():
 
 if __name__ == "__main__":
     test_stream_log_files_routed_to_harness()
-    test_other_dotted_files_NOT_routed()
+    test_other_dotted_files_not_routed()
     test_existing_harness_internal_still_routed()
-    test_user_facing_files_NOT_routed()
+    test_user_facing_files_not_routed()
     logging.info("OK")

@@ -19,7 +19,7 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from orchestrator import enforce_port_a3_target
 
@@ -60,6 +60,6 @@ def test_non_port_a3_mode_target_is_not_touched():
 if __name__ == "__main__":
     test_port_a3_with_a3_target_is_overridden_to_a5_with_loud_warning()
     test_port_a3_with_a5_target_is_unchanged_no_warning()
-    test_port_a3_with_other_nonA5_target_is_overridden()
-    test_non_port_a3_mode_target_is_NOT_touched()
+    test_port_a3_with_other_nona5_target_is_overridden()
+    test_non_port_a3_mode_target_is_not_touched()
     logging.info("all DEBT-PORT-A3-TARGET-ENFORCE tests passed")
