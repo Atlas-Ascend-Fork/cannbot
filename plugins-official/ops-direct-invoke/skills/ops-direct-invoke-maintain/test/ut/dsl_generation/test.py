@@ -10,6 +10,8 @@
 import copy
 import csv
 import importlib.util
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -151,7 +153,9 @@ class UnitContractTests(unittest.TestCase):
         self.assertEqual(contracts.validate_units({"U01": unit}), ["U01"])
         without_behavior = copy.deepcopy(unit)
         without_behavior["verification_obligations"] = []
-        with self.assertRaisesRegex(ValueError, "verification_obligations must be a nonempty list"):
+        with self.assertRaisesRegex(
+            ValueError, "verification_obligations must be a nonempty list"
+        ):
             contracts.validate_units({"U01": without_behavior})
         unit["design_constraints"][0]["review_evidence"][0].pop("check")
         with self.assertRaisesRegex(ValueError, "artifact/check/pass_criteria"):
@@ -302,6 +306,44 @@ class DesignAssemblyTests(unittest.TestCase):
 
 
 class UnitSubgraphTests(unittest.TestCase):
+    def test_generated_commands_select_only_their_unit_cases(self):
+        with tempfile.TemporaryDirectory(prefix="unit batch spaces ") as tmp:
+            work = Path(tmp)
+            native = {uid: unit_fixture(uid) for uid in ("U01", "U02", "U010")}
+            result = self.generate_graph(native, work)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            nodes = yaml.safe_load(
+                (work / ".workflow/implementation-tasks.yaml").read_text()
+            )["nodes"]
+            cases = [f"TD-{uid.lower()}-main" for uid in native]
+            for node in nodes[:3]:
+                uid = node["id"].removeprefix("implement-")
+                command = next(
+                    item
+                    for item in node["approach"]
+                    if "--grep" in item and "CANNBOTDSL_OP_MODULE=" in item
+                )
+                args = shlex.split(command.split("：", 1)[1].split("；", 1)[0])
+                self.assertIn("CANNBOTDSL_OP_MODULE=operators.add.add", args)
+                self.assertIn("$WORK_DIR/operators/add/test/test_add.py", args)
+                self.assertEqual(args[args.index("--sheet") + 1], "tdd")
+                expression = args[args.index("--grep") + 1]
+                self.assertEqual(
+                    [case for case in cases if re.search(expression, case)],
+                    [f"TD-{uid}-main"],
+                )
+                self.assertNotIn("--case-id", args)
+
+    def test_unit_selector_rejects_incorrect_case_binding(self):
+        script = SCRIPTS / "build_implementation_subgraph.py"
+        batch_spec = importlib.util.spec_from_file_location("batch_subgraph", script)
+        batch = importlib.util.module_from_spec(batch_spec)
+        sys.modules[batch_spec.name] = batch
+        sys.modules["validate_unit_contracts"] = contracts
+        batch_spec.loader.exec_module(batch)
+        with self.assertRaisesRegex(ValueError, "selection differs"):
+            batch.unit_tdd_grep("u01", {"u01": ["TD-u02-main"], "u02": ["TD-u01-main"]})
+
     def generate_graph(self, native, work):
         (work / "design/doc").mkdir(parents=True)
         (work / "design/units").mkdir()

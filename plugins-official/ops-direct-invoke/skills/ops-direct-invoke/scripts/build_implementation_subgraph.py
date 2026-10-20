@@ -14,6 +14,8 @@ import argparse
 import csv
 import importlib.util
 import logging
+import re
+import shlex
 import sys
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
@@ -239,6 +241,18 @@ def final_stage_nodes(skill, op, units):
     return nodes
 
 
+def unit_tdd_grep(uid, case_map):
+    expression = f"^TD-{re.escape(uid)}-"
+    selected = set()
+    for cases in case_map.values():
+        for case in cases:
+            if re.search(expression, case):
+                selected.add(case)
+    if selected != set(case_map[uid]):
+        fail(f"{uid}: TDD batch selection differs from bound cases")
+    return expression
+
+
 def build_nodes(work, skill, op, units, native_by_id, case_map):
     nodes = []
 
@@ -246,6 +260,7 @@ def build_nodes(work, skill, op, units, native_by_id, case_map):
     for index, unit in enumerate(units):
         uid = unit["id"]
         entry = native_by_id[uid]
+        grep = shlex.quote(unit_tdd_grep(uid, case_map))
         deps = unit_dependencies(work, units, index, native_by_id)
         nodes.append(
             make_node(
@@ -256,6 +271,13 @@ def build_nodes(work, skill, op, units, native_by_id, case_map):
                 NodeOptions(
                     notes=[
                         f"原生 Unit: {entry['path']}；TDD cases: {', '.join(case_map[uid])}；{op}_golden.py 与 design/doc/DESIGN.md 均为冻结输入。",
+                        (
+                            '当前 Unit TDD 批跑命令：PYTHONPATH="$WORK_DIR" '
+                            f"CANNBOTDSL_OP_MODULE={shlex.quote(f'operators.{op}.{op}')} "
+                            f'python "$WORK_DIR"/{shlex.quote(f"operators/{op}/test/test_{op}.py")} '
+                            f"--sheet tdd --grep {grep} --device npu --require-accelerator；"
+                            "公开入口不是 run 时沿用 CANNBOTDSL_OP_ENTRY。"
+                        ),
                         f"将 Red→Green 证据、实现版本、执行命令、退出码与逐例结果写入 $WORK_DIR/operators/{op}/implementation/implement-{uid}-执行记录.md。",
                     ],
                     acceptance=[
