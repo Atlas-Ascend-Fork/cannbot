@@ -286,7 +286,7 @@ def test_check_op_host_completeness_delegated_to_baseplugin() -> None:
     or returns None unconditionally, every AscendC archive ships without
     PB-33 enforcement (5-op recurrence risk from 2026-05-14 incident).
     """
-    from plugins.base import BasePlugin  # noqa: WPS433 — direct contract pin
+    from plugins.base import BasePlugin  # noqa: PLC0415 — direct contract pin
     plugin = BasePlugin()
     assert callable(plugin.check_op_host_completeness), (
         "BasePlugin.check_op_host_completeness must be a callable gate body, "
