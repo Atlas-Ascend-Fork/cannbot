@@ -284,7 +284,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/Overview.md for the operator in $WORK_DIR/spec/spec.yaml: operator function, natural-language definition, LaTeX math formula, and special-value / numerical-stability semantics, all traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory)."
+      - "Load the ops-design-paradigms skill first (mandatory)."
       - "Copy $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/Overview.md.templ to $WORK_DIR/design/Overview.md (this template carries no {OP} placeholder; do not introduce one)."
       - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the four sections from them: ## 算子功能 (one sentence), ## 算子定义(自然语言) (exact computation semantics: input relationships and attr effect), ## 数学公式(LaTeX) (a strict LaTeX formula — the single semantic source for every branch kernel and golden), ## 特殊值与数值稳定性 (NaN/+Inf/-Inf/0/negative behaviour aligned with golden; overflow/underflow/divide-by-zero and saturation/clamp; the precision-sensitive step and whether high-precision accumulation is required)."
       - "Replace every `>` lead-in line with actual design content; keep the four section headings; do not touch any other design file."
@@ -309,7 +309,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/Interface.md for the operator in $WORK_DIR/spec/spec.yaml: the operator prototype (ATen IR + Inputs/Outputs/Attrs), the supported dtype combination table, data format support, and constraints/limitations, all traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory)."
+      - "Load the ops-design-paradigms skill first (mandatory)."
       - "Copy $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/Interface.md.templ to $WORK_DIR/design/Interface.md (this template carries no {OP} placeholder; do not introduce one)."
       - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the sections from them: ## 算子原型 (ATen IR plus Inputs/Outputs/Attrs with name, semantics, shape contract, optionality and defaults), ## 算子规格(受支持 dtype 组合) (a table laid out by Inputs/Outputs, one row per supported combination), ## 数据 Format 支持, ## 约束与限制 (shape range / rank cap / per-axis length cap, dtype / format / attr-value constraints, alignment, broadcast rules, explicitly unsupported scenarios), and ## OpDef 代码片段 (a complete OpDef class body generated from the prototype + spec, DataType({...}) arrays expanded per combination, all Input/Output lists equal length)."
       - "Fill the ## 算子规格(受支持 dtype 组合) table row by row from spec.yaml: its rows/content must match spec.yaml exactly (no placeholder rows, no `<...>` residue in that table)."
@@ -336,7 +336,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/InferShapeDtype.md for the operator in $WORK_DIR/spec/spec.yaml: the InferShape and InferDataType derivation rules (how outputs are derived from inputs), traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory)."
+      - "Load the ops-design-paradigms skill first (mandatory)."
       - "Copy $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/InferShapeDtype.md.templ to $WORK_DIR/design/InferShapeDtype.md (this template carries no {OP} placeholder; do not introduce one)."
       - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the two sections: ## InferShape (per-output shape derivation; broadcast alignment rule and per-dim output size; DynamicShape value/attr-driven derivation logic when applicable; empty/scalar/rank-mismatch edge cases) and ## InferDataType (per-output dtype source and any dtype promotion; the consistency check point against Interface.md's 算子规格 table)."
       - "Replace every `>` lead-in line with actual derivation rules consistent with $WORK_DIR/spec/spec.yaml's supported_combinations; keep the section headings; do not touch any other design file."
@@ -360,7 +360,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/Validation.md: the operator-wide end-to-end verification criteria (Golden reference, test-case matrix, per-dtype precision tolerances, performance targets), traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory)."
+      - "Load the ops-design-paradigms skill first (mandatory)."
       - "Copy $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/Validation.md.templ to $WORK_DIR/design/Validation.md (this template carries no {OP} placeholder; do not introduce one)."
       - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill: ## 参考实现 (Golden) (a PyTorch / CPU reference or formula anchored to Overview.md's math formula, independent of the kernel under test — no self-verification), ## 端到端测试用例矩阵 (shape × dtype × format matrix covering every supported dtype combination, every branch, special values, max shape, non-aligned, broadcast if supported), and ## 精度验收标准 (per-dtype rtol/atol plus pointwise special-value alignment)."
       - "Fill ## 性能目标: carry over §7.4 of $WORK_DIR/requirements/REQUIREMENTS.md — list at least 4 key shapes aligned with real points that exist in this document's 端到端测试用例矩阵 (leave the `tilingKey` column empty for now, to be completed by the later calibration task from BranchCatalog.md), select the source route (A competitor profiling / B theoretical evaluation / both not applicable), and fill in the target-metric definition and achievement-rate algorithm per row."
@@ -387,7 +387,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/DevView.md, $WORK_DIR/design/TilingKey.md, $WORK_DIR/design/TilingData.md, and $WORK_DIR/design/BranchRoute.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory), and load the paradigm patterns.md corresponding to $WORK_DIR/spec/spec.yaml's op.paradigms."
+      - "Load the ops-design-paradigms skill first (mandatory), and load the paradigm patterns.md corresponding to $WORK_DIR/spec/spec.yaml's op.paradigms."
       - "Before writing TilingKey.md / BranchRoute.md, load the ascendc-build-system skill and read references/tiling-key-encoding.md; encode every tilingKey with the paradigm's GET_TPL_TILING_KEY actual bit encoding (never self-invented logical sequence numbers)."
       - "Copy the four templates $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/{DevView,TilingKey,TilingData,BranchRoute}.md.templ to $WORK_DIR/design/, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml; BranchRoute.md.templ carries no {OP} and is copied as-is)."
       - "Write DevView.md (开发视图) from its template: describe the file organization strictly per the paradigm patterns.md — the {op}_package/ project tree (op_host/ {op}_def.cpp OpDef registration with dtype/format combos and .ValueDepend(OPTIONAL) on value-dependent inputs, {op}_infershape.cpp InferShape/InferDataType registration matching InferShapeDtype.md, arch35/ tiling entry + split functions and the {OP}CompileInfo header; op_kernel/ arch35/ kernel templates, empty-tensor template, tiling_data.h TilingData struct, struct.h TilingKey template params, and the kernel-entry source declaring the __global__ __aicore__ entry that instantiates all TilingKey combinations). Replace every `>` lead-in."
@@ -416,7 +416,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/HostTiling.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md Host-side Tiling chapter."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory); read the Host-side Tiling chapter of the paradigm patterns.md (or other tiling content if absent) to determine the subsection structure."
+      - "Load the ops-design-paradigms skill first (mandatory); read the Host-side Tiling chapter of the paradigm patterns.md (or other tiling content if absent) to determine the subsection structure."
       - "Read $WORK_DIR/spec/spec.yaml's determinism block (accumulation_order + bitwise_reproducible) and consult skills/ops-spec-gen/references/accumulation_order.md §0/§1/§3; make the split/tiling decisions consistent with it (stable_in_axis → partials merged in fixed order; bitwise_reproducible: true → document how the kernel path is fixed) and record this in the determinism guarantees subsection."
       - "Copy $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/HostTiling.md.templ to $WORK_DIR/design/HostTiling.md, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml)."
       - "Fill each subsection per the template's 须包含 checklist (liveness-node analysis, framework prerequisites, input preprocessing/axis fusion, UB split, multi-core split, group/2D split, fill TilingData + set TilingKey, host registration, overall Tiling structure, determinism guarantees); replace every `>` lead-in line with actual content; do not touch any other design file."
@@ -441,7 +441,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/Kernel.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md Kernel-side chapter."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory); read the Kernel-side chapter of the paradigm patterns.md and confirm the paradigm-specific requirements (the template's item 9 H4 breakdown)."
+      - "Load the ops-design-paradigms skill first (mandatory); read the Kernel-side chapter of the paradigm patterns.md and confirm the paradigm-specific requirements (the template's item 9 H4 breakdown)."
       - "Copy $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/Kernel.md.templ to $WORK_DIR/design/Kernel.md, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml)."
       - "Fill each item per the template's 须包含 checklist (Kernel entry, Kernel class declaration, scheduling framework, Init, Process per dtype, Sync, CopyIn/CopyInBrc, CopyOut, paradigm-specific Kernel subsections); replace every `>` lead-in line with actual content; do not touch any other design file."
     acceptance:
@@ -465,7 +465,7 @@ nodes:
     goal:
       - "Produce $WORK_DIR/design/API.md for the operator in $WORK_DIR/spec/spec.yaml: API mapping, API verification record, data-flow design, memory management, and UB capacity verification — the closing acceptance of the implementation-plan docs (DevView.md–API.md)."
     approach:
-      - "Load the ascendc-regbase-best-practice skill first (mandatory); read the paradigm patterns.md sections on API mapping / API verification record / memory management / data-flow design / UB capacity verification to determine the subsection structure."
+      - "Load the ops-design-paradigms skill first (mandatory); read the paradigm patterns.md sections on API mapping / API verification record / memory management / data-flow design / UB capacity verification to determine the subsection structure."
       - "Copy $WORK_DIR/.agents/skills/ops-registry-invoke/templates/design/API.md.templ to $WORK_DIR/design/API.md (this template carries no {OP} placeholder; do not introduce one)."
       - "Fill each item per the template's 须包含 checklist (VF function signatures, API mapping table, API verification record, data-flow design, memory management, UB capacity verification); replace every `>` lead-in line with actual content."
       - "Per the template, if any API verification fails, roll back to $WORK_DIR/design/HostTiling.md to re-derive with a different API — this task may revise HostTiling.md / Kernel.md at the corresponding places until all API verifications pass."
