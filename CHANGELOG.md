@@ -7,6 +7,23 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 ### Added
 
 - Added the `triton-op-generator` plugin (migrated from the cannbot-skills repository): Triton-Ascend operator generation and optimization in Phase 0-7 direct-execution mode. Its eight triton Skills plus `knowledge-query`/`ops-knowledge-ingest` are sourced from `vendor/cannbot-skills` via `plugin-sources.json`; the cannbot-knowledge knowledge base is auto-cloned at install time via `plugin-install.json`; the baseline guard hook uses the standard `hooks/hooks.json` layout; all knowledge cards are served from cannbot-knowledge.
+- Added the `pypto-op-orchestrator` plugin for PyPTO operator development: the 7-stage
+  state machine (plan → golden → design → verify-prep → per-module implementation →
+  final E2E → performance tuning) is orchestrated as two harness workflows
+  (`pypto-op-develop.yaml` for generation plus tuning, `pypto-op-tune.yaml` for
+  tuning only) in the node-as-agent style, with `general-executor`/`general-verifier`
+  protocol shells and stage behaviour carried by node fields. The plugin ships no
+  PyPTO Skills, role agents, or hooks itself; `plugin-install.json` declares the
+  [cannbot-skills](https://gitcode.com/cann/cannbot-skills) repository as a dependency
+  with an `assets` mapping, and the installer clones it at install time and links the
+  declared Skills/hooks/AGENTS.md into the target project (relative symlinks, tracking
+  `master`). The installer gained the dependency-asset mechanism for this:
+  `assets` on `plugin-install.json` dependencies, the dependency repository's
+  `plugin-assets.json` manifest (inline keys override), and `resolvePluginDir` now
+  accepts a plugin without a local `skills/` directory when it declares such assets.
+  The harness orchestrator also fixes subprocess `PWD` propagation so providers that
+  resolve the project directory from `PWD` work when the orchestrator is started from
+  another directory.
 - Added the `hccl-op-generator` plugin for HCCL AICPU standard communication operator development, with four Agent state-machine workflow, from the cannbot-hccl repository. Corresponding Skills are contributed to the [cannbot-skills](https://gitcode.com/cann/cannbot-skills) repository under `communication/`.
 - Community plugin channel: `plugins-community/` is recognised by the bundler and the
   installer, and a community plugin is indexed by its manifest `name`, so its directory

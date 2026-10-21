@@ -1,0 +1,31 @@
+{
+  "name": "pypto-op-orchestrator",
+  "version": "1.0.0",
+  "description": "PyPTO 算子开发编排工作流：7 阶段状态机经 harness 编排驱动；Skills/hooks 安装时从 cannbot-skills 仓拉取。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "pypto",
+    "operator",
+    "workflow",
+    "harness"
+  ],
+  "interface": {
+    "displayName": "PyPTO 算子开发编排工作流",
+    "shortDescription": "PyPTO 算子 7 阶段生成与性能调优工作流",
+    "longDescription": "PyPTO 算子开发编排工作流：7 阶段状态机（需求规划→Golden→设计→验证准备→按模块编码→E2E 验证→性能调优）经 harness 节点即 agent 编排驱动；Skills/hooks 等资产在安装时从 cannbot-skills 仓拉取并即时软链。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills",
+      "Agents"
+    ],
+    "defaultPrompt": [
+      "用 pypto-op-develop 工作流开发一个 PyPTO 算子。"
+    ]
+  }
+}

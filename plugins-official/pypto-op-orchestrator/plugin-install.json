@@ -1,0 +1,12 @@
+{
+  "dependencies": [
+    {
+      "name": "cannbot-skills",
+      "repository": "https://gitcode.com/cann/cannbot-skills.git",
+      "ref": "master",
+      "assets": {
+        "plugin": "plugins-official/pypto-op-orchestrator"
+      }
+    }
+  ]
+}

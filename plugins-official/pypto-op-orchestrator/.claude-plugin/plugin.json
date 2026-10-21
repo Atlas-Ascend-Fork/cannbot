@@ -1,0 +1,21 @@
+{
+  "name": "pypto-op-orchestrator",
+  "version": "1.0.0",
+  "description": "PyPTO 算子开发编排工作流：7 阶段状态机（需求规划→Golden→设计→验证准备→按模块编码→E2E 验证→性能调优）经 harness 节点即 agent 编排驱动；Skills/hooks 等资产在安装时从 cannbot-skills 仓拉取并即时软链。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "pypto",
+    "operator",
+    "workflow",
+    "harness"
+  ],
+  "agents": [
+    "./agents/general-executor.md",
+    "./agents/general-verifier.md"
+  ]
+}

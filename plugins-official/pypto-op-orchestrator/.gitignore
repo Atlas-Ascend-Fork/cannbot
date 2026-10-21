@@ -1,0 +1,3 @@
+# 运行产物工作区：orchestrator --work-dir 约定为 .cannbot/<任务名>/pypto-op-orchestrator/，
+# 内含 .workflow/（状态与 session 归档）、custom/<Op>/（算子产物）等，不应随插件入库。
+.cannbot/

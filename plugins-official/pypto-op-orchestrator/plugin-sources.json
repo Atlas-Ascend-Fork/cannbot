@@ -1,0 +1,7 @@
+{
+  "skillsRepository": ".",
+  "skillInstallMode": "symlink",
+  "skills": [
+    "harness/workflow-orchestrator"
+  ]
+}

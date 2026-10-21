@@ -17,11 +17,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { findPluginDirectory, pluginSourceDefinition } from "../lib/plugin-bundle.js";
-import { prepareSharedSkills, resolveSkillSource, sourceRevisions } from "../lib/skills-source.js";
+import { isInside, prepareSharedSkills, resolveSkillSource, sourceRevisions } from "../lib/skills-source.js";
 
 const installerPackage = readJson(new URL("../package.json", import.meta.url));
 const OPENCODE_PLUGIN_SPEC = `${installerPackage.name}@${installerPackage.version}`;
@@ -89,12 +89,27 @@ function parseArgs(argv) {
   return options;
 }
 
+function declaresDependencyAssets(pluginDir) {
+  const definitionPath = join(pluginDir, "plugin-install.json");
+  if (!existsSync(definitionPath)) return false;
+  let definition;
+  try {
+    definition = readJson(definitionPath);
+  } catch {
+    return false;
+  }
+  const dependencies = Array.isArray(definition?.dependencies) ? definition.dependencies : [];
+  // A plugin whose Skills arrive through a dependency repository's asset manifest
+  // has no local skills/ directory; the assets declaration is what makes it whole.
+  return dependencies.some((dependency) => dependency?.assets && typeof dependency.assets === "object");
+}
+
 function resolvePluginDir(repoPath, pluginId) {
   for (const parent of ["plugins-official", "plugins-community", join("dist", "plugins")]) {
     const candidate = findPluginDirectory(repoPath, parent, pluginId);
     if (candidate
         && existsSync(join(candidate, ".claude-plugin", "plugin.json"))
-        && existsSync(join(candidate, "skills"))) return candidate;
+        && (existsSync(join(candidate, "skills")) || declaresDependencyAssets(candidate))) return candidate;
   }
   return null;
 }
@@ -340,9 +355,8 @@ function installAgents(pluginDir, plugin, tool, target, assets, agentsDirOverrid
   return installed;
 }
 
-function installInstructions(pluginDir, plugin, target, tool, assets, skillRewrites) {
-  const source = join(pluginDir, "AGENTS.md");
-  const markers = instructionMarkers(plugin.name);
+function installInstructionsFrom(source, pluginName, target, tool, assets, skillRewrites) {
+  const markers = instructionMarkers(pluginName);
   if (!existsSync(source)) {
     // Retired instructions can remain in either file after switching clients.
     for (const filename of ["AGENTS.md", "CLAUDE.md"]) {
@@ -371,6 +385,10 @@ function installInstructions(pluginDir, plugin, target, tool, assets, skillRewri
   return destination;
 }
 
+function installInstructions(pluginDir, plugin, target, tool, assets, skillRewrites) {
+  return installInstructionsFrom(join(pluginDir, "AGENTS.md"), plugin.name, target, tool, assets, skillRewrites);
+}
+
 function updateInstallRegistry(path, record) {
   let registry = { schemaVersion: 2, plugins: [] };
   if (existsSync(path)) {
@@ -391,14 +409,14 @@ function replaceStrings(value, replacement) {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replaceStrings(entry, replacement)]));
 }
 
-function installClaudeHooks(pluginDir, target, tool, assets) {
-  const definitionPath = join(pluginDir, "hooks", "hooks.json");
-  if (tool !== "claude" || !assets || !existsSync(definitionPath)) return null;
+function installClaudeHooksFrom(hooksDir, target, tool, destinationRoot) {
+  const definitionPath = join(hooksDir, "hooks.json");
+  if (tool !== "claude" || !existsSync(definitionPath)) return null;
 
   const configDir = toolConfigDir(target, tool);
   const settingsPath = join(configDir, "settings.json");
   const existing = existsSync(settingsPath) ? readJson(settingsPath) : {};
-  const definition = replaceStrings(readJson(definitionPath), assets.destinationRoot);
+  const definition = replaceStrings(readJson(definitionPath), destinationRoot);
   existing.hooks ??= {};
   for (const [event, entries] of Object.entries(definition.hooks ?? {})) {
     const current = Array.isArray(existing.hooks[event]) ? existing.hooks[event] : [];
@@ -412,6 +430,11 @@ function installClaudeHooks(pluginDir, target, tool, assets) {
   }
   writeJsonAtomic(settingsPath, existing);
   return settingsPath;
+}
+
+function installClaudeHooks(pluginDir, target, tool, assets) {
+  if (!assets) return null;
+  return installClaudeHooksFrom(join(pluginDir, "hooks"), target, tool, assets.destinationRoot);
 }
 
 function pathExists(path) {
@@ -496,7 +519,123 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
       }
     }
     if (dependency.expose) exposeDependency(destination, join(target, dependency.expose));
-    installed.push(join(".cannbot", "dependencies", plugin.name, dependency.name));
+    installed.push({
+      dependency,
+      destination,
+      definitionPath,
+      path: join(".cannbot", "dependencies", plugin.name, dependency.name),
+    });
+  }
+  return installed;
+}
+
+// ---------------------------------------------------------------------------
+// Dependency repository assets (plugin-install.json "assets" declaration).
+// A plugin may ship no Skills of its own and instead declare that a dependency
+// repository provides them at install time: the dependency checkout carries a
+// plugin-assets.json manifest (or the dependency entry inlines the same keys),
+// and the installer links/copies the declared Skills, hooks and AGENTS.md into
+// the target project. Inline keys in plugin-install.json override the manifest.
+// ---------------------------------------------------------------------------
+
+function dependencyAssetPath(checkout, relativePath, label, definitionPath) {
+  if (typeof relativePath !== "string" || !relativePath || isAbsolute(relativePath)) {
+    fail(`invalid ${label} in ${definitionPath}: ${relativePath}`);
+  }
+  const resolved = resolve(checkout, relativePath);
+  if (!isInside(checkout, resolved)) {
+    fail(`${label} escapes its repository checkout in ${definitionPath}: ${relativePath}`);
+  }
+  return resolved;
+}
+
+function dependencyAssetManifest(dependency, checkout, definitionPath) {
+  const assets = dependency.assets;
+  if (assets === undefined) return null;
+  if (!assets || typeof assets !== "object" || Array.isArray(assets)
+      || typeof assets.plugin !== "string" || !assets.plugin) {
+    fail(`invalid assets declaration in ${definitionPath}: expected {"plugin": "<dir>"}`);
+  }
+  const pluginRoot = dependencyAssetPath(checkout, assets.plugin, "assets.plugin", definitionPath);
+  let manifest = {};
+  const manifestPath = join(pluginRoot, "plugin-assets.json");
+  if (existsSync(manifestPath)) manifest = readJson(manifestPath);
+  const merged = {
+    skills: assets.skills ?? manifest.skills ?? null,
+    hooks: assets.hooks ?? manifest.hooks ?? null,
+    agentsMd: assets.agentsMd ?? manifest.agentsMd ?? null,
+  };
+  if (!merged.skills && !merged.hooks && !merged.agentsMd) {
+    console.log(`  note: ${dependency.name} declares assets but ${manifestPath} is absent; skipped`);
+    return null;
+  }
+  return { pluginRoot, ...merged };
+}
+
+function installDependencySkills(manifest, checkout, target, tool, record, definitionPath) {
+  if (!manifest.skills) return;
+  const { dir, names } = manifest.skills;
+  if (typeof dir !== "string" || !Array.isArray(names)
+      || !names.length || names.some((name) => typeof name !== "string" || /[\\/]/.test(name))) {
+    fail(`invalid assets.skills in ${definitionPath}: expected {"dir": "<dir>", "names": ["<name>"]}`);
+  }
+  const skillsRoot = dependencyAssetPath(checkout, dir, "assets.skills.dir", definitionPath);
+  const skillsDir = toolSkillsDir(target, tool);
+  mkdirSync(skillsDir, { recursive: true });
+  for (const name of names) {
+    const source = join(skillsRoot, name);
+    if (!existsSync(join(source, "SKILL.md"))) {
+      fail(`dependency Skill is missing SKILL.md: ${source} (${definitionPath})`);
+    }
+    installSkill(source, join(skillsDir, name), "symlink");
+    record.skills.push(name);
+  }
+}
+
+function installDependencyHooks(manifest, checkout, target, tool, plugin, record, definitionPath) {
+  if (!manifest.hooks) return;
+  if (typeof manifest.hooks.dir !== "string") {
+    fail(`invalid assets.hooks in ${definitionPath}: expected {"dir": "<dir>"}`);
+  }
+  const hooksSource = dependencyAssetPath(checkout, manifest.hooks.dir, "assets.hooks.dir", definitionPath);
+  if (!existsSync(hooksSource)) {
+    fail(`dependency hooks directory is missing: ${hooksSource} (${definitionPath})`);
+  }
+  // Same contract as installPluginAssets: hooks land under
+  // .cannbot/plugins/<plugin>/hooks and Claude registrations are rewritten to it.
+  const destinationRoot = join(target, ".cannbot", "plugins", plugin.name);
+  mkdirSync(destinationRoot, { recursive: true });
+  const destination = join(destinationRoot, "hooks");
+  rmSync(destination, { recursive: true, force: true });
+  cpSync(hooksSource, destination, { recursive: true, dereference: true });
+  installClaudeHooksFrom(hooksSource, target, tool, destinationRoot);
+  record.hooks = true;
+}
+
+function installDependencyInstructions(manifest, checkout, target, tool, plugin, record, definitionPath) {
+  if (!manifest.agentsMd) return;
+  const source = dependencyAssetPath(checkout, manifest.agentsMd, "assets.agentsMd", definitionPath);
+  if (!existsSync(source)) {
+    fail(`dependency AGENTS.md is missing: ${source} (${definitionPath})`);
+  }
+  const skillsDir = toolSkillsDir(target, tool);
+  const skillRewrites = skillPathRewrites(record.skills.map((name) => ({ name })), skillsDir);
+  const relativeRoot = `.cannbot/plugins/${plugin.name}`;
+  installInstructionsFrom(source, plugin.name, target, tool,
+    { destinationRoot: join(target, relativeRoot), relativeRoot }, skillRewrites);
+  record.agentsMd = true;
+}
+
+function installDependencyAssets(provisioned, plugin, target, tool) {
+  const installed = [];
+  for (const { dependency, destination, definitionPath } of provisioned) {
+    const manifest = dependencyAssetManifest(dependency, destination, definitionPath);
+    if (!manifest) continue;
+    const record = { dependency: dependency.name, skills: [], hooks: false, agentsMd: false };
+    installDependencySkills(manifest, destination, target, tool, record, definitionPath);
+    installDependencyHooks(manifest, destination, target, tool, plugin, record, definitionPath);
+    installDependencyInstructions(manifest, destination, target, tool, plugin, record, definitionPath);
+    installed.push(record);
   }
   return installed;
 }
@@ -840,7 +979,9 @@ function install(options) {
   const runtimeSettings = installRuntimeSettings(pluginDir, options.target, options);
   const nativeHookSettings = installNativeHooks(pluginDir, options.target, options.tool, assets);
   const hookSettings = installClaudeHooks(pluginDir, options.target, options.tool, assets) ?? nativeHookSettings;
-  const dependencies = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
+  const provisioned = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
+  const dependencies = provisioned.map((provision) => provision.path);
+  const dependencyAssets = installDependencyAssets(provisioned, plugin, options.target, options.tool);
   const nativePlugin = options.tool === "codex"
     ? installCodexPlugin(plugin, resolvedSkills, options.target, skillInstallMode)
     : options.tool === "opencode"
@@ -866,6 +1007,7 @@ function install(options) {
     settings: runtimeSettings?.slice(options.target.length + 1) ?? null,
     hookSettings: hookSettings?.slice(options.target.length + 1) ?? null,
     dependencies,
+    dependencyAssets,
     nativePlugin,
     unsupported: existsSync(join(pluginDir, "hooks")) && options.tool === "dsh" ? ["hooks"] : [],
   };
@@ -875,6 +1017,9 @@ function install(options) {
   console.log(`  skills: ${installedSkills.length}`);
   console.log(`  agents: ${installedAgents.length}`);
   console.log(`  target: ${options.target}`);
+  for (const assetRecord of dependencyAssets) {
+    console.log(`  dependency assets (${assetRecord.dependency}): skills=${assetRecord.skills.length} hooks=${assetRecord.hooks} agentsMd=${assetRecord.agentsMd}`);
+  }
   if (record.unsupported.length) {
     console.log("  note: this client uses its native project configuration instead of Claude Code hooks");
   }

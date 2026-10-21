@@ -24,12 +24,14 @@ or directly::
     python3 harness/workflow-orchestrator/tests/test_orchestrator.py
 """
 
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from dataclasses import dataclass
 from unittest.mock import patch
@@ -1093,6 +1095,69 @@ class OrchestratorTest(unittest.TestCase):
         self.assertFalse((wr / "checkpoints" / "b").exists())
 
 
+class ResumeWorkflowGuardTest(unittest.TestCase):
+    """resume 分支核对 status.json 的 workflow 与本次 --yaml，防止串工作流假成功。"""
+
+    def setUp(self):
+        self._work_dirs = []
+
+    def tearDown(self):
+        for d in self._work_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_resume_same_yaml_ok(self):
+        work_dir, wf = self._finished_work_dir(recorded="same")
+        code, out = _run_orchestrator_dry(wf, work_dir)
+        self.assertEqual(code, 0, out)
+
+    def test_resume_different_yaml_fails(self):
+        work_dir, wf = self._finished_work_dir(recorded="same")
+        other = Path(work_dir) / "other.yaml"
+        other.write_text(_workflow_yaml([_node("b")]))
+        code, out = _run_orchestrator_dry(other, work_dir)
+        self.assertEqual(code, 2, out)
+        self.assertIn("另一个工作流", out)
+        self.assertIn(str(wf), out)
+        self.assertIn(str(other), out)
+        # fail-fast：status.json 未被改动
+        self.assertEqual(read_status(work_dir)["tasks"]["a"]["status"], "pass")
+
+    def test_resume_missing_workflow_field_fails(self):
+        work_dir, _ = self._finished_work_dir(recorded=None)
+        code, out = _run_orchestrator_dry(Path(work_dir) / "workflow.yaml", work_dir)
+        self.assertEqual(code, 2, out)
+        self.assertIn("缺失 workflow 字段", out)
+
+    def _finished_work_dir(self, recorded):
+        """构造「已完成」work_dir：workflow.yaml + status.json（a 已 pass）。
+
+        recorded="same" 时记录本目录的 workflow.yaml（正常 resume）；
+        recorded=None 时省略 workflow 字段（旧版状态）。
+        返回 (work_dir, wf)。
+        """
+        work_dir = tempfile.mkdtemp(prefix="wo-test-")
+        self._work_dirs.append(work_dir)
+        wf = Path(work_dir) / "workflow.yaml"
+        wf.write_text(_workflow_yaml([_node("a")]))
+        wr = Path(work_dir) / ".workflow"
+        wr.mkdir()
+        (wr / "user_prompt.md").write_text("test\n")
+        status = {
+            "work_dir": work_dir,
+            "user_prompt": str(wr / "user_prompt.md"),
+            "seq": 1,
+            "rollbacks_used": 0,
+            "tasks": {"a": {"status": "pass", "retries": 0}},
+        }
+        if recorded == "same":
+            status["workflow"] = str(wf)
+        elif recorded is not None:
+            status["workflow"] = recorded
+        (wr / "status.json").write_text(json.dumps(status))
+        (wr / "dry_replies.json").write_text(json.dumps({}))
+        return work_dir, wf
+
+
 class BuildPromptTest(unittest.TestCase):
     """get_task.build_prompt 的白盒单测（纯函数；orchestrator 本体仍是黑盒）。"""
 
@@ -1377,6 +1442,45 @@ class VerdictFileTest(unittest.TestCase):
     def tearDown(self):
         for d in self._work_dirs:
             shutil.rmtree(d, ignore_errors=True)
+
+
+class RunAgentEnvTest(unittest.TestCase):
+    """run_agent 子进程环境的白盒单测：opencode/cannbot 按 PWD 环境变量
+    （而非实际 cwd）解析项目目录，Popen(cwd=) 不回写继承的 PWD，
+    因此 run_agent 必须显式把 PWD 置为 work_dir。"""
+
+    def test_run_agent_exports_pwd_matching_work_dir(self):
+        import orchestrator as orch  # 白盒：直接调 worker 线程体
+
+        captured = {}
+
+        class FakePopen:
+            def __init__(self, cmd, cwd=None, env=None, stdout=None, stderr=None):
+                captured["cmd"] = cmd
+                captured["cwd"] = cwd
+                captured["env"] = env
+                self.stderr = io.BytesIO(b"")
+
+            def __enter__(self):
+                return self
+
+            @staticmethod
+            def __exit__(*args):
+                return False
+
+            @staticmethod
+            def wait():
+                return 0
+
+        provider = types.SimpleNamespace(build_command=lambda agent, prompt: ["true"])
+        entry = {"task_id": "t1", "_phase": "execute", "agent": "a", "prompt": "p"}
+        with tempfile.TemporaryDirectory() as wd:
+            with patch.object(orch.subprocess, "Popen", FakePopen):
+                reply, crashed = orch.run_agent(entry, provider, wd, None)
+            self.assertFalse(crashed)
+            self.assertEqual(reply, "executed")
+            self.assertEqual(captured["cwd"], wd)
+            self.assertEqual(captured["env"]["PWD"], wd)
 
 
 if __name__ == "__main__":

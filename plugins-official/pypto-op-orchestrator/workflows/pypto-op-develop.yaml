@@ -1,0 +1,309 @@
+# PyPTO 算子开发工作流（生成 + 调优完整流程）.
+# 节点即 agent：所有节点 executor/verifier 为 general-executor/general-verifier
+# 协议薄壳（插件 agents/ 下），阶段行为定义在节点的 goal/approach/acceptance/
+# out_of_scope 字段（源自 PyPTO 算子开发角色 agent 体系），裁判方法论在 procedure
+# （只进 verify 提示词）。Skills 由安装时从 cannbot-skills 仓拉取并软链进
+# $WORK_DIR/.agents/skills/（preflight-env 节点装配），hooks（state_transition +
+# pypto-op-lint）装配进 $WORK_DIR/.opencode/，阶段门禁照旧写
+# custom/<op>/.orchestrator_state.json。
+# 插件内脚本定位: SCRIPTS=$(dirname "$WORKFLOW_YAML")/scripts，其中
+#   WORKFLOW_YAML=$(python3 -c "import json;print(json.load(open(
+#   '$WORK_DIR/.workflow/status.json'))['workflow'])")
+
+workflow: pypto-op-develop
+
+max_parallel: 1
+
+max_rollbacks: 0
+
+system_prompt: |-
+  这是 PyPTO 算子开发工作流: 按 7 阶段状态机从需求到性能调优生成可用 PyPTO 算子。
+  并行约束: max_parallel=1, 任何时刻只有一个任务在飞, 不与其他任务共享设备。
+  设备号以 $USER_PROMPT 与 $WORK_DIR/prepared_case.json 的 device_id 为唯一权威;
+  所有需要 NPU 的 bash 调用必须先 export TILE_FWK_DEVICE_ID=<device_id>, 禁止 find-free/换卡。
+  pypto 技能位于 $WORK_DIR/.agents/skills/pypto-*/(SKILL.md 入口); 阶段状态只能通过
+  state_transition 工具(hooks 提供)写 custom/<op>/.orchestrator_state.json, 禁止手写该文件。
+  约定: 下文 $OP_DIR 指 $WORK_DIR/prepared_case.json 的 op_dir 字段值, $OP 为其 op 字段值。
+
+nodes:
+  - id: preflight-env
+    task_type: normal
+    title: 校验 CANN/PyPTO/NPU 环境并装配 pypto 资产
+    goal:
+      - "CANN/PyPTO/NPU 环境可用: pypto 可导入, npu-smi 可见目标设备 (若 $USER_PROMPT 指定了 device id)"
+      - "cannbot 仓定位成功并记录到 $WORK_DIR/env.json"
+      - "插件资产装配进 $WORK_DIR: cannbot-skills 依赖仓检出、pypto skills 软链、hooks 接线、两个通用 agent 就位"
+    approach:
+      - "定位插件脚本: WORKFLOW_YAML=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/.workflow/status.json'))['workflow'])\"); SCRIPTS=$(dirname \"$WORKFLOW_YAML\")/scripts。"
+      - "定位 cannbot 仓根: $USER_PROMPT 指定或环境变量 CANNBOT_ROOT 优先; 否则由插件路径推导(插件根的上两级); 验证其下存在 script/bin/cannbot.js 与 plugins-official/pypto-op-orchestrator。"
+      - "运行 python3 $SCRIPTS/assemble_workspace.py --cannbot-root <cannbot仓根> --target $WORK_DIR, 确认 stdout JSON 的 status 为 ok(安装器幂等: 克隆/更新 cannbot-skills 到 $WORK_DIR/.cannbot/dependencies/pypto-op-orchestrator/cannbot-skills 并按其 plugin-assets.json 软链 skills、装配 hooks)。"
+      - "若存在 CANN set_env 脚本 (如 /usr/local/Ascend/ascend-toolkit/set_env.sh 或 $ASCEND_HOME/set_env.sh) 则 source 之; 随后 python3 -c \"import pypto\" 确认可导入。"
+      - "npu-smi info 确认 $USER_PROMPT 指定的 device id 在设备列表中可见 (未指定时跳过, 后续按 TILE_FWK_DEVICE_ID 环境变量或默认设备执行)。"
+      - "把定位结果 (cannbot_root / device_id) 写入 $WORK_DIR/env.json 供后续节点使用。"
+    acceptance:
+      - "python3 -c \"import pypto\" 退出码 0"
+      - "test -f $WORK_DIR/.opencode/agents/general-executor.md 且 test -f $WORK_DIR/.opencode/agents/general-verifier.md"
+      - "test -d $WORK_DIR/.cannbot/dependencies/pypto-op-orchestrator/cannbot-skills"
+      - "assemble_workspace.py 实际运行输出的 JSON status 为 ok (可在 $WORK_DIR/env.json 或执行记录中核对)"
+    out_of_scope:
+      - "安装/升级 CANN、pypto、驱动等任何系统级变更"
+      - "修改 cannbot 仓与依赖仓检出的任何内容"
+    depends_on: []
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 1
+    on_exhaust: exit
+
+  - id: prepare-case
+    task_type: normal
+    title: 准备用例输入 (prepared_case.json; staged 核对 / interactive 合成)
+    goal:
+      - "生成 $WORK_DIR/prepared_case.json (op/op_dir/require/task_desc/gen_prompt/device_id/perf_target_us/tune_rounds/mode)"
+      - "staged 模式 (预置用例): 调用方已在 $OP_DIR 预写 REQUIRE.md/task_desc.py/gen_prompt.md 三产物, 本节点只核对并合成 mode=staged 的记录; interactive 模式: 由已有 REQUIRE.md 或 $USER_PROMPT 的算子需求描述合成 mode=interactive 的最小记录"
+    approach:
+      - "定位插件脚本: WORKFLOW_YAML=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/.workflow/status.json'))['workflow'])\"); SCRIPTS=$(dirname \"$WORKFLOW_YAML\")/scripts。"
+      - "幂等: 若 $WORK_DIR/prepared_case.json 已存在且 python3 $SCRIPTS/prepare_case.py --verify --work-dir $WORK_DIR 退出码 0, 直接完成本节点(不重复生成)。"
+      - "模式判定: $USER_PROMPT 指明的 op_dir ($WORK_DIR/custom/<op>) 下已由调用方预写 REQUIRE.md + task_desc.py + gen_prompt.md 三产物 → staged 模式; 否则 $USER_PROMPT 给出已有 REQUIRE.md 路径 → interactive (--from-require); 前两者都没有但含算子需求描述 → interactive (--from-desc 纯提示词触发)。对提示词格式不作任何要求 (任意自然语言均可触发): 算子名由本节点 agent 从 $USER_PROMPT 解析, 提示词未给出算子名时根据算子语义自行拟定一个合法 Python 标识符, 经 --op-name 显式传给脚本 (staged/from-require 缺省可以目录名兜底, from-desc 必传 --op-name); device id (可选, 缺省为 null, 后续节点按 TILE_FWK_DEVICE_ID 环境变量或默认设备执行)、性能目标 us (可选, 缺省无硬性目标)、Stage 7 调优轮次 (可选, 默认 3) 从 $USER_PROMPT 解析。"
+      - "staged 模式: 从 $USER_PROMPT 解析出算子名后运行 python3 $SCRIPTS/prepare_case.py --verify --work-dir $WORK_DIR --op-dir <op_dir> --op-name <op> [--device-id N] [--perf-target-us F] [--tune-rounds I]; 脚本核对三产物存在且非空, 由命令行参数合成 prepared_case.json (mode=staged); --op-name 应显式传入 (脚本不打开/解析任何用例文件提取字段, 从提示词解析事实并拟定算子名是本节点 agent 的职责; 缺省仅以 $OP_DIR 目录名兜底)。插件不解析任何用例源文件、不生成/改写 gen_prompt.md (桥接契约内容为调用方职责)。"
+      - "interactive 模式(入口引导已写好 REQUIRE.md): 运行 python3 $SCRIPTS/prepare_case.py --from-require <REQUIRE.md路径> --work-dir $WORK_DIR [--op-name <op>] [--device-id N] [--perf-target-us F] [--tune-rounds I]; 脚本不解析 REQUIRE.md 内容, 算子名缺省取其父目录名。"
+      - "interactive 纯提示词触发($USER_PROMPT 无预置用例也无 REQUIRE.md 路径, 但含算子需求描述): 从 $USER_PROMPT 解析出算子名 (提示词未给出时按算子语义拟定合法 Python 标识符) 后运行 python3 $SCRIPTS/prepare_case.py --from-desc \"<需求描述原文>\" --op-name <op> --work-dir $WORK_DIR [--device-id N] [--perf-target-us F] [--tune-rounds I]; --op-name 必传 (脚本接受任意自然语言文本, 不校验章节结构、不解析 front matter、不提取任何字段); 脚本把需求文本落盘为 custom/<op>/REQUIRE.md (缺必备节结构时按插件 workflows/templates/require_template.md 包一层, 原文保留) 后走与 --from-require 相同的 interactive 通路。"
+      - "确认 stdout 打印的 JSON 与 $WORK_DIR/prepared_case.json 内容一致。"
+    acceptance:
+      - "python3 $WORK_DIR 下插件 scripts/prepare_case.py --verify --work-dir $WORK_DIR 退出码 0 (scripts 定位方式同 approach)"
+      - "staged 模式时 prepared_case.json 的 mode 为 staged 且 require/task_desc/gen_prompt 指向调用方预写的三产物; interactive 纯提示词触发时 mode 为 interactive 且 require 指向 --from-desc 落盘的 custom/<op>/REQUIRE.md"
+    out_of_scope:
+      - "任何算子实现工作 (impl/golden/test 编写)"
+      - "修改调用方预写产物与已有 REQUIRE.md; 不生成/改写 gen_prompt.md 的桥接契约内容"
+    depends_on:
+      - preflight-env
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 1
+    on_exhaust: exit
+
+  - id: stage1-plan
+    task_type: normal
+    title: Stage 1 需求规划与 API 可行性 (SPEC.md + API_REPORT.md)
+    goal:
+      - "产出 $OP_DIR/SPEC.md (结构化需求) 与 $OP_DIR/API_REPORT.md (PyPTO API 映射/约束/可行性), 其中 OP_DIR=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/prepared_case.json'))['op_dir'])\")"
+      - ".orchestrator_state.json 中 Stage 1 为 completed"
+    approach:
+      - "Load the pypto-op-plan skill first (mandatory) and follow its pipeline; 同时加载 pypto-intent-understand 与 pypto-api-explore (mandatory)。skills 位于 $WORK_DIR/.agents/skills/<name>/(读 SKILL.md)。active skill 不超过 3 个, 不加载 debug/性能类 skill。"
+      - "读取 prepared_case.json 的 require 字段所指 REQUIRE.md 作为用户需求输入; staged 模式同时读取 gen_prompt.md 的用例事实与桥接契约。"
+      - "资料检索统一使用 pypto-docs-search  skill($WORK_DIR/.agents/skills/pypto-docs-search): 首次先按其装配模式部署一次开发资源缓存(只装配不检索), 之后按需搜索算子 API 文档(pypto-<op>.md 1:1 命名约定)、参考实现与 golden。"
+      - "按 pypto-op-plan 的规划section产出 SPEC.md 与 API_REPORT.md; 出口判据: API map 无 unsupported 行, 或每个 unsupported 行带有 workaround 说明。"
+      - "阶段状态: 本阶段为首个阶段, 先调 state_transition(action=init, opDir=$OP_DIR, stage=1); 出口判据满足后调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=1)。工具不可用(hooks 未装配)时停止并在报告中说明, 不得手写 .orchestrator_state.json。"
+    procedure:
+      - "你是裁判: 独立阅读 SPEC.md 与 API_REPORT.md, 核对需求字段(输入/输出/dtype/shape/约束)覆盖 REQUIRE.md, API map 逐行检查 unsupported 是否有 workaround; 不重做规划工作。"
+      - "核对 .orchestrator_state.json 的 stage_status[\"1\"] 确为 completed(而非被手写伪造: 文件应由 state_transition 产生, 含 max_stage/current_stage 等完整字段)。"
+    acceptance:
+      - "OP_DIR=$WORK_DIR/custom/$(python3 -c \"import json;print(json.load(open('$WORK_DIR/prepared_case.json'))['op'])\") 下: test -s $OP_DIR/SPEC.md 且 test -s $OP_DIR/API_REPORT.md"
+      - "API_REPORT.md 的 API map 中不存在无 workaround 说明的 unsupported 行 (逐行核对)"
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['1']=='completed', s['stage_status']\" 退出码 0"
+    out_of_scope:
+      - "不写 MEMORY.md (Stage 1-4 不触碰), 不写 golden/DESIGN/impl/test"
+      - "修改 REQUIRE.md / prepared_case.json / gen_prompt.md"
+    depends_on:
+      - prepare-case
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 2
+    on_exhaust: exit
+
+  - id: stage2-golden
+    task_type: normal
+    title: Stage 2 Golden 参考实现 (<op>_golden.py + GOLDEN_PERF_REPORT.md)
+    goal:
+      - "产出 $OP_DIR/<op>_golden.py: PyTorch/NumPy 参考实现, PyPTO-friendly, 头部含 Golden function inventory 注释(每个数学操作 + shape transformation), 每个中间 tensor 带 shape 注释"
+      - "产出 $OP_DIR/GOLDEN_PERF_REPORT.md (经 pypto-golden-generate 的 scripts/profile_golden.py §15 生成, 含 Op Performance section)"
+      - ".orchestrator_state.json 中 Stage 2 为 completed"
+    approach:
+      - "Load the pypto-golden-generate skill first (mandatory) and follow its pipeline。active skill 上限 1 个。"
+      - "读取 $OP_DIR/SPEC.md 与 API_REPORT.md; golden 数值语义以 task_desc 参考 Model (staged 模式) 或 REQUIRE.md 参考公式为锚。"
+      - "golden 自验: allclose(golden, 原始参考) 至少 3 个 shape 用例通过, 证据(命令与数值)写入执行报告; 硬约束: 每个中间 tensor 有 shape 注释, 零 `.T` 转置写法。"
+      - "运行 python3 $WORK_DIR/.agents/skills/pypto-golden-generate/scripts/profile_golden.py 生成 GOLDEN_PERF_REPORT.md (先 export TILE_FWK_DEVICE_ID=<device_id>)。"
+      - "完成判据满足后调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=2)。"
+    procedure:
+      - "Stage 2 完成判据(裁判): golden allclose 通过(核对实际运行证据而非文本声称)、零 `.T`、shape 注释齐备、Golden function inventory 在 <op>_golden.py 头部(不在 MEMORY.md——本阶段不写 MEMORY.md)、GOLDEN_PERF_REPORT.md 存在且含 Op Performance section。"
+      - "警惕 golden fallback 掩蔽: 若自验脚本含 try/except 回退到参考实现的分支, max_diff=0.0 是假通过, 需检查 stderr 无 JIT/异常输出。"
+    acceptance:
+      - "test -s $OP_DIR/<op>_golden.py 且 test -s $OP_DIR/GOLDEN_PERF_REPORT.md (OP_DIR 定位同 stage1-plan)"
+      - "grep -q 'Golden function inventory' $OP_DIR/<op>_golden.py 且 ! grep -qE '\\.T\\b' $OP_DIR/<op>_golden.py"
+      - "golden 自验 allclose 通过证据(≥3 shape)在执行记录中可查"
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['2']=='completed', s['stage_status']\" 退出码 0"
+    out_of_scope:
+      - "不写 DESIGN.md/impl/test, 不做性能调优"
+      - "不写 MEMORY.md"
+    depends_on:
+      - stage1-plan
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 2
+    on_exhaust: exit
+
+  - id: stage3-design
+    task_type: normal
+    title: Stage 3 设计与模块接口 (DESIGN.md + module_interfaces.yaml)
+    goal:
+      - "产出 $OP_DIR/DESIGN.md: 计算结构、模块划分(分解与模块边界, 含 module_count)、数据类型、tile、循环状态及验证方案"
+      - "产出 $OP_DIR/eval/module_interfaces.yaml: 每个模块的输入来源、输出和最终返回结果(primary_inputs/final_outputs 契约)"
+      - ".orchestrator_state.json 中 Stage 3 为 completed"
+    approach:
+      - "Load the pypto-op-design skill first (mandatory) and follow its pipeline; 分解方法、数值稳定性检查和接口字段按其参考文档定义按需读取。"
+      - "读取 SPEC.md、API_REPORT.md 和 <op>_golden.py; tile 取值遵循范式与设计决策基线, 模块数/输入来源/输出 shape/dtype 与设计一致。"
+      - "一次完成两份产物; 需要修改已有设计时同时更新受影响的接口定义; 模块实现、模块 golden 和测试由后续阶段创建, 本阶段不写。"
+      - "结构自检: python3 $WORK_DIR/.agents/skills/pypto-op-design/scripts/validate_yaml.py $OP_DIR/eval/module_interfaces.yaml --json 无 violation。"
+      - "完成判据满足后调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=3)。"
+    procedure:
+      - "Stage 3/4 交界裁判: 核对 DESIGN.md 与 module_interfaces.yaml 的模块数、输入来源、输出 shape/dtype 互相一致且与 golden 对齐; validate_yaml.py 六条接线/shape/dtype 规则逐项过。"
+      - "design lint(submit_design 的拼写/结构拦截)在 stage4-verify-prep 节点触发; 本节点只验收两份产物与结构一致性。"
+    acceptance:
+      - "test -s $OP_DIR/DESIGN.md 且 test -s $OP_DIR/eval/module_interfaces.yaml"
+      - "python3 $WORK_DIR/.agents/skills/pypto-op-design/scripts/validate_yaml.py $OP_DIR/eval/module_interfaces.yaml --json 退出码 0 且无 violation"
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['3']=='completed', s['stage_status']\" 退出码 0"
+    out_of_scope:
+      - "不写 impl/golden/test/MEMORY.md"
+      - "不做性能调优与多档 unroll 探索 (属 Stage 7)"
+    depends_on:
+      - stage2-golden
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 2
+    on_exhaust: exit
+
+  - id: stage4-verify-prep
+    task_type: normal
+    title: Stage 4 独立检查与验证准备 (design-review + 对抗 harness)
+    goal:
+      - "独立检查 DESIGN.md 与 module_interfaces.yaml (design-review), 问题退回修订"
+      - "L1 (module_count >= 2): 产出 $OP_DIR/eval/ 三件套 test_inputs.py / adversarial_suite.json / adversarial_runner.py 且 --self-test 通过; L0 (module_count == 1) 跳过 scaffolding"
+      - ".orchestrator_state.json 中 Stage 4 为 completed"
+    approach:
+      - "Load the pypto-op-verify skill first (mandatory); 设计与接口评审按需加载 pypto-op-review。"
+      - "先调 state_transition(action=submit_design, opDir=$OP_DIR, stage=4): FAIL(抛错, 如 pypto.empty 拼写拦截)时携带详情修订 DESIGN.md/module_interfaces.yaml 后重新 submit_design, 直至 PASS。"
+      - "design-review: 按 pypto-op-verify 的 design review section 检查两份设计输出, 只读检查不运行实现测试; 问题回修订后再查。"
+      - "按 DESIGN.md 的 module_count 分流: L0 (==1) 不产出对抗 harness, 直接 complete_stage(4); L1 (>=2) 产出 eval/ 三件套——adversarial_runner.py 与 test_inputs.py 从 pypto-op-verify 的 templates/ 拷模板(test_inputs.py 只填 AGENT FILLS 块), adversarial_suite.json 按 L1-L5 每级 >=2 用例编写(写前读 module_interfaces.yaml 保证用例与接口规格自洽; 算子含减法累积时 L5 至少一条 cancellation_stress 用例)。"
+      - "L1 收尾: cd $OP_DIR/eval && python3 adversarial_runner.py --self-test 结构通过(合成 modular golden 复现用户 golden)。"
+      - "调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=4)。"
+    procedure:
+      - "裁判边界: 本阶段不生成设计/接口; 检查 design-review 证据、三件套模板来源(不得手写 runner CLI/报告 schema)、--self-test 实际运行结果。"
+      - "L0 判定: module_count==1 时 scaffolding 缺项不算缺失(acceptance 自动满足), 但 submit_design 与 complete_stage(4) 的状态链必须在场。"
+    acceptance:
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['4']=='completed', s['stage_status']\" 退出码 0"
+      - "L1 (DESIGN.md module_count >= 2): test -s $OP_DIR/eval/test_inputs.py 且 test -s $OP_DIR/eval/adversarial_suite.json 且 test -s $OP_DIR/eval/adversarial_runner.py, 且 cd $OP_DIR/eval && python3 adversarial_runner.py --self-test 退出码 0; L0 (module_count == 1) 本条自动满足"
+    out_of_scope:
+      - "不生成/修改 DESIGN.md 与 module_interfaces.yaml 之外的设计产物(design-review 发现问题时仅修订这两份)"
+      - "不写 per-module golden/test (Stage 5 懒生成), 不写任何 *_impl.py"
+      - "不写 MEMORY.md"
+    depends_on:
+      - stage3-design
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 2
+    on_exhaust: exit
+
+  - id: stage5-impl
+    task_type: normal
+    title: Stage 5 按模块编码闭环 (per-module impl -> lint -> verify -> debug 循环, 集成 impl + README)
+    goal:
+      - "按 module_count 路径完成编码闭环: L0 单次产出 $OP_DIR/<op>_impl.py + README.md; L1 逐模块产出 modules/<op>_module<suffix_k>_impl.py 并经 lint+验证闭环, 最终集成 $OP_DIR/<op>_impl.py + README.md"
+      - "staged 模式 (prepared_case.json mode == staged): 按 gen_prompt.md 桥接契约产出 $OP_DIR/<op>_pypto_impl.py 且其自检脚本通过"
+      - ".orchestrator_state.json 中 Stage 5 为 completed (所有已启动 phase verified)"
+    approach:
+      - "Load the pypto-op-develop skill first (mandatory), 同时加载 pypto-memory-template (mandatory); 失败调查时按需加载 pypto-general-debug / pypto-precision-debug (一次一个), 经验查询用 pypto-op-knowledge。active skill 不超过 5 个。"
+      - "入口(一次性): 按 pypto-memory-template 的 templates/MEMORY.template.md 创建 $OP_DIR/MEMORY.md, 从 SPEC.md/API_REPORT.md/DESIGN.md/module_interfaces.yaml/<op>_golden.py 注入 Task summary/API map/module_count/Module decomposition/contracts/Golden function inventory, 设 active_module: M1。"
+      - "L0 (module_count==1): 按 pypto-op-develop 的 templates/impl_template.py.tmpl 单次产出 <op>_impl.py(整个算法一个 @pypto.frontend.jit 体) + README.md; 跳过 per-module 循环与 cleanup。"
+      - "L1 (module_count>=2) per-module 循环(严格一次一个模块): start_phase(M_k) -> 产出 modules/<op>_module<suffix_k>_impl.py(wrapper 名 <op>_module<suffix_k>_wrapper, 只暴露 primary_inputs) -> submit_for_verify(M_k)(phase lint 门禁, FAIL 则按 block 信息的 fix_hints 修复重提) -> 按 pypto-op-verify 规约懒生成该模块的 cumulative golden(从 module_interfaces.yaml + <op>_golden.py 派生, 绝不从 impl 派生)与 per-module test(gen_module_test.py 生成)并跑 prefix-eval (--up-to-module k) -> PASS 则 complete_phase(M_k) 并推进 M_{k+1}; FAIL(带 failure_category) 则按 debugger 方法论(pypto-general-debug/pypto-precision-debug 路由表)调查根因、在 MEMORY.md 写补丁方案(file+行范围/现 snippet/建议 snippet/预期效果)后应用补丁, 回到 submit_for_verify。"
+      - "fast-fail 路由: 解析期/trace 期 5 秒内返回的失败(failure_category=structure)走压缩链路: 归因后修复并自跑 scripts/smoke_check_impl.py <impl> --bg 冒烟自检通过再重新 submit_for_verify; 同类错误单会话批量修完; 冒烟通过 != verify 通过。"
+      - "循环上限: 同一 phase cycles 达 10 次未过, 停止循环, 证据写入 MEMORY.md 并调 state_transition(action=rollback_to_stage, opDir=$OP_DIR, target_stage=3, reason=...) 或 fail_stage; 不得无限迭代。"
+      - "L1 收尾: complete_phase(MN) 后做 Composition verification( cumulative golden 复现 <op>_golden.py, composition_verification 的 seeds/shapes/tolerances) -> 运行 python3 $WORK_DIR/.agents/skills/pypto-op-verify/scripts/gen_cleanup.py --op <op> --final-impl modules/<op>_module<suffix_N>_impl.py --final-suffix <suffix_N> --spec SPEC.md --golden <op>_golden.py --out-dir $OP_DIR 集成 <op>_impl.py + README.md(脚本不适用时手工等价整合) -> record_artifact_hash(<op>_impl.py)。"
+      - "每次 Write/Edit 后扫描工具结果(含 additionalContext)中的 [pypto-op-lint] 门禁拦截, 按 fix_hints 修复重写到同一路径直至无拦截; 同一 OLxx 在同一 file:line 连续拦截 5 次则熔断上报。"
+      - "staged 模式: Stage 5 完成且自验证通过后, 按 gen_prompt.md 的 ModelNew 硬约束产出 <op>_pypto_impl.py 并运行其中的自检脚本(不抛异常且输出含 ModelNew)。"
+      - "完成: 所有 phase verified 后调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=5)。"
+      - "每次交接更新 MEMORY.md (Development & debug log / Per-module verification log); 开工前读已否决方案表, 表中方案不得无新证据重试。"
+    procedure:
+      - "你是裁判(judge-only): 只依据 acceptance 与实际运行证据裁决, 不修改任何源文件; 精度判定按 pypto-op-verify 的 verdict 格式与 failure_category 分类(precision/aicore/host_crash/workspace_overlap/oom/structure/layout/tile_shape/jit_stall/other)。"
+      - "false-positive 清单(逐项排除): golden fallback 掩蔽 JIT 失败(查 stderr); SIM 模式精度无意义(必须 NPU); 环境三件套+TILE_FWK_DEVICE_ID 缺失导致的不透明失败; 简单向量算子的 pypto.loop(1) 是布局门禁占位而非未 tiling; 多输出 kernel 必须逐叶输出 detailed_tensor_compare 且 tensor_name= 关键字传参; infra 阻塞是独立类别(不判精度 FAIL 也不伪造 PASS); max_rel_diff 远小于 rtol 的 precision fail 标注 cpu_reproducer_candidate。"
+      - "精度放行按 gen_prompt.md 的 Stage 5 精度放行规则(确定性 outlier_ratio 判定, 中间模块边界带证放行 < 1e-3), 不接受主观放宽。"
+      - "检查 lint 门禁真实生效: complete_stage(5) 被拒的所有 phase 不得 verified; MEMORY.md 每个 phase 有 self-review 6 项 + valid-shape 审计记录。"
+    acceptance:
+      - "OP=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/prepared_case.json'))['op'])\"); OP_DIR=$WORK_DIR/custom/$OP; test -s $OP_DIR/${OP}_impl.py 且 test -s $OP_DIR/README.md 且 test -f $OP_DIR/MEMORY.md"
+      - "staged 模式: test -s $OP_DIR/${OP}_pypto_impl.py; interactive 模式本条自动满足"
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['5']=='completed', s['stage_status']\" 退出码 0"
+      - "L1 时 modules/ 下每个 <op>_module<suffix_k>_impl.py 对应的 per-module 验证记录 (MEMORY.md Per-module verification log) 为 PASS, 且 evaluation_report.json 无未处理的 status: FAIL/ERROR"
+    out_of_scope:
+      - "不写 SPEC/API_REPORT/DESIGN/module_interfaces (上游冻结产物); 不修改 modules_pypto_verified 已冻结文件"
+      - "不做性能调优 (Stage 7), 不在 Stage 6 前使用多值 unroll_list"
+      - "不在 cwd 之外写任何文件(含 /tmp/mktemp); 不直接调 pypto_op_lint.py (lint 只经 hook 与 state_transition 副作用触发)"
+    depends_on:
+      - stage4-verify-prep
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 2
+    on_exhaust: exit
+
+  - id: stage6-e2e
+    task_type: normal
+    title: Stage 6 最终 E2E 验证
+    goal:
+      - "对 $OP_DIR/<op>_impl.py 做最终 E2E 验证: 全部输出叶 detailed_tensor_compare all_close + layout/structure 检查通过"
+      - ".orchestrator_state.json 中 Stage 6 为 completed"
+    approach:
+      - "先比对 artifact hash: <op>_impl.py 当前哈希与 Stage 5 record_artifact_hash 记录值一致则为 kernel unchanged, 只做 structure-only 检查(无 detailed_tensor_compare, Stage 5 精度证据沿用); 不一致则跑完整 E2E。"
+      - "完整 E2E: 用 pypto-op-verify 的 scripts/gen_module_test.py --e2e 生成 $OP_DIR/test_<op>.py(导入 <op>_impl 与 <op>_golden, path-bootstrap  preamble, vendored detailed_tensor_compare.py), 随后 cd $OP_DIR && python3 test_<op>.py (先 export TILE_FWK_DEVICE_ID=<device_id>, 无 PYTHONPATH); staged 模式精度验收必须包含 task_desc 官方用例(按 gen_prompt.md 精度验收约束与最终验证容差段)。"
+      - "layout/structure 规则(OL44/OL45/OL57/OL48/OL52/OL19)由 pypto-op-lint hooks 在写入与门禁处自动执行, 确认无残留 lint FAIL。"
+      - "证据(每叶输出 all_close, max abs/rel diff)追加到 MEMORY.md; 通过后调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=6)。"
+    procedure:
+      - "裁判: E2E 必须实际运行并读到逐叶输出 all_close 数值(文本声称无效); test_<op>.py 由模板生成且输入来自 task_desc 官方用例(staged 模式), 容差按 gen_prompt.md 最终验证容差段(VERIFY_TOLERANCE 逐输出表或 verify_rtol/atol)。"
+      - "kernel unchanged 短路仅当哈希确实一致; layout 退出码非 0 即 fail (failure_category: layout)。"
+    acceptance:
+      - "test -s $OP_DIR/test_<op>.py 且最近一次实际运行退出码 0 (kernel unchanged 短路时本条以 Stage 5 证据替代, 需在 MEMORY.md 可查)"
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['6']=='completed', s['stage_status']\" 退出码 0"
+    out_of_scope:
+      - "不修改 <op>_impl.py 及任何源文件(发现问题回 Stage 5 链路, 本节点不修)"
+      - "不做性能调优"
+    depends_on:
+      - stage5-impl
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 2
+    on_exhaust: exit
+
+  - id: stage7-tune
+    task_type: normal
+    title: Stage 7 性能调优 (S1_SETUP -> S2_COLLECT -> S3_ANALYZE -> S4 循环 -> S5_REPORT -> 回归)
+    goal:
+      - "按 pypto-op-perf-tune 分步骤完成性能调优, 产出 $OP_DIR/<op>_tuning_report.md"
+      - "prepared_case.json 的 perf_target_us 非空时, 最终实测最优值达标 (optimized_us <= perf_target_us) 或已达硬件极限 (hw_limit_reached=true 且 tuning_report 含硬件极限论证节) 即为通过, 机检结果落盘 $OP_DIR/<op>_tune_result.json; 两者皆不成立则本条不成立, 将判 fail 触发本节点自动重试 (max_retries=5, 耗尽则工作流失败); 其他异常 (文件缺失/字段非法/回归失败) 一律 fail"
+      - "调优后回归验证 (E2E detailed_tensor_compare + layout) PASS, 精度/结构无回归"
+      - ".orchestrator_state.json 中 Stage 7 为 completed; 全流程产物契约自检 ARTIFACTS_OK"
+    approach:
+      - "Load the pypto-op-perf-tune skill first (mandatory); 进入 S4 时按其状态映射表再加载 tune-orchestrator (ITER 协议/退出条件/Todo 铁律 2-4) 与对应 PHASE 子 skill (tune-frontend/tune-swimlane/tune-incore + perf-analyzer)。不加载 debug 类子 skill。"
+      - "INIT: 确定 perf_target_us 与 tuning_report_path=$OP_DIR/<op>_tuning_report.md; 硬性条款: gen_prompt.md/prepared_case.json 注入了 Stage 7 性能目标(perf_target_us)时必须原样采用, 不得替换来源; 终止条件与 Performance target sheet 记入 MEMORY.md。"
+      - "激活检查: 仅当 .orchestrator_state.json 显示 Stage 6 completed 才开始; 否则停止并报告。"
+      - "S1_SETUP: pypto-op-perf-tune 步骤 1.1-1.3 (环境检查 6 项 + 精度校验强制检查点); S2_COLLECT: 步骤 2.1-2.3 (debug_options + 采集 merged_swimlane.json/machine_runtime_operator_trace.json/bubble_analysis.log); S3_ANALYZE: 步骤 3.1-3.3 产出分析报告与 4 项基准指标并回写 MEMORY.md (Baseline/Required speedup)。"
+      - "S4 循环: S4_FRONTEND 单次 -> 未达标则 [S4_SWIMLANE -> S4_INCORE] x 至多 tune_rounds 轮 (tune_rounds 来自 prepared_case.json, 默认 3; 0 轮 = 只做 S1->S2->S3->S5 基线测量, S2 不启用 debug_options); 每 PHASE 按 tune-orchestrator ITER 协议执行并自管退出; 每轮结束重算 target_met = 实际us <= perf_target_us 并把已采纳/已失败优化、约束与代码配置追加到 MEMORY.md 的 Stage 7 accumulated context。"
+      - "硬件极限判定: 连续多轮优化无提升且依据 profiling 数据 (内存带宽/计算单元利用率等硬件指标) 判断当前实现已触及硬件极限时, 置 tune_result.json 的 hw_limit_reached=true, 并在 <op>_tuning_report.md 写硬件极限论证节 (哪些硬件指标饱和、为什么继续优化无空间); 禁止无论证置 true——这是诚信义务, verifier 会核对论证存在, 无论证或论证空泛判 fail。"
+      - "S5_REPORT: 先还原 debug_options (恢复 production 配置), 再生成并保存调优报告到 tuning_report_path。"
+      - "回归: 对最终 <op>_impl.py 重跑 E2E detailed_tensor_compare + layout check; PASS (所有输出 all_close + layout exit 0) 后调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=7); FAIL 则不调 complete_stage, 诊断摘要(各 PHASE 已采纳优化/当前代码配置/failure_category/失败证据)写入 MEMORY.md 并报告。"
+      - "收尾机检落盘: 回归 PASS 后把最终实测最优值写入 $OP_DIR/<op>_tune_result.json (JSON 对象, 四个字段: optimized_us=float 最终实测最优执行时间 us, 取 S5 还原 debug_options 后最终 <op>_impl.py 的实测最优值; perf_target_us=float|null, 与 prepared_case.json 一致; target_met=bool, perf_target_us 非空时 = optimized_us <= perf_target_us, 否则 true; hw_limit_reached=bool, 默认 false, 仅在触及硬件极限且 tuning_report 已写硬件极限论证节时置 true)。该文件是 verifier 判定性能达标的唯一机检数据来源, 必须真实测量值, 不得填估计值。"
+      - "产物自检: python3 $SCRIPTS/check_artifacts.py --prepared $WORK_DIR/prepared_case.json (SCRIPTS=$(dirname \"$WORKFLOW_YAML\")/scripts, WORKFLOW_YAML 自 $WORK_DIR/.workflow/status.json 读取)。"
+    procedure:
+      - "裁判: 逐阶段核对结构化结果的必填字段(target_met/退出原因/自核查声明/整体结果)与数值合法性(执行时间>0, 百分比在 [0,100]); target_met 以 perf_target_us 重算为准, 不只信自报; 文件类制品独立确认存在。"
+      - "回归验证按 pypto-op-verify Stage 7 regression mode: 重跑 E2E 逐叶 all_close + layout exit 0; S2 的 3 个数据文件与 S3 报告逐一核对存在。"
+      - "硬件极限放行核对: hw_limit_reached=true 时, <op>_tuning_report.md 必须含硬件极限论证节, 逐条核对论证点名的饱和硬件指标与无继续优化空间的理由; 无论证或论证空泛的 true 视为伪造, 判 fail。"
+    acceptance:
+      - "OP=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/prepared_case.json'))['op'])\"); OP_DIR=$WORK_DIR/custom/$OP; test -s $OP_DIR/${OP}_tuning_report.md"
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert all(s['stage_status'][str(i)]=='completed' for i in range(1,8)), s['stage_status']\" 退出码 0"
+      - "python3 $SCRIPTS/check_artifacts.py --prepared $WORK_DIR/prepared_case.json 退出码 0 且输出 ARTIFACTS_OK (SCRIPTS 定位同 approach)"
+      - "性能达标 (确定性断言): python3 -c \"import json; print(json.load(open('$WORK_DIR/prepared_case.json')).get('perf_target_us'))\" 输出 null/None 或空 (无硬性性能目标, interactive 场景) 时本条自动满足; 否则 (staged 场景) 必须同时成立: test -s $OP_DIR/${OP}_tune_result.json, 且 python3 -c \"import json; p=json.load(open('$WORK_DIR/prepared_case.json')); r=json.load(open('$OP_DIR/${OP}_tune_result.json')); o=r['optimized_us']; t=p['perf_target_us']; assert isinstance(o,(int,float)) and o>0, r; ok = o<=t or (r.get('hw_limit_reached') is True and '硬件极限论证' in open('$OP_DIR/${OP}_tuning_report.md').read()); assert ok, 'optimized_us=%r > perf_target_us=%r 且未论证硬件极限' % (o, t)\" 退出码 0; tune_result.json 缺失/字段非法/回归失败等其他异常一律 fail"
+    out_of_scope:
+      - "PANKO 自动调优路径 (v1 不进本工作流: 实验性 relay, 默认未启用)"
+      - "不修改算子公开契约 (名称/参数/shape/dtype/layout), 只调内部实现"
+      - "不自行宣告完成: 无 stop 判定时按 tune-orchestrator 退出条件执行"
+    depends_on:
+      - stage6-e2e
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 5
+    on_exhaust: exit

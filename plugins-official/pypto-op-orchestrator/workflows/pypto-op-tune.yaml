@@ -1,0 +1,92 @@
+# PyPTO 算子调优工作流（仅调优流程）.
+# 对应外部调用方现行"跳过 orchestrator 直调 optimizer"的 tune-only 范式:
+# 前置只需 impl + test + 精度证据。节点即 agent, 约定同 pypto-op-develop.yaml
+# 头部注释。stage7-tune 节点定义与 pypto-op-develop.yaml 中的同节点保持一致,
+# 保证两条路径调优行为一致。
+# 插件内脚本定位: SCRIPTS=$(dirname "$WORKFLOW_YAML")/scripts，其中
+#   WORKFLOW_YAML=$(python3 -c "import json;print(json.load(open(
+#   '$WORK_DIR/.workflow/status.json'))['workflow'])")
+
+workflow: pypto-op-tune
+
+max_parallel: 1
+
+max_rollbacks: 0
+
+system_prompt: |-
+  这是 PyPTO 算子调优工作流: 对已完成开发与 E2E 验证的算子执行 Stage 7 性能调优。
+  并行约束: max_parallel=1, 任何时刻只有一个任务在飞, 不与其他任务共享设备。
+  设备号以 $USER_PROMPT 与 $WORK_DIR/prepared_case.json 的 device_id 为唯一权威;
+  所有需要 NPU 的 bash 调用必须先 export TILE_FWK_DEVICE_ID=<device_id>, 禁止 find-free/换卡。
+  pypto 技能位于 $WORK_DIR/.agents/skills/pypto-*/(SKILL.md 入口); 阶段状态只能通过
+  state_transition 工具(hooks 提供)写 custom/<op>/.orchestrator_state.json, 禁止手写该文件。
+  约定: 下文 $OP_DIR 指 $WORK_DIR/prepared_case.json 的 op_dir 字段值, $OP 为其 op 字段值。
+
+nodes:
+  - id: tune-preflight
+    task_type: normal
+    title: 调优前置校验 (环境/装配 + impl/test/精度证据 + 最小 MEMORY.md)
+    goal:
+      - "pypto 资产与环境就绪 (装配幂等; 合并 develop 工作流 preflight-env 的环境校验职责)"
+      - "调优前置齐备: <op>_impl.py 与 test_<op>.py 存在非空, 精度证据 (Stage 6 completed 或重跑 E2E all_close) 在场"
+      - "$OP_DIR/MEMORY.md 存在 (缺失时按模板生成最小占位); $WORK_DIR/prepared_case.json 存在 (缺失时从 $USER_PROMPT 合成 tune-only 记录)"
+    approach:
+      - "定位插件脚本: WORKFLOW_YAML=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/.workflow/status.json'))['workflow'])\"); SCRIPTS=$(dirname \"$WORKFLOW_YAML\")/scripts。"
+      - "从 $USER_PROMPT 解析: 算子产物目录 op_dir (必填, 可为 $WORK_DIR/custom/<op> 或绝对路径)、device id (可选, 缺省为 null, 后续按 TILE_FWK_DEVICE_ID 环境变量或默认设备执行)、性能目标 us (可选, 缺省无硬性目标) 与调优轮次 (可选, 默认 3)。对提示词格式不作要求, 由本节点 agent 按语义解析。"
+      - "装配与环境: 若 $USER_PROMPT 指定 cannbot 仓路径或设置了 CANNBOT_ROOT, 运行 python3 $SCRIPTS/assemble_workspace.py --cannbot-root <仓根> --target $WORK_DIR; 否则运行 python3 $SCRIPTS/assemble_workspace.py --target $WORK_DIR (verify-only, 要求此前已装配)。source CANN set_env 后 python3 -c \"import pypto\" 确认可用, npu-smi info 确认 device 可见 (若指定了 device id)。"
+      - "prepared_case.json: 若 $WORK_DIR/prepared_case.json 缺失, 手写合成 {\"op\": <op>, \"op_dir\": <op_dir>, \"require\": null, \"task_desc\": null, \"gen_prompt\": null, \"device_id\": <N>, \"perf_target_us\": <F|null>, \"tune_rounds\": <I>, \"mode\": ...}; mode 取值: <op_dir> 内存在 task_desc.py 时为 \"staged\", 否则为 \"interactive\"。已存在则不改动。"
+      - "前置校验: <op>_impl.py 与 test_<op>.py 存在非空; 精度证据——<op_dir>/.orchestrator_state.json 的 stage_status[\"6\"] 为 completed, 否则重跑 cd <op_dir> && python3 test_<op>.py (先 export TILE_FWK_DEVICE_ID=<device_id>) 取得全输出 all_close 证据。"
+      - "MEMORY.md: <op_dir>/MEMORY.md 缺失或为空时, 按 $WORK_DIR/.agents/skills/pypto-memory-template 的模板生成最小占位 (task summary + Performance target sheet 骨架 + 空的 Development & debug log), 不伪造历史记录 (与调用方的最小 MEMORY.md 占位语义一致)。"
+      - "若 .orchestrator_state.json 显示 Stage 7 已 completed, 报告调优已完成并结束本节点 (幂等续跑)。"
+    acceptance:
+      - "test -s $OP_DIR/<op>_impl.py 且 test -s $OP_DIR/test_<op>.py (op/op_dir 来自 $WORK_DIR/prepared_case.json)"
+      - "test -f $OP_DIR/MEMORY.md 且 test -s $WORK_DIR/prepared_case.json"
+      - "精度证据在场: python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['6']=='completed'\" 退出码 0, 或重跑 test_<op>.py 实际退出码 0 且输出逐叶 all_close"
+      - "test -d $WORK_DIR/.cannbot/dependencies/pypto-op-orchestrator/cannbot-skills 且 test -d $WORK_DIR/.agents/skills/pypto-op-perf-tune"
+    out_of_scope:
+      - "任何调优与实现修改 (属 stage7-tune)"
+      - "修改 <op>_impl.py / test_<op>.py / 既有 MEMORY.md 内容"
+    depends_on: []
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 1
+    on_exhaust: exit
+
+  - id: stage7-tune
+    task_type: normal
+    title: Stage 7 性能调优 (S1_SETUP -> S2_COLLECT -> S3_ANALYZE -> S4 循环 -> S5_REPORT -> 回归)
+    goal:
+      - "按 pypto-op-perf-tune 分步骤完成性能调优, 产出 $OP_DIR/<op>_tuning_report.md"
+      - "prepared_case.json 的 perf_target_us 非空时, 最终实测最优值达标 (optimized_us <= perf_target_us) 或已达硬件极限 (hw_limit_reached=true 且 tuning_report 含硬件极限论证节) 即为通过, 机检结果落盘 $OP_DIR/<op>_tune_result.json; 两者皆不成立则本条不成立, 将判 fail 触发本节点自动重试 (max_retries=5, 耗尽则工作流失败); 其他异常 (文件缺失/字段非法/回归失败) 一律 fail"
+      - "调优后回归验证 (E2E detailed_tensor_compare + layout) PASS, 精度/结构无回归"
+      - ".orchestrator_state.json 中 Stage 7 为 completed; 全流程产物契约自检 ARTIFACTS_OK"
+    approach:
+      - "Load the pypto-op-perf-tune skill first (mandatory); 进入 S4 时按其状态映射表再加载 tune-orchestrator (ITER 协议/退出条件/Todo 铁律 2-4) 与对应 PHASE 子 skill (tune-frontend/tune-swimlane/tune-incore + perf-analyzer)。不加载 debug 类子 skill。"
+      - "INIT: 确定 perf_target_us 与 tuning_report_path=$OP_DIR/<op>_tuning_report.md; 硬性条款: gen_prompt.md/prepared_case.json 注入了 Stage 7 性能目标(perf_target_us)时必须原样采用, 不得替换来源; 终止条件与 Performance target sheet 记入 MEMORY.md。"
+      - "激活检查: 仅当 .orchestrator_state.json 显示 Stage 6 completed 才开始; 否则停止并报告。"
+      - "S1_SETUP: pypto-op-perf-tune 步骤 1.1-1.3 (环境检查 6 项 + 精度校验强制检查点); S2_COLLECT: 步骤 2.1-2.3 (debug_options + 采集 merged_swimlane.json/machine_runtime_operator_trace.json/bubble_analysis.log); S3_ANALYZE: 步骤 3.1-3.3 产出分析报告与 4 项基准指标并回写 MEMORY.md (Baseline/Required speedup)。"
+      - "S4 循环: S4_FRONTEND 单次 -> 未达标则 [S4_SWIMLANE -> S4_INCORE] x 至多 tune_rounds 轮 (tune_rounds 来自 prepared_case.json, 默认 3; 0 轮 = 只做 S1->S2->S3->S5 基线测量, S2 不启用 debug_options); 每 PHASE 按 tune-orchestrator ITER 协议执行并自管退出; 每轮结束重算 target_met = 实际us <= perf_target_us 并把已采纳/已失败优化、约束与代码配置追加到 MEMORY.md 的 Stage 7 accumulated context。"
+      - "硬件极限判定: 连续多轮优化无提升且依据 profiling 数据 (内存带宽/计算单元利用率等硬件指标) 判断当前实现已触及硬件极限时, 置 tune_result.json 的 hw_limit_reached=true, 并在 <op>_tuning_report.md 写硬件极限论证节 (哪些硬件指标饱和、为什么继续优化无空间); 禁止无论证置 true——这是诚信义务, verifier 会核对论证存在, 无论证或论证空泛判 fail。"
+      - "S5_REPORT: 先还原 debug_options (恢复 production 配置), 再生成并保存调优报告到 tuning_report_path。"
+      - "回归: 对最终 <op>_impl.py 重跑 E2E detailed_tensor_compare + layout check; PASS (所有输出 all_close + layout exit 0) 后调 state_transition(action=complete_stage, opDir=$OP_DIR, stage=7); FAIL 则不调 complete_stage, 诊断摘要(各 PHASE 已采纳优化/当前代码配置/failure_category/失败证据)写入 MEMORY.md 并报告。"
+      - "收尾机检落盘: 回归 PASS 后把最终实测最优值写入 $OP_DIR/<op>_tune_result.json (JSON 对象, 四个字段: optimized_us=float 最终实测最优执行时间 us, 取 S5 还原 debug_options 后最终 <op>_impl.py 的实测最优值; perf_target_us=float|null, 与 prepared_case.json 一致; target_met=bool, perf_target_us 非空时 = optimized_us <= perf_target_us, 否则 true; hw_limit_reached=bool, 默认 false, 仅在触及硬件极限且 tuning_report 已写硬件极限论证节时置 true)。该文件是 verifier 判定性能达标的唯一机检数据来源, 必须真实测量值, 不得填估计值。"
+      - "产物自检: python3 $SCRIPTS/check_artifacts.py --prepared $WORK_DIR/prepared_case.json (SCRIPTS=$(dirname \"$WORKFLOW_YAML\")/scripts, WORKFLOW_YAML 自 $WORK_DIR/.workflow/status.json 读取)。"
+    procedure:
+      - "裁判: 逐阶段核对结构化结果的必填字段(target_met/退出原因/自核查声明/整体结果)与数值合法性(执行时间>0, 百分比在 [0,100]); target_met 以 perf_target_us 重算为准, 不只信自报; 文件类制品独立确认存在。"
+      - "回归验证按 pypto-op-verify Stage 7 regression mode: 重跑 E2E 逐叶 all_close + layout exit 0; S2 的 3 个数据文件与 S3 报告逐一核对存在。"
+      - "硬件极限放行核对: hw_limit_reached=true 时, <op>_tuning_report.md 必须含硬件极限论证节, 逐条核对论证点名的饱和硬件指标与无继续优化空间的理由; 无论证或论证空泛的 true 视为伪造, 判 fail。"
+    acceptance:
+      - "OP=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/prepared_case.json'))['op'])\"); OP_DIR=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/prepared_case.json'))['op_dir'])\"); test -s $OP_DIR/${OP}_tuning_report.md"
+      - "python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert all(s['stage_status'][str(i)]=='completed' for i in range(1,8)), s['stage_status']\" 退出码 0"
+      - "python3 $SCRIPTS/check_artifacts.py --prepared $WORK_DIR/prepared_case.json 退出码 0 且输出 ARTIFACTS_OK (SCRIPTS 定位同 approach)"
+      - "性能达标 (确定性断言): python3 -c \"import json; print(json.load(open('$WORK_DIR/prepared_case.json')).get('perf_target_us'))\" 输出 null/None 或空 (无硬性性能目标, interactive 场景) 时本条自动满足; 否则 (staged 场景) 必须同时成立: test -s $OP_DIR/${OP}_tune_result.json, 且 python3 -c \"import json; p=json.load(open('$WORK_DIR/prepared_case.json')); r=json.load(open('$OP_DIR/${OP}_tune_result.json')); o=r['optimized_us']; t=p['perf_target_us']; assert isinstance(o,(int,float)) and o>0, r; ok = o<=t or (r.get('hw_limit_reached') is True and '硬件极限论证' in open('$OP_DIR/${OP}_tuning_report.md').read()); assert ok, 'optimized_us=%r > perf_target_us=%r 且未论证硬件极限' % (o, t)\" 退出码 0; tune_result.json 缺失/字段非法/回归失败等其他异常一律 fail"
+    out_of_scope:
+      - "PANKO 自动调优路径 (v1 不进本工作流: 实验性 relay, 默认未启用)"
+      - "不修改算子公开契约 (名称/参数/shape/dtype/layout), 只调内部实现"
+      - "不自行宣告完成: 无 stop 判定时按 tune-orchestrator 退出条件执行"
+    depends_on:
+      - tune-preflight
+    executor: general-executor
+    verifier: general-verifier
+    max_retries: 5
+    on_exhaust: exit

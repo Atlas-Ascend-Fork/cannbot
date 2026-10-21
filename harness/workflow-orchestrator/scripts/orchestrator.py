@@ -336,6 +336,9 @@ def run_agent(entry, provider, work_dir, dry_map):
         subprocess.Popen(
             provider.build_command(entry["agent"], entry["prompt"]),
             cwd=work_dir,
+            # opencode/cannbot 按 PWD 环境变量（而非实际 cwd）解析项目目录；
+            # Popen(cwd=) 不会回写继承来的 PWD，子进程会落到父进程 cwd 所属项目
+            env={**os.environ, "PWD": work_dir},
             stdout=f,
             stderr=subprocess.PIPE,
         ) as p,
@@ -665,46 +668,69 @@ def parse_args():
     return parser.parse_args()
 
 
+def _resume_workflow(args, status_path):
+    """Resume an in-flight workflow after checking the recorded yaml identity."""
+    if args.prompt:
+        print(
+            "[orchestrator] 警告: 工作流已在执行中(%s 已存在)，"
+            "--prompt 已被忽略，恢复执行时不应传递 prompt" % status_path,
+            file=sys.stderr,
+        )
+    try:
+        with open(status_path, encoding="utf-8") as f:
+            recorded = json.load(f).get("workflow")
+    except (OSError, json.JSONDecodeError) as e:
+        return err("恢复失败: 无法读取 %s: %s" % (status_path, e))
+    current = os.path.abspath(args.yaml)
+    if recorded != current:
+        return err(
+            "该工作区已存在另一个工作流的状态: %s 记录 %s，本次 --yaml 为 %s；"
+            "请删除 %s 目录或换一个干净工作区后重试"
+            % (
+                status_path,
+                recorded or "<缺失 workflow 字段>",
+                current,
+                os.path.dirname(status_path),
+            )
+        )
+    try:
+        reset_transient(args.work_dir)
+    except (OSError, json.JSONDecodeError, KeyError) as e:
+        return err("恢复失败: %s" % e)
+    return 0
+
+
+def _init_workflow(args, status_path):
+    """Initialize a fresh workflow via init_status.py; a prompt is required."""
+    if not args.prompt:
+        print(
+            "[orchestrator] 错误: 工作流未初始化(%s 不存在)，"
+            "首次运行必须提供 --prompt" % status_path,
+            file=sys.stderr,
+        )
+        return 1
+    print("[orchestrator] 初始化工作流: %s" % status_path)
+    return subprocess.run(
+        [
+            sys.executable,
+            os.path.join(SCRIPTS_DIR, "init_status.py"),
+            "--yaml",
+            args.yaml,
+            "--work-dir",
+            args.work_dir,
+            "--prompt",
+            args.prompt,
+        ]
+    ).returncode
+
+
 def prepare_workflow(args):
     """Initialize or resume the workflow, returning its preparation exit code."""
     status_path = os.path.join(args.work_dir, ".workflow", "status.json")
 
     if os.path.exists(status_path):
-        if args.prompt:
-            print(
-                "[orchestrator] 警告: 工作流已在执行中(%s 已存在)，"
-                "--prompt 已被忽略，恢复执行时不应传递 prompt" % status_path,
-                file=sys.stderr,
-            )
-        try:
-            reset_transient(args.work_dir)
-        except (OSError, json.JSONDecodeError, KeyError) as e:
-            return err("恢复失败: %s" % e)
-    else:
-        if not args.prompt:
-            print(
-                "[orchestrator] 错误: 工作流未初始化(%s 不存在)，"
-                "首次运行必须提供 --prompt" % status_path,
-                file=sys.stderr,
-            )
-            return 1
-        print("[orchestrator] 初始化工作流: %s" % status_path)
-        rc = subprocess.run(
-            [
-                sys.executable,
-                os.path.join(SCRIPTS_DIR, "init_status.py"),
-                "--yaml",
-                args.yaml,
-                "--work-dir",
-                args.work_dir,
-                "--prompt",
-                args.prompt,
-            ]
-        ).returncode
-        if rc != 0:
-            return rc
-
-    return 0
+        return _resume_workflow(args, status_path)
+    return _init_workflow(args, status_path)
 
 
 def main():

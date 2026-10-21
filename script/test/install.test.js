@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { assemblePlugins, pluginSourceDefinition } from "../lib/plugin-bundle.js";
@@ -792,6 +792,193 @@ test("declarative dependencies use the same project-level install flow", () => {
   assert.equal(isAbsolute(readlinkSync(join(target, "fixture-dependency"))), false);
   const record = readPluginRecord(target, "dsh", plugin);
   assert.deepEqual(record.dependencies, [join(".cannbot", "dependencies", plugin, "fixture-dependency")]);
+});
+
+// Dependency repository assets: a plugin without a local skills/ directory declares
+// an "assets" dependency; the installer clones the dependency repository, reads the
+// plugin-assets.json manifest inside it (inline keys in plugin-install.json override),
+// and links the declared Skills / hooks / AGENTS.md into the target project.
+function createDependencyRepository(sandbox, name, files) {
+  const repository = join(sandbox, name);
+  for (const [relativePath, content] of Object.entries(files)) {
+    const path = join(repository, relativePath);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  }
+  for (const args of [
+    ["init", "--quiet"],
+    ["add", "-A"],
+    ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "fixture"],
+  ]) {
+    const result = spawnSync("git", args, { cwd: repository, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  }
+  return repository;
+}
+
+function createAssetsPluginBundle(sandbox, dependencies) {
+  const bundleRoot = join(sandbox, "bundle");
+  const pluginRoot = join(bundleRoot, "plugins-official", "asset-fixture");
+  mkdirSync(join(pluginRoot, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({
+    name: "asset-fixture",
+    version: "1.0.0",
+    description: "Dependency assets fixture",
+  }));
+  writeFileSync(join(pluginRoot, "plugin-install.json"), JSON.stringify({ dependencies }));
+  return bundleRoot;
+}
+
+function installAssetsFixture(bundleRoot, target, sandbox, tool) {
+  mkdirSync(target, { recursive: true });
+  const result = spawnSync(process.execPath, [
+    cli, "install", "asset-fixture", "--tool", tool, "--target", target, "--source", bundleRoot,
+  ], {
+    cwd: target,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: join(sandbox, "home"),
+      XDG_CACHE_HOME: join(sandbox, "cache"),
+      CANNBOT_SKIP_CODEX_PLUGIN_ADD: "1",
+      CANNBOT_SKIP_OPENCODE_PLUGIN_ADD: "1",
+      CANNBOT_SKIP_DEPENDENCY_REPOS: "0",
+    },
+  });
+  return result;
+}
+
+const manifestSkillFiles = {
+  "ops/demo-skill/SKILL.md": ["---", "name: demo-skill", "description: Fixture", "---", ""].join("\n"),
+  "plugins-official/demo-plugin/plugin-assets.json": JSON.stringify({
+    plugin: "demo-plugin",
+    skills: { dir: "ops", names: ["demo-skill"] },
+    hooks: { dir: "plugins-official/demo-plugin/hooks" },
+    agentsMd: "plugins-official/demo-plugin/AGENTS.md",
+  }),
+  "plugins-official/demo-plugin/hooks/hooks.json": JSON.stringify({
+    hooks: {
+      SessionStart: [{
+        matcher: "",
+        hooks: [{ type: "command", command: "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.js" }],
+      }],
+    },
+  }),
+  "plugins-official/demo-plugin/AGENTS.md": "# Demo Plugin\n\nRun `bash skills/demo-skill/scripts/check.sh`.\n",
+};
+
+test("dependency assets install Skills, hooks and instructions from the dependency repository", () => {
+  const sandbox = createSandbox("cannbot-dep-assets-");
+  const dependency = createDependencyRepository(sandbox, "skills-repository", manifestSkillFiles);
+  const bundleRoot = createAssetsPluginBundle(sandbox, [{
+    name: "skills-repository",
+    repository: dependency,
+    assets: { plugin: "plugins-official/demo-plugin" },
+  }]);
+  const target = join(sandbox, "project");
+
+  const result = installAssetsFixture(bundleRoot, target, sandbox, "opencode");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const checkout = join(target, ".cannbot", "dependencies", "asset-fixture", "skills-repository");
+  const installedSkill = join(target, ".agents", "skills", "demo-skill");
+  assert.equal(lstatSync(installedSkill).isSymbolicLink(), true);
+  assert.equal(isAbsolute(readlinkSync(installedSkill)), false);
+  assert.equal(realpathSync(installedSkill), realpathSync(join(checkout, "ops", "demo-skill")));
+  assert.equal(
+    existsSync(join(target, ".cannbot", "plugins", "asset-fixture", "hooks", "hooks.json")),
+    true,
+  );
+  const instructions = readFileSync(join(target, "AGENTS.md"), "utf8");
+  assert.match(instructions, /# Demo Plugin/);
+  assert.equal(instructions.match(/<!-- cannbot:asset-fixture:start -->/g)?.length, 1);
+  // The Skill path in the dependency instructions is rewritten to the installed location.
+  assert.ok(instructions.includes(join(target, ".agents", "skills", "demo-skill") + "/"));
+
+  const record = readPluginRecord(target, "opencode", "asset-fixture");
+  assert.deepEqual(record.dependencies, [join(".cannbot", "dependencies", "asset-fixture", "skills-repository")]);
+  assert.deepEqual(record.dependencyAssets, [{
+    dependency: "skills-repository",
+    skills: ["demo-skill"],
+    hooks: true,
+    agentsMd: true,
+  }]);
+
+  // Reinstalling is idempotent: the same links, one managed instructions block.
+  const again = installAssetsFixture(bundleRoot, target, sandbox, "opencode");
+  assert.equal(again.status, 0, again.stderr || again.stdout);
+  assert.equal(lstatSync(installedSkill).isSymbolicLink(), true);
+  assert.equal(
+    readFileSync(join(target, "AGENTS.md"), "utf8").match(/<!-- cannbot:asset-fixture:start -->/g)?.length,
+    1,
+  );
+});
+
+test("dependency hooks register in Claude settings with the assembled plugin root", () => {
+  const sandbox = createSandbox("cannbot-dep-assets-claude-");
+  const dependency = createDependencyRepository(sandbox, "skills-repository", manifestSkillFiles);
+  const bundleRoot = createAssetsPluginBundle(sandbox, [{
+    name: "skills-repository",
+    repository: dependency,
+    assets: { plugin: "plugins-official/demo-plugin" },
+  }]);
+  const target = join(sandbox, "project");
+
+  const result = installAssetsFixture(bundleRoot, target, sandbox, "claude");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
+  const command = settings.hooks.SessionStart[0].hooks[0].command;
+  assert.ok(command.includes(join(target, ".cannbot", "plugins", "asset-fixture")));
+  assert.equal(command.includes("${CLAUDE_PLUGIN_ROOT}"), false);
+  assert.equal(
+    existsSync(join(target, ".claude", "skills", "demo-skill", "SKILL.md")),
+    true,
+  );
+});
+
+test("inline assets override the manifest and a missing manifest is skipped", () => {
+  const sandbox = createSandbox("cannbot-dep-assets-inline-");
+  const inlineRepository = createDependencyRepository(sandbox, "inline-repository", {
+    "ops/inline-skill/SKILL.md": ["---", "name: inline-skill", "description: Fixture", "---", ""].join("\n"),
+    "plugins-official/no-manifest/.gitkeep": "",
+  });
+  const bareRepository = createDependencyRepository(sandbox, "bare-repository", {
+    "plugins-official/no-manifest/.gitkeep": "",
+  });
+  const bundleRoot = createAssetsPluginBundle(sandbox, [
+    {
+      name: "inline-repository",
+      repository: inlineRepository,
+      assets: {
+        plugin: "plugins-official/no-manifest",
+        skills: { dir: "ops", names: ["inline-skill"] },
+      },
+    },
+    {
+      name: "bare-repository",
+      repository: bareRepository,
+      assets: { plugin: "plugins-official/no-manifest" },
+    },
+  ]);
+  const target = join(sandbox, "project");
+
+  const result = installAssetsFixture(bundleRoot, target, sandbox, "opencode");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /bare-repository.*skipped/);
+
+  const inlineSkill = join(target, ".agents", "skills", "inline-skill");
+  assert.equal(lstatSync(inlineSkill).isSymbolicLink(), true);
+  assert.equal(
+    realpathSync(inlineSkill),
+    realpathSync(join(target, ".cannbot", "dependencies", "asset-fixture", "inline-repository", "ops", "inline-skill")),
+  );
+  const record = readPluginRecord(target, "opencode", "asset-fixture");
+  assert.deepEqual(record.dependencyAssets, [{
+    dependency: "inline-repository",
+    skills: ["inline-skill"],
+    hooks: false,
+    agentsMd: false,
+  }]);
 });
 
 // The community channel is exercised against fixtures built inside the sandbox rather
