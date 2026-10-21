@@ -49,6 +49,7 @@ python3 orchestrator.py --yaml <wf.yaml> --work-dir <dir> [--provider opencode]
 
 import argparse
 import atexit
+import fcntl
 import json
 import os
 import shutil
@@ -158,16 +159,12 @@ def log_event(work_dir, **kv):
         kv,
         timestamp=datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S"),
     )
-    with open(
-        os.path.join(work_dir, ".workflow", "log.jsonl"), "a", encoding="utf-8"
-    ) as f:
+    with open(os.path.join(work_dir, ".workflow", "log.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(kv, ensure_ascii=False) + "\n")
 
 
 def load_status(work_dir):
-    with open(
-        os.path.join(work_dir, ".workflow", "status.json"), encoding="utf-8"
-    ) as f:
+    with open(os.path.join(work_dir, ".workflow", "status.json"), encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -190,40 +187,36 @@ def save_status(work_dir, status):
     os.replace(tmp, path)
 
 
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+def _close_lock_fd(lock_file):
+    if not lock_file.closed:
+        lock_file.close()
 
 
 def acquire_lock(work_dir):
-    """单实例互斥：pid 锁 + 存活探测；陈旧锁自动接管，正常退出释放。
-    ponytail: 双启动竞窗（同微秒首启）未做 O_EXCL，双启间隔够大即安全。"""
+    """获取单实例非阻塞锁；内核会在进程退出时自动释放文件锁。"""
     lock = os.path.join(work_dir, ".workflow", "orchestrator.lock")
     os.makedirs(os.path.dirname(lock), exist_ok=True)
-    if os.path.exists(lock):
-        try:
-            pid = int(open(lock, encoding="utf-8").read().strip() or 0)
-        except (ValueError, OSError):
-            pid = 0
-        if pid and pid != os.getpid() and alive(pid):
-            return None
-    with open(lock, "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
-    atexit.register(lambda: os.path.exists(lock) and os.unlink(lock))
-    return lock
+    lock_file = open(lock, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+    except BlockingIOError:
+        _close_lock_fd(lock_file)
+        return None
+    except BaseException:
+        _close_lock_fd(lock_file)
+        raise
+    atexit.register(_close_lock_fd, lock_file)
+    return lock_file
 
 
 def reset_transient(work_dir):
     """瞬态重置（崩溃恢复 / [] 空轮自愈）：running→pending、verifying→executed。"""
     status = load_status(work_dir)
-    hits = [
-        t for t in status["tasks"].values() if t["status"] in ("running", "verifying")
-    ]
+    hits = [t for t in status["tasks"].values() if t["status"] in ("running", "verifying")]
     if not hits:
         return 0
     for t in hits:
@@ -252,9 +245,7 @@ def copy_tree(src, dst):
     for name in os.listdir(src):
         if name == WORKFLOW_DIR_NAME:
             continue
-        subprocess.run(
-            [CP, "-a", "--reflink=auto", os.path.join(src, name), dst + "/"], check=True
-        )
+        subprocess.run([CP, "-a", "--reflink=auto", os.path.join(src, name), dst + "/"], check=True)
 
 
 def clear_tree(path):
@@ -302,10 +293,7 @@ def update(work_dir, task_id, reply):
 def report(work_dir):
     status = load_status(work_dir)
     for tid, t in sorted(status["tasks"].items()):
-        print(
-            "[orchestrator]   %s: %s (retries=%d)"
-            % (tid, t["status"], t.get("retries", 0))
-        )
+        print("[orchestrator]   %s: %s (retries=%d)" % (tid, t["status"], t.get("retries", 0)))
 
 
 def run_agent(entry, provider, work_dir, dry_map):
@@ -325,9 +313,7 @@ def run_agent(entry, provider, work_dir, dry_map):
             # "|文本" 可显式覆盖（如 "$VERDICT:fail:原因|pass" 模拟裁决文件与文本矛盾）
             body, _, text = reply[len(VERDICT_PREFIX) :].partition("|")
             verdict, _, reason = body.partition(":")
-            write_verdict_file(
-                work_dir, entry["task_id"], verdict.strip(), reason.strip() or None
-            )
+            write_verdict_file(work_dir, entry["task_id"], verdict.strip(), reason.strip() or None)
             reply = text or ("通过" if verdict.strip() == "pass" else "失败")
         return reply, reply == CRASH
     path = session_path(work_dir, entry["task_id"], entry["_phase"])
@@ -465,10 +451,7 @@ def harvest_done(work_dir, inflight):
         if rc != 0:
             # 单任务更新失败不停机：可能因 agent 越权直改 status.json 等。
             # 记录后继续回收其余任务，交由下一轮调度重试/告警。
-            err(
-                "状态更新失败: %s (reply=%r)，跳过并继续"
-                % (entry["task_id"], reply[:200])
-            )
+            err("状态更新失败: %s (reply=%r)，跳过并继续" % (entry["task_id"], reply[:200]))
 
 
 def terminal_exit(work_dir, verdict):
@@ -523,12 +506,9 @@ def ask_get_task(work_dir):
     try:
         out = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        return None, err(
-            "get_task 输出无法解析: %r stderr=%r" % (proc.stdout, proc.stderr)
-        )
+        return None, err("get_task 输出无法解析: %r stderr=%r" % (proc.stdout, proc.stderr))
     if not (
-        isinstance(out, list)
-        or (isinstance(out, dict) and out.get("result") in TERMINAL_RESULTS)
+        isinstance(out, list) or (isinstance(out, dict) and out.get("result") in TERMINAL_RESULTS)
     ):
         return None, err("get_task 输出无法解析: %r" % proc.stdout)
     return out, None
@@ -563,9 +543,7 @@ def dispatch_batch(ctx, batch):
             return err("任务状态预占失败: %s" % entry["task_id"])
     for entry in batch:
         ctx.inflight[
-            ctx.executor.submit(
-                run_agent, entry, ctx.provider, ctx.work_dir, ctx.dry_map
-            )
+            ctx.executor.submit(run_agent, entry, ctx.provider, ctx.work_dir, ctx.dry_map)
         ] = entry
     return None
 
@@ -623,17 +601,11 @@ def loop_step(ctx):
 
 def loop(work_dir, provider, dry_map):
     max_parallel = read_max_parallel(work_dir)
-    if (
-        not isinstance(max_parallel, int)
-        or isinstance(max_parallel, bool)
-        or max_parallel < 1
-    ):
+    if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
         return err("无法从 workflow yaml 读取合法的 max_parallel")
 
     # 常驻共享池 + 全部轮间状态聚合进 ctx（仅主线程读写）
-    ctx = LoopContext(
-        work_dir, provider, dry_map, ThreadPoolExecutor(max_workers=max_parallel)
-    )
+    ctx = LoopContext(work_dir, provider, dry_map, ThreadPoolExecutor(max_workers=max_parallel))
     try:
         while True:
             exit_code = loop_step(ctx)
@@ -645,9 +617,7 @@ def loop(work_dir, provider, dry_map):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Workflow orchestrator")
-    parser.add_argument(
-        "--yaml", required=True, help="path to the workflow definition file"
-    )
+    parser.add_argument("--yaml", required=True, help="path to the workflow definition file")
     parser.add_argument(
         "--work-dir", required=True, help="working directory for all workflow artifacts"
     )
@@ -657,9 +627,7 @@ def parse_args():
         default=None,
         help="Coding Agent CLI used to execute the workflow's tasks",
     )
-    parser.add_argument(
-        "--prompt", default=None, help="development task prompt (first run only)"
-    )
+    parser.add_argument("--prompt", default=None, help="development task prompt (first run only)")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -738,9 +706,7 @@ def main():
     if not args.dry_run and not args.provider:
         return err("必须提供 --provider（或用 --dry-run 模拟）")
     if acquire_lock(args.work_dir) is None:
-        return err(
-            "另一个 orchestrator 实例正在运行（.workflow/orchestrator.lock），拒绝双跑"
-        )
+        return err("另一个 orchestrator 实例正在运行（.workflow/orchestrator.lock），拒绝双跑")
     rc = prepare_workflow(args)
     if rc != 0:
         return rc
