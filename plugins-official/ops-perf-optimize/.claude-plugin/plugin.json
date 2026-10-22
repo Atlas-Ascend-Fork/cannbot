@@ -1,0 +1,18 @@
+{
+  "name": "ops-perf-optimize",
+  "description": "AscendC 五阶段性能调优 Team：基线评估、前处理、诊断分析、实施验证、后处理；保留泛化调优、精度门禁和恢复，回集成逐 case 防退化。",
+  "version": "4.1.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "dependencies": [
+    "ops-perf-optimize-skills",
+    "ops-perf-optimize-kb-skills"
+  ],
+  "agents": [
+    "./AGENTS.md"
+  ]
+}

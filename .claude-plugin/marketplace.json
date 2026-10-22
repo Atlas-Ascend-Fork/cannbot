@@ -13,7 +13,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "a25ecb1cda6234d9a95493bf8c913f81b86b55a0"
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
       },
       "strict": false,
       "version": "1.0.5",
@@ -51,7 +51,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "infra",
-        "sha": "a25ecb1cda6234d9a95493bf8c913f81b86b55a0"
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
       },
       "strict": false,
       "version": "1.1.0",
@@ -74,7 +74,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "model",
-        "sha": "a25ecb1cda6234d9a95493bf8c913f81b86b55a0"
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
       },
       "strict": false,
       "version": "1.2.0",
@@ -189,7 +189,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "communication",
-        "sha": "01f6b06830ddc95b1083322dbcbce95defba6168"
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
       },
       "strict": false,
       "version": "1.2.13",
@@ -252,7 +252,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "01f6b06830ddc95b1083322dbcbce95defba6168"
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
       },
       "strict": false,
       "version": "1.0.0",
@@ -278,7 +278,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "plugins-community/cannbot-knowledge/skills",
-        "sha": "01f6b06830ddc95b1083322dbcbce95defba6168"
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
       },
       "strict": false,
       "version": "1.0.0",
@@ -310,6 +310,81 @@
       "dependencies": [
         "triton-op-generator-skills",
         "triton-op-generator-kb-skills"
+      ]
+    },
+    {
+      "name": "ops-perf-optimize-skills",
+      "description": "AscendC 算子性能调优共享 Skills（17 项）。覆盖 profiling 采集、性能优化与 Blaze 路由、理论性能估算、精度与同步调试、环境检查、NPU 架构知识与注册算子模板，供 ops-perf-optimize 使用。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "ops",
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+      },
+      "strict": false,
+      "version": "4.1.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "category": "skills",
+      "skills": [
+        "./ops-theoretical-performance-estimation",
+        "./ops-simulator",
+        "./ops-profiling",
+        "./ascendc-perf-optimize",
+        "./ascendc-performance-best-practices",
+        "./ascendc-blaze-best-practice",
+        "./ascendc-blaze-migration",
+        "./ascendc-regbase-best-practice",
+        "./ascendc-docs-search",
+        "./ascendc-env-check",
+        "./npu-arch",
+        "./ascendc-st-design",
+        "./ascendc-precision-debug",
+        "./ascendc-sync-audit",
+        "./ascendc-mc2-best-practice",
+        "./ops-precision-standard",
+        "./ascendc-registry-invoke-template"
+      ]
+    },
+    {
+      "name": "ops-perf-optimize-kb-skills",
+      "description": "cannbot-knowledge 知识消费 Skill（1 项）：knowledge-query 知识检索。供 ops-perf-optimize 的方案设计与方案实施引用知识卡。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "plugins-community/cannbot-knowledge/skills",
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+      },
+      "strict": false,
+      "version": "4.1.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "category": "skills",
+      "skills": [
+        "./knowledge-query"
+      ]
+    },
+    {
+      "name": "ops-perf-optimize",
+      "source": "./plugins-official/ops-perf-optimize",
+      "description": "AscendC 五阶段性能调优 Team：基线评估、前处理、诊断分析、实施验证、后处理；保留泛化调优、精度门禁和恢复，回集成逐 case 防退化。",
+      "version": "4.1.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "ascendc",
+        "perf-optimize",
+        "performance",
+        "operator",
+        "npu"
+      ],
+      "category": "development",
+      "dependencies": [
+        "ops-perf-optimize-skills",
+        "ops-perf-optimize-kb-skills"
       ]
     }
   ]

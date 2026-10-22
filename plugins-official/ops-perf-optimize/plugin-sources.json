@@ -1,0 +1,24 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "skills": [
+    "ops/ops-theoretical-performance-estimation",
+    "ops/ops-simulator",
+    "ops/ops-profiling",
+    "ops/ascendc-perf-optimize",
+    "ops/ascendc-performance-best-practices",
+    "ops/ascendc-blaze-best-practice",
+    "ops/ascendc-blaze-migration",
+    "ops/ascendc-regbase-best-practice",
+    "ops/ascendc-docs-search",
+    "ops/ascendc-env-check",
+    "ops/npu-arch",
+    "ops/ascendc-st-design",
+    "ops/ascendc-precision-debug",
+    "ops/ascendc-sync-audit",
+    "ops/ascendc-mc2-best-practice",
+    "ops/ops-precision-standard",
+    "ops/ascendc-registry-invoke-template",
+    "plugins-community/cannbot-knowledge/skills/knowledge-query"
+  ]
+}

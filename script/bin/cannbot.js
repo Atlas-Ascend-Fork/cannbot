@@ -35,6 +35,46 @@ const TOOL_DIRECTORIES = Object.freeze({
   dsh: { configDirs: [".dsh"], defaultConfigDir: ".dsh" },
 });
 const TOOL_NAMES = Object.keys(TOOL_DIRECTORIES);
+const LAUNCH_COMMANDS = Object.freeze({
+  opencode: "opencode",
+  codex: "codex",
+  claude: "claude",
+  trae: "trae",
+  dsh: "dsh",
+});
+const USAGE_GUIDES = Object.freeze({
+  "ops-perf-optimize": `选择使用方式（将 /path/to/... 和目标 SoC 替换为实际配置）：
+
+方式一：自动化调优
+
+  请对 /path/to/operator/ 执行自动化性能调优，目标 SoC 为 Ascend950。
+  性能用例：/path/to/cases.csv；功能用例复用性能用例。
+  性能对标：同环境原始实现，逐 case 目标比例 1.2x；固定优化 3 轮。
+  Python：/path/to/venv/bin/python；CANN：source /path/to/Ascend/cann/bin/setenv.bash。
+  中间结果输出到 /path/to/output/。
+
+方式二：交互式调优
+
+  Step 1：性能分析与方案生成
+
+  对 /path/to/operator/，先只采集性能并分析瓶颈、输出方案，完成后暂停，等我选择再实施。
+  使用 ops-profiling 采集，结合 ascendc-perf-optimize 和 ascendc-performance-best-practices 分析。
+  目标 SoC：Ascend950；用例：/path/to/cases.csv；Python：/path/to/venv/bin/python。
+  CANN：source /path/to/Ascend/cann/bin/setenv.bash；输出到 /path/to/output/。
+
+  Step 1 完成后，可自主审视方案，并与 Agent 对话修改；确认方案后再进入 Step 2。
+
+  Step 2：按照生成的方案进行优化
+
+  请对 /path/to/operator/ 做性能优化，采用审阅修改后确认的 <方案编号>。
+  沿用已确认的环境、用例、约束和输出目录，实施方案并验证精度与性能。
+  输出候选的逐 case 性能对比和精度结果，完成后暂停，等我确认再做全量验收与回集成。
+
+  Step 3：全量验收与原工程回集成
+
+  使用上一步保留的可信实现，完成全量精度与性能验收，并回集成到 /path/to/operator/。
+  验证原工程调用方式，输出最终逐 case 性能对比、代码位置、验证报告和复现命令。`,
+});
 
 function fail(message) {
   console.error(`cannbot: ${message}`);
@@ -174,7 +214,7 @@ function installPluginAssets(pluginDir, plugin, target, sourceDefinition, skillR
   mkdirSync(destinationRoot, { recursive: true });
   const assets = { destinationRoot, relativeRoot };
   let installed = false;
-  for (const name of ["workflows", "agents", "hooks", "LICENSE", "SKILLS_LICENSE"]) {
+  for (const name of ["workflows", "scripts", "agents", "hooks", "quickstart.md", "LICENSE", "SKILLS_LICENSE"]) {
     let source = join(pluginDir, name);
     if (name === "SKILLS_LICENSE" && sharedSkills) {
       source = join(sharedSkills.root, "LICENSE");
@@ -333,15 +373,15 @@ function installAgents(pluginDir, plugin, tool, target, assets, agentsDirOverrid
   for (const relativeAgent of plugin.agents ?? []) {
     const source = resolve(pluginDir, relativeAgent);
     const markdown = rewritePluginReferences(readFileSync(source, "utf8"), assets, skillRewrites);
+    const agent = parseAgent(markdown);
     if (tool !== "codex") {
-      const destination = join(agentsDir, basename(source));
+      const destination = join(agentsDir, `${agent.name}.md`);
       rmSync(destination, { recursive: true, force: true });
       writeFileSync(destination, markdown);
       installed.push(destination);
       continue;
     }
 
-    const agent = parseAgent(markdown);
     const destination = join(agentsDir, `${agent.name}.toml`);
     const toml = [
       `name = ${JSON.stringify(agent.name)}`,
@@ -1029,6 +1069,20 @@ function install(options) {
     console.log(`  opencode plugin: ${nativePlugin.package}`);
   } else {
     console.log(`  ${options.tool} skills: ${nativePlugin.discovery}`);
+  }
+  console.log("");
+  console.log("Next steps:");
+  console.log(`  1. Start the client: ${LAUNCH_COMMANDS[options.tool]}`);
+  const usage = USAGE_GUIDES[plugin.name];
+  if (usage) {
+    console.log("");
+    for (const line of usage.split("\n")) {
+      console.log(line ? `  ${line}` : "");
+    }
+  }
+  if (assets && existsSync(join(assets.destinationRoot, "quickstart.md"))) {
+    console.log("");
+    console.log(`  Full guide: ${join(assets.destinationRoot, "quickstart.md")}`);
   }
 }
 

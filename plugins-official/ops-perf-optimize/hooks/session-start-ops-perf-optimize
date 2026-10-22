@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------------------------------------
+
+# SessionStart hook for CANNBot (ops-perf-optimize) plugin.
+#
+# On each session start, tell Claude which first-class agent owns performance
+# optimization. Do not inject the full workflow as generic session memory: the
+# agent definition is the single source of truth and Claude loads it on dispatch.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+AGENTS_MD="${PLUGIN_ROOT}/AGENTS.md"
+if [ ! -f "$AGENTS_MD" ]; then
+  exit 0
+fi
+
+session_context="<CANNBOT_CONTEXT>
+Route to the \`perf-optimize\` agent only when the user explicitly asks to optimize or tune the performance of a specific AscendC operator or code directory. Do not route installation/help questions, report or log analysis, profiling inspection, precision debugging, code review, or requests that merely mention cases.csv, msprof, profiling, speedup, or a performance target without both explicit optimization intent and a concrete operator target. For a valid request, the agent must fully read the \`ops-perf-optimize\` Skill at \`${PLUGIN_ROOT}/skills/ops-perf-optimize-workflow/SKILL.md\`. Do not reconstruct the workflow from this hook text or \`${AGENTS_MD}\`.
+</CANNBOT_CONTEXT>"
+
+# Escape for JSON
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+session_context_escaped=$(escape_for_json "$session_context")
+
+# Output JSON for Claude Code hook system
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  cat <<EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "${session_context_escaped}"
+  }
+}
+EOF
+else
+  cat <<EOF
+{
+  "additional_context": "${session_context_escaped}"
+}
+EOF
+fi
+
+exit 0

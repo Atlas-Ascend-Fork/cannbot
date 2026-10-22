@@ -223,10 +223,14 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
   const skillCommit = revision.stdout.match(/commit ([0-9a-f]+)\t/)?.[1];
   assert.ok(skillSourceUrl, "missing Skill submodule URL");
   assert.match(skillCommit, /^[0-9a-f]{40}$/);
-  const expectedPlugins = ["hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "triton-op-generator"];
+  const expectedPlugins = ["hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "ops-perf-optimize", "triton-op-generator"];
   // Only bundled plugins have manifests; source-only workflow entries are not packaged.
+  // A community plugin is bundled under its directory name, which need not match its
+  // manifest name, so only official-directory entries belong to this official list;
+  // community entries are validated by the dedicated loop below.
   const officialPlugins = marketplace.plugins.filter((plugin) =>
-    typeof plugin.source === "string" && existsSync(join(packageRoot, "dist", "plugins", plugin.name)));
+    typeof plugin.source === "string" && plugin.source.startsWith("./plugins-official/")
+    && existsSync(join(packageRoot, "dist", "plugins", plugin.name)));
   for (const plugin of marketplace.plugins.filter((entry) => typeof entry.source === "string")) {
     assert.ok(existsSync(resolve(repositoryRoot, plugin.source)), plugin.source);
   }
@@ -305,7 +309,7 @@ test("package bundle includes plugin licenses", () => {
     readFileSync(join(packageRoot, "dist", "plugins", "LICENSE"), "utf8"),
     readFileSync(join(repositoryRoot, "plugins-official", "LICENSE"), "utf8"),
   );
-  for (const plugin of ["model-infer-optimize", "ops-direct-invoke", "triton-op-generator"]) {
+  for (const plugin of ["model-infer-optimize", "ops-direct-invoke", "ops-perf-optimize", "triton-op-generator"]) {
     assert.equal(
       readFileSync(join(packageRoot, "dist", "plugins", plugin, "LICENSE"), "utf8"),
       readFileSync(join(repositoryRoot, "plugins-official", "LICENSE"), "utf8"),
@@ -464,6 +468,29 @@ for (const source of sources) {
       assertUnifiedInstall(target, tool, plugin);
     });
   }
+}
+
+for (const source of sources) {
+  test(`${source} installs ops-perf-optimize workflow tools`, () => {
+    const { target, result: installResult } = installPlugin("ops-perf-optimize", "opencode", source);
+    const pluginRoot = join(target, ".cannbot", "plugins", "ops-perf-optimize");
+    for (const script of ["workflow_state.py", "prepare_case_sets.py", "validate_source_isolation.py"]) {
+      assert.equal(existsSync(join(pluginRoot, "scripts", script)), true, script);
+    }
+    assert.equal(existsSync(join(pluginRoot, "quickstart.md")), true);
+    assert.match(installResult.stdout, /方式一：自动化调优/);
+    assert.match(installResult.stdout, /方式二：交互式调优/);
+    const agentFile = join(target, ".opencode", "agents", "perf-optimize.md");
+    assert.equal(existsSync(agentFile), true);
+    assert.match(readFileSync(agentFile, "utf8"), /^name: perf-optimize$/m);
+    assert.deepEqual(readPluginRecord(target, "opencode", "ops-perf-optimize").agents,
+      [".opencode/agents/perf-optimize.md"]);
+    const resolver = join(skillRoot(target, "opencode"),
+      "ops-perf-optimize-workflow", "scripts", "resolve-plugin-root.sh");
+    const result = spawnSync("bash", [resolver], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(existsSync(join(result.stdout.trim(), "scripts", "workflow_state.py")), true);
+  });
 }
 
 for (const plugin of ["model-infer-optimize"]) {

@@ -1,0 +1,33 @@
+{
+  "name": "ops-perf-optimize",
+  "version": "4.1.0",
+  "description": "AscendC 五阶段性能调优 Team。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "ascendc",
+    "perf-optimize",
+    "performance",
+    "operator",
+    "npu",
+    "workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AscendC 算子性能调优",
+    "shortDescription": "AscendC 算子五阶段性能调优工作流",
+    "longDescription": "AscendC 算子端到端性能调优 Team。按基线评估→前处理→诊断分析→实施验证→后处理的五阶段工作流执行：工程剥离和恢复，冻结用例、建立可信基线、profiling 分析、隔离实施候选、精度与性能门禁与全量验收。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "请优化 /path/to/operator 算子的性能，目标 SoC 为 Ascend950"
+    ]
+  }
+}

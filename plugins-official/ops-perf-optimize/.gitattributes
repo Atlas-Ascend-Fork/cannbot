@@ -1,0 +1,8 @@
+# Shell scripts must stay LF: Git Bash / MSYS cannot execute CRLF scripts
+# ("$'\r': command not found"). Force LF on checkout regardless of
+# core.autocrlf so init.sh, init-windows.sh, tests and hooks run as-is.
+*.sh text eol=lf
+hooks/* text eol=lf
+
+# Python reads CRLF fine, but normalize anyway to keep diffs clean.
+*.py text eol=lf
