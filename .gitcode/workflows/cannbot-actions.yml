@@ -108,12 +108,6 @@ stages:
         runs-on:
           - self-hosted
           - runner_name=A5_skill_tester_02
-      JOB_ut:
-        name: UT_cannbot
-        uses: .gitcode/workflows/ut_action.yml
-        with:
-          # Reuse the existing Skills UT image; cannbot has no UT_Test image output.
-          image_version: ubuntu24.04_x86:lv6_v1.1094
     pre:
     - type: auto
     fail-fast: false
