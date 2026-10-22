@@ -348,3 +348,4 @@ extern "C" __global__ __aicore__ void softmax_custom(GM_ADDR x, GM_ADDR y, GM_AD
     op.Process();
 }
 """
+```
