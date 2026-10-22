@@ -133,7 +133,7 @@ MCTS 算法的 Phase 1–7 与 naive/round.md 基本一致，区别仅在于：
 - **Phase 3/4 迭代时**：若验证/优化过程中发现当前 direction 明显不可行（如连续编译失败），可基于 MCTS 上下文在 **同一 round 内** 微调 direction，但必须在 `report.md` 中记录调整原因。
 - **Phase 5 `summary.json`**：必须正确写入本 round 实际执行的 `direction`。
 
-具体步骤参见 [naive/round.md](naive/round.md) 的对应章节。本章仅列出 MCTS 需要额外注意的点。
+具体步骤参见 [naive/round.md](../naive/round.md) 的对应章节。本章仅列出 MCTS 需要额外注意的点。
 
 ### 4.1 Phase 2：算法设计时的 MCTS 输入
 
