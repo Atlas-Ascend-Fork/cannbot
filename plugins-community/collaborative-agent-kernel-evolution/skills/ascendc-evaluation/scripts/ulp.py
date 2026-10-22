@@ -41,6 +41,7 @@ _DTYPE_PARAMS = {
 # Bit-level helpers
 # ---------------------------------------------------------------------------
 
+
 def _to_bf16_bits(t: torch.Tensor) -> np.ndarray:
     """Convert tensor to bf16 uint16 bit representation."""
     t32 = t.to(torch.bfloat16).to(torch.float32)
@@ -56,8 +57,7 @@ def _to_fp32_bits(t: torch.Tensor) -> np.ndarray:
     return t.to(torch.float32).view(torch.uint32).numpy()
 
 
-def _flush_bits(bits: np.ndarray, bits_width: int,
-                mantissa_bits: int) -> np.ndarray:
+def _flush_bits(bits: np.ndarray, bits_width: int, mantissa_bits: int) -> np.ndarray:
     """Flush -0 to +0.  If include_subnormal is handled externally,
     this only fixes the ±0 issue."""
     if bits_width == 16:
@@ -70,24 +70,29 @@ def _flush_bits(bits: np.ndarray, bits_width: int,
     return bits
 
 
-def _flush_subnormals(bits: np.ndarray, bits_width: int,
-                      mantissa_bits: int) -> np.ndarray:
+def _flush_subnormals(
+    bits: np.ndarray, bits_width: int, mantissa_bits: int
+) -> np.ndarray:
     """Flush subnormals and ±0 to +0."""
     if bits_width == 16:
         sign_bit = np.uint16(1 << 15)
-        exp_mask_shifted = np.uint16(((1 << (bits_width - 1 - mantissa_bits)) - 1) << mantissa_bits)
+        exp_mask_shifted = np.uint16(
+            ((1 << (bits_width - 1 - mantissa_bits)) - 1) << mantissa_bits
+        )
         exp_bits = bits & exp_mask_shifted
         # Subnormal: exp == 0 (includes ±0)
-        is_subnormal_or_zero = (exp_bits == np.uint16(0))
+        is_subnormal_or_zero = exp_bits == np.uint16(0)
         # Also catch -0 explicitly
-        is_neg_zero = (bits == sign_bit)
+        is_neg_zero = bits == sign_bit
         bits = np.where(is_subnormal_or_zero | is_neg_zero, np.uint16(0), bits)
     else:
         sign_bit = np.uint32(1 << 31)
-        exp_mask_shifted = np.uint32(((1 << (bits_width - 1 - mantissa_bits)) - 1) << mantissa_bits)
+        exp_mask_shifted = np.uint32(
+            ((1 << (bits_width - 1 - mantissa_bits)) - 1) << mantissa_bits
+        )
         exp_bits = bits & exp_mask_shifted
-        is_subnormal_or_zero = (exp_bits == np.uint32(0))
-        is_neg_zero = (bits == sign_bit)
+        is_subnormal_or_zero = exp_bits == np.uint32(0)
+        is_neg_zero = bits == sign_bit
         bits = np.where(is_subnormal_or_zero | is_neg_zero, np.uint32(0), bits)
     return bits
 
@@ -98,25 +103,19 @@ def _ordered_from_uint(u: np.ndarray, bits: int) -> np.ndarray:
     Positive floats map to themselves; negative floats are mirrored
     so that the ordering is consistent across the number line.
     """
-    if bits == 16:
-        sign_bit = np.uint16(1 << 15)
-        max_val = np.uint16(0xFFFF)
-        signed = u.astype(np.int32)
-        mask = (u & sign_bit).astype(bool)
-        return np.where(mask, (max_val.astype(np.int32) - signed), signed)
-    elif bits == 32:
-        sign_bit = np.uint32(1 << 31)
-        max_val = np.uint32(0xFFFFFFFF)
-        signed = u.astype(np.int64)
-        mask = (u & sign_bit).astype(bool)
-        return np.where(mask, (max_val.astype(np.int64) - signed), signed)
-    else:
+    if bits not in (16, 32):
         raise ValueError(f"Unsupported bit width: {bits}")
+    sign_bit = 1 << (bits - 1)
+    signed = u.astype(np.int64)
+    magnitude = signed & (sign_bit - 1)
+    # Both signed zeros have the same rank; crossing zero counts actual steps.
+    return np.where(signed & sign_bit, -magnitude, magnitude)
 
 
 # ---------------------------------------------------------------------------
 # Bitwise mode
 # ---------------------------------------------------------------------------
+
 
 def _detect_special(t: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     """Detect NaN and Inf positions in a tensor.
@@ -128,9 +127,9 @@ def _detect_special(t: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
     return np.isnan(arr), np.isinf(arr)
 
 
-def _apply_special_distances(dist: np.ndarray,
-                             a: torch.Tensor,
-                             b: torch.Tensor) -> np.ndarray:
+def _apply_special_distances(
+    dist: np.ndarray, a: torch.Tensor, b: torch.Tensor
+) -> np.ndarray:
     """Override distances for NaN/Inf positions.
 
     Rules:
@@ -173,9 +172,9 @@ def _apply_special_distances(dist: np.ndarray,
     return result
 
 
-def ulp_distance_bitwise(a: torch.Tensor, b: torch.Tensor,
-                         dtype: torch.dtype,
-                         include_subnormal: bool = True) -> np.ndarray:
+def ulp_distance_bitwise(
+    a: torch.Tensor, b: torch.Tensor, dtype: torch.dtype, include_subnormal: bool = True
+) -> np.ndarray:
     """Compute bitwise ULP distance between two tensors.
 
     When include_subnormal=False, subnormals and ±0 are flushed to +0.
@@ -223,8 +222,10 @@ def ulp_distance_bitwise(a: torch.Tensor, b: torch.Tensor,
 # Native mode: |a - b| / ULP(b, dtype)
 # ---------------------------------------------------------------------------
 
-def _ulp_value_at(b: torch.Tensor, dtype: torch.dtype,
-                  include_subnormal: bool = True) -> np.ndarray:
+
+def _ulp_value_at(
+    b: torch.Tensor, dtype: torch.dtype, include_subnormal: bool = True
+) -> np.ndarray:
     """Compute the ULP (spacing) at each element of b in the given dtype.
 
     Returns fp64 numpy array.  inf/nan positions yield nan.
@@ -250,13 +251,19 @@ def _ulp_value_at(b: torch.Tensor, dtype: torch.dtype,
         b32 = b_flat.to(torch.bfloat16).to(torch.float32)
         bits32 = b32.view(torch.uint32).numpy()
         bf16_bits = ((bits32 >> np.uint32(16)) & np.uint32(0xFFFF)).astype(np.uint16)
-        exp = ((bf16_bits >> np.uint16(mantissa_bits)) & np.uint16(exp_mask)).astype(np.int32)
+        exp = ((bf16_bits >> np.uint16(mantissa_bits)) & np.uint16(exp_mask)).astype(
+            np.int32
+        )
     elif dtype == torch.float16:
         bits = b_flat.to(torch.float16).view(torch.uint16).numpy()
-        exp = ((bits >> np.uint16(mantissa_bits)) & np.uint16(exp_mask)).astype(np.int32)
+        exp = ((bits >> np.uint16(mantissa_bits)) & np.uint16(exp_mask)).astype(
+            np.int32
+        )
     else:  # fp32
         bits = b_flat.to(torch.float32).view(torch.uint32).numpy()
-        exp = ((bits >> np.uint32(mantissa_bits)) & np.uint32(exp_mask)).astype(np.int32)
+        exp = ((bits >> np.uint32(mantissa_bits)) & np.uint32(exp_mask)).astype(
+            np.int32
+        )
 
     if include_subnormal:
         # Subnormals all share the spacing of exponent one, so their ULP is two
@@ -278,9 +285,9 @@ def _ulp_value_at(b: torch.Tensor, dtype: torch.dtype,
     return ulp_values
 
 
-def ulp_distance_native(a: torch.Tensor, b: torch.Tensor,
-                        dtype: torch.dtype,
-                        include_subnormal: bool = True) -> np.ndarray:
+def ulp_distance_native(
+    a: torch.Tensor, b: torch.Tensor, dtype: torch.dtype, include_subnormal: bool = True
+) -> np.ndarray:
     """Compute native ULP distance: |a - b| / ULP(b, dtype).
 
     b is cast to *dtype* to determine the ULP at each position.
@@ -301,7 +308,7 @@ def ulp_distance_native(a: torch.Tensor, b: torch.Tensor,
 
     ulp_at_b = _ulp_value_at(b, dtype, include_subnormal=include_subnormal)
 
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         distance = np.abs(a64 - b64) / ulp_at_b
 
     return _apply_special_distances(distance, a, b)
@@ -311,10 +318,16 @@ def ulp_distance_native(a: torch.Tensor, b: torch.Tensor,
 # Unified metrics
 # ---------------------------------------------------------------------------
 
-def ulp_metrics(a: torch.Tensor, b: torch.Tensor,
-                dtype: torch.dtype, *, ulp_tol: int = 2,
-                method: str = "bitwise",
-                include_subnormal: bool = True) -> dict:
+
+def ulp_metrics(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    dtype: torch.dtype,
+    *,
+    ulp_tol: int = 2,
+    method: str = "bitwise",
+    include_subnormal: bool = True,
+) -> dict:
     """Compute ULP metrics: ulp_mean, ulp_max, ulp_miss_rate.
 
     method='bitwise': integer distance between IEEE-754 bit representations.
@@ -322,16 +335,18 @@ def ulp_metrics(a: torch.Tensor, b: torch.Tensor,
     include_subnormal: if False, flush subnormals to 0 before computing.
     """
     if method == "native":
-        dist = ulp_distance_native(a, b, dtype,
-                                   include_subnormal=include_subnormal)
+        dist = ulp_distance_native(a, b, dtype, include_subnormal=include_subnormal)
     else:
-        dist = ulp_distance_bitwise(a, b, dtype,
-                                    include_subnormal=include_subnormal)
+        dist = ulp_distance_bitwise(a, b, dtype, include_subnormal=include_subnormal)
 
     n = dist.size
     if n == 0:
-        return {"ulp_mean": 0.0, "ulp_max": 0.0, "ulp_miss_rate": 0.0,
-                "nan_mismatch": 0}
+        return {
+            "ulp_mean": 0.0,
+            "ulp_max": 0.0,
+            "ulp_miss_rate": 0.0,
+            "nan_mismatch": 0,
+        }
 
     # Count positions where distance is inf (NaN/Inf mismatches)
     nan_mismatch = int(np.sum(np.isinf(dist)))
@@ -342,8 +357,7 @@ def ulp_metrics(a: torch.Tensor, b: torch.Tensor,
 
     return {
         "ulp_mean": float(np.mean(dist_for_stats)),
-        "ulp_max": float(np.max(dist_for_stats)) if nan_mismatch == 0
-        else float('inf'),
+        "ulp_max": float(np.max(dist_for_stats)) if nan_mismatch == 0 else float("inf"),
         "ulp_miss_rate": float(np.sum(dist > ulp_tol) / n),
         "nan_mismatch": nan_mismatch,
     }
