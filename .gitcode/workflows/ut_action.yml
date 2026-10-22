@@ -1,0 +1,63 @@
+name: ut_action
+
+on:
+  workflow_call:
+    inputs:
+      image_version:
+        required: true
+        type: string
+
+jobs:
+  JOB_ut:
+    name: UT
+    if: "${{ default() && atomgit.event.pull_request.number > 0 }}"
+    steps:
+      - name: Checkout
+        identifier: process_checkout
+        uses: checkout
+        with:
+          ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
+          allow-unsafe-pr-checkout: true
+      - name: run_repository_ut
+        identifier: run_ut
+        env:
+          EXPECTED_MERGE_SHA: ${{ atomgit.event.pull_request.merge_commit_sha }}
+          ATOMGIT_RUN_ATTEMPT: ${{ atomgit.run_attempt }}
+        run: |
+          bash <<'BASH'
+          set -euo pipefail
+          cd "${{ steps.process_checkout.outputs.path }}"
+          [[ "$EXPECTED_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'PR merge SHA is unavailable' >&2; exit 3; }
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_MERGE_SHA" ]] || { echo 'Checkout differs from the PR merge SHA' >&2; exit 3; }
+          [[ "${ATOMGIT_RUN_ID:-}" =~ ^[A-Za-z0-9_-]+$ && "$ATOMGIT_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] \
+            || { echo 'Native run ID/attempt is unavailable' >&2; exit 3; }
+          report_dir="$PWD/.gitcode/cannbot-ut-reports/$ATOMGIT_RUN_ID/$ATOMGIT_RUN_ATTEMPT"
+          mkdir -p "$report_dir"
+          printf 'report_dir=%s\nreport_key=ut/%s/%s\n' "$report_dir" "$ATOMGIT_RUN_ID" "$ATOMGIT_RUN_ATTEMPT" >> "$ATOMGIT_OUTPUT"
+          printf '# UT source preparation\n\nPR merge: `%s`\n\n' "$EXPECTED_MERGE_SHA" > "$report_dir/source-prepare.md"
+          init_exit=0
+          timeout --kill-after=10s 120s git submodule update --init --depth 1 -- vendor/cannbot-skills \
+            > "$report_dir/vendor-init.stdout.log" 2> "$report_dir/vendor-init.stderr.log" || init_exit=$?
+          printf 'Vendor initialization exit: %s\n' "$init_exit" >> "$report_dir/source-prepare.md"
+          cat "$report_dir/vendor-init.stdout.log"
+          cat "$report_dir/vendor-init.stderr.log" >&2
+          if (( init_exit != 0 )); then
+            printf '\nTests did not start.\n' >> "$report_dir/source-prepare.md"
+            exit "$init_exit"
+          fi
+          bash .gitcode/scripts/ut.sh "$report_dir"
+          BASH
+      - name: upload_ut_report
+        if: ${{ always() && steps.run_ut.outputs.report_dir != '' }}
+        continue-on-error: true
+        uses: obs-upload
+        with:
+          endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+          bucket: "ascend-ci"
+          access-key: ${{ secrets.AK }}
+          secret-key: ${{ secrets.SK }}
+          artifact-path: "${{ steps.run_ut.outputs.report_dir }}/*"
+          object-prefix: "${{ env.obs_path }}/${{ steps.run_ut.outputs.report_key }}/"
+    runs-on: ["self-hosted", "arch=x64", "spec=xlarge"]
+    container:
+      image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ inputs.image_version }}
