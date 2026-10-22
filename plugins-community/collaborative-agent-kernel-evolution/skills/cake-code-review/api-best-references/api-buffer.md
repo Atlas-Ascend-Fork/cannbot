@@ -8,7 +8,7 @@ TBuf/TQue 选择、Double Buffer 流水线并行、批量搬运模式。
 
 1. [TBuf vs TQue 选择](#tbuf-vs-tque-选择)
 2. [Double Buffer 流水线并行](#double-buffer-流水线并行)
-3. [批量搬运 + 逐行计算模式](#批量搬运--逐行计算模式)
+3. [批量搬运 + 逐行计算模式](#批量搬运-逐行计算模式)
 
 ---
 
