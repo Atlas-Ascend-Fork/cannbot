@@ -303,17 +303,17 @@ decision = strategy.select_next_round(
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `direction` | `str | None` | 下一轮优化方向；`"pattern: custom"` 表示由 LLM 自主探索。MCTS 等节点选择策略返回 `None`，由子 agent 自主决定。 |
-| `hypothesis` | `str | None` | 方向/节点假设。 |
-| `round_strategy` | `str | None` | 如 `exploration`、`focused_tuning`、`structural_change`。 |
-| `analysis_policy` | `str | None` | 如 `pattern_entry`、`bottleneck_analysis`、`ir_supported`。 |
+| `direction` | `str \| None` | 下一轮优化方向；`"pattern: custom"` 表示由 LLM 自主探索。MCTS 等节点选择策略返回 `None`，由子 agent 自主决定。 |
+| `hypothesis` | `str \| None` | 方向/节点假设。 |
+| `round_strategy` | `str \| None` | 如 `exploration`、`focused_tuning`、`structural_change`。 |
+| `analysis_policy` | `str \| None` | 如 `pattern_entry`、`bottleneck_analysis`、`ir_supported`。 |
 | `evidence_sources` | `list[str]` | 证据来源。 |
-| `baseline` | `BaselineProposal` | `mode="none" | "single" | "multiple"`，及 `round_dirs`。对 MCTS，`round_dirs[0]` 为选中的父 round；虚拟节点映射为空字符串，Orchestrator 将回退到 `global_baseline`。 |
-| `parent_round_dir` | `str | None` | 选中的父 round 目录名（MCTS 使用）。 |
-| `selected_round_dir` | `str | None` | 由 Orchestrator 在创建新 round 后回填的新 round 目录名。 |
-| `switch_marker` | `SwitchMarker | None` | 方向切换审计信息，不为 `None` 时记录到 `round_index.json` 与 `opt-note.md`。 |
+| `baseline` | `BaselineProposal` | `mode="none" \| "single" \| "multiple"`，及 `round_dirs`。对 MCTS，`round_dirs[0]` 为选中的父 round；虚拟节点映射为空字符串，Orchestrator 将回退到 `global_baseline`。 |
+| `parent_round_dir` | `str \| None` | 选中的父 round 目录名（MCTS 使用）。 |
+| `selected_round_dir` | `str \| None` | 由 Orchestrator 在创建新 round 后回填的新 round 目录名。 |
+| `switch_marker` | `SwitchMarker \| None` | 方向切换审计信息，不为 `None` 时记录到 `round_index.json` 与 `opt-note.md`。 |
 | `algorithm_recommends_stop` | `bool` | 策略是否建议停止。 |
-| `stop_reason` | `str | None` | 建议停止的原因。 |
+| `stop_reason` | `str \| None` | 建议停止的原因。 |
 | `metadata` | `dict` | 策略附加数据（如 `mcts_parent_id`、`mcts_selection_path`）。 |
 
 策略能力通过 `StrategyCapabilities` 声明：
