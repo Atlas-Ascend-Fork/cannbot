@@ -43,7 +43,7 @@ For example, if you do `from torch import _VF`, you can then use `_VF.lstm` and 
 - Modify the `forward()` method to use functional calls instead of `nn.Modules`.
     - This can be achieved by defining a `module_fn()` that takes in all the args that the forward pass was called with as well as any neural network parameters that the Model holds. It should faithfully reproduce the exact forward pass as the original Model class.
     - Then, you can augment the `Model.forward()` method signature, where you add a `fn` argument that defaults to `module_fn`.
-    - Important: your goal is to reproduce the original model’s behavior. Do not add unnecessary arguments to module_fn—only include those strictly required to replicate the functionality, even if extra arguments exist in the torch.nn.funtional's interface.
+    - Important: your goal is to reproduce the original model’s behavior. Do not add unnecessary arguments to module_fn—only include those strictly required to replicate the functionality, even if extra arguments exist in the torch.nn.functional's interface.
 - You need to read the original code carefully. E.g., the code may not implement a residual connection even though the name or comment suggests it.
 
 ### Members
