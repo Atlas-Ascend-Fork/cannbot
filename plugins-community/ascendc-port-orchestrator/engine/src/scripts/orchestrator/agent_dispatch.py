@@ -1055,15 +1055,9 @@ def _spawn_for_state_once(
         op: workspace dir name
         workspace: workspace dir path
         state: YAML state (await_worker / await_probe / etc.)
-        lane: NPU id 0/1/2
-        spawn_index: 1-based counter (used for G7 slug)
-        timeout_sec: foreground timeout (default 1h)
-        background: if True, returns Popen for legacy non-graybox dispatch;
-            isolated graybox dispatch is intentionally rejected because its
-            staged plugin runtime must live until the worker exits
-        output_file: required when background=True
-        directive_text: passed to brief builder for respawns
-        handoff_from_prior: handoff text from prior agent
+        request: _SpawnRequest —— 生成请求对象，字段含
+            lane/spawn_index/timeout_sec/background/output_file/
+            directive_text/handoff_from_prior，定义见 _SpawnRequest 类
 
     Returns:
         - foreground: AgentResult
