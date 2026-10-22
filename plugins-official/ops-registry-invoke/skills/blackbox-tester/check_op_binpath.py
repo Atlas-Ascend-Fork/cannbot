@@ -30,7 +30,9 @@ LOG = logging.getLogger(__name__)
 # ③ `Available bin for op <Op> is <P>`
 PATTERNS = [
     re.compile(r"Op\[([A-Za-z0-9_]+)\][^\n]*?bin path is\s+(/[^\s\],]+\.o)"),
-    re.compile(r"OpName:\[([A-Za-z0-9_]+)\][^\n]*?bin file path\s*\[\s*(/[^\]\s]+\.o)\]"),
+    re.compile(
+        r"OpName:\[([A-Za-z0-9_]+)\][^\n]*?bin file path\s*\[\s*(/[^\]\s]+\.o)\]"
+    ),
     re.compile(r"Available bin for op\s+([A-Za-z0-9_]+)\s+is\s+(/[^\s\],]+\.o)"),
 ]
 
@@ -41,11 +43,13 @@ def _read_log(path):
 
 
 def _matching_paths(text, optype):
-    want = optype.lower()
+    want = re.compile(
+        r"(?:aclnn)?" + re.escape(optype.lower()) + r"(?:_\d+(?:_[a-z0-9_]+)?)?"
+    )
     paths = []
     for pattern in PATTERNS:
         for optoken, bin_path in pattern.findall(text):
-            if want in optoken.lower() and bin_path not in paths:
+            if want.fullmatch(optoken.lower()) and bin_path not in paths:
                 paths.append(bin_path)
     return paths
 
@@ -58,9 +62,21 @@ def _inside(path, expected_dir):
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("log")
-    parser.add_argument("--optype", required=True, help="被测算子 OpType(驼峰)，如 AddCustom / SoftShrink")
-    parser.add_argument("--expect-dir", required=True, help="自定义算子安装包位置 vendors/<OpType> 绝对路径")
-    parser.add_argument("--require", action="store_true", help="没抓到本 op 的 bin path 也判失败(默认 WARN)")
+    parser.add_argument(
+        "--optype",
+        required=True,
+        help="被测算子 OpType(驼峰)，如 AddCustom / SoftShrink",
+    )
+    parser.add_argument(
+        "--expect-dir",
+        required=True,
+        help="自定义算子安装包位置 vendors/<OpType> 绝对路径",
+    )
+    parser.add_argument(
+        "--require",
+        action="store_true",
+        help="没抓到本 op 的 bin path 也判失败(默认 WARN)",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
 
@@ -73,7 +89,11 @@ def main(argv=None):
     paths = _matching_paths(text, args.optype)
     if not paths:
         tag = "FAIL" if args.require else "WARN"
-        LOG.info("[check-origin] %s: 日志里没抓到 %s 的 bin path；请确认 CANN 日志和算子执行。", tag, args.optype)
+        LOG.info(
+            "[check-origin] %s: 日志里没抓到 %s 的 bin path；请确认 CANN 日志和算子执行。",
+            tag,
+            args.optype,
+        )
         return 1 if args.require else 2
 
     expected_dir = os.path.realpath(args.expect_dir)
@@ -83,10 +103,16 @@ def main(argv=None):
         LOG.info("[check-origin] %s %s", status, path)
 
     if bad:
-        LOG.error("[check-origin] FAIL: %s 有 %d 个 kernel bin 不在自定义算子安装包 %s 下。",
-                  args.optype, len(bad), args.expect_dir)
+        LOG.error(
+            "[check-origin] FAIL: %s 有 %d 个 kernel bin 不在自定义算子安装包 %s 下。",
+            args.optype,
+            len(bad),
+            args.expect_dir,
+        )
         return 1
-    LOG.info("[check-origin] PASS: %s 的 kernel bin 全部来自自定义算子安装包。", args.optype)
+    LOG.info(
+        "[check-origin] PASS: %s 的 kernel bin 全部来自自定义算子安装包。", args.optype
+    )
     return 0
 
 
