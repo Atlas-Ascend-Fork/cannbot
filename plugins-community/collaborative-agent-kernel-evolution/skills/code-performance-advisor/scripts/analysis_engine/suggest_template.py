@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -147,8 +148,6 @@ class SuggestionGenerator:
     @staticmethod
     def _identify_primary_bottleneck(suggestions: List[Dict[str, Any]]) -> str:
         """Identify primary bottleneck from suggestions with specific metrics."""
-        import re
-
         if not suggestions:
             return "Unknown"
 
