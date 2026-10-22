@@ -660,7 +660,6 @@ if (nSize_ < MIN_N_SIZE || nSize_ > MAX_N_SIZE) {
 
 - **UT 测试**: 34/34 通过（包括 n=1 边界场景）
 - **ST 测试**: 2/2 通过
-```
 
 ---
 
