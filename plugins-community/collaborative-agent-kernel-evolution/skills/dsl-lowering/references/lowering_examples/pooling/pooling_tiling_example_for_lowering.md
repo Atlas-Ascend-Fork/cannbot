@@ -521,3 +521,4 @@ extern "C" __global__ __aicore__ void average_pooling2d_custom(GM_ADDR x, GM_ADD
     // TODO: user kernel impl
 }
 """
+```

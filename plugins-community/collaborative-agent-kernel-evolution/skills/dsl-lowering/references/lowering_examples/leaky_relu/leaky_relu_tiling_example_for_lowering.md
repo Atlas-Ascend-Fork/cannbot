@@ -312,3 +312,4 @@ extern "C" __global__ __aicore__ void leaky_relu_custom(GM_ADDR x, GM_ADDR y, GM
     // TODO: user kernel impl
 }
 """
+```
