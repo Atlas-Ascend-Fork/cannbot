@@ -23,7 +23,9 @@ LOG = logging.getLogger(__name__)
 
 def api_names(path):
     with open(path, newline="", encoding="utf-8") as handle:
-        return sorted({row["api_name"] for row in csv.DictReader(handle) if row.get("api_name")})
+        return sorted(
+            {row["api_name"] for row in csv.DictReader(handle) if row.get("api_name")}
+        )
 
 
 def attr_keys(path):
@@ -48,7 +50,9 @@ def so_symbols(opp, optype):
     if not nm:
         LOG.warning("找不到 nm 工具，跳过符号核对")
         return None
-    result = subprocess.run([nm, "-D", library], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [nm, "-D", library], capture_output=True, text=True, check=False
+    )
     return set(re.findall(r"\baclnn\w+", result.stdout))
 
 
@@ -58,11 +62,15 @@ def sig_under(include_root, api):
         return None
     for root, _, files in os.walk(include_root):
         for filename in files:
-            with open(os.path.join(root, filename), encoding="utf-8", errors="replace") as handle:
+            with open(
+                os.path.join(root, filename), encoding="utf-8", errors="replace"
+            ) as handle:
                 text = handle.read()
             text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
             text = re.sub(r"//[^\n]*", "", text)
-            match = re.search(re.escape(api) + r"GetWorkspaceSize\s*\((.*?)\)", text, re.S)
+            match = re.search(
+                re.escape(api) + r"GetWorkspaceSize\s*\((.*?)\)", text, re.S
+            )
             if match:
                 return match.group(1)
     return None
@@ -81,7 +89,9 @@ def builtin_header_sig(opp, api):
     except OSError as exc:
         LOG.debug("无法枚举 toolkit 架构目录: %s", exc)
         arches = []
-    candidates.extend(os.path.join(toolkit, arch, "include", "aclnnop") for arch in arches)
+    candidates.extend(
+        os.path.join(toolkit, arch, "include", "aclnnop") for arch in arches
+    )
     for include_root in candidates:
         signature = sig_under(include_root, api)
         if signature is not None:
@@ -163,14 +173,22 @@ def public_apis(symbols):
     if not symbols:
         return set()
     raw = {name for name in symbols if not name.endswith("GetWorkspaceSize")}
-    raw |= {name[: -len("GetWorkspaceSize")] for name in symbols if name.endswith("GetWorkspaceSize")}
+    raw |= {
+        name[: -len("GetWorkspaceSize")]
+        for name in symbols
+        if name.endswith("GetWorkspaceSize")
+    }
     return raw
 
 
 def _fail_dual_interface(api):
     base = api[: -len("Tensor")]
-    LOG.error("api_name '%s' 是 ValueDepend(OPTIONAL) 的 Tensor 双接口变体；"
-              "请改用基接口 '%s'。", api, base)
+    LOG.error(
+        "api_name '%s' 是 ValueDepend(OPTIONAL) 的 Tensor 双接口变体；"
+        "请改用基接口 '%s'。",
+        api,
+        base,
+    )
     return False
 
 
@@ -178,13 +196,24 @@ def _public_wrapper_signature(args, api, op_apis):
     signature = builtin_header_sig(args.opp, api)
     if signature is None:
         candidates = sorted(op_apis)
-        LOG.error("api_name '%s' 不在 vendor 符号或 CANN 公共接口中（候选：%s）", api, candidates[:4])
+        LOG.error(
+            "api_name '%s' 不在 vendor 符号或 CANN 公共接口中（候选：%s）",
+            api,
+            candidates[:4],
+        )
         return None, False
     shadows = other_vendor_headers(args.opp, args.optype, api)
     if shadows:
-        LOG.error("CANN 公共 ACLNN wrapper '%s' 同时被其它 vendor 头文件定义：%s", api, shadows)
+        LOG.error(
+            "CANN 公共 ACLNN wrapper '%s' 同时被其它 vendor 头文件定义：%s",
+            api,
+            shadows,
+        )
         return None, False
-    LOG.info("api_name '%s' 使用 CANN 公共 ACLNN wrapper；必须由 smoke kernel-origin 门禁确认。", api)
+    LOG.info(
+        "api_name '%s' 使用 CANN 公共 ACLNN wrapper；必须由 smoke kernel-origin 门禁确认。",
+        api,
+    )
     return signature, True
 
 
@@ -193,9 +222,14 @@ def _validate_api_signatures(args, symbols, op_apis):
     condemned = set()
     ok = True
     if symbols is None:
-        LOG.warning("找不到 vendors/%s/op_api/lib/libcust_opapi.so，跳过符号/头文件核对", args.optype)
+        LOG.warning(
+            "找不到 vendors/%s/op_api/lib/libcust_opapi.so，跳过符号/头文件核对",
+            args.optype,
+        )
     for api in api_names(args.csv):
-        if symbols is not None and dual_interface_violation(api, symbols, args.opp, args.optype):
+        if symbols is not None and dual_interface_violation(
+            api, symbols, args.opp, args.optype
+        ):
             ok = _fail_dual_interface(api)
             condemned.add(api)
             continue
@@ -219,9 +253,17 @@ def _validate_attributes(args, api, signature):
     for key in attr_keys(args.csv):
         if key in params:
             continue
-        candidates = [param for param in sorted(params) if param.lower().startswith(key.lower())]
+        candidates = [
+            param for param in sorted(params) if param.lower().startswith(key.lower())
+        ]
         hint = f"；是否应为 '{candidates[0]}'?" if candidates else ""
-        LOG.error("属性键 '%s' 不是 %s 的接口参数名（头文件参数：%s%s）", key, api, sorted(params), hint)
+        LOG.error(
+            "属性键 '%s' 不是 %s 的接口参数名（头文件参数：%s%s）",
+            key,
+            api,
+            sorted(params),
+            hint,
+        )
         ok = False
     return ok
 
@@ -240,8 +282,42 @@ def _validate_tensor_counts(args, api_sigs, condemned):
             tensor_count = csv_tensor_count(row.get("tensor_view_shapes") or "")
             param_count = sig_tensor_param_count(signature)
             if tensor_count > param_count:
-                LOG.error("用例 '%s' 的 tensor 数 %d > %s 接口 tensor 形参数 %d。",
-                          row.get("testcase_name"), tensor_count, api, param_count)
+                LOG.error(
+                    "用例 '%s' 的 tensor 数 %d > %s 接口 tensor 形参数 %d。",
+                    row.get("testcase_name"),
+                    tensor_count,
+                    api,
+                    param_count,
+                )
+                return False
+    return True
+
+
+def _validate_csv_literals(path):
+    """Validate CSV literals even when vendor symbols are unavailable."""
+    with open(path, newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            shapes = row.get("tensor_view_shapes")
+            if shapes is not None and csv_tensor_count(shapes) < 0:
+                LOG.error(
+                    "用例 '%s' 的 tensor_view_shapes 必须是可解析的顶层元组。",
+                    row.get("testcase_name"),
+                )
+                return False
+            raw = (row.get("attributes") or "").strip()
+            if not raw:
+                continue
+            try:
+                attributes = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                LOG.error(
+                    "用例 '%s' 的 attributes 无法解析。", row.get("testcase_name")
+                )
+                return False
+            if not isinstance(attributes, dict):
+                LOG.error(
+                    "用例 '%s' 的 attributes 必须是字典。", row.get("testcase_name")
+                )
                 return False
     return True
 
@@ -253,6 +329,10 @@ def main(argv=None):
     parser.add_argument("--opp", default=os.environ.get("ASCEND_OPP_PATH", ""))
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
+
+    if not _validate_csv_literals(args.csv):
+        LOG.info("[preflight] 有不通过项，修复用例后重试")
+        return 1
 
     symbols = so_symbols(args.opp, args.optype)
     op_apis = public_apis(symbols)
