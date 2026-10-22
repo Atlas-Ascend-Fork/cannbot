@@ -24,20 +24,22 @@ def is_int(value):
 
 def offset_leaf(value, case_name):
     """Accept TTK's scalar form and the public Skill's temporary ``(n,)`` form."""
-    if is_int(value):
+    if value is None or is_int(value):
         return value
     if isinstance(value, (tuple, list)) and len(value) == 1 and is_int(value[0]):
         return value[0]
     raise ValueError(
-        f"{case_name}: tensor_view_offsets leaf must be int or a singleton int tuple, got {value!r}"
+        f"{case_name}: tensor_view_offsets leaf must be None, int or a singleton int tuple, got {value!r}"
     )
 
 
 def is_tensor_list_shape(value):
     # A normal Tensor shape is a tuple of dimensions.  A TensorList slot is a
     # tuple of shape tuples (including scalar shapes ``()``).
-    return bool(value) and isinstance(value, (tuple, list)) and all(
-        item is None or isinstance(item, (tuple, list)) for item in value
+    return (
+        bool(value)
+        and isinstance(value, (tuple, list))
+        and all(item is None or isinstance(item, (tuple, list)) for item in value)
     )
 
 
@@ -57,7 +59,9 @@ def normalize_view_offsets(row):
         shapes = ast.literal_eval(row.get("tensor_view_shapes") or "")
         offsets = ast.literal_eval(raw)
     except (SyntaxError, ValueError) as exc:
-        raise ValueError(f"{case_name}: invalid non-contiguous tensor fields: {exc}") from exc
+        raise ValueError(
+            f"{case_name}: invalid non-contiguous tensor fields: {exc}"
+        ) from exc
     if not isinstance(shapes, (tuple, list)) or not isinstance(offsets, (tuple, list)):
         raise ValueError(f"{case_name}: tensor_view_shapes/offsets must be tuple-like")
     if len(shapes) != len(offsets):
@@ -114,7 +118,9 @@ def write_file(path, headers, rows):
 
 def merge(testcases_dir, positive_out, negative_out):
     root = Path(testcases_dir)
-    positive_files = sorted(root.glob("*_l0_functional.csv")) + sorted(root.glob("*_l1_functional.csv"))
+    positive_files = sorted(root.glob("*_l0_functional.csv")) + sorted(
+        root.glob("*_l1_functional.csv")
+    )
     negative_files = sorted(root.glob("*_l2_exception.csv"))
     if not positive_files:
         raise ValueError(f"no canonical L0/L1 CSVs under {root}")
