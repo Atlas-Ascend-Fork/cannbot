@@ -45,4 +45,3 @@
 > 打开报告后，展开页面中的「UT Test 失败修复指南」，复制其中的提示词并粘贴给 Agent，Agent 将根据日志自动定位并修复问题。
 >
 > 示例：
-> ![UT_Test下载示例](pipeline-ut-test-download-link.png)
