@@ -127,13 +127,15 @@ def merge(testcases_dir, positive_out, negative_out):
     positive_headers, positive_rows = read_files(positive_files)
     if not positive_rows:
         raise ValueError("canonical L0/L1 CSVs contain no cases")
-    write_file(Path(positive_out), positive_headers, positive_rows)
-
+    # Validate the complete input cohort before replacing either output.
+    # A malformed L2 file must not leave new positives paired with stale L2.
     negative_count = 0
     negative_path = Path(negative_out)
     if negative_files:
         negative_headers, negative_rows = read_files(negative_files)
         negative_count = len(negative_rows)
+    write_file(Path(positive_out), positive_headers, positive_rows)
+    if negative_files:
         write_file(negative_path, negative_headers, negative_rows)
     elif negative_path.exists():
         negative_path.unlink()
