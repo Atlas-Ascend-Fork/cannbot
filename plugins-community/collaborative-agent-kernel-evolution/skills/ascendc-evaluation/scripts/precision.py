@@ -33,12 +33,13 @@ logger = logging.getLogger(__name__)
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ElementStats:
-    nan: Optional[int]       # None for int types
-    inf: Optional[int]       # None for int types
+    nan: Optional[int]  # None for int types
+    inf: Optional[int]  # None for int types
     subnormal: Optional[int]  # None for int types
-    small: Optional[int]      # None for int types (no sv_th)
+    small: Optional[int]  # None for int types (no sv_th)
     total: int
 
     def to_dict(self) -> dict:
@@ -58,6 +59,7 @@ class ComparisonGroup:
     Float types populate all fields.
     Integer types set re_max, re_mean, rmse, svec, ulp_* to None.
     """
+
     ae_max: float
     ae_mean: float
     re_max: Optional[float]
@@ -91,6 +93,7 @@ class ComparisonGroup:
 @dataclass
 class Ratios:
     """Ratio metrics (ans_vs_golden / ref_vs_golden). Float-only."""
+
     max_re: float
     mean_re: float
     rmse: float
@@ -108,6 +111,7 @@ class Ratios:
 @dataclass
 class ComponentResult:
     """Measurement result with pass/fail judgment and optional diagnosis."""
+
     ans_counts: ElementStats
     ref_counts: ElementStats
     golden_counts: ElementStats
@@ -115,8 +119,8 @@ class ComponentResult:
     ref_vs_golden: ComparisonGroup
     ans_vs_ref: ComparisonGroup
     ratios: Optional[Ratios]
-    passed: bool = True                    # NEW: mismatch_rate-based
-    diagnosis: Optional[dict] = None       # NEW: from CAKE2
+    passed: bool = True  # NEW: mismatch_rate-based
+    diagnosis: Optional[dict] = None  # NEW: from CAKE2
 
     def to_dict(self) -> dict:
         d = {
@@ -137,6 +141,7 @@ class ComponentResult:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _count_element_stats(t: torch.Tensor, sv_th=None) -> ElementStats:
     """Count element statistics: NaN, Inf, subnormal, small-value, total.
@@ -175,11 +180,37 @@ def _count_element_stats(t: torch.Tensor, sv_th=None) -> ElementStats:
 # Float comparison (full 12-field)
 # ---------------------------------------------------------------------------
 
+
+@dataclass(frozen=True)
+class _UlpOptions:
+    tolerance: int
+    method: str
+    include_subnormal: bool
+
+
+def _compute_ulp_metrics(a, b, dtype, options: _UlpOptions):
+    if dtype in (torch.bfloat16, torch.float16, torch.float32):
+        return ulp_metrics(
+            a,
+            b,
+            dtype,
+            ulp_tol=options.tolerance,
+            method=options.method,
+            include_subnormal=options.include_subnormal,
+        )
+    return {"ulp_mean": 0.0, "ulp_max": 0, "ulp_miss_rate": 0.0}
+
+
 def _compute_comparison_float(
-    a: torch.Tensor, b: torch.Tensor, golden: torch.Tensor,
-    sv_th: float, sv_err: float,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    golden: torch.Tensor,
+    sv_th: float,
+    sv_err: float,
     *,
-    atol: float, rtol: float, ulp_tol: int,
+    atol: float,
+    rtol: float,
+    ulp_tol: int,
     dtype: torch.dtype,
     ulp_method: str = "bitwise",
     include_subnormal: bool = True,
@@ -222,16 +253,12 @@ def _compute_comparison_float(
     else:
         svec = 0
 
-    # ULP metrics (only for floating-point types)
-    if dtype in [torch.bfloat16, torch.float16, torch.float32]:
-        ulp = ulp_metrics(a, b, dtype, ulp_tol=ulp_tol, method=ulp_method,
-                          include_subnormal=include_subnormal)
-    else:
-        # Integer and other non-float types: skip ULP computation
-        ulp = {"ulp_mean": 0.0, "ulp_max": 0, "ulp_miss_rate": 0.0}
+    ulp = _compute_ulp_metrics(
+        a, b, dtype, _UlpOptions(ulp_tol, ulp_method, include_subnormal)
+    )
 
     # Mismatch rate
-    close = torch.isclose(a.float(), b.float(), atol=atol, rtol=rtol)
+    close = torch.isclose(a64, b64, atol=atol, rtol=rtol)
     mismatch_rate = 1.0 - close.sum().item() / max(close.numel(), 1)
 
     return ComparisonGroup(
@@ -254,9 +281,12 @@ def _compute_comparison_float(
 # Integer comparison (ae + mismatch_rate only)
 # ---------------------------------------------------------------------------
 
+
 def _compute_comparison_int(
-    a: torch.Tensor, b: torch.Tensor,
-    atol: float, rtol: float,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    atol: float,
+    rtol: float,
 ) -> ComparisonGroup:
     """Minimal precision comparison for integer types.
 
@@ -274,7 +304,7 @@ def _compute_comparison_int(
     # Mismatch rate: exact equality for zero tolerance, double-cast otherwise
     # (float32 loses precision for int32 > 2^24 / int64 > 2^53)
     if atol == 0 and rtol == 0.0:
-        close = (a == b)
+        close = a == b
     else:
         close = torch.isclose(a.double(), b.double(), atol=atol, rtol=rtol)
     mismatch_rate = 1.0 - close.sum().item() / max(close.numel(), 1)
@@ -299,11 +329,17 @@ def _compute_comparison_int(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+
 def _compute_comparison(
-    a: torch.Tensor, b: torch.Tensor, golden: torch.Tensor,
-    sv_th, sv_err,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    golden: torch.Tensor,
+    sv_th,
+    sv_err,
     *,
-    atol: float, rtol: float, ulp_tol,
+    atol: float,
+    rtol: float,
+    ulp_tol,
     dtype: torch.dtype,
     ulp_method: str = "bitwise",
     include_subnormal: bool = True,
@@ -321,9 +357,17 @@ def _compute_comparison(
         if ulp_tol is None:
             raise ValueError("ulp_tol required for float comparison")
         return _compute_comparison_float(
-            a, b, golden, sv_th, sv_err,
-            atol=atol, rtol=rtol, ulp_tol=ulp_tol, dtype=dtype,
-            ulp_method=ulp_method, include_subnormal=include_subnormal,
+            a,
+            b,
+            golden,
+            sv_th,
+            sv_err,
+            atol=atol,
+            rtol=rtol,
+            ulp_tol=ulp_tol,
+            dtype=dtype,
+            ulp_method=ulp_method,
+            include_subnormal=include_subnormal,
         )
     else:
         return _compute_comparison_int(a, b, atol, rtol)
@@ -338,8 +382,10 @@ DIAGNOSIS_PATTERNS = [
         "id": "nan_inf_introduced",
         "detect": lambda r: (
             ((r.ans_counts.nan or 0) > 0 or (r.ans_counts.inf or 0) > 0)
-            and (r.golden_counts.nan or 0) == 0 and (r.golden_counts.inf or 0) == 0
-            and (r.ref_counts.nan or 0) == 0 and (r.ref_counts.inf or 0) == 0
+            and (r.golden_counts.nan or 0) == 0
+            and (r.golden_counts.inf or 0) == 0
+            and (r.ref_counts.nan or 0) == 0
+            and (r.ref_counts.inf or 0) == 0
         ),
         "likelihood": "high",
         "category": "numerical_stability",
@@ -354,8 +400,7 @@ DIAGNOSIS_PATTERNS = [
     {
         "id": "zero_output",
         "detect": lambda r: (
-            r.ans_vs_golden.mismatch_rate > 0.9
-            and r.ans_vs_golden.ae_mean < 1e-6
+            r.ans_vs_golden.mismatch_rate > 0.9 and r.ans_vs_golden.ae_mean < 1e-6
         ),
         "likelihood": "high",
         "category": "incomplete_implementation",
@@ -370,8 +415,10 @@ DIAGNOSIS_PATTERNS = [
         "id": "localized_outlier",
         "detect": lambda r: (
             not r.passed
-            and r.ratios is not None and r.ratios.max_re > r.ratios.mean_re * 5
-            and r.ratios is not None and r.ratios.mean_re <= 2.0
+            and r.ratios is not None
+            and r.ratios.max_re > r.ratios.mean_re * 5
+            and r.ratios is not None
+            and r.ratios.mean_re <= 2.0
         ),
         "likelihood": "high",
         "category": "boundary_handling",
@@ -415,9 +462,12 @@ DIAGNOSIS_PATTERNS = [
         "id": "uneven_distribution",
         "detect": lambda r: (
             not r.passed
-            and r.ratios is not None and r.ratios.rmse > 2.0
-            and r.ratios is not None and r.ratios.max_re <= 10.0
-            and r.ratios is not None and r.ratios.mean_re <= 2.0
+            and r.ratios is not None
+            and r.ratios.rmse > 2.0
+            and r.ratios is not None
+            and r.ratios.max_re <= 10.0
+            and r.ratios is not None
+            and r.ratios.mean_re <= 2.0
         ),
         "likelihood": "medium",
         "category": "error_distribution",
@@ -475,8 +525,7 @@ INT_DIAGNOSIS_PATTERNS = [
     {
         "id": "int_off_by_one",
         "detect": lambda r: (
-            r.ans_vs_golden.ae_max <= 1
-            and r.ans_vs_golden.mismatch_rate > 0.0
+            r.ans_vs_golden.ae_max <= 1 and r.ans_vs_golden.mismatch_rate > 0.0
         ),
         "likelihood": "high",
         "category": "rounding_error",
@@ -524,10 +573,14 @@ def _collect_failed_checks(result):
             failed_checks.append("ae_max")
 
     golden_ref_clean = (
-        (result.golden_counts.nan or 0) == 0 and (result.golden_counts.inf or 0) == 0
-        and (result.ref_counts.nan or 0) == 0 and (result.ref_counts.inf or 0) == 0
+        (result.golden_counts.nan or 0) == 0
+        and (result.golden_counts.inf or 0) == 0
+        and (result.ref_counts.nan or 0) == 0
+        and (result.ref_counts.inf or 0) == 0
     )
-    if golden_ref_clean and ((result.ans_counts.nan or 0) > 0 or (result.ans_counts.inf or 0) > 0):
+    if golden_ref_clean and (
+        (result.ans_counts.nan or 0) > 0 or (result.ans_counts.inf or 0) > 0
+    ):
         failed_checks.append("nan_inf")
     return failed_checks
 
@@ -539,12 +592,14 @@ def _match_diagnosis_patterns(result, is_float):
     for pat in patterns:
         try:
             if pat["detect"](result):
-                matched.append({
-                    "likelihood": pat["likelihood"],
-                    "category": pat["category"],
-                    "description": pat["description"],
-                    "suggestions": pat["suggestions"],
-                })
+                matched.append(
+                    {
+                        "likelihood": pat["likelihood"],
+                        "category": pat["category"],
+                        "description": pat["description"],
+                        "suggestions": pat["suggestions"],
+                    }
+                )
         except Exception as exc:
             logger.debug("diagnosis pattern %s detect failed: %s", pat.get("id"), exc)
             continue
@@ -557,7 +612,12 @@ def _diagnose(result):
     failed_checks = _collect_failed_checks(result)
 
     if result.passed:
-        return {"verdict": "pass", "failed_checks": [], "pattern": None, "root_causes": []}
+        return {
+            "verdict": "pass",
+            "failed_checks": [],
+            "pattern": None,
+            "root_causes": [],
+        }
 
     matched = _match_diagnosis_patterns(result, is_float)
     pattern_id = matched[0]["category"] if matched else "unknown"
@@ -565,22 +625,27 @@ def _diagnose(result):
         "verdict": "fail",
         "failed_checks": failed_checks,
         "pattern": pattern_id,
-        "root_causes": matched if matched else [{
-            "likelihood": "low",
-            "category": "unknown",
-            "description": "No known pattern matched — manual investigation needed",
-            "suggestions": [
-                "Compare ans_vs_golden and ref_vs_golden metrics side by side",
-                "Check the precision JSON for detailed per-element statistics",
-                "Generate a dashboard with op-dashboard for visual analysis",
-            ],
-        }],
+        "root_causes": matched
+        if matched
+        else [
+            {
+                "likelihood": "low",
+                "category": "unknown",
+                "description": "No known pattern matched — manual investigation needed",
+                "suggestions": [
+                    "Compare ans_vs_golden and ref_vs_golden metrics side by side",
+                    "Check the precision JSON for detailed per-element statistics",
+                    "Generate a dashboard with op-dashboard for visual analysis",
+                ],
+            }
+        ],
     }
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def _compute_ratios(ans_vs_golden, ref_vs_golden, dtype):
     """Compute answer-vs-reference ratios for float dtypes (None for int types)."""
@@ -597,17 +662,30 @@ def _compute_ratios(ans_vs_golden, ref_vs_golden, dtype):
 
 def _has_new_nan_inf(ans_counts, ref_counts, golden_counts) -> bool:
     """True if the answer introduces NaN/Inf that neither reference nor golden has."""
-    if (golden_counts.nan or 0) == 0 and (ref_counts.nan or 0) == 0 and (ans_counts.nan or 0) > 0:
+    if (
+        (golden_counts.nan or 0) == 0
+        and (ref_counts.nan or 0) == 0
+        and (ans_counts.nan or 0) > 0
+    ):
         return True
-    if (golden_counts.inf or 0) == 0 and (ref_counts.inf or 0) == 0 and (ans_counts.inf or 0) > 0:
+    if (
+        (golden_counts.inf or 0) == 0
+        and (ref_counts.inf or 0) == 0
+        and (ans_counts.inf or 0) > 0
+    ):
         return True
     return False
 
 
-def dual_inspect(y_ans: torch.Tensor, y_ref: torch.Tensor,
-                 y_golden: torch.Tensor, name: str, *,
-                 tolerances: Optional[dict] = None,
-                 dtype: Optional[torch.dtype] = None) -> ComponentResult:
+def dual_inspect(
+    y_ans: torch.Tensor,
+    y_ref: torch.Tensor,
+    y_golden: torch.Tensor,
+    name: str,
+    *,
+    tolerances: Optional[dict] = None,
+    dtype: Optional[torch.dtype] = None,
+) -> ComponentResult:
     """Three-way precision comparison producing ComponentResult.
 
     Args:
@@ -644,9 +722,16 @@ def dual_inspect(y_ans: torch.Tensor, y_ref: torch.Tensor,
     golden_counts = _count_element_stats(y_golden, sv_th)
 
     # 2. Three comparison groups (dispatches to float or int internally)
-    _kw = dict(sv_th=sv_th, sv_err=sv_err, atol=atol, rtol=rtol,
-               ulp_tol=ulp_tol, dtype=dtype, ulp_method=ulp_method,
-               include_subnormal=include_subnormal)
+    _kw = dict(
+        sv_th=sv_th,
+        sv_err=sv_err,
+        atol=atol,
+        rtol=rtol,
+        ulp_tol=ulp_tol,
+        dtype=dtype,
+        ulp_method=ulp_method,
+        include_subnormal=include_subnormal,
+    )
     ans_vs_golden = _compute_comparison(y_ans, y_golden, y_golden, **_kw)
     ref_vs_golden = _compute_comparison(y_ref, y_golden, y_golden, **_kw)
     ans_vs_ref = _compute_comparison(y_ans, y_ref, y_golden, **_kw)
