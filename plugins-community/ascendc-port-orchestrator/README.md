@@ -1,19 +1,21 @@
 # ascendc-port-orchestrator
 
-面向 AscendC 算子的社区编排插件。**跨代际移植推荐优先使用 Lite 版本 `ascendc-cross-gen-port-light`**，尤其适合基于已有 A2/A3 算子快速迁移、尚未准备 KernelBench 风格 golden 的场景。Lite 按阶段推进迁移；需要确定性编排、安全网和双层知识库反馈环时，可选择完整版本 `ascendc-cross-gen-port`。
+面向 AscendC 算子的社区编排插件。**跨代际移植推荐优先使用 Lite 版本 `ascendc-cross-gen-migration`**，尤其适合基于已有 A2/A3 算子快速迁移、尚未准备 KernelBench 风格 golden 的场景。Lite 按阶段推进迁移；需要确定性编排、安全网和双层知识库反馈环时，可选择完整版本 `ascendc-cross-gen-port`。
 
 本插件提供三个入口，其中前两个共享完整编排器，Lite 独立执行：
 
 1. **`ascendc-cross-gen-port` — 跨代际移植**：把 arch22 源算子移植到 **arch35 / A5**（如 Ascend910C/V220 → Ascend950PR/V300）。目标架构用自然语言指定，来源架构由代码分析自动识别。
 2. **`ascendc-backward-gen` — 正向→反向生成**：由可微 PyTorch 正向规格生成并验证 AscendC 反向（梯度）算子。
-3. **`ascendc-cross-gen-port-light` — 轻量迁移**：`ascendc-cross-gen-port` 的轻量入口。无 KernelBench 风格的 golden 输入，或希望基于已有的 A2/A3 算子修改后快速迁移时使用：按阶段门禁完成 910b/910_93→950/arch35 算子迁移，全程免交互自动推进；精度标杆由 agent 逆向源码自合成并与 A5 实测双向互检。**不经上述编排流水线（设计如此）**。Skill 本体由 cannbot-skills 仓 [`ops/ascendc-cross-gen-port-light`](https://gitcode.com/cann/cannbot-skills/tree/master/ops/ascendc-cross-gen-port-light) 维护，安装时经 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块链接，本插件作统一入口。
+3. **`ascendc-cross-gen-migration` — 轻量迁移**：`ascendc-cross-gen-port` 的轻量入口。无 KernelBench 风格的 golden 输入，或希望基于已有的 A2/A3 算子修改后快速迁移时使用：按阶段门禁完成 910b/910_93→950/arch35 算子迁移，全程免交互自动推进；精度标杆由 agent 逆向源码自合成并与 A5 实测双向互检。**不经上述编排流水线（设计如此）**。Skill 本体由 cannbot-skills 仓 [`ops/ascendc-cross-gen-migration`](https://gitcode.com/cann/cannbot-skills/tree/master/ops/ascendc-cross-gen-migration) 维护，安装时经 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块链接，本插件作统一入口。
 
 ## 推荐使用 Lite
+
+Lite 的正式入口现为 `ascendc-cross-gen-migration`（原 `ascendc-cross-gen-port-light`）。升级时请同步更新插件与 skills 依赖并重新安装，将已有提示词中的旧命令改为 `/ascendc-cross-gen-migration`；本文继续用 Lite 指代这条轻量迁移路径。
 
 安装并加载轻量入口后，可直接向 Agent 提出任务：
 
 ```text
-/ascendc-cross-gen-port-light 把 <已有 A2/A3 算子目录> 移植到 A5。
+/ascendc-cross-gen-migration 把 <已有 A2/A3 算子目录> 移植到 A5。
 目标环境为 <CANN 路径、SoC、可用 NPU 等信息>，请完成编译、精度对齐和性能优化，
 保留代码、测试输入、运行命令和原始日志，供我独立验证。
 ```

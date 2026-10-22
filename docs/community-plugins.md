@@ -14,7 +14,7 @@
 面向 AscendC 算子的移植编排插件，提供三个入口：
 
 - **跨代际移植**（`ascendc-cross-gen-port`）：把已有算子移植到不同代际目标架构（如 Ascend910C/V220 → Ascend950PR/V300，或 → Atlas 300I Duo / Ascend310P3）。目标架构用自然语言指定，来源架构由代码分析自动识别。
-- **轻量迁移**（`ascendc-cross-gen-port-light`）：无 golden 输入或希望基于已有算子修改后快速迁移时使用，全程免交互自动推进。
+- **轻量迁移**（`ascendc-cross-gen-migration`）：无 golden 输入或希望基于已有算子修改后快速迁移时使用，全程免交互自动推进。
 - **正向→反向生成**（`ascendc-backward-gen`）：由可微 PyTorch 正向规格生成并验证 AscendC 反向（梯度）算子。
 
 安装见 [quickstart.md](../plugins-community/ascendc-port-orchestrator/quickstart.md)。

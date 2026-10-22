@@ -127,6 +127,30 @@ function installWithSourceInit(plugin, tool) {
   return { sandbox, target, result };
 }
 
+for (const tool of tools) {
+  test(`ascendc-port-orchestrator source install exposes the renamed migration Skill for ${tool}`, () => {
+    const { target } = installPlugin("ascendc-port-orchestrator", tool);
+    const installed = join(skillRoot(target, tool), "ascendc-cross-gen-migration");
+    assert.equal(realpathSync(installed), realpathSync(join(
+      repositoryRoot, "vendor", "cannbot-skills", "ops", "ascendc-cross-gen-migration",
+    )));
+    assert.match(readFileSync(join(installed, "SKILL.md"), "utf8"), /^name: ascendc-cross-gen-migration$/m);
+    assert.equal(existsSync(join(skillRoot(target, tool), "ascendc-cross-gen-port-light")), false);
+  });
+}
+
+test("ascendc-port-orchestrator bundles the renamed migration Skill and its route assets", () => {
+  const sandbox = createSandbox("cannbot-migration-bundle-");
+  assemblePlugins(repositoryRoot, sandbox, ["ascendc-port-orchestrator"]);
+  const plugin = join(sandbox, "plugins", "ascendc-port-orchestrator");
+  const manifest = JSON.parse(readFileSync(join(plugin, ".claude-plugin", "plugin.json"), "utf8"));
+  assert.ok(manifest.skills.includes("./skills/ascendc-cross-gen-migration"));
+  assert.equal(manifest.skills.includes("./skills/ascendc-cross-gen-port-light"), false);
+  const skill = join(plugin, "skills", "ascendc-cross-gen-migration");
+  assert.match(readFileSync(join(skill, "SKILL.md"), "utf8"), /^name: ascendc-cross-gen-migration$/m);
+  assert.ok(existsSync(join(skill, "routes", "2201-to-3510", "stages", "stage_0_env.md")));
+});
+
 function readPluginRecord(target, tool, plugin) {
   const registry = JSON.parse(readFileSync(join(configRoot(target, tool), "cannbot-plugin.json"), "utf8"));
   assert.equal(registry.schemaVersion, 2);
