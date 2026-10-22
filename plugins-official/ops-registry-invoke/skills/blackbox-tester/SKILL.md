@@ -166,6 +166,7 @@ fi
 
 **两条独立门禁**：
 - **正向（L0/L1）**：`precision_status == "PASS"`；退出 0 当且仅当 `pass==total 且 fail==skip==0`。
+  状态先忽略大小写与首尾空白，再按完整 token 识别既有成功/跳过别名；`NOT_PASS`、`UNSUCCESSFUL` 等未知状态按 fail 处理，不能靠成功子串通过门禁。
 - **负向（L2）`--negative`**：退出 0 当且仅当 `total` 等于 L2 全量条数且 `pass==0`（全部非法输入被拒绝=NO_OUTPUT/FAIL）。**不要**把 L2 混进正向全绿门禁、也**不要**靠改 golden 把 L2 洗成 PASS——L2 就是要"全失败"。
 辅助信息：`precision`（如 `100.0%`）、`soc`。result.csv 完整 27 列表头见 [`references/ttk-aclnn-guide.md §6`](references/ttk-aclnn-guide.md#6-判读-resultcsv)。
 

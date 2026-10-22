@@ -26,18 +26,30 @@ def _write(tmp_path, rows, header):
 
 
 def test_all_pass_gate_ok(tmp_path):
-    path = _write(tmp_path, [["c1", "PASS"], ["c2", "PASS"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["c1", "PASS"], ["c2", "PASS"]],
+        ["testcase_name", "precision_status"],
+    )
     stats = pr.summarize(path)
     assert (stats["total"], stats["pass"], stats["fail"], stats["skip"]) == (2, 2, 0, 0)
 
 
 def test_any_fail_gate_fail(tmp_path):
-    path = _write(tmp_path, [["c1", "PASS"], ["c2", "FAIL"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["c1", "PASS"], ["c2", "FAIL"]],
+        ["testcase_name", "precision_status"],
+    )
     assert pr.main([path]) == 1
 
 
 def test_skip_counts_and_fails_gate(tmp_path):
-    path = _write(tmp_path, [["c1", "PASS"], ["c2", "SKIP"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["c1", "PASS"], ["c2", "SKIP"]],
+        ["testcase_name", "precision_status"],
+    )
     assert pr.summarize(path)["skip"] == 1
     assert pr.main([path]) == 1
 
@@ -55,9 +67,15 @@ def test_smoke_accepts_one_pass_or_precision_fail(tmp_path):
 
 
 def test_smoke_rejects_infrastructure_status_or_wrong_count(tmp_path):
-    path = _write(tmp_path, [["c1", "GOLDEN_FAILURE"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path, [["c1", "GOLDEN_FAILURE"]], ["testcase_name", "precision_status"]
+    )
     assert pr.main([path, "--smoke"]) == 1
-    path = _write(tmp_path, [["c1", "PASS"], ["c2", "PASS"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["c1", "PASS"], ["c2", "PASS"]],
+        ["testcase_name", "precision_status"],
+    )
     assert pr.main([path, "--smoke"]) == 1
 
 
@@ -72,12 +90,20 @@ def test_real_fixture_parses(tmp_path):
 
 
 def test_negative_gate_all_rejected_ok(tmp_path):
-    path = _write(tmp_path, [["c1", "NO_OUTPUT"], ["c2", "FAIL"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["c1", "NO_OUTPUT"], ["c2", "FAIL"]],
+        ["testcase_name", "precision_status"],
+    )
     assert pr.main([path, "--negative"]) == 0
 
 
 def test_negative_gate_unexpected_pass_fails(tmp_path):
-    path = _write(tmp_path, [["c1", "NO_OUTPUT"], ["c2", "PASS"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["c1", "NO_OUTPUT"], ["c2", "PASS"]],
+        ["testcase_name", "precision_status"],
+    )
     assert pr.main([path, "--negative"]) == 1
 
 
@@ -87,13 +113,18 @@ def test_negative_gate_empty_fails(tmp_path):
 
 
 def test_negative_gate_requires_full_expected_count(tmp_path):
-    path = _write(tmp_path, [["c1", "NO_OUTPUT"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path, [["c1", "NO_OUTPUT"]], ["testcase_name", "precision_status"]
+    )
     assert pr.main([path, "--negative", "--expect-total", "2"]) == 1
 
 
 def _write_layer_csvs(directory):
     os.makedirs(directory, exist_ok=True)
-    levels = [("l0", "functional", ["op_L0_001", "op_L0_002"]), ("l1", "functional", ["op_L1_001"])]
+    levels = [
+        ("l0", "functional", ["op_L0_001", "op_L0_002"]),
+        ("l1", "functional", ["op_L1_001"]),
+    ]
     for level, suffix, names in levels:
         path = os.path.join(directory, f"aclnnOp_{level}_{suffix}.csv")
         with open(path, "w", newline="") as handle:
@@ -105,20 +136,43 @@ def _write_layer_csvs(directory):
 
 def test_by_layer_counts(tmp_path):
     directory = _write_layer_csvs(str(tmp_path / "tc"))
-    path = _write(tmp_path, [["op_L0_001", "PASS"], ["op_L0_002", "FAIL"], ["op_L1_001", "PASS"]],
-                  ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["op_L0_001", "PASS"], ["op_L0_002", "FAIL"], ["op_L1_001", "PASS"]],
+        ["testcase_name", "precision_status"],
+    )
     assert pr.by_layer(path, directory) == []
 
 
 def test_by_layer_resolves_dup_suffix(tmp_path):
     directory = _write_layer_csvs(str(tmp_path / "tc"))
-    path = _write(tmp_path, [["op_L0_001", "PASS"], ["op_L0_001_aclnnOp_dup0", "FAIL"]],
-                  ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path,
+        [["op_L0_001", "PASS"], ["op_L0_001_aclnnOp_dup0", "FAIL"]],
+        ["testcase_name", "precision_status"],
+    )
     assert pr.by_layer(path, directory) == []
 
 
 def test_by_layer_unmapped_reported(tmp_path):
     directory = _write_layer_csvs(str(tmp_path / "tc"))
-    path = _write(tmp_path, [["ghost_case", "FAIL"]], ["testcase_name", "precision_status"])
+    path = _write(
+        tmp_path, [["ghost_case", "FAIL"]], ["testcase_name", "precision_status"]
+    )
     assert pr.by_layer(path, directory) == ["ghost_case"]
 
+
+def test_failure_words_containing_pass_tokens_do_not_pass(tmp_path):
+    for status in ("NOT_PASS", "NOT_OK", "UNSUCCESSFUL", "PASS_WITH_FAILURE"):
+        path = _write(
+            tmp_path, [["bad", status]], ["testcase_name", "precision_status"]
+        )
+        assert pr.classify({"precision_status": status}) == "fail"
+        assert pr.main([path]) == 1
+
+
+def test_known_status_tokens_still_accept_case_and_whitespace():
+    for value in ("PASS", " passed ", "True", "SUCCESS", "OK"):
+        assert pr.classify({"status": value}) == "pass"
+    for value in ("SKIP", " skipped ", "SOC_NOT_SUPPORT", "NOT_SUPPORT", "DISABLED"):
+        assert pr.classify({"precision_status": value}) == "skip"

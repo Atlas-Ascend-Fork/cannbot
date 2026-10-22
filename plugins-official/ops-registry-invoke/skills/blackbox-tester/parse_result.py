@@ -41,9 +41,9 @@ def classify(row):
         value = norm(row[keys[candidate]])
         if not value:
             continue
-        if any(token in value for token in SKIP_TOKENS):
+        if value in SKIP_TOKENS:
             return "skip"
-        if any(token in value for token in PASS_TOKENS):
+        if value in PASS_TOKENS:
             return "pass"
         return "fail"
     return "fail"
@@ -56,7 +56,14 @@ def _read_csv(path):
 
 def summarize(path):
     rows = _read_csv(path)
-    stats = {"total": len(rows), "pass": 0, "fail": 0, "skip": 0, "fails": [], "passes": []}
+    stats = {
+        "total": len(rows),
+        "pass": 0,
+        "fail": 0,
+        "skip": 0,
+        "fails": [],
+        "passes": [],
+    }
     for row in rows:
         status = classify(row)
         stats[status] += 1
@@ -76,18 +83,27 @@ def smoke_ok(path):
     key = keys.get("precision_status")
     status = (rows[0].get(key) or "").strip().upper() if key else ""
     if status not in {"PASS", "FAIL"}:
-        return False, f"precision_status must be PASS or FAIL, got {status or '<missing>'}"
+        return (
+            False,
+            f"precision_status must be PASS or FAIL, got {status or '<missing>'}",
+        )
     return True, status
 
 
 def _layer_files(testcases_dir):
     patterns = ("*_l[0-9]_functional.csv", "*_l[0-9]_exception.csv")
-    paths = {file_name for pattern in patterns for file_name in glob.glob(os.path.join(testcases_dir, pattern))}
+    paths = {
+        file_name
+        for pattern in patterns
+        for file_name in glob.glob(os.path.join(testcases_dir, pattern))
+    }
     return sorted(paths)
 
 
 def _layer_name(path):
-    match = re.search(r"_l(\d)_(?:functional|exception)\.csv$", os.path.basename(path), re.IGNORECASE)
+    match = re.search(
+        r"_l(\d)_(?:functional|exception)\.csv$", os.path.basename(path), re.IGNORECASE
+    )
     return f"L{match.group(1)}" if match else None
 
 
@@ -112,7 +128,8 @@ def resolve_layer(name, layer_map):
     if name in layer_map:
         return layer_map[name]
     for candidate in sorted(layer_map, key=len, reverse=True):
-        suffix = name[len(candidate):]
+        prefix_length = len(candidate)
+        suffix = name[prefix_length:]
         if name.startswith(candidate) and DUP_SUFFIX.match(suffix):
             return layer_map[candidate]
     return None
@@ -139,10 +156,18 @@ def by_layer(path, testcases_dir):
     stats, unmapped = _read_layer_stats(path, layer_map)
     for layer in sorted(stats):
         current = stats[layer]
-        LOG.info("  %s: total=%d pass=%d fail=%d skip=%d",
-                 layer, current["total"], current["pass"], current["fail"], current["skip"])
+        LOG.info(
+            "  %s: total=%d pass=%d fail=%d skip=%d",
+            layer,
+            current["total"],
+            current["pass"],
+            current["fail"],
+            current["skip"],
+        )
     if unmapped:
-        LOG.info("  UNMAPPED: %d case(s) not in layer CSVs: %s", len(unmapped), unmapped[:10])
+        LOG.info(
+            "  UNMAPPED: %d case(s) not in layer CSVs: %s", len(unmapped), unmapped[:10]
+        )
     return unmapped
 
 
@@ -150,11 +175,19 @@ def _build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("result_csv")
     parser.add_argument("--expect-total", type=int, default=None)
-    parser.add_argument("--by-layer", default=None, metavar="TESTCASES_DIR",
-                        help="分层 CSV 目录，输出 L0/L1/L2 分层统计（不影响门禁）")
+    parser.add_argument(
+        "--by-layer",
+        default=None,
+        metavar="TESTCASES_DIR",
+        help="分层 CSV 目录，输出 L0/L1/L2 分层统计（不影响门禁）",
+    )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--negative", action="store_true", help="负向套件：算子应拒绝全部用例")
-    mode.add_argument("--smoke", action="store_true", help="基础设施冒烟：恰好 1 行，精度 FAIL 不拦")
+    mode.add_argument(
+        "--negative", action="store_true", help="负向套件：算子应拒绝全部用例"
+    )
+    mode.add_argument(
+        "--smoke", action="store_true", help="基础设施冒烟：恰好 1 行，精度 FAIL 不拦"
+    )
     return parser
 
 
@@ -171,14 +204,22 @@ def _negative_gate(stats, expect_total):
     if expect_total is not None and stats["total"] != expect_total:
         ok = False
         LOG.info("MISMATCH: total %d != expected %d", stats["total"], expect_total)
-    LOG.info("NEGATIVE-GATE: %s", "PASS(全部按预期被拒绝)" if ok else "FAIL(存在未被拒绝的非法用例)")
+    LOG.info(
+        "NEGATIVE-GATE: %s",
+        "PASS(全部按预期被拒绝)" if ok else "FAIL(存在未被拒绝的非法用例)",
+    )
     return 0 if ok else 1
 
 
 def _positive_gate(stats, expect_total):
     for name, status in stats["fails"][:50]:
         LOG.info("  [%s] %s", status.upper(), name)
-    ok = stats["total"] > 0 and stats["pass"] == stats["total"] and stats["fail"] == 0 and stats["skip"] == 0
+    ok = (
+        stats["total"] > 0
+        and stats["pass"] == stats["total"]
+        and stats["fail"] == 0
+        and stats["skip"] == 0
+    )
     if expect_total is not None and stats["total"] != expect_total:
         ok = False
         LOG.info("MISMATCH: total %d != expected %d", stats["total"], expect_total)
@@ -190,8 +231,13 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
     stats = summarize(args.result_csv)
-    LOG.info("total=%d pass=%d fail=%d skip=%d",
-             stats["total"], stats["pass"], stats["fail"], stats["skip"])
+    LOG.info(
+        "total=%d pass=%d fail=%d skip=%d",
+        stats["total"],
+        stats["pass"],
+        stats["fail"],
+        stats["skip"],
+    )
     if args.by_layer:
         by_layer(args.result_csv, args.by_layer)
     if args.smoke:
