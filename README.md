@@ -26,7 +26,7 @@ cd cannbot/plugins-official/${plugin}
 bash init.sh
 ```
 
-`${plugin}`：插件名称，见[官方插件](#-官方插件)，例如 `ops-direct-invoke`。
+`${plugin}`：插件名称，见[官方插件](#官方插件)，例如 `ops-direct-invoke`。
 
 ## 📦 官方插件
 
