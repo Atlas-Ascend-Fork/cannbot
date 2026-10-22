@@ -65,6 +65,7 @@ optimization_goal: {brief description}
 |--------|----------|--------|-----------------|----------|
 | {metric_2} | {value} | {value} | {percentage}% | Medium |
 | {metric_3} | {value} | {value} | {percentage}% | Low |
+```
 
 ---
 

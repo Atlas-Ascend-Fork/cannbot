@@ -200,7 +200,6 @@ aclnnStatus aclnnOperator(void* workspace, uint64_t workspaceSize, aclOpExecutor
 - **溢出行为**：当结果超出输出 dtype 范围时，应饱和到最大值 / 报错 / 限制输入范围？必须明确，不能留给实现阶段猜测。
 - **Cast 语义（fp→int）**：当计算链中存在浮点→整数 cast 时，声明舍入模式（如截断/舍入/向零等）。NPU 上正向溢出饱和到 INT_MAX，负向溢出饱和到 INT_MIN，golden 与 kernel 必须一致遵循。
 - **容差合理性**：如果内部计算涉及浮点运算（如 sqrt），bitwise_equal 是否从数学上可能成立？如果不可能，应使用 max_relative 并给出 rtol/atol。
-```
 
 ---
 
