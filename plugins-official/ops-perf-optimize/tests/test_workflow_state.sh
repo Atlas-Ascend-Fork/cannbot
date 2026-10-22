@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 
 set -euo pipefail
 
@@ -15,8 +24,9 @@ mkdir -p "$TEST_ROOT/code" "$TEST_ROOT/run/round1"
 printf '%s\n' 'kernel-v1' > "$TEST_ROOT/code/kernel.cpp"
 printf '%s\n' 'case_id,shape,dtype,level' 'a,"[1,16]",float16,L0' 'b,"[17,32]",float16,L0' > "$TEST_ROOT/cases.csv"
 
-PREPARE="$PLUGIN_ROOT/scripts/prepare_case_sets.py"
-TOOL="$PLUGIN_ROOT/scripts/workflow_state.py"
+SCRIPTS="$PLUGIN_ROOT/skills/ops-perf-optimize-workflow/scripts"
+PREPARE="$SCRIPTS/prepare_case_sets.py"
+TOOL="$SCRIPTS/workflow_state.py"
 STATE="$TEST_ROOT/run/workflow-state.json"
 MANIFEST="$TEST_ROOT/run/run-manifest.json"
 REQUEST="$TEST_ROOT/optimization-request.json"

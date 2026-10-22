@@ -474,9 +474,15 @@ for (const source of sources) {
   test(`${source} installs ops-perf-optimize workflow tools`, () => {
     const { target, result: installResult } = installPlugin("ops-perf-optimize", "opencode", source);
     const pluginRoot = join(target, ".cannbot", "plugins", "ops-perf-optimize");
+    const workflowRoot = join(skillRoot(target, "opencode"), "ops-perf-optimize-workflow");
+    const workflowScripts = join(workflowRoot, "scripts");
     for (const script of ["workflow_state.py", "prepare_case_sets.py", "validate_source_isolation.py"]) {
-      assert.equal(existsSync(join(pluginRoot, "scripts", script)), true, script);
+      assert.equal(existsSync(join(workflowScripts, script)), true, script);
     }
+    assert.equal(existsSync(join(workflowRoot, "workflows", "task-prompts.md")), true);
+    assert.equal(existsSync(join(workflowRoot, "workflows", "prompts", "baseline.md")), true);
+    assert.equal(existsSync(join(pluginRoot, "workflows")), false);
+    assert.equal(existsSync(join(pluginRoot, "scripts")), false);
     assert.equal(existsSync(join(pluginRoot, "quickstart.md")), true);
     assert.match(installResult.stdout, /方式一：自动化调优/);
     assert.match(installResult.stdout, /方式二：交互式调优/);
@@ -485,11 +491,6 @@ for (const source of sources) {
     assert.match(readFileSync(agentFile, "utf8"), /^name: perf-optimize$/m);
     assert.deepEqual(readPluginRecord(target, "opencode", "ops-perf-optimize").agents,
       [".opencode/agents/perf-optimize.md"]);
-    const resolver = join(skillRoot(target, "opencode"),
-      "ops-perf-optimize-workflow", "scripts", "resolve-plugin-root.sh");
-    const result = spawnSync("bash", [resolver], { encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(existsSync(join(result.stdout.trim(), "scripts", "workflow_state.py")), true);
   });
 }
 

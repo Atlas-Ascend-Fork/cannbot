@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Version 2.0 (the "License").
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -29,11 +29,12 @@ def read(relative: str) -> str:
 def test_workflow_has_one_contract_and_small_dispatch_envelope() -> None:
     skill = read("skills/ops-perf-optimize-workflow/SKILL.md")
     contract = read("skills/ops-perf-optimize-workflow/references/workflow-contract.md")
-    prompts = read("workflows/task-prompts.md")
+    prompts = read("skills/ops-perf-optimize-workflow/workflows/task-prompts.md")
     assert "唯一工作流真源" in contract
     assert "阶段、派发、恢复和报告的唯一工作流真源" in skill
     for field in (
-        "PLUGIN_ROOT:",
+        "WORKFLOW_ROOT:",
+        "WORKFLOW_SCRIPTS:",
         "ROLE:",
         "TASK_KIND:",
         "RUN_MANIFEST:",
@@ -52,11 +53,11 @@ def test_workflow_has_one_contract_and_small_dispatch_envelope() -> None:
     assert "不复制或改写业务规则" in prompts
     assert "只读取一份角色模板" in prompts
     assert len(prompts.splitlines()) < 80
-    assert not (ROOT / "workflows" / "resume-and-lessons.md").exists()
+    assert not (ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "resume-and-lessons.md").exists()
 
 
 def test_dispatch_templates_cover_every_role_and_mode_specific_interface() -> None:
-    prompts = read("workflows/task-prompts.md")
+    prompts = read("skills/ops-perf-optimize-workflow/workflows/task-prompts.md")
     role_templates = {
         "preparation": "preparation.md",
         "baseline": "baseline.md",
@@ -66,15 +67,15 @@ def test_dispatch_templates_cover_every_role_and_mode_specific_interface() -> No
     }
     loaded = {}
     for role, filename in role_templates.items():
-        relative = f"workflows/prompts/{filename}"
+        relative = f"skills/ops-perf-optimize-workflow/workflows/prompts/{filename}"
         assert f"prompts/{filename}" in prompts
         loaded[role] = read(relative)
         assert f"ROLE: {role}" in loaded.get(role, "")
 
     assert "TASK_KIND: extract-single-operator" in loaded.get("preparation", "")
     assert "通用 subagent + `ops-perf-preparation`" in prompts
-    assert "performance-full-cases.csv" in read("workflows/prompts/generation.md")
-    assert "generalization-full-cases.csv" in read("workflows/prompts/generation.md")
+    assert "performance-full-cases.csv" in read("skills/ops-perf-optimize-workflow/workflows/prompts/generation.md")
+    assert "generalization-full-cases.csv" in read("skills/ops-perf-optimize-workflow/workflows/prompts/generation.md")
     assert "performance-tuning-cases.csv" in loaded.get("analysis", "")
     assert "generalization-tuning-cases.csv" in loaded.get("analysis", "")
     assert "MC²/多 rank" in loaded.get("analysis", "")
@@ -175,7 +176,7 @@ def test_soc_isolation_and_public_contract_span_workflow_agents_skills() -> None
     mechanics = read(
         "skills/ops-perf-postprocess/references/integration-mechanics.md"
     )
-    integration_prompt = read("workflows/prompts/integration.md")
+    integration_prompt = read("skills/ops-perf-optimize-workflow/workflows/prompts/integration.md")
     combined = "\n".join(
         (skill, contract, analysis, impl, integrate, mechanics, integration_prompt)
     )

@@ -28,6 +28,17 @@
 
 ## 1. 安装
 
+### npx 安装（推荐）
+
+**必须在实际要执行性能调优任务的工程目录下运行安装命令**。npx 安装器会把 Skills、`AGENTS.md` 和 `.cannbot/` 资产写入当前目录，因此不要在本仓库根目录、home目录或其他无关目录执行。
+
+```bash
+cd /path/to/your/tuning-project
+npx @cannbot-plugin/cannbot@latest install ops-perf-optimize --tool opencode
+```
+
+`--tool` 可选 `opencode`、`claude` 或 `codex`。npx 安装会自动获取并复制完整的 Skill 资源，不需要克隆本仓库或初始化依赖子模块；后续也必须在同一个工程目录下启动 Agent 并执行调优任务。
+
 ### 源码安装
 
 ```bash
@@ -48,7 +59,7 @@ bash /path/to/cannbot/plugins-official/ops-perf-optimize/init.sh project opencod
 
 ### 验证安装
 
-统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 27 个 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 workflows、scripts、hooks 资产与 `quickstart.md`。
+统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 27 个 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 hooks 资产与 `quickstart.md`；工作流定义和脚本随 `ops-perf-optimize-workflow` Skill 的 `workflows/`、`scripts/` 目录安装。
 
 ## 2. 发起任务
 

@@ -49,10 +49,10 @@ effective_geomean_speedup = exp(mean(log(speedup_i)))
 
 ## 3. 确定性工具
 
-统一调用插件根脚本：
+统一调用工作流共享脚本：
 
 ```bash
-python3 <plugin-root>/scripts/summarize_performance_effects.py \
+python3 "$WORKFLOW_SCRIPTS/summarize_performance_effects.py" \
   --baseline <baseline-performance.csv> \
   --candidate <candidate-performance.csv> \
   --out-csv <effect-details.csv> \
@@ -64,6 +64,6 @@ python3 <plugin-root>/scripts/summarize_performance_effects.py \
 ## 4. 多轮与最终口径
 
 - 每轮：相对该轮当前基线为每个候选生成独立的 effect 产物；只用有效指标选择轮次最佳。
-- 每轮结束：复用所保留实现的本轮 effect 产物，并用原始基线与该实现生成累计 effect 产物，立即刷新持续报告的逐 case 与总体结果；两种比较使用相同 case 集合。保留 baseline 也必须更新。登记命令与恢复规则见 `$PLUGIN_ROOT/workflows/references/state-reporting.md`。
+- 每轮结束：复用所保留实现的本轮 effect 产物，并用原始基线与该实现生成累计 effect 产物，立即刷新持续报告的逐 case 与总体结果；两种比较使用相同 case 集合。保留 baseline 也必须更新。登记命令与恢复规则见 `$WORKFLOW_ROOT/workflows/references/state-reporting.md`。
 - 最终端到端：用原始冻结基线与最终实现生成一份 effect 产物，作为多轮汇总的最终性能结论。
 - 用户另有更严格的有效 case 目标时优先执行；用户只给普通性能目标时，本文件是默认且唯一的抖动过滤规则。

@@ -37,7 +37,7 @@
 10. DAV_3510 目标的 RoPE/rotary 必查 `paired-segment-rotate`。DAV_3510 量化逐 case 给出 `quant_vf_route`：`shared-exponent-pack`、`two-pass-amax-cast` 或有证据的 `no_matching_vf_example`。
 11. 具体 AscendC API 参数必须用 `ascendc-docs-search` 和目标 SDK 验证，未经验证的参数不得进入方案。
 12. 静态检查点处于 `ready` 时，把适用 finding 作为 profiling 假设直接并入分析，逐条标 `adopted`、`refuted` 或 `deferred`；不再生成独立代码检视阶段或报告。
-13. 从 manifest 读取 `TARGET_SOCS`，不得把当前设备或 A5 工作基线扩大成全代际结论。方案不得修改公开 API、原约束或支持 dtype。按 `$PLUGIN_ROOT/workflows/references/source-isolation.md` 追踪共享实现和模板使用者，将复制后独立路由、非目标代际及同代未涉及分支的原 fallback 作为 required feature；生成实施前冻结的文件/行范围，不能仅以架构目录命名证明隔离。
+13. 从 manifest 读取 `TARGET_SOCS`，不得把当前设备或 A5 工作基线扩大成全代际结论。方案不得修改公开 API、原约束或支持 dtype。按 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 追踪共享实现和模板使用者，将复制后独立路由、非目标代际及同代未涉及分支的原 fallback 作为 required feature；生成实施前冻结的文件/行范围，不能仅以架构目录命名证明隔离。
 
 ## 效率与理论上限
 

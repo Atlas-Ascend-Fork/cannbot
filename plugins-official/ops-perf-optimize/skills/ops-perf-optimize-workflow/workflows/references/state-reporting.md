@@ -7,7 +7,7 @@
 - `precision`：原始基线失败、候选新增/恶化失败、当前假设、已排除假设、下一步；
 - `operator`：是否等待人工、问题和安全恢复点。
 
-`workflow_state.py` 的每次写入都加锁、原子替换状态并重绘同目录 `性能调优报告.md`。长任务至少在开始、每个可验证假设完成、候选状态变化和阶段结束时调用 `progress`；不要用固定频率刷无意义心跳。主 Agent 派发每个阶段时必须先 `mark --status in_progress`，产物就绪后再标 `complete`；未标 `in_progress` 的阶段无法记录 `started_at`/`elapsed_seconds`，报告中如实显示 `-`，禁止事后伪造 0 耗时。
+`$WORKFLOW_SCRIPTS/workflow_state.py` 的每次写入都加锁、原子替换状态并重绘同目录 `性能调优报告.md`。长任务至少在开始、每个可验证假设完成、候选状态变化和阶段结束时调用 `progress`；不要用固定频率刷无意义心跳。主 Agent 派发每个阶段时必须先 `mark --status in_progress`，产物就绪后再标 `complete`；未标 `in_progress` 的阶段无法记录 `started_at`/`elapsed_seconds`，报告中如实显示 `-`，禁止事后伪造 0 耗时。
 
 报告固定包含：输入与集合身份、当前阶段、最近进展、精度异常与已知基线失败、当前/排除假设、下一动作、候选门禁与性能、逐轮选择、当前逐 case 性能与本轮/累计总体指标、各轮性能汇总、最终验收、是否等待人工、安全恢复点。它从 Stage 0 存在到终态；不另建进度 JSON、双份多轮汇总或逐轮同名报告。
 
@@ -23,7 +23,7 @@
 
 当前性能按完成时间选取，同一时间戳按完成事件顺序确定；重新加载、派发和重绘不改变选择。失效保存点明确标记待复核，不退回历史结果冒充当前验收。
 
-读取当前上下文使用 `workflow_state.py inspect --state <path> --stage <key> [--stage <前置阶段键>] [--recent 3]`。它只读并校验 manifest SHA，输出配置、集合路径/SHA/数量、阶段状态和选定阶段最近事件，不展开全量选择记录与历史；详细 case、诊断和证据仍按路径读取。该视图不替代 `verify` 或阶段门禁。写操作已重绘报告，无需紧接着再 `render` 或整份读回状态。
+读取当前上下文使用 `$WORKFLOW_SCRIPTS/workflow_state.py inspect --state <path> --stage <key> [--stage <前置阶段键>] [--recent 3]`。它只读并校验 manifest SHA，输出配置、集合路径/SHA/数量、阶段状态和选定阶段最近事件，不展开全量选择记录与历史；详细 case、诊断和证据仍按路径读取。该视图不替代 `verify` 或阶段门禁。写操作已重绘报告，无需紧接着再 `render` 或整份读回状态。
 
 ### 五阶段保存点
 
@@ -42,12 +42,12 @@
 完成唯一终选后、进入下一轮或结束任务前，主 Agent 必须登记所保留实现的两种比较：
 
 - **本轮**：轮初基线 vs 本轮保留实现，复用该实现的 `effect-summary.json`。
-- **累计**：原始冻结基线 vs 同一保留实现，用 `summarize_performance_effects.py` 从已有 CSV 生成 `cumulative-effect-details.csv` 与 `cumulative-effect-summary.json`，存于该轮保留实现的性能证据目录。第一轮两种基线相同时可复用同一摘要。
+- **累计**：原始冻结基线 vs 同一保留实现，用 `$WORKFLOW_SCRIPTS/summarize_performance_effects.py` 从已有 CSV 生成 `cumulative-effect-details.csv` 与 `cumulative-effect-summary.json`，存于该轮保留实现的性能证据目录。第一轮两种基线相同时可复用同一摘要。
 
 两份摘要必须引用同一份所选实现的性能 CSV，case 集合与顺序一致。累计基线必须是原始实现，不能误用上一轮基线或连乘各轮加速比。保留 baseline 时，本轮用轮初基线与自身生成摘要（有效几何加速比为 `N/A`），累计仍展示此前已取得的收益；不得登记被淘汰候选的性能。
 
 ```bash
-python3 "$PLUGIN_ROOT/scripts/workflow_state.py" mark \
+python3 "$WORKFLOW_SCRIPTS/workflow_state.py" mark \
   --state "$OUTPUT_DIR/workflow-state.json" \
   --stage "round${ROUND}.complete" --status complete \
   --message "$ROUND_CONCLUSION" --next-action "$NEXT_ACTION" \

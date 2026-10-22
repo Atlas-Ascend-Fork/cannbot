@@ -12,7 +12,7 @@
 | 接入命令 | `attach-functional` | `attach-generalization` |
 | 验收子集 | 接入时确定性选择最多 40 条 L0 | 接入时从泛化全集确定性选择最多 40 条 L0 |
 
-新版接入流程完整覆盖两种模式：基线评估 Agent 只生成可信库存，`prepare_case_sets.py` 负责确定性冻结、选择与 manifest 更新；不得把 generalization 当作 standard 的普通功能库存，也不得在 Agent 内重写选择算法。
+新版接入流程完整覆盖两种模式：基线评估 Agent 只生成可信库存，`$WORKFLOW_SCRIPTS/prepare_case_sets.py` 负责确定性冻结、选择与 manifest 更新；不得把 generalization 当作 standard 的普通功能库存，也不得在 Agent 内重写选择算法。
 
 ## 输入
 
@@ -30,7 +30,7 @@
 4. standard 库存不受性能 50 条或快速验收 40 条上限影响；generalization 覆盖执行路径、dtype/attrs、shape 规模、对齐/尾块和边界，不得用随机填充凑数。
 5. 每个 case 有稳定 ID、level、shape、dtype、attrs、seed、golden 来源、比较器和阈值。
 6. standard 原子写入 `functional-full/` 与 `functional-generation.json`；generalization 原子写入 `generalization-full-cases.csv` 与 `functional-generation.json`，并由接入步骤在 manifest 中把同一集合登记为 `functional_full`，其中每条用例同时具备性能采集字段和可信功能判定字段。
-7. 返回后由基线评估 Agent 调用 `prepare_case_sets.py attach-functional`（standard）或 `attach-generalization`（generalization）生成冻结集合及最多 40 条 L0 验收子集；基线评估 Agent不重复实现选择算法。
+7. 返回后由基线评估 Agent 调用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py attach-functional`（standard）或 `attach-generalization`（generalization）生成冻结集合及最多 40 条 L0 验收子集；基线评估 Agent不重复实现选择算法。
 
 ## 输出
 

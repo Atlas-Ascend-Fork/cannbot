@@ -4,7 +4,7 @@
 
 ## 0. 先判定是否必须代际隔离
 
-本参考只展开 APT 注册接线。所有工程都先按 `$PLUGIN_ROOT/workflows/references/source-isolation.md` 复制共享实现并冻结最小修改范围；以下 SoC 检查不能替代同代未涉及模板的保护。工作输入已是自定义注册工程，按 `extraction-manifest.json` 回映原工程，不重新转换调用方式。
+本参考只展开 APT 注册接线。所有工程都先按 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 复制共享实现并冻结最小修改范围；以下 SoC 检查不能替代同代未涉及模板的保护。工作输入已是自定义注册工程，按 `extraction-manifest.json` 回映原工程，不重新转换调用方式。
 
 先分别取证，不要混为一谈：
 

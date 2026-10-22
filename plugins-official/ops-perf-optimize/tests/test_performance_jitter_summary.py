@@ -19,8 +19,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-SCRIPT = ROOT / "scripts" / "summarize_performance_effects.py"
+sys.path.insert(0, str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts"))
+SCRIPT = ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "summarize_performance_effects.py"
 SPEC = importlib.util.spec_from_file_location("performance_effects", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

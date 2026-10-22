@@ -9,7 +9,7 @@
 | `TUNING_MODE` | `standard`（默认）或 `generalization`；属于输入身份 |
 | `PERFORMANCE_CASES` | standard 必选；generalization 可提供性能/功能合一用例，或留空后生成 |
 | `FUNCTIONAL_MODE` | standard：`reuse_performance|existing|generate`；generalization：固定 `reuse_performance`，不作为待确认选项 |
-| `PERFORMANCE_REFERENCE` | 每 case 对标来源与目标比例，见 [`baseline-evaluation.md`](baseline-evaluation.md)；通过 `--performance-reference <json>` 固化，旧任务保留原始实现对比 |
+| `PERFORMANCE_REFERENCE` | 每 case 对标来源与目标比例，见 [`baseline-evaluation.md`](../../ops-perf-baseline-evaluate/references/baseline-evaluation.md)；通过 `--performance-reference <json>` 固化，旧任务保留原始实现对比 |
 | `OPTIMIZATION_OBJECTIVE` | `fixed_rounds` 或 `target`；前者默认 3 轮，后者需指标、比较方向、数值、单位和可选最大轮次 |
 | `PYTHON_ENVIRONMENT` | Python 可执行文件及可选激活命令；创建 request 时记录实际版本 |
 | `CANN_ENVIRONMENT` | 环境加载命令；用户明确选择当前环境时写 `inherit` |
@@ -24,7 +24,7 @@ generalization 还必须在启动时确认竞品性能来源：
 
 精度诊断不是用户输入项，固定持续执行，没有工作流级总时长、轮次、Agent turn 或 token 上限。命令级防挂死 watchdog 可以识别单次编译/执行的 Hang，但不得被解释成精度诊断总预算。
 
-用户确认后调用 `prepare_case_sets.py create-request` 写 `optimization-request.json`。该文件只保存请求意图和环境，不保存输出目录、冻结 artifact 或阶段状态，因此可以跨 run 复用。核心结构为：
+用户确认后调用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py create-request` 写 `optimization-request.json`。该文件只保存请求意图和环境，不保存输出目录、冻结 artifact 或阶段状态，因此可以跨 run 复用。核心结构为：
 
 ```json
 {

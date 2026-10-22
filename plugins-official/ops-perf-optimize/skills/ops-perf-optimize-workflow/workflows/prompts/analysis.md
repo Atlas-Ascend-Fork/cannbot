@@ -5,7 +5,8 @@
 ```text
 ROLE: analysis
 TASK_KIND: round-analysis
-PLUGIN_ROOT: <resolved absolute plugin root>
+WORKFLOW_ROOT: <resolved absolute ops-perf-optimize-workflow skill directory>
+WORKFLOW_SCRIPTS: <resolved absolute ops-perf-optimize-workflow/scripts directory>
 REQUEST: <optimization-request.json absolute path>
 RUN_MANIFEST: <run-manifest.json absolute path>
 WORKFLOW_STATE: <workflow-state.json absolute path>

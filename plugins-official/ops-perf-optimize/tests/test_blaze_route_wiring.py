@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Version 2.0 (the "License").
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -25,10 +25,10 @@ OPS_ROOT = PLUGIN_ROOT.parents[1] / "vendor" / "cannbot-skills" / "ops"
 PERF_BP = OPS_ROOT / "ascendc-performance-best-practices"
 BLAZE_SKILL = OPS_ROOT / "ascendc-blaze-best-practice" / "SKILL.md"
 MIGRATION_SKILL = OPS_ROOT / "ascendc-blaze-migration" / "SKILL.md"
-MATMUL_GUIDE = PERF_BP / "reference" / "matmul" / "arch35" / "guide.md"
-BLAZE_DESIGN = PERF_BP / "reference" / "matmul" / "arch35" / "blaze_design.md"
+MATMUL_GUIDE = PERF_BP / "references" / "matmul" / "arch35" / "guide.md"
+BLAZE_DESIGN = PERF_BP / "references" / "matmul" / "arch35" / "blaze_design.md"
 SKILL_MD = PERF_BP / "SKILL.md"
-CONV_GUIDE = PERF_BP / "reference" / "conv" / "guide.md"
+CONV_GUIDE = PERF_BP / "references" / "conv" / "guide.md"
 
 
 def read(path: Path) -> str:

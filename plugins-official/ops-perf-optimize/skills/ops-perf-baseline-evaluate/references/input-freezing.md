@@ -3,7 +3,7 @@
 接收 create-request 生成的已确认 REQUEST（freeze 前 RUN_MANIFEST/WORKFLOW_STATE 为 pending）；先运行依赖预检，再进行源码快照、构建部署或采集，并在 freeze 之前解决 fail 项：
 
 ```bash
-python3 "$PLUGIN_ROOT/scripts/preflight_dependencies.py" --request <optimization-request.json> \
+python3 "$WORKFLOW_SCRIPTS/preflight_dependencies.py" --request <optimization-request.json> \
     [--ttk-root <ops-test-kit>] [--device 0]
 ```
 
@@ -13,7 +13,7 @@ python3 "$PLUGIN_ROOT/scripts/preflight_dependencies.py" --request <optimization
 
 无交互运行必须提供已确认的 request JSON，不得自行猜测功能模式、目标或环境。`validate-request` 校验 schema、确认状态、路径和 Python 版本；CANN 选择 `inherit` 时还校验确认时的环境快照。失效时回到用户确认，不静默替换环境。
 
-使用 `prepare_case_sets.py freeze --request <optimization-request.json>` 把 request 复制到运行目录，原子生成 `run-manifest.json` 和模式对应集合。manifest 记录 request 路径/SHA、本次源码与用例身份、目标和环境。standard 使用以下四类集合：
+使用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py freeze --request <optimization-request.json>` 把 request 复制到运行目录，原子生成 `run-manifest.json` 和模式对应集合。manifest 记录 request 路径/SHA、本次源码与用例身份、目标和环境。standard 使用以下四类集合：
 
 | 集合 | 文件 | 用途 |
 |---|---|---|
@@ -30,12 +30,12 @@ generalization 固定把泛化性能全集复用为功能全集。已有性能�
 
 库存静态检查结果直接写入 `collections.functional_full.validation`。缺少显式接口、golden 或阈值字段时标 `needs_review`，由主 Agent依据库存框架的可信生成契约补充说明后再验收；不再为此临时编写脚本或生成第二份 preparation JSON。
 
-`confirm-performance`、`attach-functional`、`attach-generalization` 或 `attach-competitor` 合法更新 manifest 后，立即执行 `workflow_state.py sync-manifest`，使恢复身份与报告同步；其他未声明的 manifest 变化仍按 stale input 处理。
+`confirm-performance`、`attach-functional`、`attach-generalization` 或 `attach-competitor` 合法更新 manifest 后，立即执行 `$WORKFLOW_SCRIPTS/workflow_state.py sync-manifest`，使恢复身份与报告同步；其他未声明的 manifest 变化仍按 stale input 处理。
 
 输入冻结后调用：
 
 ```bash
-python3 "$PLUGIN_ROOT/scripts/workflow_state.py" start \
+python3 "$WORKFLOW_SCRIPTS/workflow_state.py" start \
   --state "$OUTPUT_DIR/workflow-state.json" \
   --manifest "$OUTPUT_DIR/run-manifest.json"
 ```

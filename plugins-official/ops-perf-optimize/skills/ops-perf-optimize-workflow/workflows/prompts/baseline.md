@@ -5,7 +5,8 @@
 ```text
 ROLE: baseline
 TASK_KIND: environment-cases-targets
-PLUGIN_ROOT: <resolved absolute plugin root>
+WORKFLOW_ROOT: <resolved absolute ops-perf-optimize-workflow skill directory>
+WORKFLOW_SCRIPTS: <resolved absolute ops-perf-optimize-workflow/scripts directory>
 REQUEST: <confirmed optimization-request.json absolute path>
 RUN_MANIFEST: <absolute path, or pending before freeze>
 WORKFLOW_STATE: <absolute path, or pending before freeze>

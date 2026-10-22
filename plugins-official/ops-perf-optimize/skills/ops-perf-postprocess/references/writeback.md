@@ -9,7 +9,7 @@
 3. `FUNCTIONAL_ACCEPTANCE_CASES`：冻结的最多 40 条 L0 功能验收子集。
 4. `FINAL_FUNCTIONAL_REPORT`、`FINAL_PERFORMANCE_REPORT`：证明 OPT_DIR 已完成全量验收。
 5. `RUN_MANIFEST`、`SOURCE_COMPATIBILITY`、`PRE_INTEGRATION_SNAPSHOT`：分别锁定 `TARGET_SOCS`、原工程支持 SoC/隔离风格，以及未修改的注册源码身份。
-6. `VALIDATE_INTEGRATION_SAFETY`：插件的 `validate_integration_safety.py` 绝对路径。
+6. `VALIDATE_INTEGRATION_SAFETY`：`$WORKFLOW_SCRIPTS/validate_integration_safety.py` 的绝对路径。
 7. `EXTRACTION_MANIFEST`：前处理的源码、依赖和注册入口映射；以及最终候选的 source-isolation scope/gate。
 
 缺任一前置证据或 SHA 不匹配时停止并报告，不重新生成用例、不替代 Stage 3。
@@ -27,7 +27,7 @@
 
 所有 TTK 环境校验、CSV 转换和原入口运行统一加载 TTK 标准 skill（`ttk-how-run-test`/`ttk-how-write-case`/`ttk-how-write-plugin`）。API 查询用 `ascendc-docs-search`；集成新增功能失败时用 `ascendc-precision-debug` 正向定位。
 
-注册回集成沿用自定义注册工程的注册语义，直调保持原 launch ABI 和 runner，不默认做直调转注册。下面注册专用的 vendor/OpType/模板接线步骤仅适用于注册输入；直调按映射使用原构建/launch 规则，公用安全、精度与性能门禁不减。先读 `$PLUGIN_ROOT/workflows/references/source-isolation.md`，通过剥离映射定位原文件及工程接线；不能把 optimized 副本覆盖回公共 legacy 文件。
+注册回集成沿用自定义注册工程的注册语义，直调保持原 launch ABI 和 runner，不默认做直调转注册。下面注册专用的 vendor/OpType/模板接线步骤仅适用于注册输入；直调按映射使用原构建/launch 规则，公用安全、精度与性能门禁不减。先读 `$WORKFLOW_ROOT/workflows/references/source-isolation.md`，通过剥离映射定位原文件及工程接线；不能把 optimized 副本覆盖回公共 legacy 文件。
 
 ## 第一纪律：忠实移植
 
@@ -66,7 +66,7 @@
 
 兼容矩阵中未上板的 SoC 标记 `not_verified_preserved_by_isolation`，不得写 PASS；每代的 host/kernel 路由与 fallback 分别留证。
 
-同时写 `integration-safety-scope.json`，严格使用 `validate_integration_safety.py` 的 schema：`target_socs` 与 `verified_socs` 必须等于 manifest 的 `TARGET_SOCS`；`supported_socs` 每项带源码证据，并与脚本从未注释 `AICore().AddConfig(...)` 自动发现的集合精确一致；存在未验证 SoC 时填写项目隔离风格、path markers、route tokens 和每个共享变更文件的双路由证据。非 `AddConfig` 工程仍须人工交叉检查 build config、`SocVersion`、架构目录和入口，不能因自动发现为空就把支持集合报成只有 target。计划阶段不得预填尚不存在的集成后行号，集成完成后再补齐并运行门禁。
+同时写 `integration-safety-scope.json`，严格使用 `$WORKFLOW_SCRIPTS/validate_integration_safety.py` 的 schema：`target_socs` 与 `verified_socs` 必须等于 manifest 的 `TARGET_SOCS`；`supported_socs` 每项带源码证据，并与脚本从未注释 `AICore().AddConfig(...)` 自动发现的集合精确一致；存在未验证 SoC 时填写项目隔离风格、path markers、route tokens 和每个共享变更文件的双路由证据。非 `AddConfig` 工程仍须人工交叉检查 build config、`SocVersion`、架构目录和入口，不能因自动发现为空就把支持集合报成只有 target。计划阶段不得预填尚不存在的集成后行号，集成完成后再补齐并运行门禁。
 
 另按完整原算子树的独立快照生成 `source-isolation-integration.json`，由主 Agent 审阅并冻结 SHA 后实施；记录源码/构建输入、最小接线范围、新增副本及未涉及模板保护。范围基于原工程重新映射，不能直接复用工作工程行号，也不能在集成后扩大范围。
 
@@ -79,7 +79,7 @@
 3. `ASCENDC_TPL_ARGS_DECL` 与 `ASCENDC_TPL_SEL` 取值一一对应；kernel 分派、host `SetTilingKey` 和 TilingData 类型一致。
 4. 用 tiling 阶段真实可计算量表达谓词；保留非目标场景旧路径。
 5. 公开契约零修改：禁止改变 `op_api/`、op def/proto、infer shape、API 签名、原有 shape/attr 检查、支持 dtype/format；优化 kernel 支持更多类型也不能扩大声明。
-6. 用同一份完整算子注册树的集成前后独立副本运行 `validate_integration_safety.py --manifest "$RUN_MANIFEST" --baseline ... --candidate ... --scope ... --isolation-scope <source-isolation-integration.json> --out ...`。脚本核对冻结目标、支持集合、双路由证据和冻结文件/行范围；主 Agent 复核 scope SHA 及调用链/编译隔离，`decision != pass` 时禁止构建、部署或进入 Stage C。
+6. 用同一份完整算子注册树的集成前后独立副本运行 `$WORKFLOW_SCRIPTS/validate_integration_safety.py --manifest "$RUN_MANIFEST" --baseline ... --candidate ... --scope ... --isolation-scope <source-isolation-integration.json> --out ...`。脚本核对冻结目标、支持集合、双路由证据和冻结文件/行范围；主 Agent 复核 scope SHA 及调用链/编译隔离，`decision != pass` 时禁止构建、部署或进入 Stage C。
 7. 用注册工程自带工具链构建和部署 vendor 包。先只读发现 `build.sh --help`、README/CI 与单算子 target；不得自造 CMake/staging/部署脚本或静默全仓构建。
 8. 不修改共享 CANN SDK。清理仅限本算子受管 build 产物与已确认的旧 vendor 部署，目标不明时停止。
 

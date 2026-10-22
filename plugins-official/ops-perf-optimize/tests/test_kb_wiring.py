@@ -75,7 +75,7 @@ def test_marketplace_bundle_covers_exactly_the_declared_skills() -> None:
 
 
 def test_dispatch_envelope_carries_kb_root() -> None:
-    prompts = read(ROOT / "workflows" / "task-prompts.md")
+    prompts = read(ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md")
     assert (
         "KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>"
         in prompts
@@ -91,7 +91,9 @@ def test_dispatch_envelope_carries_kb_root() -> None:
         "integration",
         "preparation",
     ):
-        assert "KB_ROOT:" in read(ROOT / "workflows" / "prompts" / f"{filename}.md"), (
+        assert "KB_ROOT:" in read(
+            ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "prompts" / f"{filename}.md"
+        ), (
             filename
         )
 

@@ -19,9 +19,9 @@
 #   - init.sh codex copy               -> <project>/.agents/skills/ops-perf-optimize-workflow (a real copy,
 #                                         no symlink trail; init.sh records the plugin root in the
 #                                         .cannbot-ops-perf-optimize marker for this case)
-#   - unified CLI packaged install     -> <project>/.agents/skills/ops-perf-optimize-workflow (a real copy)
-#                                         with the workflow tools copied to
-#                                         <project>/.cannbot/plugins/ops-perf-optimize/
+#   - unified CLI packaged install     -> <project>/.agents/skills/ops-perf-optimize-workflow (a real copy,
+#                                         workflow tools travel inside its scripts/ directory) with the
+#                                         workflows copied to <project>/.cannbot/plugins/ops-perf-optimize/
 # so the plugin root is found by resolving symlinks and walking upward, not by assuming `../..`.
 #
 # Usage:  bash resolve-plugin-root.sh [start_dir]
@@ -29,26 +29,40 @@
 
 set -uo pipefail
 
+# The workflow tools travel with the entry Skill. Accept the legacy plugin-root
+# scripts layout as well so older packages keep resolving.
+has_workflow_scripts() {
+    if [ -f "$1/skills/ops-perf-optimize-workflow/scripts/workflow_state.py" ]; then
+        [ -f "$1/skills/ops-perf-optimize-workflow/scripts/prepare_case_sets.py" ] \
+            && [ -f "$1/skills/ops-perf-optimize-workflow/scripts/validate_source_isolation.py" ]
+        return
+    fi
+    [ -f "$1/scripts/workflow_state.py" ] \
+        && [ -f "$1/scripts/prepare_case_sets.py" ] \
+        && [ -f "$1/scripts/validate_source_isolation.py" ]
+}
+
 # A directory qualifies as the plugin root only if it carries the plugin
 # manifest, canonical Skill entry/contract, and workflow tools.
 is_plugin_root() {
     [ -f "$1/.claude-plugin/plugin.json" ] \
         && [ -f "$1/skills/ops-perf-optimize-workflow/SKILL.md" ] \
         && [ -f "$1/skills/ops-perf-optimize-workflow/references/workflow-contract.md" ] \
-        && [ -f "$1/scripts/workflow_state.py" ] \
-        && [ -f "$1/scripts/prepare_case_sets.py" ] \
-        && [ -f "$1/scripts/validate_source_isolation.py" ] \
+        && has_workflow_scripts "$1" \
         && [ -f "$1/skills/ops-perf-acceptance-criteria/SKILL.md" ]
 }
 
 # Packaged installs do not ship the source plugin manifest next to the copied
-# Skill; the unified CLI copies the workflow tools into the project instead.
-# Such a runtime root only needs the tools the contract invokes.
+# Skill; the unified CLI copies the entry Skill into the project, and the
+# workflows/scripts travel inside it. Legacy installs may keep them at the
+# plugin root instead.
 is_runtime_root() {
-    [ -f "$1/scripts/workflow_state.py" ] \
-        && [ -f "$1/scripts/prepare_case_sets.py" ] \
-        && [ -f "$1/scripts/validate_source_isolation.py" ] \
-        && [ -f "$1/workflows/task-prompts.md" ]
+    if [ -f "$1/skills/ops-perf-optimize-workflow/workflows/task-prompts.md" ]; then
+        has_workflow_scripts "$1"
+        return
+    fi
+    [ -f "$1/workflows/task-prompts.md" ] \
+        && has_workflow_scripts "$1"
 }
 
 walk_up() {

@@ -16,7 +16,7 @@ status: ready
 4. 对应条目的**误报边界**（含证伪知识）与命中条件同等重要，报出前必须逐条核对；
 5. **凡结论依赖 `#if` 架构宏取值的（不限于 PRC-ARCH-001），一律先按 PRC-ARCH-001 的打表命令取证目标 SoC 的宏取值，禁止从宏名反推平台**；未打表就断言某分支在目标平台不生效的，属证据不足，不得报出，也不得作为其它 finding 的前提。
 6. **平台参数（核数 / UB / L2）先看代码怎么取的，再谈数值**：按 PRC-ARCH-002 确认 host 是否从平台接口获取、取到的值是否真正参与切分表达式——写死或"取了不用"本身就是 finding。检视时目标平台的真实取值（运行时 `acl.get_soc_name()` / `GetCoreNumAiv()`，或对应 SocVersion 的 ini）写进报告元信息段，**仅用于核对代码算出的数**，不单独构成 finding；同代芯片核数并不唯一（950 有 8/16/56/64/72 五档），样例仓与最佳实践文档里的数字是示意值，不可代入。**环境取不到平台数值时注明"不可得"即可，不得据此标 blocker 或跳过任何检查点**——ARCH-002 / MEM-011 / MEM-012 的命中形态均为结构判定。
-7. arch22（A2/A3）目标先完整读取 [arch22 检视适用性矩阵](skill:ascendc-performance-best-practices) `reference/common/arch22/perf_review_applicability.md`，按矩阵加载通用卡片，再加载本索引的 `PRC-MM-*` / `PRC-FA-*`；A5 目标不得加载这七条 arch22 专项卡片。A2 证据不能表述为 A3 已验证，缺少 A3 实测时写明 `A3_not_run`。
+7. arch22（A2/A3）目标先完整读取 [arch22 检视适用性矩阵](skill:ascendc-performance-best-practices) `references/common/arch22/perf_review_applicability.md`，按矩阵加载通用卡片，再加载本索引的 `PRC-MM-*` / `PRC-FA-*`；A5 目标不得加载这七条 arch22 专项卡片。A2 证据不能表述为 A3 已验证，缺少 A3 实测时写明 `A3_not_run`。
 
 ## 目录约定
 
@@ -66,18 +66,18 @@ arch22 专项编号依目标库的 MatMul、FlashAttention 族级指南进入对
 
 | ID | 名称 | 适用范围 | 知识点文件 | status |
 |---|---|---|---|---|
-| PRC-MM-001 | MatMul 多级 Ping-Pong 与事件闭环 | arch22 MatMul/BatchMatMul/GroupMatMul；kernel 侧 | [MatMul 流水设计](skill:ascendc-performance-best-practices) `reference/matmul/arch22/pipeline_design.md#prc-mm-001` | ready |
-| PRC-MM-002 | 大包搬运、紧迫侧优先与预加载门禁 | arch22 MatMul；kernel/tiling 侧 | [MatMul 流水设计](skill:ascendc-performance-best-practices) `reference/matmul/arch22/pipeline_design.md#prc-mm-002` | ready |
-| PRC-MM-003 | 先 M/N 填核、欠并行再 Split-K | arch22 MatMul；tiling/kernel 侧 | [MatMul 复用与切分](skill:ascendc-performance-best-practices) `reference/matmul/arch22/reuse_and_split_design.md#prc-mm-003` | ready |
-| PRC-MM-004 | L0/L1 驻留与 L2 分片复用 | arch22 MatMul/BatchMatMul；tiling/kernel 侧 | [MatMul 复用与切分](skill:ascendc-performance-best-practices) `reference/matmul/arch22/reuse_and_split_design.md#prc-mm-004` | ready |
+| PRC-MM-001 | MatMul 多级 Ping-Pong 与事件闭环 | arch22 MatMul/BatchMatMul/GroupMatMul；kernel 侧 | [MatMul 流水设计](skill:ascendc-performance-best-practices) `references/matmul/arch22/pipeline_design.md#prc-mm-001` | ready |
+| PRC-MM-002 | 大包搬运、紧迫侧优先与预加载门禁 | arch22 MatMul；kernel/tiling 侧 | [MatMul 流水设计](skill:ascendc-performance-best-practices) `references/matmul/arch22/pipeline_design.md#prc-mm-002` | ready |
+| PRC-MM-003 | 先 M/N 填核、欠并行再 Split-K | arch22 MatMul；tiling/kernel 侧 | [MatMul 复用与切分](skill:ascendc-performance-best-practices) `references/matmul/arch22/reuse_and_split_design.md#prc-mm-003` | ready |
+| PRC-MM-004 | L0/L1 驻留与 L2 分片复用 | arch22 MatMul/BatchMatMul；tiling/kernel 侧 | [MatMul 复用与切分](skill:ascendc-performance-best-practices) `references/matmul/arch22/reuse_and_split_design.md#prc-mm-004` | ready |
 
 ### FA——arch22 FlashAttention（A2/A3 专项）
 
 | ID | 名称 | 适用范围 | 知识点文件 | status |
 |---|---|---|---|---|
-| PRC-FA-001 | S2/M 切分与 workspace 联合求解 | arch22 FlashAttention/FIA；host/tiling 侧 | [FA Tiling 与流水](skill:ascendc-performance-best-practices) `reference/flash_attention/arch22/tiling_pipeline_design.md#prc-fa-001` | ready |
-| PRC-FA-002 | 多级 buffer 深度与事件 ID 共同闭合 | arch22 FlashAttention/FIA；kernel 侧 | [FA Tiling 与流水](skill:ascendc-performance-best-practices) `reference/flash_attention/arch22/tiling_pipeline_design.md#prc-fa-002` | ready |
-| PRC-FA-003 | 启动与热循环 Scalar 减载 | arch22 FlashAttention/FIA；kernel 侧 | [FA Scalar 与启动开销](skill:ascendc-performance-best-practices) `reference/flash_attention/arch22/scalar_overhead_design.md#prc-fa-003` | ready |
+| PRC-FA-001 | S2/M 切分与 workspace 联合求解 | arch22 FlashAttention/FIA；host/tiling 侧 | [FA Tiling 与流水](skill:ascendc-performance-best-practices) `references/flash_attention/arch22/tiling_pipeline_design.md#prc-fa-001` | ready |
+| PRC-FA-002 | 多级 buffer 深度与事件 ID 共同闭合 | arch22 FlashAttention/FIA；kernel 侧 | [FA Tiling 与流水](skill:ascendc-performance-best-practices) `references/flash_attention/arch22/tiling_pipeline_design.md#prc-fa-002` | ready |
+| PRC-FA-003 | 启动与热循环 Scalar 减载 | arch22 FlashAttention/FIA；kernel 侧 | [FA Scalar 与启动开销](skill:ascendc-performance-best-practices) `references/flash_attention/arch22/scalar_overhead_design.md#prc-fa-003` | ready |
 
 ### VEC——MemBase 矢量计算
 

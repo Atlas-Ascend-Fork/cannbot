@@ -19,10 +19,10 @@
 1. 以集成前原源码快照构建原工程基线，集成后的原工程构建另一份产物；沿原调用入口运行，核验真实加载的二进制。两侧保持同一 SoC、设备/频率、CANN、用例、seed、golden、计时边界及 warmup 协议。
 2. 功能全集和性能全集都检查精度，并分别采集每个**可运行且会启动目标 kernel**的 case 的性能。目录形式功能库存按已冻结 manifest 枚举；保留所有原 ID 与输入映射，不替换或删 case。冻结库存中 `is_enabled=false` 且有 `expected_error` 的行必须在集成前后分别验证指定错误子串，记录 `PASS`、实际错误摘录与原始身份；这类行不产生目标 kernel 耗时，不得填入伪造的正 `total_us`。若诊断表明目标 kernel 实际启动，须调查该行而非直接豁免。两集合有相同 ID 时仅在完整输入/seed/语义也相同时复用同一结果；同名不同输入分别验证。
 3. TTK 负责精度；性能按 `ops-profiling`，MC² 沿 `ascendc-mc2-best-practice`。一份相同源码/二进制/入口/集合/环境/协议证据只采一次；demo 与原工程身份不同必须实测，不能援引“不重复采集”跳过集成检查。
-4. 每个目标 SoC 都用 `validate_postprocess_performance.py` 检查两个集合的完整覆盖与逐 case 回退；功能全集中的可运行行以旧/新耗时和源 CSV SHA 检查数值退化，预期报错行以集成前后错误结果文件检查冻结子串与 ID 覆盖。含预期报错行时必须传入下方两个 `--*-functional-errors` 参数；不得为了让数值门禁通过而删行、改冻结库存或伪造耗时。平均收益或达标 case 占比不能覆盖任何有效退化。性能数值门禁不替代采集身份、源码安全和真实路由审阅。
+4. 每个目标 SoC 都用 `$WORKFLOW_SCRIPTS/validate_postprocess_performance.py` 检查两个集合的完整覆盖与逐 case 回退；功能全集中的可运行行以旧/新耗时和源 CSV SHA 检查数值退化，预期报错行以集成前后错误结果文件检查冻结子串与 ID 覆盖。含预期报错行时必须传入下方两个 `--*-functional-errors` 参数；不得为了让数值门禁通过而删行、改冻结库存或伪造耗时。平均收益或达标 case 占比不能覆盖任何有效退化。性能数值门禁不替代采集身份、源码安全和真实路由审阅。
 
 ```bash
-python3 "$PLUGIN_ROOT/scripts/validate_postprocess_performance.py" \
+python3 "$WORKFLOW_SCRIPTS/validate_postprocess_performance.py" \
   --manifest "$OUTPUT_DIR/run-manifest.json" --target-soc "$SOC" \
   --baseline-functional "$BEFORE/functional-performance.csv" \
   --candidate-functional "$AFTER/functional-performance.csv" \
@@ -49,7 +49,7 @@ python3 "$PLUGIN_ROOT/scripts/validate_postprocess_performance.py" \
 
 generalization 保留涉及/不涉及用例的映射与抽检扩样（5% → 20% → 全量）作为附加路由检查；最终功能及性能全集已经覆盖全体，抽检不能替代。回路由后的 ratio 从最终集成实测重新计算，内外层计数和未达标结论延续原规则。
 
-最终原工程性能还须刷新持续报告：每个 SoC 使用其原工程集成前/后的性能全集 CSV 生成 effect 摘要，用 `workflow_state.py mark --stage integration.performance.<soc> --status complete --selected-candidate <最终原工程身份> --performance-summary <摘要> --cumulative-performance-summary <同一摘要> --performance-scope full` 登记。显式注明 SoC 与原工程入口，不把最后的 demo `final.performance` 留作最终集成性能。功能全集的独立性能结果引用各 SoC gate，不与性能全集混算；多 SoC 的完整结果保留在各自证据与 VERIFY_REPORT 中，报告当前表只代表最近登记的那个 SoC。
+最终原工程性能还须刷新持续报告：每个 SoC 使用其原工程集成前/后的性能全集 CSV 生成 effect 摘要，用 `$WORKFLOW_SCRIPTS/workflow_state.py mark --stage integration.performance.<soc> --status complete --selected-candidate <最终原工程身份> --performance-summary <摘要> --cumulative-performance-summary <同一摘要> --performance-scope full` 登记。显式注明 SoC 与原工程入口，不把最后的 demo `final.performance` 留作最终集成性能。功能全集的独立性能结果引用各 SoC gate，不与性能全集混算；多 SoC 的完整结果保留在各自证据与 VERIFY_REPORT 中，报告当前表只代表最近登记的那个 SoC。
 
 未接纳优化时后处理交付 no-op 说明，仍检查原始身份覆盖两套全集的精度与性能；同身份证据可复用。CANN-Bench 只在用户要求时执行。归档同时保留经过验收的 demo、最终原工程源码与路由差异；明确两者身份不同，交付结论以最终原工程为准。
 

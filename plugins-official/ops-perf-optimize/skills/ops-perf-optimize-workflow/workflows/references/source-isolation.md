@@ -25,7 +25,7 @@
 
 分析专家在实施前生成每方案 `source-isolation-<scheme_id>.json`，主 Agent 审阅分派范围并作为 analysis artifact 保存 SHA。实施专家只消费，不能放宽范围或在改动后重新生成免责清单。新一轮基于当前 baseline 重新盘点；回集成针对完整原算子树的独立快照生成对应 scope。
 
-调用 `validate_source_isolation.py snapshot --baseline <source-root> --out <snapshot.json>` 取得源码/构建输入的 SHA 映射，用作 scope 的 `baseline_files`，不手工裁剪。快照和其他证据放在源码目录之外。脚本覆盖 C/C++/AscendC、CMake、Python/Shell、INI、CMake presets 及 config/configs/cmake 内 JSON/YAML，忽略 build/output/docs 等产物目录；准备专家须核对真实编译依赖，若代码位于排除目录或使用其他输入后缀，先补齐脚本识别范围再验收，不能静默忽略。scope 格式：
+调用 `$WORKFLOW_SCRIPTS/validate_source_isolation.py snapshot --baseline <source-root> --out <snapshot.json>` 取得源码/构建输入的 SHA 映射，用作 scope 的 `baseline_files`，不手工裁剪。快照和其他证据放在源码目录之外。脚本覆盖 C/C++/AscendC、CMake、Python/Shell、INI、CMake presets 及 config/configs/cmake 内 JSON/YAML，忽略 build/output/docs 等产物目录；准备专家须核对真实编译依赖，若代码位于排除目录或使用其他输入后缀，先补齐脚本识别范围再验收，不能静默忽略。scope 格式：
 
 ```json
 {

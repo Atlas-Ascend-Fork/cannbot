@@ -10,10 +10,10 @@ description: AscendC 算子性能优化工作流的五阶段主编排入口（�
 ## 启动
 
 1. 完整读取 [workflow-contract.md](references/workflow-contract.md)，这是阶段、派发、恢复和报告的唯一工作流真源。主 Agent 只需掌握编排契约，不预载阶段执行参考。
-2. 将当前 Skill 所在目录设为 `SKILL_DIR`，运行 `bash "$SKILL_DIR/scripts/resolve-plugin-root.sh" "$SKILL_DIR"` 定位 `PLUGIN_ROOT`；脚本位于 `$PLUGIN_ROOT/scripts/`，派发入口为 `$PLUGIN_ROOT/workflows/task-prompts.md`。定位失败返回具体缺口。
-3. 已提供 `optimization-request.json` 时调用 `prepare_case_sets.py validate-request` 并复用有效确认。需要创建/修复请求时才读 [request-intake.md](references/request-intake.md)，一次性补齐缺失信息；不重复确认已授权事项。
+2. 将当前 Skill 所在目录设为 `SKILL_DIR`，`WORKFLOW_ROOT="$SKILL_DIR"`，`WORKFLOW_SCRIPTS="$WORKFLOW_ROOT/scripts"`；派发入口为 `$WORKFLOW_ROOT/workflows/task-prompts.md`。入口或脚本缺失时返回具体缺口。
+3. 已提供 `optimization-request.json` 时调用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py validate-request` 并复用有效确认。需要创建/修复请求时才读 [request-intake.md](references/request-intake.md)，一次性补齐缺失信息；不重复确认已授权事项。
 4. 按编排契约的知识库解析顺序解析一次 `KB_ROOT`（cannbot-knowledge，安装时自动克隆）并全程复用；解析成功且检索索引缺失时按需构建（失败仅告警）。不可用在报告标注 `kb_unavailable: true`，阶段以无知识增强模式继续，不阻塞主线。
-5. 派发基线评估，接收 `run-manifest.json` 后初始化或恢复 `workflow-state.json`；首次状态操作读取 `$PLUGIN_ROOT/workflows/references/state-reporting.md`。版本变更时才读取 [migration.md](references/migration.md)。
+5. 派发基线评估，接收 `run-manifest.json` 后初始化或恢复 `workflow-state.json`；首次状态操作读取 `$WORKFLOW_ROOT/workflows/references/state-reporting.md`。版本变更时才读取 [migration.md](references/migration.md)。
 
 ## 编排
 

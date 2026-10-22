@@ -4,7 +4,7 @@
 
 一次只实施一份 `implementation-contract-<scheme_id>.json`。只写主 Agent 分配的隔离候选目录；不写原始工程，不修改 `$ASCEND_HOME_PATH`、`$ASCEND_OPP_PATH` 或 CANN SDK，不在功能门禁前采集性能，不重选 case。
 
-开始前读取派发输入视图、本阶段 Skill、`$PLUGIN_ROOT/workflows/references/source-isolation.md`、`BASELINE_DIR`、`extraction-manifest.json`、`source-compatibility.md`、`roundN/analysis.md`、实施契约和对应冻结 `source-isolation-<scheme_id>.json`。契约是实施符合性的机器真源：`implementation_mode=exact`、`substitution_policy=forbidden`；`target_socs` 必须与 manifest 一致，公开契约、非目标 SoC 及未涉及模板必须为不可变；required feature 不得因时间、复杂度或风险被删减。此真源范围不包括 `expected_effect`、历史 `abandon_if` 或整体优化目标；它们不得覆盖候选终选规则。正文与契约冲突时停止并给出具体差异；不可自行扩大 scope。
+开始前读取派发输入视图、本阶段 Skill、`$WORKFLOW_ROOT/workflows/references/source-isolation.md`、`BASELINE_DIR`、`extraction-manifest.json`、`source-compatibility.md`、`roundN/analysis.md`、实施契约和对应冻结 `source-isolation-<scheme_id>.json`。契约是实施符合性的机器真源：`implementation_mode=exact`、`substitution_policy=forbidden`；`target_socs` 必须与 manifest 一致，公开契约、非目标 SoC 及未涉及模板必须为不可变；required feature 不得因时间、复杂度或风险被删减。此真源范围不包括 `expected_effect`、历史 `abandon_if` 或整体优化目标；它们不得覆盖候选终选规则。正文与契约冲突时停止并给出具体差异；不可自行扩大 scope。
 
 信封 `KB_ROOT` 存在时，编码前先消费所选方案在 `analysis.md` 中登记的 `kb_cards`：逐张读取 `$KB_ROOT/<doc-id>`，并按需以 `knowledge-query` 的 `preflight --task "<方案要点> 实施约束"` 补充检索 API 语义、队列/同步与精度反模式。API 证据顺序为知识库 → `ascendc-docs-search` → 本机 SDK：知识卡补充证据与已知坑，不替代 docs-search 与 SDK 核验。实际读取的卡片与用途记入 `scheme-conformance.json` 顶层 `kb_cards`（`[{"doc_id": ..., "purpose": ...}]`）；`KB_ROOT` 缺失或检索失败时记 `kb_unavailable`，按无知识增强继续，不阻塞实施。
 
@@ -27,7 +27,7 @@
 
 沿用已验证的单算子构建入口，保存工作目录、命令、目标 SoC、工具链/编译选项、依赖输入及源码/产物 SHA；入口变化时先检查最小闭包，不静默全仓编译。上述构建输入与产物均未变时复用；仅源码 SHA 相同不能证明构建身份相同。诊断探针与正式候选分别登记构建/加载身份；移除插桩后按正式候选身份重新构建和验收。独立候选的 CPU 构建/静态检查可在资源允许时同时运行，日志和构建目录分别隔离；部署、功能压测和性能采集按设备排他。保存首个未裁剪错误；fresh process 必须加载所登记的二进制身份。
 
-写 `scheme-conformance.json`，包含 scheme、route/substitution 状态、每个 required feature 的状态和证据，以及知识卡消费记录（顶层 `kb_cards`，或 `kb_unavailable`）。使用主 Agent提供的 `validate_implementation_conformance.py --manifest "$RUN_MANIFEST" --baseline "$BASELINE_DIR" --candidate "$CODE_DIR" --isolation-scope "$ISOLATION_SCOPE"`（并传入 contract/result/out）生成 `scheme-conformance-gate.json`；其中 `candidate_safety.decision` 和 `source_isolation.decision` 均须为 `pass`，scope SHA 须与派发前一致。机器范围检查不替代 SoC/模板路由、编译期隔离及原 fallback 的语义审阅。
+写 `scheme-conformance.json`，包含 scheme、route/substitution 状态、每个 required feature 的状态和证据，以及知识卡消费记录（顶层 `kb_cards`，或 `kb_unavailable`）。使用主 Agent提供的 `$WORKFLOW_SCRIPTS/validate_implementation_conformance.py --manifest "$RUN_MANIFEST" --baseline "$BASELINE_DIR" --candidate "$CODE_DIR" --isolation-scope "$ISOLATION_SCOPE"`（并传入 contract/result/out）生成 `scheme-conformance-gate.json`；其中 `candidate_safety.decision` 和 `source_isolation.decision` 均须为 `pass`，scope SHA 须与派发前一致。机器范围检查不替代 SoC/模板路由、编译期隔离及原 fallback 的语义审阅。
 
 交接或恢复时，用同组输入将 `--out` 换为 `--verify-existing <gate>`，只读核验保存 gate 与当前契约、scope、源码及 feature 证据一致；旧 gate 缺身份字段时重新验证已有材料，不因此重跑硬件。另核对真实构建产物和验收记录的 scheme、源码/二进制、集合、环境与协议归属。gate pass 不代表已构建、已验收或已 eligible；基线零差异副本不能据旧 gate 声称新方案已实施，保留 baseline 应显式参与终选。
 

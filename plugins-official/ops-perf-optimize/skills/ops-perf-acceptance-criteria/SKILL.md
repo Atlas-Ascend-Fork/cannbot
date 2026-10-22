@@ -14,6 +14,6 @@ description: 性能优化阶段共用的验收判据：性能采集协议、精�
 | 比较性能、生成 effect 摘要、防止退化 | [performance-jitter-policy.md](references/performance-jitter-policy.md) |
 | 泛化 ratio 计算与覆盖核验 | [ratio.md](references/ratio.md) |
 
-修改范围安全契约与剥离/隔离验证用例不属于本 Skill，统一读取 `$PLUGIN_ROOT/workflows/references/source-isolation.md` 与 `validation-cases.md`。
+修改范围安全契约与剥离/隔离验证用例不属于本 Skill，统一读取 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 与 `validation-cases.md`。
 
-不要默认读取整套参考。设备采集等待主 Agent 的排他调度；机器脚本位于信封传入的 `$PLUGIN_ROOT/scripts/`。数值/文件范围 gate 不替代源码路由审阅和真实构建/运行身份核验。
+不要默认读取整套参考。设备采集等待主 Agent 的排他调度；机器脚本位于信封传入的 `$WORKFLOW_SCRIPTS/`。数值/文件范围 gate 不替代源码路由审阅和真实构建/运行身份核验。

@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Version 2.0 (the "License").
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -72,10 +72,10 @@ def test_runtime_artifact_model_has_three_truth_layers_and_no_duplicate_summarie
     assert "一份 `roundN/analysis.md`" in skill
     assert "同一事实只写一次" in contract
 
-    prompts = read(ROOT / "workflows" / "task-prompts.md")
+    prompts = read(ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md")
     assert "必须保留的稳定派发入口" in prompts
     assert "唯一工作流真源" in prompts
-    assert not (ROOT / "workflows" / "resume-and-lessons.md").exists()
+    assert not (ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "resume-and-lessons.md").exists()
     assert "不另建进度 JSON、双份多轮汇总或逐轮同名报告" in contract
     assert "不拆成三段保存点或重复的方案报告" in read(
         ROOT / "skills/ops-perf-analysis/references/analysis-execution.md"

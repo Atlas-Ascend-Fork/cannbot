@@ -20,7 +20,7 @@
 
 ## 2. 请求接入
 
-已有 request：`prepare_case_sets.py validate-request` 校验后复用。缺少或失效时按 [request-intake.md](request-intake.md) 收集代码、精确 TARGET_SOCS、模式、用例、对标来源、停止目标、优化意图、可选性能锚点、Python/CANN 环境，生成用户已确认的 request。无交互环境必须提供已确认 request，不猜测环境或目标。
+已有 request：`$WORKFLOW_SCRIPTS/prepare_case_sets.py validate-request` 校验后复用。缺少或失效时按 [request-intake.md](request-intake.md) 收集代码、精确 TARGET_SOCS、模式、用例、对标来源、停止目标、优化意图、可选性能锚点、Python/CANN 环境，生成用户已确认的 request。无交互环境必须提供已确认 request，不猜测环境或目标。
 
 `OPTIMIZATION_INTENT`（`safe_incremental` 默认 / `pursue_optimal`）与 `REFERENCE_PERF` 是可选输入身份，写入 request/manifest：前者决定是否把**结构性重写**（融合/数据布局/精度方案/内部格式转换，公开契约仍不变）纳入方案空间并放宽"最小 scope"偏好；后者是同算子/同族更优实现或竞品的 `case_id,ref_total_us`（或参考实现工程路径，由 prepare 采同协议基线），提供后分析以"实测 vs 参考"的差距为绝对参照，缺省则以算子内在最小成本 roofline 为唯一普适锚点。
 
@@ -56,7 +56,7 @@ standard：preparation → 每轮 analysis → implementation → 主 Agent 复�
 
 分析后、候选实施前检查理论上限，门**分两级**且机器可检：(1)「当前结构天花板」——全部冻结调优 case 的 `verdict` 为 `NEAR-BANDWIDTH-CEILING`、`NEAR-COMPUTE-CEILING` 或 `MEMORY-CEILING`，且现 kernel 结构内没有合法可实施减量方案（方案数为 0）；(2)「算子内在天花板」——实测已逼近**算子内在最小成本 roofline**（`实测 ≤ ceiling_intrinsic_us * 1.5`；该 roofline 由 shape/dtype/权重字节恒可计算，无需任何外部实现）且不落后 `REFERENCE_PERF`。**仅两级同时满足**才以 `reason_code=ceiling_bound` 结束性能探索，保留当前基线。若只触及当前结构天花板、但离内在最小成本仍显著（或落后参考锚点），则当前结构天花板 ≠ 物理天花板：门不触发，本轮须先评估结构性重写方向（`pursue_optimal` 下为强制门禁，`safe_incremental` 下记录方向与预估收益交用户决策）；仅当结构性方向也经源码/建模证据判不可行后方可收敛。`safe_incremental` 下需要用户决定更宽实施范围时，先交付可审阅的范围、风险与有依据的收益估计，不能把尚未定界的技术未知当作用户决策。报告须引用逐 case 的 `MBU/MFU/mte2_util/ceiling_us/headroom/verdict`、目标 SoC 峰值口径和合法手段不可用的证据；PIPELINE-TRAP 还须排除已证明不重读权重的重叠方案。有合法候选（增量或结构性）时继续实施，不因 bound/verdict 标签单独停止；用户显式要求继续时，将覆盖理由登记到 workflow-state。
 
-`pursue_optimal` 的结构性方向是跨轮义务，登记进 `workflow-state` 的结构方向台账（`workflow_state.py structural-direction --id <稳定id> --status <status>`）：`not_attempted`/`blocked_by_scope` 为**未了结**（`blocked_by_scope` 须重冻结更宽 scope 后重试，不得当作完成），`realized`/`infeasible_evidenced`/`blocked_by_precision` 为了结。**硬门禁**：台账存在未了结方向时，`workflow_state.py finish --status success --reason-code completed` 被拒绝；须先把每个方向推进到了结态，或以 `finish --status awaiting_operator --reason-code structural_headroom_unrealized` 显式驻留交人工决策。运行时风险（死锁/同步）不能作为 `infeasible_evidenced` 的理由，须先经 `ascendc-sync-audit` 产出缓解方案或"风险不可避免"的证据。
+`pursue_optimal` 的结构性方向是跨轮义务，登记进 `workflow-state` 的结构方向台账（`$WORKFLOW_SCRIPTS/workflow_state.py structural-direction --id <稳定id> --status <status>`）：`not_attempted`/`blocked_by_scope` 为**未了结**（`blocked_by_scope` 须重冻结更宽 scope 后重试，不得当作完成），`realized`/`infeasible_evidenced`/`blocked_by_precision` 为了结。**硬门禁**：台账存在未了结方向时，`$WORKFLOW_SCRIPTS/workflow_state.py finish --status success --reason-code completed` 被拒绝；须先把每个方向推进到了结态，或以 `finish --status awaiting_operator --reason-code structural_headroom_unrealized` 显式驻留交人工决策。运行时风险（死锁/同步）不能作为 `infeasible_evidenced` 的理由，须先经 `ascendc-sync-audit` 产出缓解方案或"风险不可避免"的证据。
 
 `ceiling_bound` 只停止性能探索：implementation 仍完成保留基线的交接和最终 demo 全集验收，随后进入 integration；完成剩余验收后再登记任务终态，是否达到用户目标据实报告。
 
@@ -91,9 +91,9 @@ generalization 保留既有规则：
 
 诊断分析与实施验证的方案设计、方案实施引用 cannbot-knowledge 知识卡。主 Agent 在首次派发需要它的阶段前解析一次 `KB_ROOT` 并全程复用，按以下顺序：环境变量 `CANNBOT_KNOWLEDGE_ROOT`（已设置且目录存在）→ 从项目根 glob `.cannbot/dependencies/*/cannbot-knowledge/knowledge`（取第一个含 `ops/ascendc` 子目录的匹配）→ 运行已安装 `knowledge-query` Skill 的 `discover`。解析成功且检索索引缺失时按需构建（`knowledge_query.py --knowledge-root "$KB_ROOT" build`，失败仅告警，不影响卡片直读）。知识库不可用（依赖仓克隆被跳过、离线或解析失败）不是阻塞项：信封省略 `KB_ROOT`，阶段标注 `kb_unavailable`，按无知识增强继续，不降低精度与性能验收要求；主 Agent 在报告中登记该状态。
 
-读取 `$PLUGIN_ROOT/workflows/task-prompts.md`，按 ROLE 只取对应模板；通用信封的字段定义以该稳定派发入口为准。传入 PLUGIN_ROOT、REQUEST、RUN_MANIFEST、WORKFLOW_STATE、TUNING_MODE、TARGET_SOCS、ROUND、CODE_DIR、KB_ROOT（或省略）、输入/输出、ACCEPTANCE 和条件技能；不把整个编排契约复制给 subagent。
+读取 `$WORKFLOW_ROOT/workflows/task-prompts.md`，按 ROLE 只取对应模板；通用信封的字段定义以该稳定派发入口为准。传入 WORKFLOW_ROOT、WORKFLOW_SCRIPTS、REQUEST、RUN_MANIFEST、WORKFLOW_STATE、TUNING_MODE、TARGET_SOCS、ROUND、CODE_DIR、KB_ROOT（或省略）、输入/输出、ACCEPTANCE 和条件技能；不把整个编排契约复制给 subagent。
 
-使用 `$PLUGIN_ROOT/scripts/workflow_state.py` 管理状态，具体命令和字段按需读取 `$PLUGIN_ROOT/workflows/references/state-reporting.md`。主 Agent 派发前 mark in_progress，验收后 complete；诊断假设/候选变化时记录 progress。阶段没有真实开始时间就保留未知，不伪造耗时。
+使用 `$WORKFLOW_SCRIPTS/workflow_state.py` 管理状态，具体命令和字段按需读取 `$WORKFLOW_ROOT/workflows/references/state-reporting.md`。主 Agent 派发前 mark in_progress，验收后 complete；诊断假设/候选变化时记录 progress。阶段没有真实开始时间就保留未知，不伪造耗时。
 
 保留 `phase.baseline/preparation/analysis/implementation/integration` 和原 round/gen 保存点。phase.analysis 记录初次交接，轮内重复诊断用细粒度键；phase.implementation 在最终 demo 全集验收后完成。每轮 complete 前登记所保留实现的本轮与累计摘要，二者引用同一候选 CSV；原始基线不能换成上一轮基线或连乘加速比。
 

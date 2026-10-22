@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-# CANN Open Software License Version 2.0 (the "License").
+# CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts"))
 from build_performance_targets import build, validate_reference  # noqa: E402
 from prepare_case_sets import code_identity, identity  # noqa: E402
 from validate_execution_identity import file_identity, record  # noqa: E402
@@ -318,7 +318,7 @@ def test_regression_gate_cli_fails_and_records_routes_required(tmp_path):
     out = tmp_path / "gate.json"
     args = [
         sys.executable,
-        str(ROOT / "scripts/validate_postprocess_performance.py"),
+        str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts/validate_postprocess_performance.py"),
         "--manifest",
         str(manifest),
         "--target-soc",
@@ -360,7 +360,7 @@ def test_phase_gate_recomputes_csv_instead_of_trusting_pass_label(tmp_path):
 def test_workflow_cannot_skip_baseline_or_finish_early(tmp_path):
     manifest, _ = fixture(tmp_path)
     state = tmp_path / "state.json"
-    cli = [sys.executable, str(ROOT / "scripts/workflow_state.py")]
+    cli = [sys.executable, str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts/workflow_state.py")]
     subprocess.run(
         cli + ["start", "--state", str(state), "--manifest", str(manifest)],
         check=True,
@@ -402,7 +402,7 @@ def test_workflow_cannot_skip_baseline_or_finish_early(tmp_path):
 
 def test_five_roles_dispatch_to_generic_subagent_without_named_experts():
     manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
-    assert "agents" not in manifest
+    assert manifest.get("agents", []) == ["./AGENTS.md"]
     assert not (ROOT / "agents").exists()
     contract = (
         ROOT / "skills/ops-perf-optimize-workflow/references/workflow-contract.md"
@@ -446,7 +446,7 @@ def phase_files(tmp_path, preflight, targets, gate):
 def test_complete_phase_lifecycle_freezes_source_evidence(tmp_path):
     manifest, evidence = fixture(tmp_path)
     state = tmp_path / "state.json"
-    cli = [sys.executable, str(ROOT / "scripts/workflow_state.py")]
+    cli = [sys.executable, str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts/workflow_state.py")]
 
     def run(*args):
         result = subprocess.run(cli + list(args), capture_output=True, text=True)
@@ -575,7 +575,7 @@ def test_target_cli_writes_reviewable_markdown_and_machine_evidence(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts/build_performance_targets.py"),
+            str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts/build_performance_targets.py"),
             "--manifest",
             str(manifest),
             "--evidence",

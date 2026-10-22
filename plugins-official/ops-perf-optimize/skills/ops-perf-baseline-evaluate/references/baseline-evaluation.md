@@ -4,11 +4,11 @@
 
 ## 环境与用例
 
-调用 `preflight_dependencies.py --request <request>`，按 `ascendc-env-check` 核对必要依赖、NPU 型号/数量/设备初始化、CANN、Python、编译与性能工具。TTK 由预检统一接入：未找到 ops-test-kit 时自动 `git clone --depth=1` 上游最新到 `/tmp/ops-test-kit` 并校验可导入，随后把 TTK 仓自带 4 个标准 skill（`$TTK/.claude/skills/` 下的 `ttk-how-run-test`/`ttk-how-write-case`/`ttk-how-write-plugin`/`ttk-how-diagnose`）软链到当前部署客户端的 skills 目录（opencode→`.opencode/skills`，claude→`.claude/skills`，codex→`.agents/skills`，codearts→`.codeartsdoer/skills`，项目级与全局级均已存在的全部链接）；后续所有 TTK 操作直接加载这 4 个 skill。每个 `TARGET_SOCS` 必须有对应可用设备和环境证据，多机分别运行预检并汇总；不能用当前一张 950 卡证明 910b 可用。正式评估不得使用 `--skip-device` 或 `--skip-build`。无 fail 后 freeze；warn 的处理理由写入报告。
+调用 `$WORKFLOW_SCRIPTS/preflight_dependencies.py --request <request>`，按 `ascendc-env-check` 核对必要依赖、NPU 型号/数量/设备初始化、CANN、Python、编译与性能工具。TTK 由预检统一接入：未找到 ops-test-kit 时自动 `git clone --depth=1` 上游最新到 `/tmp/ops-test-kit` 并校验可导入，随后把 TTK 仓自带 4 个标准 skill（`$TTK/.claude/skills/` 下的 `ttk-how-run-test`/`ttk-how-write-case`/`ttk-how-write-plugin`/`ttk-how-diagnose`）软链到当前部署客户端的 skills 目录（opencode→`.opencode/skills`，claude→`.claude/skills`，codex→`.agents/skills`，codearts→`.codeartsdoer/skills`，项目级与全局级均已存在的全部链接）；后续所有 TTK 操作直接加载这 4 个 skill。每个 `TARGET_SOCS` 必须有对应可用设备和环境证据，多机分别运行预检并汇总；不能用当前一张 950 卡证明 910b 可用。正式评估不得使用 `--skip-device` 或 `--skip-build`。无 fail 后 freeze；warn 的处理理由写入报告。
 
 产出 `环境检查报告.md`：请求 SHA、真实设备与 SoC 映射、依赖版本/路径、检查状态、warn 理由、失败修复证据及 `preflight-report.json` 引用。不把“脚本存在”当作设备可用。
 
-按 [input-freezing.md](input-freezing.md) 调用 `prepare_case_sets.py` 冻结集合；`existing/reuse_performance` 只用确定性脚本。需要生成时读取 [`case-generation.md`](case-generation.md) 与 `$PLUGIN_ROOT/workflows/prompts/generation.md`，加载 `ascendc-st-design`、`ops-precision-standard`，保留 standard L0/L1/L2 完整库存、generalization 默认 1000 条合一用例和最多 40 条 L0 验收子集；生成完成执行 attach 与 sync-manifest。基线评估完成前库存必须就绪。
+按 [input-freezing.md](input-freezing.md) 调用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py` 冻结集合；`existing/reuse_performance` 只用确定性脚本。需要生成时读取 [`case-generation.md`](case-generation.md) 与 `$WORKFLOW_ROOT/workflows/prompts/generation.md`，加载 `ascendc-st-design`、`ops-precision-standard`，保留 standard L0/L1/L2 完整库存、generalization 默认 1000 条合一用例和最多 40 条 L0 验收子集；生成完成执行 attach 与 sync-manifest。基线评估完成前库存必须就绪。
 
 ## 被测实现身份
 
@@ -32,14 +32,14 @@
 用统一脚本记录构建命令、完整构建日志、构建产物和加载证据；多个 SoC 对同一输出文件重复执行 `record`，最后执行 `validate`：
 
 ```bash
-python3 "$PLUGIN_ROOT/scripts/validate_execution_identity.py" record \
+python3 "$WORKFLOW_SCRIPTS/validate_execution_identity.py" record \
   --manifest "$OUTPUT_DIR/run-manifest.json" --target-soc <TARGET_SOC> \
   --build-command '<exact build command>' --build-log <build.log> \
   --built-artifact <target-runtime-artifact> \
   --runtime-evidence <runtime-evidence.json> \
   --out "$OUTPUT_DIR/baseline/execution-identity.json"
 
-python3 "$PLUGIN_ROOT/scripts/validate_execution_identity.py" validate \
+python3 "$WORKFLOW_SCRIPTS/validate_execution_identity.py" validate \
   --manifest "$OUTPUT_DIR/run-manifest.json" \
   --identity "$OUTPUT_DIR/baseline/execution-identity.json"
 ```
@@ -78,7 +78,7 @@ standard 的 xpu 来源与访问参数写入 `performance_reference` JSON（例�
 ```
 
 ```bash
-python3 "$PLUGIN_ROOT/scripts/build_performance_targets.py" \
+python3 "$WORKFLOW_SCRIPTS/build_performance_targets.py" \
   --manifest "$OUTPUT_DIR/run-manifest.json" --evidence "$OUTPUT_DIR/baseline/target-evidence.json" \
   --out "$OUTPUT_DIR/baseline/performance-targets.json" --out-md "$OUTPUT_DIR/baseline/性能目标.md"
 ```

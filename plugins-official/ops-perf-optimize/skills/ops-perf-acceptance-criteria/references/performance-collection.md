@@ -2,7 +2,7 @@
 
 一般算子显式使用 `profiler=msprof`、`aic_metrics=PipeUtilization` 和一个持久 application 会话覆盖整个调优子集。每例连续执行 10 组 `warmup → target`；每次 target 的全部 kernel `total_us` 先求和，再取 10 组中位数。`validation.json` 使用 schema v3，expected/parsed/mapped relevant launches 必须相等，warmup 不计时。
 
-采集前记录源码、加载二进制、case、Device、CANN、频率和 warmup 身份。源码与二进制 SHA 并列记录不构成血缘证明：被测源码、本次构建产物和实际加载产物必须形成同源链。原实现基线使用 `$PLUGIN_ROOT/scripts/validate_execution_identity.py`；候选和回集成实现使用各阶段的构建/加载身份门禁。
+采集前记录源码、加载二进制、case、Device、CANN、频率和 warmup 身份。源码与二进制 SHA 并列记录不构成血缘证明：被测源码、本次构建产物和实际加载产物必须形成同源链。原实现基线使用 `$WORKFLOW_SCRIPTS/validate_execution_identity.py`；候选和回集成实现使用各阶段的构建/加载身份门禁。
 
 现成 ops warmup 先实际 probe（通常 ArgMax；ArgMax 家族用 Max），probe 失败才构建后备 warmup；两侧身份必须一致。身份与覆盖完全相同时复用已有证据。
 

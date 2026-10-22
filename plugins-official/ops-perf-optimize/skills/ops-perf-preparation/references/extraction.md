@@ -49,4 +49,4 @@
 
 ## 评测入口
 
-修改剥离规则后可按 `$PLUGIN_ROOT/workflows/references/validation-cases.md` 选择真实工程验证；后续候选的代际与模板保护遵循`$PLUGIN_ROOT/workflows/references/source-isolation.md`。
+修改剥离规则后可按 `$WORKFLOW_ROOT/workflows/references/validation-cases.md` 选择真实工程验证；后续候选的代际与模板保护遵循`$WORKFLOW_ROOT/workflows/references/source-isolation.md`。

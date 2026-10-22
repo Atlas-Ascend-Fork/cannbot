@@ -21,7 +21,8 @@
 ```text
 ROLE: <baseline|preparation|analysis|implementation|integration>
 TASK_KIND: <role template variant>
-PLUGIN_ROOT: <resolved absolute plugin root; scripts and shared state protocol>
+WORKFLOW_ROOT: <resolved absolute ops-perf-optimize-workflow skill directory>
+WORKFLOW_SCRIPTS: <resolved absolute ops-perf-optimize-workflow/scripts directory>
 REQUEST: <optimization-request.json absolute path>
 RUN_MANIFEST: <absolute path; pending only before baseline freeze>
 WORKFLOW_STATE: <absolute path; pending only before baseline freeze>
@@ -38,7 +39,7 @@ CONDITIONAL_SKILLS: <additional skills required by the selected route, or absent
 
 只替换模板占位符，不删字段。基线 freeze 前 `TUNING_MODE`、`TARGET_SOCS` 取自已确认 REQUEST；freeze 后 `TUNING_MODE` 必须取自 manifest，输入与输出必须是绝对路径；`KB_ROOT` 由主 Agent 按编排契约解析一次后全程复用，absent 表示知识库不可用，阶段按无知识增强继续；执行细则以对应阶段 Skill 为准；角色基础技能以 Agent 定义为准，条件技能只按契约和已确认输入填写，不能因猜测预载。
 
-主 Agent 不预载阶段执行参考，不将整份工作流契约复制进任务。受派 Agent 只加载角色声明的阶段 Skill，按需加载共享验证规则。受派 Agent 先读自己的角色定义及冻结输入；manifest/state 已初始化时，先用 `workflow_state.py inspect --state <WORKFLOW_STATE> --stage <本阶段键>` 读取配置、集合身份和本阶段记录，按需读取原文件的详细字段；基线 freeze 前改读已确认 REQUEST。只写分配目录。返回 `status`、产物绝对路径、适用的源码/二进制 SHA、门禁结论和未决证据；不得用对话摘要代替落盘文件。输入不完整、身份不匹配或验收不可机械验证时，返回主 Agent 补齐，不在 prompt 中临时发明流程。
+主 Agent 不预载阶段执行参考，不将整份工作流契约复制进任务。受派 Agent 只加载角色声明的阶段 Skill，按需加载共享验证规则。受派 Agent 先读自己的角色定义及冻结输入；manifest/state 已初始化时，先用 `$WORKFLOW_SCRIPTS/workflow_state.py inspect --state <WORKFLOW_STATE> --stage <本阶段键>` 读取配置、集合身份和本阶段记录，按需读取原文件的详细字段；基线 freeze 前改读已确认 REQUEST。只写分配目录。返回 `status`、产物绝对路径、适用的源码/二进制 SHA、门禁结论和未决证据；不得用对话摘要代替落盘文件。输入不完整、身份不匹配或验收不可机械验证时，返回主 Agent 补齐，不在 prompt 中临时发明流程。
 
 信封引用产物路径和必要差异，不粘贴完整日志、逐 case 数据或历史诊断。目录与构建入口定位一次后复用清单；仅在路径、依赖或身份变化时重新扫描。长命令的完整输出写入证据文件，向会话返回退出码、摘要和日志路径；失败时读取首个完整错误及相关上下文，不反复整树搜索或输出全量日志。
 
