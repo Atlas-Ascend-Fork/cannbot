@@ -1,6 +1,7 @@
 ---
 name: st-verifier
 description: ACLNN ST 测试产物验收技能。供 st-verifier 子agent 对「白盒/黑盒用例生成、纳入 ST 框架、批量执行、ST 框架开发」做实质检查:用例结构覆盖度(coverage_audit.py 独立用 build_model 重算期望覆盖)、用例是否符合方案设计(分支验证 / `docs/{OP}/design/Validation.md`「端到端测试用例矩阵」枚举测试点全命中)、用例是否全部纳入框架(生成==manifest==执行条数)、框架正确性(可读全部用例、golden 独立)、执行结果(全量执行/skip/pass 数)。当验收 ST 测试产物任务时使用。
+disable-model-invocation: true
 ---
 
 # ACLNN ST 测试产物验收

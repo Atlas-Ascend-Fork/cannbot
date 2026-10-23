@@ -103,10 +103,7 @@
       "name": "harness-skills",
       "category": "skills",
       "strict": false,
-      "source": {
-        "source": "local",
-        "path": "harness"
-      },
+      "source": "./harness",
       "skills": [
         "./workflow-orchestrator",
         "./workflow-rollback-advice"

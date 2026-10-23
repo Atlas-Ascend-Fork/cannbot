@@ -3,6 +3,7 @@ name: ops-requirement-analysis
 description: >-
   为一个待开发算子产出需求分析文档 REQUIREMENTS.md。按「算子名解析 → 模型研究 / 竞品(TF·PyTorch)研究 /
   CANN 方案研究 → 需求总结」的流水线，把模型场景、竞品实现、CANN 现状与客户需求汇总成一份结构固定的需求文档。当需要生成算子需求文档 / REQUIREMENTS.md / 需求分析时触发。
+disable-model-invocation: true
 ---
 
 # 算子需求分析 Skill

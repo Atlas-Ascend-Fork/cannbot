@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "plugin": "ops-registry-invoke",
+  "description": "ops-registry-invoke 的 skill 依赖清单，单一事实源。native 随 cannbot 仓分发（含 harness 的 workflow-orchestrator）；external 不入本仓，由入口 skill 预检后经 npx skills add 从 cannbot-skills 主线装配，不 pin，永远 HEAD。修改依赖时同步更新本文件、入口 SKILL.md 的预检说明与 .gitignore。",
+  "sources": {
+    "native": "https://gitcode.com/cann/cannbot.git",
+    "external": "https://gitcode.com/cann/cannbot-skills.git"
+  },
+  "skills": {
+    "native": [
+      "ops-registry-invoke",
+      "workflow-orchestrator",
+      "workflow-dispatch",
+      "ops-requirement-analysis",
+      "design-template",
+      "ascendc-build-system",
+      "blackbox-tester",
+      "st-verifier",
+      "tiling-ut-harness",
+      "tiling-exception-coverage"
+    ],
+    "external": [
+      "ascendc-code-review",
+      "ascendc-docs-gen",
+      "ascendc-precision-debug",
+      "ascendc-registry-invoke-template",
+      "ascendc-runtime-debug",
+      "ascendc-st-design",
+      "ascendc-whitebox-design",
+      "npu-arch",
+      "ops-design-paradigms",
+      "ops-spec-gen"
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 ---
 name: tiling-ut-harness
 description: 在 x86 宿主机上构建并运行 CANN TilingFunc 的 gtest 单测（pattern B：registry dlopen 已安装 op_host .so）。用于编写或修改 tests/tiling/ 下的 Tiling UT、伪造 fe::PlatFormInfos 平台参数、构造 OpTilingContextBuilder、链接 libtiling_api、捕获 OP_LOGE 日志锚点；遇到 GetCoreNumAiv/GetCoreMemSize 返回 0、undefined reference to fe::PlatFormInfos 或 CheckLogLevel、cannot find -lbase、DSO missing from command line、gtest 链接失败、日志断言取不到输出时使用。
+disable-model-invocation: true
 ---
 
 # Tiling UT 宿主机 harness（pattern B）

@@ -1,6 +1,7 @@
 ---
 name: tiling-exception-coverage
-description: Exception-scenario coverage for Ascend C operator tiling UTs: a 31-item checklist with failure/degradation assertion discipline. Use when writing tiling gtest exception (negative) cases or auditing an existing tiling UT's exception coverage.
+description: "Exception-scenario coverage for Ascend C operator tiling UTs: a 31-item checklist with failure/degradation assertion discipline. Use when writing tiling gtest exception (negative) cases or auditing an existing tiling UT's exception coverage."
+disable-model-invocation: true
 ---
 
 # Tiling UT Exception-Scenario Coverage

@@ -1,6 +1,6 @@
 ---
-name: workflow-bootstrap
-description: 算子开发工作流架构路由入口。获取 NPU 架构号（asys info -r hardware；用户显式指定 SoC 型号时经 npu-arch skill 查询），按架构代际选择对应工作流并交由 workflow-orchestrator skill 启动：arch 2201（A2/A3）路由至 a2-a3-op-develop.yaml，arch >= 3510（A5 及更新）路由至 op-develop.yaml；无法判定时报告证据并询问用户。当用户要求启动算子开发工作流、或需要按机器架构选择 A2/A3 或 A5 工作流时使用。
+name: workflow-dispatch
+description: 算子开发工作流的架构路由分发
 disable-model-invocation: true
 ---
 
@@ -17,8 +17,8 @@ workflow-orchestrator skill 启动它。
 
 | NPU arch | 平台代际 | 工作流 YAML |
 |---|---|---|
-| `2201`（DAV_2201，如 Ascend 910B） | A2/A3 | `$SKILL_ROOT/../../workflows/a2-a3-op-develop.yaml` |
-| `>= 3510`（DAV_3510 及更新，如 Ascend 950） | A5 及更新 | `$SKILL_ROOT/../../workflows/op-develop.yaml` |
+| `2201`（DAV_2201，如 Ascend 910B） | A2/A3 | `$SKILL_ROOT/../ops-registry-invoke/workflows/a2-a3-op-develop.yaml` |
+| `>= 3510`（DAV_3510 及更新，如 Ascend 950） | A5 及更新 | `$SKILL_ROOT/../ops-registry-invoke/workflows/op-develop.yaml` |
 
 用户显式指定路线时以用户为准。其余 arch 值（早于 2201、介于两代之间、
 无法判定）不猜测：报告检测结果并请用户选择路线。

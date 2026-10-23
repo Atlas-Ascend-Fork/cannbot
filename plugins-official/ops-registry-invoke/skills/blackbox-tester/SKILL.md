@@ -1,6 +1,7 @@
 ---
 name: blackbox-tester
 description: TTK 黑盒执行技能。使用 ops-test-kit aclnn 模式对当前工作流部署的 vendor 自定义算子做全量黑盒精度执行与结果汇报：按公共标准文件分离 L0/L1 正向套件与 L2 负向套件 → 加载 golden 插件 → 全量跑 ttk aclnn → 解析 result.csv 输出两条门禁结论（L0/L1 数值全绿 + L2 反向全部被拒绝）。当需要对算子进行黑盒精度验收、或驱动 blackbox-tester 执行黑盒时使用。
+disable-model-invocation: true
 ---
 
 # TTK 黑盒精度验收

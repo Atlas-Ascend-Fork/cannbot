@@ -1,6 +1,7 @@
 ---
 name: ascendc-build-system
 description: Ascend C 算子的构建与排错。用于编写或修改算子 kernel/host 代码、创建算子工程、改 CMakeLists.txt；排查构建失败、.o 产物缺失或数量不符、追踪 codegen 实际编译了什么；理解从 .cpp 到设备二进制的编译管线。
+disable-model-invocation: true
 ---
 
 # Ascend C 构建系统

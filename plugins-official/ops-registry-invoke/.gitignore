@@ -1,0 +1,15 @@
+# 外部 skills：运行时由入口 skill 预检后经 npx skills add 从 cannbot-skills
+# 主线装配（清单见 skills/ops-registry-invoke/skills.json），不入库。
+/skills/ascendc-code-review/
+/skills/ascendc-docs-gen/
+/skills/ascendc-precision-debug/
+/skills/ascendc-registry-invoke-template/
+/skills/ascendc-runtime-debug/
+/skills/ascendc-st-design/
+/skills/ascendc-whitebox-design/
+/skills/npu-arch/
+/skills/ops-design-paradigms/
+/skills/ops-spec-gen/
+
+# skills CLI 的安装记录；本仓不 pin 外部依赖版本
+/skills-lock.json
