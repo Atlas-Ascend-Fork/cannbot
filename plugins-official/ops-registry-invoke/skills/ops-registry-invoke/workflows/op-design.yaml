@@ -1,0 +1,291 @@
+# Minimal op-design workflow driving the shared workflow-orchestrator skill.
+# The orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
+# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+workflow: op-design
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant to this task, as development reference.
+nodes:
+  - id: init-design-dir
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Initialize the design document directory structure
+    goal:
+      - "Create $WORK_DIR/design/branches/ as a directory and $WORK_DIR/design/INDEX.md whose content equals the design-template skill's templates/design/INDEX.md.templ with every {OP} replaced by the operator name from spec.yaml."
+    approach:
+      - "OP_NAME=$(python3 -c \"import yaml; print(yaml.safe_load(open('$WORK_DIR/spec/spec.yaml'))['op']['name'])\")"
+      - "mkdir -p $WORK_DIR/design/branches"
+      - "sed \"s/{OP}/${OP_NAME}/g\" the design-template skill's templates/design/INDEX.md.templ > $WORK_DIR/design/INDEX.md"
+    acceptance:
+      - "$WORK_DIR/design/ and $WORK_DIR/design/branches/ exist and are directories."
+      - "$WORK_DIR/design/INDEX.md exists and is non-empty."
+      - "No placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/INDEX.md."
+    out_of_scope:
+      - "Do not create any design document other than INDEX.md; the remaining design files are produced by later tasks."
+      - "Do not create or modify any file outside $WORK_DIR/design/."
+    depends_on: []
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-overview
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Overview.md
+    goal:
+      - "Produce $WORK_DIR/design/Overview.md for the operator in $WORK_DIR/spec/spec.yaml: operator function, natural-language definition, LaTeX math formula, and special-value / numerical-stability semantics, all traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Copy the design-template skill's templates/design/Overview.md.templ to $WORK_DIR/design/Overview.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the four sections from them: ## 算子功能 (one sentence), ## 算子定义(自然语言) (exact computation semantics: input relationships and attr effect), ## 数学公式(LaTeX) (a strict LaTeX formula — the single semantic source for every branch kernel and golden), ## 特殊值与数值稳定性 (NaN/+Inf/-Inf/0/negative behaviour aligned with golden; overflow/underflow/divide-by-zero and saturation/clamp; the precision-sensitive step and whether high-precision accumulation is required)."
+      - "Replace every `>` lead-in line with actual design content; keep the four section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Overview.md exists and is non-empty: test -s $WORK_DIR/design/Overview.md."
+      - "No placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Overview.md."
+      - "All four section headings remain: grep -qF '## 算子功能' $WORK_DIR/design/Overview.md && grep -qF '## 算子定义(自然语言)' $WORK_DIR/design/Overview.md && grep -qF '## 数学公式(LaTeX)' $WORK_DIR/design/Overview.md && grep -qF '## 特殊值与数值稳定性' $WORK_DIR/design/Overview.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/Overview.md; the ## 数学公式(LaTeX) section contains a LaTeX formula, and the content is traceable to $WORK_DIR/requirements/REQUIREMENTS.md / $WORK_DIR/spec/spec.yaml."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Overview.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-interface
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Interface.md
+    goal:
+      - "Produce $WORK_DIR/design/Interface.md for the operator in $WORK_DIR/spec/spec.yaml: the operator prototype (ATen IR + Inputs/Outputs/Attrs), the supported dtype combination table, data format support, and constraints/limitations, all traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Copy the design-template skill's templates/design/Interface.md.templ to $WORK_DIR/design/Interface.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the sections from them: ## 算子原型 (ATen IR plus Inputs/Outputs/Attrs with name, semantics, shape contract, optionality and defaults), ## 算子规格(受支持 dtype 组合) (a table laid out by Inputs/Outputs, one row per supported combination), ## 数据 Format 支持, ## 约束与限制 (shape range / rank cap / per-axis length cap, dtype / format / attr-value constraints, alignment, broadcast rules, explicitly unsupported scenarios), and ## OpDef 代码片段 (a complete OpDef class body generated from the prototype + spec, DataType({...}) arrays expanded per combination, all Input/Output lists equal length)."
+      - "Fill the ## 算子规格(受支持 dtype 组合) table row by row from spec.yaml: its rows/content must match spec.yaml exactly (no placeholder rows, no `<...>` residue in that table)."
+      - "Replace every `>` lead-in line with actual design content; keep the section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Interface.md exists and is non-empty: test -s $WORK_DIR/design/Interface.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Interface.md."
+      - "No `<...>` placeholder residue in the OpDef / dtype table: ! grep -qE '<(Op|op|in[0-9]*|out[0-9]*|optional_in|attr|req_attr|bool_attr|default|soc)>' $WORK_DIR/design/Interface.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/Interface.md."
+      - "The ## 算子规格(受支持 dtype 组合) table has no placeholder rows and its rows/content match $WORK_DIR/spec/spec.yaml's supported combinations exactly."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Interface.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-infershape-dtype
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document InferShapeDtype.md
+    goal:
+      - "Produce $WORK_DIR/design/InferShapeDtype.md for the operator in $WORK_DIR/spec/spec.yaml: the InferShape and InferDataType derivation rules (how outputs are derived from inputs), traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Copy the design-template skill's templates/design/InferShapeDtype.md.templ to $WORK_DIR/design/InferShapeDtype.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the two sections: ## InferShape (per-output shape derivation; broadcast alignment rule and per-dim output size; DynamicShape value/attr-driven derivation logic when applicable; empty/scalar/rank-mismatch edge cases) and ## InferDataType (per-output dtype source and any dtype promotion; the consistency check point against Interface.md's 算子规格 table)."
+      - "Replace every `>` lead-in line with actual derivation rules consistent with $WORK_DIR/spec/spec.yaml's supported_combinations; keep the section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/InferShapeDtype.md exists and is non-empty: test -s $WORK_DIR/design/InferShapeDtype.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/InferShapeDtype.md."
+      - "Every `>` lead-in has been replaced with actual derivation rules: ! grep -qE '^>' $WORK_DIR/design/InferShapeDtype.md; the rules are consistent with $WORK_DIR/spec/spec.yaml's supported_combinations."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/InferShapeDtype.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-validation
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Validation.md
+    goal:
+      - "Produce $WORK_DIR/design/Validation.md: the operator-wide end-to-end verification criteria (Golden reference, test-case matrix, per-dtype precision tolerances, performance targets), traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Copy the design-template skill's templates/design/Validation.md.templ to $WORK_DIR/design/Validation.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill: ## 参考实现 (Golden) (a PyTorch / CPU reference or formula anchored to Overview.md's math formula, independent of the kernel under test — no self-verification), ## 端到端测试用例矩阵 (shape × dtype × format matrix covering every supported dtype combination, every branch, special values, max shape, non-aligned, broadcast if supported), and ## 精度验收标准 (per-dtype rtol/atol plus pointwise special-value alignment)."
+      - "Fill ## 性能目标: carry over §7.4 of $WORK_DIR/requirements/REQUIREMENTS.md — list at least 4 key shapes aligned with real points that exist in this document's 端到端测试用例矩阵 (leave the `tilingKey` column empty for now, to be completed by the later calibration task from BranchCatalog.md), select the source route (A competitor profiling / B theoretical evaluation / both not applicable), and fill in the target-metric definition and achievement-rate algorithm per row."
+      - "Leave the target-value column empty in this task (it is back-filled by a later calibration task using measured/estimated values); do not invent any number here."
+      - "Replace every `>` lead-in line with actual content; keep the section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Validation.md exists and is non-empty: test -s $WORK_DIR/design/Validation.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Validation.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/Validation.md; the 参考实现 (Golden) is explicitly independent of the kernel under test, and 精度验收标准 gives per-dtype rtol/atol."
+      - "grep -qF '性能目标' $WORK_DIR/design/Validation.md; its key-shape count is ≥ 4 and its shape/dtype values and source route match §7.4 of $WORK_DIR/requirements/REQUIREMENTS.md item by item; the target-value column is empty or marked 待标定, with no invented numbers."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Validation.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-devview-tilingkey-tilingdata-branchroute
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design documents DevView.md / TilingKey.md / TilingData.md / BranchRoute.md
+    goal:
+      - "Produce $WORK_DIR/design/DevView.md, $WORK_DIR/design/TilingKey.md, $WORK_DIR/design/TilingData.md, and $WORK_DIR/design/BranchRoute.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory), and load the paradigm patterns.md corresponding to $WORK_DIR/spec/spec.yaml's op.paradigms."
+      - "Before writing TilingKey.md / BranchRoute.md, load the ascendc-build-system skill and read references/tiling-key-encoding.md; encode every tilingKey with the paradigm's GET_TPL_TILING_KEY actual bit encoding (never self-invented logical sequence numbers)."
+      - "Copy the four templates the design-template skill's templates/design/{DevView,TilingKey,TilingData,BranchRoute}.md.templ to $WORK_DIR/design/, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml; BranchRoute.md.templ carries no {OP} and is copied as-is)."
+      - "Write DevView.md (开发视图) from its template: describe the file organization strictly per the paradigm patterns.md — the {op}_package/ project tree (op_host/ {op}_def.cpp OpDef registration with dtype/format combos and .ValueDepend(OPTIONAL) on value-dependent inputs, {op}_infershape.cpp InferShape/InferDataType registration matching InferShapeDtype.md, arch35/ tiling entry + split functions and the {OP}CompileInfo header; op_kernel/ arch35/ kernel templates, empty-tensor template, tiling_data.h TilingData struct, struct.h TilingKey template params, and the kernel-entry source declaring the __global__ __aicore__ entry that instantiates all TilingKey combinations). Replace every `>` lead-in."
+      - "Write TilingKey.md (TilingKey 模板划分) from its template, following its 须包含 checklist item by item: (1) the TilingKey C++ struct definition as ASCENDC_TPL_* code, with no TilingKeyIS numeric branches unless the paradigm requires them; (2) the TPL_SEL combination table listing every TilingKey value combination with its trigger condition and covered dtype/shape; (3) the template partition table and binary instance count, where every boundary-case routing row is an actually reachable branch. Keep the branch-split discipline: only real structural/path differences become separate tilingKeys, pure parameter differences are parameterized. The tilingKey set produced here is the single source for BranchRoute.md and BranchCatalog.md. Replace every `>` lead-in."
+      - "Write TilingData.md (TilingData 汇总结构体) from its template, following its 须包含 checklist item by item: (1) the complete TilingData C++ struct definition; (2) the field table (name / type / meaning / source from HostTiling.md / kernel consumption point from Kernel.md); (3) paradigm-specific constraints (e.g. Reduction valid/padded separation, cacheBufUbSize) where applicable. Replace every `>` lead-in."
+      - "Write BranchRoute.md (分支判定与场景覆盖) from its template, following its 须包含 checklist item by item: (1) the tilingKey routing table (tilingKey / branch name / entry condition / covered scenario / corresponding Interface.md 算子规格 row); (2) branch priority and mutual-exclusion with a routing decision flowchart, where no two branches cover the same case; (3) the scenario coverage matrix, where every supported dtype combination falls into at least one branch. Its tilingKey set must match TilingKey.md exactly. Replace every `>` lead-in."
+      - "Keep each template's section headings; do not touch any other design file."
+    acceptance:
+      - "All four files exist and are non-empty: test -s $WORK_DIR/design/DevView.md && test -s $WORK_DIR/design/TilingKey.md && test -s $WORK_DIR/design/TilingData.md && test -s $WORK_DIR/design/BranchRoute.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/DevView.md $WORK_DIR/design/TilingKey.md $WORK_DIR/design/TilingData.md $WORK_DIR/design/BranchRoute.md."
+      - "No `<...>` placeholder residue in the TilingKey / BranchRoute tables: ! grep -qE '<(name|case|dtype|shape|值|条件)>' $WORK_DIR/design/TilingKey.md $WORK_DIR/design/BranchRoute.md."
+      - "Every `>` lead-in in each of the four files has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/DevView.md $WORK_DIR/design/TilingKey.md $WORK_DIR/design/TilingData.md $WORK_DIR/design/BranchRoute.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/DevView.md, TilingKey.md, TilingData.md, BranchRoute.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-host-tiling
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document HostTiling.md
+    goal:
+      - "Produce $WORK_DIR/design/HostTiling.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md Host-side Tiling chapter."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory); read the Host-side Tiling chapter of the paradigm patterns.md (or other tiling content if absent) to determine the subsection structure."
+      - "Read $WORK_DIR/spec/spec.yaml's determinism block (accumulation_order + bitwise_reproducible) and consult skills/ops-spec-gen/references/accumulation_order.md §0/§1/§3; make the split/tiling decisions consistent with it (stable_in_axis → partials merged in fixed order; bitwise_reproducible: true → document how the kernel path is fixed) and record this in the determinism guarantees subsection."
+      - "Copy the design-template skill's templates/design/HostTiling.md.templ to $WORK_DIR/design/HostTiling.md, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml)."
+      - "Fill each subsection per the template's 须包含 checklist (liveness-node analysis, framework prerequisites, input preprocessing/axis fusion, UB split, multi-core split, group/2D split, fill TilingData + set TilingKey, host registration, overall Tiling structure, determinism guarantees); replace every `>` lead-in line with actual content; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/HostTiling.md exists and is non-empty: test -s $WORK_DIR/design/HostTiling.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/HostTiling.md."
+      - "Every `>` lead-in has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/HostTiling.md."
+      - "Determinism is explicit and grounded: grep -qF 'accumulation_order' $WORK_DIR/design/HostTiling.md && grep -qF 'bitwise_reproducible' $WORK_DIR/design/HostTiling.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/HostTiling.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-devview-tilingkey-tilingdata-branchroute
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-kernel
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Kernel.md
+    goal:
+      - "Produce $WORK_DIR/design/Kernel.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md Kernel-side chapter."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory); read the Kernel-side chapter of the paradigm patterns.md and confirm the paradigm-specific requirements (the template's item 9 H4 breakdown)."
+      - "Copy the design-template skill's templates/design/Kernel.md.templ to $WORK_DIR/design/Kernel.md, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml)."
+      - "Fill each item per the template's 须包含 checklist (Kernel entry, Kernel class declaration, scheduling framework, Init, Process per dtype, Sync, CopyIn/CopyInBrc, CopyOut, paradigm-specific Kernel subsections); replace every `>` lead-in line with actual content; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Kernel.md exists and is non-empty: test -s $WORK_DIR/design/Kernel.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Kernel.md."
+      - "Every `>` lead-in has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/Kernel.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Kernel.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-host-tiling
+      - write-design-interface
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-api
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document API.md
+    goal:
+      - "Produce $WORK_DIR/design/API.md for the operator in $WORK_DIR/spec/spec.yaml: API mapping, API verification record, data-flow design, memory management, and UB capacity verification — the closing acceptance of the implementation-plan docs (DevView.md–API.md)."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory); read the paradigm patterns.md sections on API mapping / API verification record / memory management / data-flow design / UB capacity verification to determine the subsection structure."
+      - "Copy the design-template skill's templates/design/API.md.templ to $WORK_DIR/design/API.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Fill each item per the template's 须包含 checklist (VF function signatures, API mapping table, API verification record, data-flow design, memory management, UB capacity verification); replace every `>` lead-in line with actual content."
+      - "Per the template, if any API verification fails, roll back to $WORK_DIR/design/HostTiling.md to re-derive with a different API — this task may revise HostTiling.md / Kernel.md at the corresponding places until all API verifications pass."
+    acceptance:
+      - "$WORK_DIR/design/API.md exists and is non-empty: test -s $WORK_DIR/design/API.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/API.md."
+      - "Every `>` lead-in has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/API.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/API.md (and, only if an API verification fails, revise HostTiling.md / Kernel.md at the corresponding places); do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-kernel
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-branch-catalog
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document BranchCatalog.md
+    goal:
+      - "Produce $WORK_DIR/design/BranchCatalog.md: the branch design catalog table registering, for every tilingKey, the branch name / entry condition / covered scenario / design file path, derived from $WORK_DIR/design/BranchRoute.md's branch determination."
+    approach:
+      - "Copy the design-template skill's templates/design/BranchCatalog.md.templ to $WORK_DIR/design/BranchCatalog.md, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml)."
+      - "Based on $WORK_DIR/design/BranchRoute.md's branch determination, write the catalog table: one row per tilingKey, registering branch name / entry condition / covered scenario / design file path $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md."
+      - "The tilingKey set in BranchCatalog.md must match $WORK_DIR/design/BranchRoute.md exactly."
+      - "Only register the catalog here; do not write any branch's detailed design, and do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/BranchCatalog.md exists and is non-empty: test -s $WORK_DIR/design/BranchCatalog.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/BranchCatalog.md."
+      - "No `<...>` placeholder residue in the catalog table: ! grep -qE '<(name|条件|case)>' $WORK_DIR/design/BranchCatalog.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/BranchCatalog.md."
+      - "The catalog table has one row per tilingKey, matching $WORK_DIR/design/BranchRoute.md's key set exactly (no missing, no extra), and each row references $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/BranchCatalog.md; do not create or modify any other file (including the branch design files, which are produced by a later task)."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-devview-tilingkey-tilingdata-branchroute
+    max_retries: 2
+    on_exhaust: exit
+  - id: generate-design-subgraph
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the branch design subgraph design-sub-graph.yaml
+    goal:
+      - "Read $WORK_DIR/design/BranchCatalog.md and produce $WORK_DIR/.workflow/design-sub-graph.yaml: one designer task per tilingKey writing $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md, each node satisfying the subgraph contract and carrying depends_on: [] (branches are independent)."
+      - "Every generated node must carry an acceptance item requiring the branch design doc's code blocks to satisfy the DESIGN-BRANCH template's completeness contract: no '...'/'……'/省略 omission inside any code block, and every identifier the code uses (members, buffers, events, tiling-data fields) is declared in the doc. The design-verifier enforces this contract and rejects incomplete code blocks, so the requirement must be explicit in the node's acceptance."
+    approach:
+      - "Read $ORCH_SKILL/templates/basic_workflow.yaml first (ORCH_SKILL=the workflow-orchestrator skill directory) — the annotated schema template; the node keys and their list/str/int requirements are documented inline there, so take the node shape from it."
+      - "Write the subgraph form: a mapping whose sole top-level key is nodes holding normal nodes only. Enumerate every tilingKey in BranchCatalog.md in registration order, one node per key, executor=designer / verifier=design-verifier, each writing $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md."
+      - "Branch design nodes are independent — each writes its own file and shares no state — so every node's depends_on is []."
+    acceptance:
+      - 'Contract-valid: ORCH_SKILL=the workflow-orchestrator skill directory ; python3 -c "import sys; sys.path.insert(0,\"$ORCH_SKILL/scripts\"); import get_task; nodes,err=get_task.load_subgraph(\"$WORK_DIR/.workflow/design-sub-graph.yaml\"); assert not err, err" exits 0.'
+      - 'Dep-free: python3 -c "import yaml; nodes=yaml.safe_load(open(\"$WORK_DIR/.workflow/design-sub-graph.yaml\")[\"nodes\"]; bad=[n[\"id\"] for n in nodes if n[\"depends_on\"]]; assert not bad, \"every node carries no dependency (depends_on: []); offenders: %s\" % bad" exits 0.'
+      - "Node count equals the tilingKey count in BranchCatalog.md (no missing, no extra); node ids/titles/acceptance are traceable to BranchCatalog.md / BranchRoute.md; every node has executor=designer and verifier=design-verifier."
+      - "Every node's acceptance includes the code-completeness item above (verbatim or faithfully rephrased; never dropped)."
+    out_of_scope:
+      - "Do not create or modify any file other than $WORK_DIR/.workflow/design-sub-graph.yaml."
+      - "Do not execute the branch design tasks; do not write any branch design file."
+    depends_on:
+      - write-design-branch-catalog
+      - write-design-api
+      - write-design-overview
+      - write-design-validation
+    max_retries: 2
+    on_exhaust: exit
+  - id: design-branches
+    task_type: subgraph
+    file: .workflow/design-sub-graph.yaml
+    depends_on:
+      - generate-design-subgraph

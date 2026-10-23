@@ -1,0 +1,180 @@
+# Blackbox verification module, extracted from the retired op-develop monolith
+# (blackbox-gen / blackbox-smoke / blackbox-run-l0-100pct / blackbox-run-l1-100pct /
+# blackbox-run-l2-100pct) plus the new verify-inputs module boundary gate. Input:
+# a complete op-impl run's artifacts (op/ package with its tiling UT and whitebox
+# suites, golden.py, spec/, design/, requirements/, npu-arch.json, ttk.conf.yaml).
+# Output: the operator verified to zero precision problems — L0/L1 positive suites
+# 100% green, L2 negative suite fully rejected, closing regression holding.
+# The orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
+# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+workflow: blackbox
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore the operator package under $WORK_DIR/op/ and the requirements under $WORK_DIR/requirements/ relevant to this task, as verification reference.
+nodes:
+  - id: verify-inputs
+    task_type: normal
+    title: Module boundary gate - verify the op-impl artifacts contract and rebuild the deployment
+    executor: general-executor
+    verifier: general-verifier
+    depends_on: []
+    goal:
+      - "Prove the frozen op-impl artifacts in $WORK_DIR satisfy the blackbox module's input contract before any verification work starts: every required input exists, the op package rebuilds for the target SoC, and its aclnn API installs into $WORK_DIR/dev-package with the exported L2 symbol pair — so every later node tests a known-good deployment of this work_dir's own package."
+      - "Completion gate: the build exits 0, the installed libcust_opapi.so exports the aclnn<OpPascal>GetWorkspaceSize / aclnn<OpPascal> symbol pair, and every input-contract file check passes."
+    approach:
+      - "This node verifies, never fixes: the inputs are final op-impl products. A failing check is a module-boundary violation (a fixture defect), reported as FAILED with the failing check named — do not edit any source to make a check pass."
+      - "Derive the operator's name forms from spec.yaml: OP_SNAKE = op.name, OP_PASCAL = PascalCase."
+      - "Input-contract files: $WORK_DIR/golden.py, $WORK_DIR/spec/spec.yaml, $WORK_DIR/requirements/REQUIREMENTS.md, $WORK_DIR/design/ (with Validation.md), $WORK_DIR/npu-arch.json, $WORK_DIR/ttk.conf.yaml; the package skeleton $WORK_DIR/op/op_host/, $WORK_DIR/op/op_kernel/, $WORK_DIR/op/op_api/, $WORK_DIR/op/op_graph/, $WORK_DIR/op/build.sh, $WORK_DIR/op/CMakeLists.txt; the op_api four files $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h, aclnn_${OP_SNAKE}.cpp, ${OP_SNAKE}.h, ${OP_SNAKE}.cpp; the closing-regression assets $WORK_DIR/op/tests/tiling/run.sh + test_tiling_gtest.cpp and at least one $WORK_DIR/op/tests/whitebox/branch-*/ttk_design_doc_cases.csv."
+      - "Rebuild the package from its own sources: cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture recorded in $WORK_DIR/npu-arch.json exits 0 (the build's CMake falls back to $ENV{ASCEND_HOME_PATH} when CANN_HOME is unset; only if both are unset, source the toolkit's set_env.sh first)."
+      - "Reinstall into this work_dir's own deployment: rm -rf $WORK_DIR/dev-package, then install the produced run package $WORK_DIR/op/build/custom_opp_ubuntu_x86_64.run with bash <run package> --quiet --nox11 --force --install-path=$WORK_DIR/dev-package (the --force skips the installer's bundled-python pre-validation, which cannot load in this container)."
+    acceptance:
+      - "Input-contract files present: test -s $WORK_DIR/golden.py && test -s $WORK_DIR/spec/spec.yaml && test -s $WORK_DIR/requirements/REQUIREMENTS.md && test -s $WORK_DIR/design/Validation.md && test -s $WORK_DIR/npu-arch.json && test -s $WORK_DIR/ttk.conf.yaml && test -d $WORK_DIR/op/op_host && test -d $WORK_DIR/op/op_kernel && test -d $WORK_DIR/op/op_api && test -d $WORK_DIR/op/op_graph && test -f $WORK_DIR/op/build.sh && test -f $WORK_DIR/op/CMakeLists.txt."
+      - "op_api four files present: test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.cpp && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.cpp."
+      - "Build passes: cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture recorded in $WORK_DIR/npu-arch.json exits 0."
+      - "Deployment installed: test -s $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so."
+      - "L2 symbol pair exported: nm -D $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so | grep -cE ' T aclnn<OP_PASCAL>(GetWorkspaceSize)?$' equals 2 (with <OP_PASCAL> substituted from spec.yaml)."
+      - "Closing-regression assets present: test -f $WORK_DIR/op/tests/tiling/run.sh && test -s $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp && find $WORK_DIR/op/tests/whitebox -name ttk_design_doc_cases.csv | grep -q ."
+    out_of_scope:
+      - "Verify only: no file under $WORK_DIR/op/, golden.py, spec/, design/, requirements/, npu-arch.json or ttk.conf.yaml is modified; the only writes are the build artifacts under $WORK_DIR/op/build/ and the fresh $WORK_DIR/dev-package/ install."
+      - "Do not run any device test, ttk batch, tiling UT or whitebox batch in this node; do not fix a failing check — report it."
+    max_retries: 2
+    on_exhaust: exit
+  - id: blackbox-gen
+    task_type: normal
+    title: Generate the blackbox ACLNN ST case set (L0/L1/L2 plus oversized side tables)
+    executor: general-executor
+    verifier: general-verifier
+    depends_on:
+      - verify-inputs
+    goal:
+      - "Produce the full blackbox ACLNN ST case set under $WORK_DIR/op/tests/blackbox/ (design/ intermediates + testcases/ standard *_l0_functional.csv, *_l1_functional.csv, *_l2_exception.csv) for the operator in $WORK_DIR/spec/spec.yaml, designed one-shot from facts independent of the design line: $WORK_DIR/requirements/REQUIREMENTS.md plus the actual interface facts — the proto sources under $WORK_DIR/op/op_graph/ and the actual OpDef in $WORK_DIR/op/op_host/*_def.cpp; reading $WORK_DIR/design/*.md or any existing case set is forbidden, so the blackbox suite stays independent of the whitebox/design line."
+      - "Completion gate: the ascendc-st-design skill's generation, QA and review stages all pass; the case parameter interface (names, order, types, optionality, defaults, output positions; api_name = aclnn<OpPascal>) matches the actual OpDef; resource-oversized cases are isolated into same-stem *_oversized.csv side tables that stay out of the executable suites."
+    approach:
+      - "Load the ascendc-st-design skill first (mandatory — it is the single execution authority for blackbox modeling, generation, QA and standard artifacts; do not restate or bypass its stage procedure); adapt its output layout to this workflow: design/ and testcases/ under $WORK_DIR/op/tests/blackbox/."
+      - "Fact mapping (this workflow's equivalent of the agent doc's REQUIREMENTS + proto.md inputs): $WORK_DIR/requirements/REQUIREMENTS.md -> supported scope, value domains, error semantics; $WORK_DIR/op/op_graph/ proto sources + the actual OpDef in $WORK_DIR/op/op_host/*_def.cpp -> parameter ABI and tensor-to-tensor shape bindings. An explicit conflict between the two fact inputs that would flip a positive/negative classification is reported as FAILED with both locations — never guessed away."
+      - "Run ascendc-st-design once, for the ACLNN suite under tests/blackbox/. Targets are predetermined; no interface-selection prompt. Cover applicable rank-0 inputs. Every tensor's support_non_contiguous is declared explicitly from the facts (false unless explicitly supported); ValueDepend(OPTIONAL) is modeled per the ACLNN ABI; negative scenarios lock original inputs, never derived quantities."
+      - "After the standard CSVs fully pass the skill's generation/QA/review, isolate oversized cases: python3 $WORK_DIR/.agents/the ops-registry-invoke skill's scripts/isolate_oversized_cases.py <the three standard CSVs under $WORK_DIR/op/tests/blackbox/testcases/> — over-threshold rows move to same-stem *_oversized.csv side tables that never enter the executable suites; thresholds may only be set via the script's documented env overrides and must be recorded; do not shrink factor domains, hand-edit CSVs, or delete side tables to dodge the isolation."
+      - "Record $WORK_DIR/op/tests/blackbox/WORKFLOW_PROVENANCE.json: both fact inputs, the skill's real path and repo revision, conflict conclusions, standard artifacts, per-layer main/side-table counts and effective thresholds, the public QA conclusions, and any requirement scenario that could not be landed."
+    acceptance:
+      - "The ACLNN suite contains the independently generated standard L0/L1/L2 CSVs and the full public design/QA reports."
+      - "Standard CSVs exist non-empty (each glob resolves at least one file): test -s $WORK_DIR/op/tests/blackbox/testcases/*_l0_functional.csv && test -s $WORK_DIR/op/tests/blackbox/testcases/*_l1_functional.csv && test -s $WORK_DIR/op/tests/blackbox/testcases/*_l2_exception.csv."
+      - "Design intermediates exist non-empty: $WORK_DIR/op/tests/blackbox/design/ contains the skill's standard artifacts 01_parameter_description.md, 02_test_factors.yaml, 03_scenario_enumeration.md, 04_constraints.py, 05_topology.md, 06_review_report.md, each non-empty."
+      - "api_name consistency: OP_PASCAL=$(python3 -c \"import yaml; n=yaml.safe_load(open('$WORK_DIR/spec/spec.yaml'))['op']['name']; print(''.join(w.capitalize() for w in n.split('_')))\") ; a python3 csv.DictReader pass over the three standard CSVs asserts every data row's api_name is exactly aclnn$OP_PASCAL."
+      - "Interface consistency with the actual OpDef: parameter names, order, optionality, defaults and output positions in the case set match $WORK_DIR/op/op_host/*_def.cpp, and the tensor-to-tensor shape bindings match the proto contract (st-verifier cross-checks item by item)."
+      - "Oversized isolation is effective and stable: rerunning isolate_oversized_cases.py over the three main CSVs exits 0 and moves zero further rows; *_oversized.csv rows are excluded from the executable suites and the side-table counts are recorded in WORKFLOW_PROVENANCE.json."
+      - "$WORK_DIR/op/tests/blackbox/WORKFLOW_PROVENANCE.json exists, parses as JSON, and records both fact inputs, skill path + revision, conflict conclusions, main/side-table counts and effective thresholds."
+      - "st-verifier reviews per its 用例生成 dimensions (standard artifacts present, structure coverage, interface/shape-binding consistency, no hand-written or sampled CSV) and passes."
+    out_of_scope:
+      - "Write only under $WORK_DIR/op/tests/blackbox/; do not modify kernel/host/api sources, $WORK_DIR/golden.py, design docs, whitebox case sets, or anything else."
+      - "Do not execute device tests or run any ttk batch; do not hand-write, sample, or post-edit CSV rows; do not delete or shrink side tables to bypass isolation."
+    max_retries: 2
+    on_exhaust: exit
+  - id: blackbox-smoke
+    task_type: normal
+    title: Blackbox smoke - freeze the three suite CSVs, run the first L0 case to green
+    executor: general-executor
+    verifier: general-verifier
+    depends_on:
+      - blackbox-gen
+    goal:
+      - "Run the first case of the L0 test suite with the TTK framework, fixing precision issues until it passes."
+    approach:
+      - "Locate the cases: the blackbox-tester skill's merge_cases.py adapts the standard layer CSVs into executable TTK suites (column-union merge, offset normalization; its exact-suffix matching keeps *_oversized.csv side tables out by construction). Freeze the suites under $WORK_DIR/op/tests/blackbox/ttk/ with three invocations: (1) over a staging dir holding only the *_l0_functional.csv, --positive-out blackbox_l0.csv; (2) over a staging dir holding only the *_l1_functional.csv, --positive-out blackbox_l1.csv; (3) over the full testcases/ dir, --positive-out blackbox_all.csv --negative-out blackbox_l2_neg.csv (this invocation's duplicate-testcase_name check across L0/L1 must pass). Record each suite's data-row count — the --expect-total value for every later task. Done when: the four CSVs exist and each per-layer suite's data-row count equals its standard layer CSV's data-row count."
+      - "Locate the TTK framework root: $WORK_DIR/ops-test-kit; every ttk command runs from that directory. The blackbox-tester skill is the invocation authority for ttk aclnn mode (environment, vendor visibility, bin-path proof, result parsing) — consult it and its references/ttk-aclnn-guide.md for the invocation contract."
+      - "Phase 1 - run the first case without cross_check: read the first row's testcase_name from blackbox_l0.csv and run python3 -m ttk aclnn -i $WORK_DIR/op/tests/blackbox/ttk/blackbox_l0.csv -t <case-name> --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/op/tests/blackbox/ttk/result_smoke.csv (local golden comparison only, no third_party), with CANN debug logging tee'd to smoke_debug.log in the same directory. --input-dist uniform is fixed workflow-wide; the golden is $WORK_DIR/golden.py used as-is — if it is missing, the task fails. Done when: result_smoke.csv holds exactly one row."
+      - "Phase 2 - adjudicate failed cases: rerun each row whose precision_status is not PASS with -t by name adding --compare cross_check --config $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server), writing to $WORK_DIR/op/tests/blackbox/ttk/result_smoke-crosscheck.csv; a case that passes under cross_check is adjudicated green; a case still failing enters precision localization and fix (wrong-precision class of the triage line + fix discipline) and is rerun until green. Skip this phase when phase 1 is all-green."
+      - "Gate script: run the parse_result.py script under the blackbox-tester skill on <result.csv> with --expect-total <N>; it exits 0 if and only if pass==total and fail==skip==0; for the negative suite add --negative — exit 0 if and only if pass==0 (every row rejected)."
+      - "Failure triage: reproduce each failure first with -t by case name, then load the skill for its class and record conclusions and fixes in the evidence file — build failure (build.sh error / no artifacts) -> ascendc-compile-debug; AIC Error, runtime crash, error codes (161xxx/361xxx/507xxx/561xxx), hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug (criteria: $WORK_DIR/design/Validation.md per-dtype rtol/atol); TTK-framework-level failure (malformed results / GOLDEN_FAILURE / OOM / killed) -> ttk-how-diagnose."
+      - "Fix discipline: reproduce before attributing; code fixes stay inside the out_of_scope whitelist; after any code change run cd $WORK_DIR/op && ./build.sh to rebuild and deploy into dev-package before rerunning; suite CSVs, golden.py, tolerances and isolation thresholds stay as-is; a failure that cannot be fixed without deviating from design stays red with its attribution (oracle/design defect)."
+      - "Operator-source proof: run the check_op_binpath.py script under the blackbox-tester skill on $WORK_DIR/op/tests/blackbox/ttk/smoke_debug.log with --optype <OpPascal> --expect-dir $WORK_DIR/dev-package/vendors/<OpPascal> --require. Done when: exit 0 — the tested kernel comes from this workflow's own deployment."
+    acceptance:
+      - "Gate: the first L0 case ends green in phase 1 (parse_result.py $WORK_DIR/op/tests/blackbox/ttk/result_smoke.csv --expect-total 1 exits 0) or is adjudicated green in phase 2 (parse_result.py $WORK_DIR/op/tests/blackbox/ttk/result_smoke-crosscheck.csv --expect-total 1 exits 0); a case still failing after cross_check goes through precision fix until green."
+      - "Suites ready: the three suite CSVs' data-row counts equal their standard layer CSVs'; blackbox_all.csv's data-row count equals l0+l1; counts and oversized side-table counts recorded."
+      - "Operator source: check_op_binpath.py --require exits 0."
+    out_of_scope:
+      - "Modification whitelist: $WORK_DIR/op/op_host/ (host/tiling code), $WORK_DIR/op/op_kernel/ (kernel code) and $WORK_DIR/op/op_api/ (aclnn L2/L0 API code — this module verifies and fixes the aclnn path end to end); everything else stays as-is — the TTK framework ($WORK_DIR/ops-test-kit), all case CSVs, $WORK_DIR/golden.py (never modify), tolerances and isolation thresholds, $WORK_DIR/design/ docs, whitebox case sets."
+      - "Run only the first L0 case; new files land only under $WORK_DIR/op/tests/blackbox/."
+    max_retries: 2
+    on_exhaust: exit
+  - id: blackbox-run-l0-100pct
+    task_type: normal
+    title: Full L0 blackbox suite - every case precision-PASS (hard gate)
+    executor: general-executor
+    verifier: general-verifier
+    depends_on:
+      - blackbox-smoke
+    goal:
+      - "Run the full L0 test suite with the TTK framework, fixing issues until every case passes."
+    approach:
+      - "Locate the case CSV: $WORK_DIR/op/tests/blackbox/ttk/blackbox_l0.csv (the L0 suite frozen by blackbox-smoke; its data-row count is the --expect-total value)."
+      - "Locate the TTK framework root: $WORK_DIR/ops-test-kit; every ttk command runs from that directory."
+      - "Phase 1 - run the full suite without cross_check: python3 -m ttk aclnn -i $WORK_DIR/op/tests/blackbox/ttk/blackbox_l0.csv --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/op/tests/blackbox/ttk/result_l0.csv (local golden comparison only, no third_party). rm -f the result file before running; resumes and single-case reruns always via -t by name; the suite stays whole. Done when: result_l0.csv's case set equals the suite's full row set."
+      - "Phase 2 - adjudicate failed cases: rerun each row whose precision_status is not PASS with -t by name adding --compare cross_check --config $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server), writing to $WORK_DIR/op/tests/blackbox/ttk/result_l0-crosscheck.csv; a case that passes under cross_check is adjudicated green; a case still failing enters precision localization and fix (wrong-precision class of the triage line + fix discipline) and is rerun until green. Skip this phase when phase 1 is all-green."
+      - "Gate script: run the parse_result.py script under the blackbox-tester skill on <result.csv> with --expect-total <N>; it exits 0 if and only if pass==total and fail==skip==0; for the negative suite add --negative — exit 0 if and only if pass==0 (every row rejected)."
+      - "Failure triage: reproduce each failure first with -t by case name, then load the skill for its class and record conclusions and fixes in the evidence file — build failure (build.sh error / no artifacts) -> ascendc-compile-debug; AIC Error, runtime crash, error codes (161xxx/361xxx/507xxx/561xxx), hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug (criteria: $WORK_DIR/design/Validation.md per-dtype rtol/atol); TTK-framework-level failure (malformed results / GOLDEN_FAILURE / OOM / killed) -> ttk-how-diagnose."
+      - "Fix discipline: reproduce before attributing; code fixes stay inside the out_of_scope whitelist; after any code change run cd $WORK_DIR/op && ./build.sh to rebuild and deploy into dev-package before rerunning; suite CSVs, golden.py, tolerances and isolation thresholds stay as-is; a failure that cannot be fixed without deviating from design stays red with its attribution (oracle/design defect)."
+      - "Evidence: $WORK_DIR/op/tests/blackbox/ttk/run-l0-100pct.RECORD.md records the full row set, per-row results, fix history, and the commands run; gate numbers come from one clean full rerun after the last code change."
+    acceptance:
+      - "Gate: after adjudication every case in the suite is green — phase-1 PASS rows plus crosscheck-adjudicated rows together cover the full row set (all-green phase 1 is exactly parse_result.py $WORK_DIR/op/tests/blackbox/ttk/result_l0.csv --expect-total <L0 data-row count> exits 0; otherwise parse_result.py result_l0-crosscheck.csv --expect-total <phase-1 FAIL count> also exits 0 and the union covers the suite)."
+      - "Coverage: result_l0.csv's case set equals the suite's full row set, generated after the last build."
+      - "Build and evidence: cd $WORK_DIR/op && ./build.sh exits 0; run-l0-100pct.RECORD.md non-empty."
+    out_of_scope:
+      - "Modification whitelist: $WORK_DIR/op/op_host/ (host/tiling code), $WORK_DIR/op/op_kernel/ (kernel code) and $WORK_DIR/op/op_api/ (aclnn L2/L0 API code); everything else stays as-is — the TTK framework ($WORK_DIR/ops-test-kit), all case CSVs, $WORK_DIR/golden.py (never modify), tolerances and isolation thresholds, $WORK_DIR/design/ docs, whitebox case sets."
+      - "L1/L2 cases and performance stages belong to other tasks."
+    max_retries: 2
+    on_exhaust: exit
+  - id: blackbox-run-l1-100pct
+    task_type: normal
+    title: Full L1 blackbox suite in one run - every case precision-PASS (hard gate)
+    executor: general-executor
+    verifier: general-verifier
+    depends_on:
+      - blackbox-run-l0-100pct
+    goal:
+      - "Run the full L1 test suite with the TTK framework, fixing issues until every case passes."
+    approach:
+      - "Locate the case CSV: $WORK_DIR/op/tests/blackbox/ttk/blackbox_l1.csv (the L1 suite frozen by blackbox-smoke; its data-row count is the --expect-total value)."
+      - "Locate the TTK framework root: $WORK_DIR/ops-test-kit; every ttk command runs from that directory."
+      - "Phase 1 - run the full suite in one go without cross_check: python3 -m ttk aclnn -i $WORK_DIR/op/tests/blackbox/ttk/blackbox_l1.csv --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/op/tests/blackbox/ttk/result_l1.csv (local golden comparison only, no third_party). rm -f the result file before running; resumes and single-case reruns always via -t by name; the suite stays whole, never staged or sampled. Done when: result_l1.csv's case set equals the suite's full row set."
+      - "Phase 2 - adjudicate failed cases: rerun each row whose precision_status is not PASS with -t by name adding --compare cross_check --config $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server), writing to $WORK_DIR/op/tests/blackbox/ttk/result_l1-crosscheck.csv; a case that passes under cross_check is adjudicated green; a case still failing enters precision localization and fix (wrong-precision class of the triage line + fix discipline) and is rerun until green. Skip this phase when phase 1 is all-green."
+      - "Gate script: run the parse_result.py script under the blackbox-tester skill on <result.csv> with --expect-total <N>; it exits 0 if and only if pass==total and fail==skip==0; for the negative suite add --negative — exit 0 if and only if pass==0 (every row rejected)."
+      - "Failure triage: reproduce each failure first with -t by case name, then load the skill for its class and record conclusions and fixes in the evidence file — build failure (build.sh error / no artifacts) -> ascendc-compile-debug; AIC Error, runtime crash, error codes (161xxx/361xxx/507xxx/561xxx), hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug (criteria: $WORK_DIR/design/Validation.md per-dtype rtol/atol); TTK-framework-level failure (malformed results / GOLDEN_FAILURE / OOM / killed) -> ttk-how-diagnose."
+      - "Fix discipline: reproduce before attributing; code fixes stay inside the out_of_scope whitelist; after any code change run cd $WORK_DIR/op && ./build.sh to rebuild and deploy into dev-package before rerunning; suite CSVs, golden.py, tolerances and isolation thresholds stay as-is; a failure that cannot be fixed without deviating from design stays red with its attribution (oracle/design defect)."
+      - "Evidence: $WORK_DIR/op/tests/blackbox/ttk/run-l1-100pct.RECORD.md records the full row set, per-row results, fix history, and the commands run; gate numbers come from one clean full rerun after the last code change; when this task changed code, result_l0.csv is rerun in full and still meets the L0 gate."
+    acceptance:
+      - "Gate: after adjudication every case in the suite is green — phase-1 PASS rows plus crosscheck-adjudicated rows together cover the full row set (all-green phase 1 is exactly parse_result.py $WORK_DIR/op/tests/blackbox/ttk/result_l1.csv --expect-total <L1 data-row count> exits 0; otherwise parse_result.py result_l1-crosscheck.csv --expect-total <phase-1 FAIL count> also exits 0 and the union covers the suite)."
+      - "Coverage: result_l1.csv's case set equals the suite's full row set, generated after the last build."
+      - "Build and evidence: cd $WORK_DIR/op && ./build.sh exits 0; run-l1-100pct.RECORD.md non-empty; if this task changed code, result_l0.csv was regenerated and still meets the L0 gate."
+    out_of_scope:
+      - "Modification whitelist: $WORK_DIR/op/op_host/ (host/tiling code), $WORK_DIR/op/op_kernel/ (kernel code) and $WORK_DIR/op/op_api/ (aclnn L2/L0 API code); everything else stays as-is — the TTK framework ($WORK_DIR/ops-test-kit), all case CSVs, $WORK_DIR/golden.py (never modify), tolerances and isolation thresholds, $WORK_DIR/design/ docs, whitebox case sets."
+      - "L2 cases and performance stages belong to other tasks; the L1 suite runs whole, never staged or sampled."
+    max_retries: 2
+    on_exhaust: exit
+  - id: blackbox-run-l2-100pct
+    task_type: normal
+    title: Full L2 negative blackbox suite in one run - every case rejected (closing gate)
+    executor: general-executor
+    verifier: general-verifier
+    depends_on:
+      - blackbox-run-l1-100pct
+    goal:
+      - "Run the full L2 negative test suite with the TTK framework, fixing issues until every case is rejected by the operator."
+    approach:
+      - "Locate the case CSV: $WORK_DIR/op/tests/blackbox/ttk/blackbox_l2_neg.csv (the L2 negative suite frozen by blackbox-smoke; its data-row count is the --expect-total value)."
+      - "Locate the TTK framework root: $WORK_DIR/ops-test-kit; every ttk command runs from that directory."
+      - "Phase 1 - run the full suite in one go without cross_check: python3 -m ttk aclnn -i $WORK_DIR/op/tests/blackbox/ttk/blackbox_l2_neg.csv --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/op/tests/blackbox/ttk/result_l2.csv (local golden comparison only, no third_party). rm -f the result file before running; resumes and single-case reruns always via -t by name; the suite stays whole, never staged or sampled. Done when: result_l2.csv's case set equals the suite's full row set."
+      - "Phase 2 - adjudicate anomalous rows: rerun each row that is not cleanly REJECTED with -t by name adding --compare cross_check --config $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server), writing to $WORK_DIR/op/tests/blackbox/ttk/result_l2-crosscheck.csv; a row confirmed executing under cross_check means the operator lacks a validation (negative-semantics fix flow); a row still ambiguous is escalated per the triage line. Skip this phase when phase 1 rejects every row cleanly."
+      - "Negative semantics: rejected means passing. A row that precision-PASSes means the operator lacks a validation — add it in the whitelisted directories per the design docs and rerun; a row that is itself an illegal case stays red with its attribution."
+      - "Gate script: run the parse_result.py script under the blackbox-tester skill on <result.csv> with --expect-total <N>; it exits 0 if and only if pass==total and fail==skip==0; for the negative suite add --negative — exit 0 if and only if pass==0 (every row rejected)."
+      - "Failure triage: reproduce each failure first with -t by case name, then load the skill for its class and record conclusions and fixes in the evidence file — build failure (build.sh error / no artifacts) -> ascendc-compile-debug; AIC Error, runtime crash, error codes (161xxx/361xxx/507xxx/561xxx), hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug (criteria: $WORK_DIR/design/Validation.md per-dtype rtol/atol); TTK-framework-level failure (malformed results / GOLDEN_FAILURE / OOM / killed) -> ttk-how-diagnose."
+      - "Fix discipline: reproduce before attributing; code fixes stay inside the out_of_scope whitelist; after any code change run cd $WORK_DIR/op && ./build.sh to rebuild and deploy into dev-package before rerunning; suite CSVs, golden.py, tolerances and isolation thresholds stay as-is; a failure that cannot be fixed without deviating from design stays red with its attribution (oracle/design defect)."
+      - "Closing regression: when this task changed code, result_l0.csv and result_l1.csv are rerun in full and still meet their gates; the tiling UT (cd $WORK_DIR/op/tests/tiling && ./run.sh, 0 failed) and every whitebox branch full batch (ttk kernel mode over the branch CSVs under $WORK_DIR/op/tests/whitebox/branch-*/) stay green under the same two-phase method (phase 1 --compare stat_rel_err without --config; failed rows adjudicated with --compare cross_check --config); record the evidence in $WORK_DIR/op/tests/blackbox/ttk/regression.RECORD.md."
+      - "Evidence: $WORK_DIR/op/tests/blackbox/ttk/run-l2-100pct.RECORD.md records the full row set, per-row rejection status, fixes and attributions, and the commands run."
+    acceptance:
+      - "Gate: parse_result.py $WORK_DIR/op/tests/blackbox/ttk/result_l2.csv --negative --expect-total <L2 data-row count> exits 0 (pass==0, every row rejected), with phase-2 adjudication evidence for any row that phase 1 did not reject cleanly."
+      - "Coverage: result_l2.csv's case set equals the suite's full row set, generated after the last build."
+      - "Closing regression: tiling UT and whitebox branch full batches stay green, regression.RECORD.md non-empty; if this task changed code, result_l0.csv and result_l1.csv were regenerated and still meet their gates."
+    out_of_scope:
+      - "Modification whitelist: $WORK_DIR/op/op_host/ (host/tiling code), $WORK_DIR/op/op_kernel/ (kernel code) and $WORK_DIR/op/op_api/ (aclnn L2/L0 API code); everything else stays as-is — the TTK framework ($WORK_DIR/ops-test-kit), all case CSVs, $WORK_DIR/golden.py (never modify), tolerances and isolation thresholds, $WORK_DIR/design/ docs, whitebox case sets."
+      - "Performance stages belong to other tasks; the L2 suite runs whole, never staged or sampled."
+    max_retries: 2
+    on_exhaust: exit

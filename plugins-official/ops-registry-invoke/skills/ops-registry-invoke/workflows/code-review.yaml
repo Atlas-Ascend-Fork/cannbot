@@ -1,0 +1,207 @@
+# Code-review module, extracted from the op-develop monolith (code-review +
+# fix-findings) with a verify-inputs module boundary gate ahead of them. Input:
+# a complete op-impl run's artifacts (op/ package, golden.py, spec/, design/,
+# requirements/, npu-arch.json, ttk.conf.yaml) and the finished test suites they
+# feed (tiling UT under op/tests/tiling/, whitebox batches under op/tests/whitebox/,
+# blackbox suites under op/tests/blackbox/ when present). Output: a recorded,
+# re-checkable review of the operator sources with every FAIL finding closed and
+# every affected test gate re-run green. Complements op-impl.yaml / blackbox.yaml;
+# runs standalone on a finished work_dir. The orchestrator wires the Codex layout
+# ($WORK_DIR/.agents/skills plus $WORK_DIR/.codex/agents) automatically via
+# link_agent_config.py.
+workflow: code-review
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore the operator package under $WORK_DIR/op/ and the requirements under $WORK_DIR/requirements/ relevant to this task, as development reference.
+nodes:
+- id: verify-inputs
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Module boundary gate - verify the reviewable artifacts contract and rebuild the deployment
+  goal:
+  - 'Prove the frozen op-impl artifacts in $WORK_DIR satisfy the code-review module''s input
+    contract before any review work starts: the package skeleton and op_api four files exist,
+    the package rebuilds for the target SoC, its aclnn API installs into $WORK_DIR/dev-package
+    with the exported L2 symbol pair, and the regression-gate assets the fix-findings node may
+    re-run exist — so the review inspects a known-good build of this work_dir''s own package.'
+  - 'Completion gate: the build exits 0, the installed libcust_opapi.so exports the
+    aclnn<OpPascal>GetWorkspaceSize / aclnn<OpPascal> symbol pair, and every input-contract
+    file check passes.'
+  approach:
+  - 'This node verifies, never fixes: the inputs are final op-impl products. A failing check
+    is a module-boundary violation (a fixture defect), reported as FAILED with the failing
+    check named — do not edit any source to make a check pass.'
+  - 'Derive the operator''s name forms from spec.yaml: OP_SNAKE = op.name, OP_PASCAL = PascalCase.'
+  - 'Input-contract files: $WORK_DIR/golden.py, $WORK_DIR/spec/spec.yaml, $WORK_DIR/requirements/REQUIREMENTS.md,
+    $WORK_DIR/design/ (with Validation.md and branches/), $WORK_DIR/npu-arch.json, $WORK_DIR/ttk.conf.yaml;
+    the package skeleton $WORK_DIR/op/op_host/, $WORK_DIR/op/op_kernel/, $WORK_DIR/op/op_api/,
+    $WORK_DIR/op/op_graph/, $WORK_DIR/op/build.sh, $WORK_DIR/op/CMakeLists.txt; the op_api four
+    files $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h, aclnn_${OP_SNAKE}.cpp, ${OP_SNAKE}.h, ${OP_SNAKE}.cpp.'
+  - 'Regression-gate assets (the gates fix-findings may re-run after a fix; a missing gate asset
+    is recorded as an absent gate, not a failure): the tiling UT $WORK_DIR/op/tests/tiling/run.sh
+    + test_tiling_gtest.cpp; the whitebox branch CSVs (find $WORK_DIR/op/tests/whitebox -name
+    ttk_design_doc_cases.csv); the blackbox frozen suites $WORK_DIR/op/tests/blackbox/ttk/blackbox_l0.csv,
+    blackbox_l1.csv, blackbox_l2_neg.csv; the aclnn harness $WORK_DIR/op/tests/aclnn/run.sh; the
+    torch e2e $WORK_DIR/op/tests/torch/run.sh.'
+  - 'Rebuild the package from its own sources: cd $WORK_DIR/op && ./build.sh with the SoC argument
+    required for the architecture recorded in $WORK_DIR/npu-arch.json exits 0 (the build''s CMake
+    falls back to $ENV{ASCEND_HOME_PATH} when CANN_HOME is unset; only if both are unset, source
+    the toolkit''s set_env.sh first).'
+  - 'Reinstall into this work_dir''s own deployment: rm -rf $WORK_DIR/dev-package, then install
+    the produced run package $WORK_DIR/op/build/custom_opp_ubuntu_x86_64.run with bash <run package>
+    --quiet --nox11 --force --install-path=$WORK_DIR/dev-package (the --force skips the installer''s
+    bundled-python pre-validation, which cannot load in this container).'
+  acceptance:
+  - 'Input-contract files present: test -s $WORK_DIR/golden.py && test -s $WORK_DIR/spec/spec.yaml
+    && test -s $WORK_DIR/requirements/REQUIREMENTS.md && test -s $WORK_DIR/design/Validation.md
+    && test -s $WORK_DIR/npu-arch.json && test -s $WORK_DIR/ttk.conf.yaml && test -d $WORK_DIR/op/op_host
+    && test -d $WORK_DIR/op/op_kernel && test -d $WORK_DIR/op/op_api && test -d $WORK_DIR/op/op_graph
+    && test -f $WORK_DIR/op/build.sh && test -f $WORK_DIR/op/CMakeLists.txt.'
+  - 'op_api four files present: test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.cpp
+    && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.cpp.'
+  - 'Build passes: cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture
+    recorded in $WORK_DIR/npu-arch.json exits 0.'
+  - 'Deployment installed: test -s $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so.'
+  - 'L2 symbol pair exported: nm -D $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so
+    | grep -cE '' T aclnn<OP_PASCAL>(GetWorkspaceSize)?$'' equals 2 (with <OP_PASCAL> substituted
+    from spec.yaml).'
+  - 'Regression-gate assets inventoried: $WORK_DIR/code-review/INPUT_CONTRACT.md exists, is non-empty,
+    and lists each regression-gate asset from the approach with its present/absent verdict — absent
+    gates are recorded there once and reused by fix-findings, never re-derived.'
+  out_of_scope:
+  - 'Verify only: no file under $WORK_DIR/op/, golden.py, spec/, design/, requirements/, npu-arch.json
+    or ttk.conf.yaml is modified; the only writes are the build artifacts under $WORK_DIR/op/build/,
+    the fresh $WORK_DIR/dev-package/ install, and $WORK_DIR/code-review/INPUT_CONTRACT.md.'
+  - 'Do not run any device test, ttk batch, tiling UT or whitebox batch in this node; do not fix
+    a failing check — report it.'
+  depends_on: []
+  max_retries: 2
+  on_exhaust: exit
+- id: code-review
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Review the operator sources and record the findings under $WORK_DIR/code-review/
+  goal:
+  - 'Review the operator sources under $WORK_DIR/op/ (op_host/ and op_graph/ as the Host side,
+    op_kernel/ as the Kernel side, op_api/ as the aclnn layer) exactly per the scope defined in
+    agents/code-reviewer.md — every applicable TOPK, security-redline (plus SIMT kernel redlines
+    when SIMT code is present), and performance clause of the ascendc-code-review skill — and
+    write the aggregated report to $WORK_DIR/code-review/CODE_REVIEW.md.'
+  - 'Completion gate: the report exists and is internally consistent — the first-line status
+    matches the FAIL finding count, every finding carries a unique ID with file:line evidence
+    that resolves under $WORK_DIR/op/, and the four deterministic ops-impl-review script logs are
+    saved under $WORK_DIR/code-review/checks/. This task is explicitly NOT gated on zero findings:
+    findings are recorded for the downstream fix-findings task, never fixed here.'
+  approach:
+  - 'Run as agents/code-reviewer.md with this workflow''s path overlay (the overlay wins over the
+    agent doc''s defaults): the review inputs are $WORK_DIR/op/op_host/, $WORK_DIR/op/op_graph/,
+    $WORK_DIR/op/op_kernel/, and $WORK_DIR/op/op_api/ instead of operators/{OP}_package/*; the
+    report lands at $WORK_DIR/code-review/CODE_REVIEW.md instead of the agent doc''s default location.'
+  - 'Load the ascendc-code-review skill first (mandatory) and run its file-review workflow end
+    to end (rule routing, per-clause review, line verification); every FAIL / SUSPICIOUS finding
+    keeps its unique F / S ID, full file path, and line-verified line number.'
+  - 'Load the ops-impl-review skill and run its four deterministic scripts over the package,
+    saving each full output to $WORK_DIR/code-review/checks/<script_name>.log: scalar_mainchain_check,
+    vf_reachability_check, and non3510_scaffold_check against $WORK_DIR/op, and
+    workspace_consistency_check with the design root $WORK_DIR (branch designs at
+    $WORK_DIR/design/branches/) and the package root $WORK_DIR/op.'
+  - 'Fold the deterministic results into the report: a script verdict of FAIL (exit 2) becomes
+    at least one FAIL finding citing the offending location from its log; INCONCLUSIVE (exit 1)
+    is recorded as a SUSPICIOUS finding; PASS contributes no finding.'
+  - 'Design consistency (oracle-versus-implementation conflicts): where a review clause and the
+    design docs disagree about intended behavior, the design doc is the arbiter — record the
+    conflict as a finding citing both locations; never resolve it by assuming either side is right.'
+  acceptance:
+  - 'test -s $WORK_DIR/code-review/CODE_REVIEW.md exits 0, and the four deterministic logs exist
+    non-empty: for s in scalar_mainchain_check vf_reachability_check workspace_consistency_check
+    non3510_scaffold_check; do test -s $WORK_DIR/code-review/checks/$s.log || exit 1; done.'
+  - 'The report''s first line is a single status that matches its body: head -1 $WORK_DIR/code-review/CODE_REVIEW.md
+    | grep -qE ''^\*\*状态\*\*:[[:space:]]*(✅通过|❌失败)[[:space:]]*$'' exits 0, and it is ❌失败
+    exactly when at least one FAIL finding is listed (verifier cross-checks the finding list).'
+  - 'Every finding is re-checkable: each finding entry carries a unique ID, a severity, and a
+    file path with line number that resolves under $WORK_DIR/op/ (verifier spot-checks); no finding
+    lacks evidence.'
+  out_of_scope:
+  - 'Read-only over the code under review: do not modify anything under $WORK_DIR/op/, $WORK_DIR/design/,
+    $WORK_DIR/spec/, the test suites, $WORK_DIR/golden.py, or tolerances.'
+  - 'Do not fix any finding — remediation belongs to the downstream fix-findings task; write only
+    under $WORK_DIR/code-review/ and run no builds or TTK batches.'
+  depends_on:
+  - verify-inputs
+  max_retries: 2
+  on_exhaust: exit
+- id: fix-findings
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Fix every FAIL finding and re-run the affected test gates green
+  goal:
+  - 'Close every FAIL finding recorded in $WORK_DIR/code-review/CODE_REVIEW.md by fixing the
+    operator sources, then re-run every test gate the touched code feeds and leave it green;
+    record each closure in $WORK_DIR/code-review/CODE_REVIEW_FIX.md.'
+  - 'When the review recorded zero FAIL findings, change no code and only write the no-op record
+    to $WORK_DIR/code-review/CODE_REVIEW_FIX.md.'
+  - 'Completion gate: every FAIL finding ID from CODE_REVIEW.md is quoted and closed in
+    CODE_REVIEW_FIX.md, and the regression gates below hold — or the zero-findings no-op is
+    recorded.'
+  approach:
+  - 'Inventory: read $WORK_DIR/code-review/CODE_REVIEW.md and its checks/ logs; list every FAIL
+    finding (ID, location, required fix). Zero FAIL findings -> write the no-op record and stop.'
+  - 'Fix discipline: confirm each finding at its cited location before editing (a finding whose
+    cited file:line does not reproduce is recorded as not-reproducible with the evidence, not
+    silently dropped); fixes land only in $WORK_DIR/op/op_host/, $WORK_DIR/op/op_kernel/,
+    $WORK_DIR/op/op_api/, $WORK_DIR/op/op_graph/, and $WORK_DIR/op/CMakeLists.txt; after any code
+    change run cd $WORK_DIR/op && ./build.sh (exit 0, deploys into $WORK_DIR/dev-package/) before
+    any test re-run, and rebuild after every subsequent fix.'
+  - 'Relevant tests = every gate fed by the whitelisted sources, restricted to the gates whose
+    assets verify-inputs inventoried as present in $WORK_DIR/code-review/INPUT_CONTRACT.md (an
+    absent gate is skipped with its absence cited from the inventory, never re-derived or
+    guessed). Re-run each with the exact command form its gate node already recorded in its own
+    evidence files (the run-*.RECORD.md / regression.RECORD.md under $WORK_DIR/op/tests/):'
+  - 'Package build: cd $WORK_DIR/op && ./build.sh exits 0.'
+  - 'Tiling UT (when present): cd $WORK_DIR/op/tests/tiling && ./run.sh exits 0 with 0 failed;
+    the pinned oracle files (test_tiling_gtest.cpp, CMakeLists.txt, run.sh) stay untouched.'
+  - 'Whitebox branch full batches (when present): for every $WORK_DIR/op/tests/whitebox/branch-*/,
+    re-run the full batch under the two-phase method (phase 1 --compare stat_rel_err without
+    --config; failed rows adjudicated with -t by name adding --compare cross_check --config
+    $WORK_DIR/ttk.conf.yaml); every row green.'
+  - 'Blackbox suites (when present): blackbox_l0.csv / blackbox_l1.csv / blackbox_l2_neg.csv
+    re-run in full from $WORK_DIR/ops-test-kit per the commands recorded in their
+    run-l{0,1,2}-100pct.RECORD.md files; failed positive rows adjudicated via cross_check exactly
+    as those nodes define.'
+  - 'ACLNN harness and torch e2e (when present): cd $WORK_DIR/op/tests/aclnn && ./run.sh and
+    bash $WORK_DIR/op/tests/torch/run.sh both exit 0 with no FAILED row.'
+  - 'Evidence: write $WORK_DIR/code-review/CODE_REVIEW_FIX.md quoting each FAIL finding verbatim
+    with its fix and the per-gate rerun results (commands + outcome); append regression evidence
+    to $WORK_DIR/op/tests/blackbox/ttk/regression.RECORD.md without overwriting it.'
+  acceptance:
+  - 'test -s $WORK_DIR/code-review/CODE_REVIEW_FIX.md exits 0; every FAIL finding ID listed in
+    $WORK_DIR/code-review/CODE_REVIEW.md appears in CODE_REVIEW_FIX.md (verifier cross-checks the
+    IDs one by one); the zero-findings case is explicitly recorded as a no-op with no code modified.'
+  - 'cd $WORK_DIR/op && ./build.sh exits 0.'
+  - 'Tiling UT green when its assets were inventoried present: cd $WORK_DIR/op/tests/tiling && ./run.sh
+    exits 0 and its log shows [  PASSED  ] with no [  FAILED  ] line; the pinned oracle files are
+    unmodified.'
+  - 'Blackbox gates hold on regenerated results when the suites were inventoried present: the
+    blackbox-tester skill''s parse_result.py on $WORK_DIR/op/tests/blackbox/ttk/result_l0.csv
+    --expect-total <L0 data-row count> exits 0, likewise for result_l1.csv, and for result_l2.csv
+    with --negative.'
+  - 'Whitebox branch batches green when their CSVs were inventoried present: every
+    $WORK_DIR/op/tests/whitebox/branch-*/ batch re-runs green under the two-phase method.'
+  - 'Harness gates hold when their runners were inventoried present: cd $WORK_DIR/op/tests/aclnn
+    && ./run.sh exits 0, and bash $WORK_DIR/op/tests/torch/run.sh exits 0.'
+  - 'Frozen assets unchanged: every case CSV, $WORK_DIR/golden.py, tolerances, isolation
+    thresholds, the tiling UT oracle files, and $WORK_DIR/design/ docs are unmodified (verifier
+    checks against the pre-task state); a finding that cannot be fixed without deviating from
+    design stays open in CODE_REVIEW_FIX.md with its attribution instead.'
+  out_of_scope:
+  - 'Modification whitelist: $WORK_DIR/op/op_host/, op_kernel/, op_api/, op_graph/, CMakeLists.txt,
+    plus the build/test artifacts the gates regenerate and CODE_REVIEW_FIX.md; everything else
+    stays as-is.'
+  - 'Never modify test cases, suite CSVs, golden.py, tolerances, or thresholds to force a gate green.'
+  - 'Do not modify anything else under $WORK_DIR/code-review/; the review itself is not re-run here.'
+  depends_on:
+  - code-review
+  max_retries: 2
+  on_exhaust: exit

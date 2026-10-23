@@ -1,0 +1,141 @@
+# ACLNN migration module (prototype-first chain, second of two). Translates a
+# green torch direct-invoke prototype (produced by the proto-impl module) into
+# the ACLNN engineering form, regression-verifies the migrated package against
+# the prototype's own blackbox case set, then code-reviews and documents it.
+# Input: a complete proto-impl run's artifacts (the prototype/ tree with its
+# recorded all-pass blackbox results, plus the frozen anchors golden.py,
+# spec/spec.yaml, npu-arch.json, ttk.conf.yaml). Output: an ACLNN op/ package
+# ported from the prototype, built and deployed, regression-green on the
+# prototype's full case set through TTK aclnn mode and on a re-pointed torch
+# e2e subset, with a recorded code review and the paired public docs. This is
+# the prototype-first counterpart of the design-first chain (op-impl.yaml +
+# blackbox.yaml); it runs standalone on a finished proto-impl work_dir. The
+# orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
+# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+workflow: aclnn-migrate
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore the direct-invoke prototype under $WORK_DIR/prototype/ and the migrated operator package under $WORK_DIR/op/ relevant to this task, as migration reference.
+nodes:
+  - id: verify-inputs
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Module boundary gate - verify the proto-impl artifacts contract and freeze the prototype baseline
+    goal:
+      - 'Prove the frozen proto-impl artifacts in $WORK_DIR satisfy the aclnn-migrate module''s input contract before any migration work starts: the direct-invoke prototype tree exists with its recorded all-pass blackbox results, and the frozen anchors (spec, golden, npu-arch, ttk config) exist — so the migration translates a proven prototype against known-good anchors.'
+      - 'Completion gate: every input-contract check passes, the prototype''s recorded blackbox run is all-pass (the proto-impl runner gate $WORK_DIR/prototype/check_results.py exits 0), and the prototype baseline digest file is written so the downstream regression can prove the prototype was never silently edited.'
+    approach:
+      - 'This node verifies, never fixes: the inputs are final proto-impl products. A failing check is a module-boundary violation (a fixture defect), reported as FAILED with the failing check named — do not edit any input to make a check pass.'
+      - 'Derive the operator''s name forms from spec.yaml: OP_SNAKE = op.name, OP_PASCAL = PascalCase.'
+      - 'Frozen anchors: $WORK_DIR/golden.py (the independent TestSpec oracle), $WORK_DIR/spec/spec.yaml (the identifier-of-record for names, dtypes and the shape/attr contract), $WORK_DIR/npu-arch.json (the SoC the migrated package must build for), $WORK_DIR/ttk.conf.yaml (the third_party cross_check config).'
+      - 'The prototype tree $WORK_DIR/prototype/ is the migration''s porting source and its regression oracle. Its contract (the proto-impl module''s output): op_kernel/ holds the direct-invoke kernel source(s) (*.asc); op_host/ holds the host+main driver source(s) (*.asc); op_extension/ holds the torch adapter (the *_torch.cpp TORCH_LIBRARY registration plus ops.h and register.cpp); the package root holds CMakeLists.txt, run.sh, and the generic python entry run_case.py (run_case(shapes, dtypes, attrs) -> output tensors).'
+      - 'The prototype case set is $WORK_DIR/prototype/cases.csv (the proto-impl blackbox-torch set: one recorded row per spec boundary_conditions/extreme_inputs case, carrying its shape(s), dtype(s), attrs and expected behavior) and its recorded run is $WORK_DIR/prototype/results.csv (per-case status PASS/FAIL/REJECTED/EMPTY) with the evidence log $WORK_DIR/prototype/blackbox.RECORD.md; run_cases.py and check_results.py are that runner and its gate. These are exactly the artifacts the regression-aclnn node adapts into aclnn mode and re-runs through the migrated ACLNN package.'
+      - 'Freeze the baseline: write $WORK_DIR/migration/PROTOTYPE_BASELINE.md naming each prototype input with its sha256 (the prototype case set cases.csv and its recorded results results.csv, the prototype kernel and adapter sources under op_kernel/, op_host/ and op_extension/, plus the anchors), and write the machine-checkable digest file $WORK_DIR/migration/PROTOTYPE_BASELINE.sha256 in sha256sum format covering those files, with ABSOLUTE paths so sha256sum -c is location-independent; downstream nodes run sha256sum -c --quiet against it.'
+    acceptance:
+      - 'Frozen anchors and toolkit present: test -s $WORK_DIR/golden.py && test -s $WORK_DIR/spec/spec.yaml && test -s $WORK_DIR/npu-arch.json && test -s $WORK_DIR/ttk.conf.yaml && test -d $WORK_DIR/ops-test-kit.'
+      - 'Prototype tree present (proto-impl layout): test -d $WORK_DIR/prototype/op_kernel && test -d $WORK_DIR/prototype/op_host && test -d $WORK_DIR/prototype/op_extension && test -f $WORK_DIR/prototype/CMakeLists.txt && test -f $WORK_DIR/prototype/run.sh && test -s $WORK_DIR/prototype/run_case.py.'
+      - 'Prototype kernel and torch adapter sources present: find $WORK_DIR/prototype -name ''*.asc'' | grep -q . && test -n "$(find $WORK_DIR/prototype/op_extension -name ''*_torch.cpp'')".'
+      - 'Prototype case set and recorded run present: test -s $WORK_DIR/prototype/cases.csv && test -s $WORK_DIR/prototype/results.csv && test -s $WORK_DIR/prototype/run_cases.py && test -s $WORK_DIR/prototype/check_results.py && test -s $WORK_DIR/prototype/blackbox.RECORD.md.'
+      - 'Prototype run is all-pass (proto-impl''s own gate): python3 $WORK_DIR/prototype/check_results.py exits 0 — results.csv covers exactly the in-fence set of cases.csv and holds 0 FAIL.'
+      - 'Baseline frozen and well-formed: test -s $WORK_DIR/migration/PROTOTYPE_BASELINE.md && test -s $WORK_DIR/migration/PROTOTYPE_BASELINE.sha256 && sha256sum -c --quiet $WORK_DIR/migration/PROTOTYPE_BASELINE.sha256 exits 0.'
+    out_of_scope:
+      - 'Verify only: no file under $WORK_DIR/prototype/, $WORK_DIR/golden.py, $WORK_DIR/spec/, $WORK_DIR/ops-test-kit/, $WORK_DIR/npu-arch.json or $WORK_DIR/ttk.conf.yaml is modified; the only writes are $WORK_DIR/migration/PROTOTYPE_BASELINE.md and $WORK_DIR/migration/PROTOTYPE_BASELINE.sha256.'
+      - 'Do not run any device test, package build or ttk batch in this node; do not fix a failing check — report it.'
+    depends_on: []
+    max_retries: 2
+    on_exhaust: exit
+  - id: migrate-package
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Translate the direct-invoke prototype into the ACLNN operator package and build it green
+    goal:
+      - 'Translate the proven direct-invoke prototype at $WORK_DIR/prototype/ into the ACLNN operator package at $WORK_DIR/op/: op_host/ (the OpDef *_def.cpp plus infershape and tiling), op_kernel/ (the prototype''s kernel compute adapted to the package''s TilingData/TilingFunc structure), op_api/ (aclnn_<op>.h/.cpp L2 plus <op>.h/.cpp L0), and the package-root CMakeLists.txt + build.sh — so the package builds green for the SoC recorded in $WORK_DIR/npu-arch.json, installs into $WORK_DIR/dev-package, and exports the aclnn L2 symbol pair.'
+      - 'The kernel LOGIC is translated from the prototype, not reinvented: the prototype''s proven compute and data flow are the porting source; this task only changes the plumbing — the framework context replaces the prototype''s runtime platform queries, the package build replaces the standalone CMake, and TilingData fields replace the prototype''s plain struct.'
+      - 'Completion gate: the package builds (exit 0) for the recorded SoC, installs into $WORK_DIR/dev-package, exports the aclnn<OpPascal>GetWorkspaceSize / aclnn<OpPascal> symbol pair, and the prototype-to-package provenance is recorded in $WORK_DIR/migration/MIGRATION.md.'
+    approach:
+      - 'Initialize the package skeleton from the ascendc-registry-invoke-template skill into $WORK_DIR/op/ and rename it to the target operator, exactly as op-impl.yaml''s setup-op-package does: resolve the template through the skill symlink (WORKFLOW_YAML=$(python3 -c "import json; print(json.load(open(''$WORK_DIR/.workflow/status.json''))[''workflow''])") ; TEMPLATE_DIR=$(dirname "$(dirname "$WORKFLOW_YAML")")/skills/ascendc-registry-invoke-template), copy references/add_example/. to $WORK_DIR/op/, drop the template tests/, and replace every sample name form (add_example->OP_SNAKE, AddExample->OP_PASCAL, ADD_EXAMPLE->OP_UPPER).'
+      - 'Interface is the identifier-of-record: $WORK_DIR/spec/spec.yaml''s io table fixes the input/output names, declaration order, dtypes and attrs; the prototype''s torch adapter signature ($WORK_DIR/prototype/op_extension/*_torch.cpp with its $WORK_DIR/prototype/run_case.py entry, the interface the proto-impl stage proved) confirms arg order and optionality. Where spec.yaml and the prototype signature disagree, spec.yaml wins for names/dtypes and the disagreement is recorded in $WORK_DIR/migration/MIGRATION.md.'
+      - 'op_host/: write $WORK_DIR/op/op_host/*_def.cpp so its OpDef body matches spec.yaml''s inputs/outputs/attrs in declaration order; fill *_infershape.cpp from spec.yaml''s shape/dtype rules; implement the TilingFunc and TilingData struct by porting the prototype host harness''s validated runtime split (core-count and UB-budget queries, tile shape and loop structure) into TilingContext/CompileInfo-based field computation.'
+      - 'op_kernel/: port the prototype kernel''s compute and data flow into the package''s kernel entry, reading TilingData instead of the prototype''s plain struct; keep the compute semantics identical (same dtype/cast contract, broadcast and boundary behavior) — the prototype is the working reference, not throwaway.'
+      - 'op_api/: rewrite the four files $WORK_DIR/op/op_api/aclnn_<op>.h/.cpp (L2) and <op>.h/.cpp (L0) so aclnn<OpPascal>GetWorkspaceSize''s parameter list is exactly spec.yaml''s inputs, then attrs, then outputs, following the op-impl.yaml update-op-api rewrite pattern; keep the template''s l0op-style structure (null/dtype checks, Contiguous handling, executor creation, launcher-list registration).'
+      - 'CMakeLists.txt + build.sh: the SoC/arch argument comes from $WORK_DIR/npu-arch.json — never hardcoded; build with cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture recorded in $WORK_DIR/npu-arch.json (exit 0; the CMake falls back to $ENV{ASCEND_HOME_PATH} when CANN_HOME is unset), then install the produced run package $WORK_DIR/op/build/custom_opp_ubuntu_x86_64.run into $WORK_DIR/dev-package the way setup-op-package does the template install (rm -rf $WORK_DIR/dev-package first).'
+      - 'Record provenance in $WORK_DIR/migration/MIGRATION.md: for each ported prototype source (the kernel/driver sources under $WORK_DIR/prototype/op_kernel/ and $WORK_DIR/prototype/op_host/, and the torch adapter under $WORK_DIR/prototype/op_extension/) the $WORK_DIR/op/ file it produced, and every deliberate deviation from the prototype with its reason.'
+    acceptance:
+      - 'Package skeleton present: test -d $WORK_DIR/op/op_host && test -d $WORK_DIR/op/op_kernel && test -d $WORK_DIR/op/op_api && test -d $WORK_DIR/op/op_graph && test -f $WORK_DIR/op/build.sh && test -f $WORK_DIR/op/CMakeLists.txt.'
+      - 'Four op_api files exist for the operator''s own name: OP_SNAKE=$(python3 -c "import yaml; print(yaml.safe_load(open(''$WORK_DIR/spec/spec.yaml''))[''op''][''name''])") ; test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.cpp && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.cpp.'
+      - 'No sample-name residue: ! grep -RniE ''add_example|AddExample|ADD_EXAMPLE|addExample'' $WORK_DIR/op/.'
+      - 'Build passes for the recorded SoC: cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture recorded in $WORK_DIR/npu-arch.json exits 0.'
+      - 'Deployment installed: test -s $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so.'
+      - 'L2 symbol pair exported: nm -D $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so | grep -cE '' T aclnn<OP_PASCAL>(GetWorkspaceSize)?$'' equals 2 (with <OP_PASCAL> substituted from spec.yaml).'
+      - 'Provenance recorded: test -s $WORK_DIR/migration/MIGRATION.md && grep -qF ''prototype'' $WORK_DIR/migration/MIGRATION.md.'
+    out_of_scope:
+      - 'Modify only $WORK_DIR/op/, the artifacts build.sh regenerates ($WORK_DIR/op/build/ and the fresh $WORK_DIR/dev-package/ install), and $WORK_DIR/migration/; every prototype file under $WORK_DIR/prototype/, $WORK_DIR/spec/, $WORK_DIR/golden.py, $WORK_DIR/npu-arch.json and $WORK_DIR/ttk.conf.yaml is read-only.'
+      - 'Do not change the operator''s semantics — the kernel math, dtype/cast contract, broadcast and boundary behavior come from the prototype and spec.yaml unchanged; no performance optimization.'
+    depends_on:
+      - verify-inputs
+    max_retries: 2
+    on_exhaust: exit
+  - id: regression-aclnn
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Regression - the prototype's full case set green through the migrated ACLNN package, plus a re-pointed torch e2e
+    goal:
+      - 'Prove the migrated ACLNN package reproduces the prototype''s results: run the prototype''s FULL blackbox case set through the migrated package via TTK aclnn mode — every positive case precision-PASS at spec tolerance and every negative case rejected — and re-run the prototype''s original torch harness, re-pointed to the aclnn path, green on a sampled subset covering every dtype combination.'
+      - 'Completion gate: the positive ACLNN suite is all-green (parse_result.py --expect-total N exits 0), the negative suite is all-rejected (parse_result.py --negative exits 0), the torch e2e subset is green, and the prototype baseline digests are unchanged.'
+    approach:
+      - 'Locate the regression suite source: the prototype''s own blackbox case set $WORK_DIR/prototype/cases.csv (one recorded row per boundary_conditions/extreme_inputs case, carrying its shape(s), dtype(s), attrs and expected behavior), restricted to the in-fence set the proto-impl runner actually executed — exactly the case rows $WORK_DIR/prototype/results.csv records (cases.csv holds the full set; the 2**22 case-size fence subset is what ran). Adapt that in-fence set into aclnn mode under $WORK_DIR/op/tests/aclnn/testcases/ with a recorded python pre-pass that maps each case row into a TTK aclnn case row — api_name = aclnn<OP_PASCAL>, the tensor descriptors (shapes/dtypes) mapped to the operator''s spec.yaml inputs/outputs by name, the attributes from the case''s attrs — splitting positive rows (recorded expected behavior is not the rejection classification) into aclnn_<OP_SNAKE>_l0_functional.csv and negative rows (recorded expected behavior is the rejection classification, e.g. raises_error) into aclnn_<OP_SNAKE>_l2_exception.csv. The prototype and the migrated package share spec.yaml''s interface, so the case semantics are identical; record the row mapping and the positive/negative split counts in regression.RECORD.md.'
+      - 'Merge into the executable TTK suites with the blackbox-tester skill''s merge_cases.py (column-union, offset normalization; its exact-suffix matching keeps any *_oversized.csv side table out by construction): python3 the blackbox-tester skill''s merge_cases.py $WORK_DIR/op/tests/aclnn/testcases --positive-out $WORK_DIR/op/tests/aclnn/regression_all.csv --negative-out $WORK_DIR/op/tests/aclnn/regression_l2_neg.csv; record each suite''s data-row count — the --expect-total value for the gates.'
+      - 'Run TTK aclnn mode from $WORK_DIR/ops-test-kit (the blackbox-tester skill is the invocation authority for environment, vendor visibility, bin-path proof and result parsing). Positive suite, full: rm -f $WORK_DIR/op/tests/aclnn/result.csv; python3 -m ttk aclnn -i $WORK_DIR/op/tests/aclnn/regression_all.csv --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/op/tests/aclnn/result.csv; negative suite likewise to result_l2.csv. Resumes and reruns always via -t by name; the suite stays whole, never staged or sampled.'
+      - 'Phase 2 - adjudicate failed positive rows: rerun each row whose precision_status is not PASS with -t by name adding --compare cross_check --config $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server), writing $WORK_DIR/op/tests/aclnn/result-crosscheck.csv; a case that passes under cross_check is adjudicated green, a case still failing enters precision localization and fix. Skip this phase when phase 1 is all-green.'
+      - 'Gate with the blackbox-tester skill''s parse_result.py: python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/aclnn/result.csv --expect-total <regression_all data-row count> exits 0 (pass==total, fail==skip==0); the negative suite python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/aclnn/result_l2.csv --negative --expect-total <regression_l2_neg data-row count> exits 0 (pass==0, every row rejected).'
+      - 'Operator-source proof before trusting any result: run the blackbox-tester skill''s check_op_binpath.py on the debug log with --optype $OP_PASCAL --expect-dir $WORK_DIR/dev-package/vendors/$OP_PASCAL --require (exit 0) — the tested kernel must come from this migration''s own deployment, never a built-in or stale vendor.'
+      - 'Torch e2e regression: re-point the prototype''s original torch harness ($WORK_DIR/prototype/op_extension/ with its $WORK_DIR/prototype/run_case.py entry) to the migrated ACLNN path — bind it to the aclnn op (a torch_npu custom-op registration or a direct op_api call) and run it on a sampled subset of the prototype case set of at least 5 cases that together cover every dtype combination in spec.yaml''s supported_combinations; every sampled case must stay green. Keep the re-pointed harness under $WORK_DIR/op/tests/torch/ (run.sh + run.log; a copy, never the frozen prototype) and record the sampling (case names plus dtype coverage).'
+      - 'Fix discipline: migration bugs are fixed inside $WORK_DIR/op/ (op_host/, op_kernel/, op_api/, op_graph/, CMakeLists.txt); after any code change rebuild and redeploy (cd $WORK_DIR/op && ./build.sh for the recorded SoC) before rerunning. Never edit the prototype, spec.yaml, golden.py, the tolerances or the case set to force green.'
+      - 'Prototype-frozen check: sha256sum -c --quiet $WORK_DIR/migration/PROTOTYPE_BASELINE.sha256 exits 0 — the prototype case set and recorded results are byte-identical to the verify-inputs baseline; a mismatch means the prototype was silently edited to make migration pass, which is a FAIL, not a pass.'
+      - 'Failure triage per the blackbox-tester skill''s guide (build failure -> ascendc-compile-debug; AIC error, crash, error codes, hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug with the tolerance from $WORK_DIR/spec/spec.yaml; TTK-framework-level failure -> ttk-how-diagnose). Evidence: $WORK_DIR/op/tests/aclnn/regression.RECORD.md records suite row counts, per-case results, the fix history, the commands run and the prototype-frozen check.'
+    acceptance:
+      - 'Suites built: test -s $WORK_DIR/op/tests/aclnn/regression_all.csv && test -s $WORK_DIR/op/tests/aclnn/regression_l2_neg.csv; the two --expect-total counts equal their suites'' data-row counts.'
+      - 'Suite derives from the prototype case set: the positive and negative adapter suites together cover every executed prototype case — their data-row counts sum to the $WORK_DIR/prototype/results.csv data-row count (the in-fence set the proto-impl runner ran), so no executed prototype case is silently dropped (recorded in regression.RECORD.md).'
+      - 'Positive gate all-green: after adjudication every case in the suite is green — all-green phase 1 is exactly python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/aclnn/result.csv --expect-total <regression_all data-row count> exits 0; otherwise parse_result.py $WORK_DIR/op/tests/aclnn/result-crosscheck.csv --expect-total <phase-1 non-PASS count> also exits 0 and the union covers the suite.'
+      - 'Negative gate all-rejected: python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/aclnn/result_l2.csv --negative --expect-total <regression_l2_neg data-row count> exits 0.'
+      - 'Operator source proven: check_op_binpath.py with --optype $OP_PASCAL --expect-dir $WORK_DIR/dev-package/vendors/$OP_PASCAL --require exits 0.'
+      - 'Torch e2e subset green: bash $WORK_DIR/op/tests/torch/run.sh exits 0 with no FAILED row, and the sampled subset is at least 5 cases covering every supported dtype combination (recorded in regression.RECORD.md).'
+      - 'Prototype frozen: sha256sum -c --quiet $WORK_DIR/migration/PROTOTYPE_BASELINE.sha256 exits 0.'
+      - 'Evidence recorded: test -s $WORK_DIR/op/tests/aclnn/regression.RECORD.md.'
+    out_of_scope:
+      - 'Modification whitelist: $WORK_DIR/op/op_host/, op_kernel/, op_api/, op_graph/, CMakeLists.txt and the build/test artifacts regenerated under $WORK_DIR/op/tests/aclnn/ and $WORK_DIR/op/tests/torch/; everything else is read-only — the prototype tree ($WORK_DIR/prototype/, never modify), $WORK_DIR/spec/, $WORK_DIR/golden.py, the tolerances, $WORK_DIR/npu-arch.json and $WORK_DIR/ttk.conf.yaml.'
+      - 'The case set, golden, tolerances and the prototype baseline stay as-is; a case that cannot pass without deviating from the prototype or spec stays red with its attribution (oracle/prototype defect).'
+    depends_on:
+      - migrate-package
+    max_retries: 2
+    on_exhaust: exit
+  - id: review-docs
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Code-review the migrated package (fix within op/) and generate the paired operator docs
+    goal:
+      - 'Code-review the migrated package and generate its operator docs: run the ascendc-code-review skill over $WORK_DIR/op/ (op_host/, op_graph/, op_kernel/, op_api/) to produce the aggregated report $WORK_DIR/code-review/CODE_REVIEW.md, close every blocking (FAIL) finding inside $WORK_DIR/op/ and re-run the migration regression gates green, then run the ascendc-docs-gen skill to produce the paired public docs.'
+      - 'Completion gate: the review report exists with its verdict line, no FAIL finding is left unresolved (each closed in $WORK_DIR/code-review/CODE_REVIEW_FIX.md, or a zero-findings no-op recorded), the paired docs exist non-empty, and — when a fix touched $WORK_DIR/op/ — the regression gates hold on regenerated results.'
+    approach:
+      - 'Load the ascendc-code-review skill first (mandatory) and run its file-review workflow end to end (rule routing, per-clause review, line verification) as agents/code-reviewer.md with this workflow''s path overlay: the review inputs are $WORK_DIR/op/op_host/, $WORK_DIR/op/op_graph/, $WORK_DIR/op/op_kernel/ and $WORK_DIR/op/op_api/; the report lands at $WORK_DIR/code-review/CODE_REVIEW.md. Every FAIL / SUSPICIOUS finding keeps a unique F / S id, a full path and a line-verified line number.'
+      - 'The report''s first line is a single status — **状态**: ✅通过 when no FAIL finding is listed, **状态**: ❌失败 otherwise. Also run the ops-impl-review skill''s deterministic scripts over the migrated package — scalar_mainchain_check, vf_reachability_check and non3510_scaffold_check against $WORK_DIR/op, and workspace_consistency_check only when a design root exists (a proto-first work_dir has no $WORK_DIR/design/, so record it not-applicable rather than running it against a missing design) — saving each full output under $WORK_DIR/code-review/checks/; a script verdict of FAIL folds in as a FAIL finding, INCONCLUSIVE as SUSPICIOUS.'
+      - 'Fix loop (this node owns it): when the review reports blocking (FAIL) findings, confirm each at its cited location, fix only inside $WORK_DIR/op/ (op_host/, op_kernel/, op_api/, op_graph/, CMakeLists.txt), rebuild and redeploy (cd $WORK_DIR/op && ./build.sh for the recorded SoC), and re-run the migration regression gates (regression-aclnn''s TTK aclnn suites and the re-pointed torch e2e) until they hold again; record every closure in $WORK_DIR/code-review/CODE_REVIEW_FIX.md. Zero FAIL findings -> record the no-op and change no code. A finding that cannot be fixed without deviating from spec or design stays open with its attribution.'
+      - 'Then load the ascendc-docs-gen skill (mandatory — the single execution authority for doc structure, evidence sourcing and the paired delivery order) and generate the paired public docs from verifiable facts: the aclnn API interface doc $WORK_DIR/op/docs/aclnn<OpPascal>.md first, then $WORK_DIR/op/README.md linking it; expose both under the workflow path with ln -sfn op/docs $WORK_DIR/docs. <OpPascal> is confirmed against the hand-written public header $WORK_DIR/op/op_api/aclnn_<op_snake>.h, never guessed from directory names.'
+      - 'Do not append to any LOG file and do not reply DONE — logging is the workflow runner''s job.'
+    acceptance:
+      - 'Review report present with a verdict: test -s $WORK_DIR/code-review/CODE_REVIEW.md exits 0 and its first line matches head -1 $WORK_DIR/code-review/CODE_REVIEW.md | grep -qE ''^\*\*状态\*\*:[[:space:]]*(✅通过|❌失败)[[:space:]]*$''.'
+      - 'Blocking findings closed: test -s $WORK_DIR/code-review/CODE_REVIEW_FIX.md exits 0 and every FAIL finding id listed in CODE_REVIEW.md appears in CODE_REVIEW_FIX.md (verifier cross-checks the ids one by one), or the zero-findings no-op is explicitly recorded with no code modified.'
+      - 'Paired docs present: OP_PASCAL=$(python3 -c "import yaml; n=yaml.safe_load(open(''$WORK_DIR/spec/spec.yaml''))[''op''][''name'']; print(''''.join(w.capitalize() for w in n.split(''_'')))") ; test -s $WORK_DIR/op/docs/aclnn${OP_PASCAL}.md && test -s $WORK_DIR/op/README.md && test -s $WORK_DIR/docs/aclnn${OP_PASCAL}.md.'
+      - 'README links the doc it ships with: grep -qF "docs/aclnn${OP_PASCAL}.md" $WORK_DIR/op/README.md.'
+      - 'Regression holds when code changed: when this task modified any file under $WORK_DIR/op/, the migration regression was re-run green — python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/aclnn/result.csv --expect-total <regression_all data-row count> exits 0, the negative gate likewise, and bash $WORK_DIR/op/tests/torch/run.sh exits 0.'
+      - 'Frozen assets unchanged: $WORK_DIR/prototype/, $WORK_DIR/spec/spec.yaml, $WORK_DIR/golden.py, the tolerances and $WORK_DIR/npu-arch.json are unmodified (verifier checks against the pre-task state).'
+    out_of_scope:
+      - 'Modify only $WORK_DIR/code-review/, $WORK_DIR/op/docs/, $WORK_DIR/op/README.md, the $WORK_DIR/docs symlink, and (for fixes) $WORK_DIR/op/op_host/, op_kernel/, op_api/, op_graph/, CMakeLists.txt plus the build/dev-package artifacts they regenerate; everything else is read-only.'
+      - 'Never modify the prototype tree, $WORK_DIR/spec/, $WORK_DIR/golden.py, the tolerances, the ACLNN regression case set, or $WORK_DIR/npu-arch.json to make a gate green; a suspected code defect is attributed in the report, never patched in the doc''s place.'
+    depends_on:
+      - regression-aclnn
+    max_retries: 3
+    on_exhaust: exit

@@ -1,0 +1,72 @@
+# Minimal requirements-spec workflow driving the shared workflow-orchestrator skill.
+# The orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
+# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+workflow: requirements-spec
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant to this task, as development reference.
+nodes:
+  - id: analyze-requirements
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the requirements analysis document REQUIREMENTS.md
+    goal:
+      - "Produce $WORK_DIR/requirements/REQUIREMENTS.md for the operator described in $USER_PROMPT, covering its functional scope, inputs/outputs, and constraints, along with the research intermediates under $WORK_DIR/requirements/research/."
+      - "The CANN-side research anchors on the existing (A2/A3-era) implementation and produces three artifacts under $WORK_DIR/requirements/research/cann/: code_walkthrough.md (call-chain walkthrough), code_design.md (deliverable coverage + analysis), and formula.md (formula extracted from the existing kernel's Compute method — the semantic anchor of the operator's math, reference evidence for downstream design/golden tasks)."
+    approach:
+      - "First read the customer requirement from the file named by $USER_PROMPT (the user prompt); extract the operator name and any specified runtime environment, invocation, network, dtype, or shape requirements."
+      - "Load the ops-requirement-analysis skill first (mandatory) and follow its pipeline: stage 1 name resolution, stage 2 three-way research (model / competitor / CANN) with decision priority — math semantics and formula follow the competitor implementation (the primary semantic baseline and reference-oracle source); signatures, dtypes and deliverable facts follow the official IR when it hits (built-in or generation-gap operators — the only truth source against same-name ambiguity), and follow the competitor interface as the design baseline when IR misses (brand-new operators: aclnn mirrors PyTorch, GEIR mirrors TensorFlow, with the basis recorded); stage 3 requirement summary per its references/output_template.md."
+      - "Load the cannbot-knowledge knowledge base at $WORK_DIR/cannbot-knowledge and query it for this operator and its key CANN/Ascend C APIs; reuse $WORK_DIR/cannbot-knowledge/artifacts/preflight.md when present, cite source card paths in the requirement research, and record no-hit topics explicitly."
+      - "Treat $WORK_DIR/requirements/references/ (cann/, ascend/, competitor/ subdirectories) as the skill's reference/ tree for empirical source search."
+      - "Consult the local built-in proto at $ASCEND_OPP_PATH/built-in/op_proto/inc/ as the highest-authority CANN fact source."
+      - "Use the chip platform recorded in $WORK_DIR/npu-arch.json as the runtime-environment evidence."
+      - "Fill any missing customer-requirement fields with the skill's defaults (Ascend 950PR/950DT, single-op + PyTorch) and mark them as assumptions; decide autonomously, never ask the user."
+    acceptance:
+      - "$WORK_DIR/requirements/REQUIREMENTS.md exists and is non-empty."
+      - "The document has the fixed section structure (## 1 需求背景 through ## 8 需求分析总结) with all sections filled."
+      - "Supported data types, chip platform / runtime environment, and the operator formula are all traceable in the document."
+      - "No bare COPY: directives remain; table of contents entries match the body headings."
+      - "The §7.4 performance requirement section lists at least 4 concrete key shapes, states the source route (A / B / both not applicable), and fills in no target values."
+      - "$WORK_DIR/requirements/research/cann/ contains code_walkthrough.md, code_design.md and formula.md; when no kernel source was found, formula.md carries an explicit 'Kernel code missing' note instead of invented line-level evidence."
+      - "Brand-new operator (no CANN implementation at any level: ops-* / canndev / built-in proto all missed): code_design.md marks every deliverable ❌ and states 'CANN has no existing implementation; A5 is greenfield development'; formula.md then derives from competitor/paper formulas with sources noted."
+      - "Each located competitor framework produces research/opensource/{framework}/code_walkthrough.md, code_design.md and formula.md; competitor formula.md carries source file:line references, and code_design.md states the op's forward/backward identity."
+      - "model_research.md marks graded sources (arxiv / github / huggingface) on its reference links."
+      - "§8.1 deliverables derive from the §7.3 invocation method per the mapping table (union for combined invocations), no fixed all-yes list; for a generation-gap (代际补齐) scenario, §8.2 declares the capability union is not narrowed plus the new-kernel subset + IsAiCoreSupport dispatch/fallback."
+      - "formula.md is extracted from the existing kernel's Compute method (not via TensorFlow mapping); kernel dtype branches are listed separately, and every magic-number constant carries a source file:line reference."
+      - "Variant full coverage: every tiling/kernel variant in the overview tables has its own detailed subsection (compute flow + buffer allocation + tiling strategy); no 'same as template 1' skips."
+      - "Framework registration is enumerated per evidence: any found plugin (TF/ONNX/Caffe) is listed with its ParseParams attribute mapping and registration code, each marked ✅/❌; none found is recorded as ❌, never silently omitted."
+      - "The verifier reviews the document item by item against the fixed section, COPY, numbering, TOC, research, performance, and API requirements; every check passes."
+    out_of_scope:
+      - "Do not write spec.yaml, DESIGN.md, or any implementation code; this task only produces the requirements document and its research intermediates."
+    depends_on: []
+    max_retries: 1
+    on_exhaust: exit
+  - id: generate-spec
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the operator spec file spec.yaml
+    goal:
+      - "Produce $WORK_DIR/spec/spec.yaml for the operator described in $WORK_DIR/requirements/REQUIREMENTS.md: a machine-checkable structured operator spec translated from and consistent with it, with no omission and no invented addition (every field traceable to REQUIREMENTS.md)."
+      - "Use $WORK_DIR/spec/ as this task's working directory; the spec artifact is written there."
+    approach:
+      - "Load the ops-spec-gen skill first (mandatory); decide category and paradigms from its registries (category_enum.yaml, paradigm_enum.yaml, category_paradigm_map.yaml), never by intuition."
+      - "Confirm $WORK_DIR/requirements/REQUIREMENTS.md exists; extract operator category/paradigms, input tensors + dtypes, output dtype/shape rules, math formula, reference oracle, numerical tolerance, boundary cases, target chips (runtime environment section), and non-tensor attributes."
+      - "Generate the skeleton with the generator (never hand-write spec.yaml): python3 the ops-spec-gen skill's scripts/generate_spec.py --op-name <op-from-REQUIREMENTS> --category <Category> --paradigms <P1,P2> --inputs \"n1:dt1,dt2;n2:...\" --outputs <out> --description \"...\" --output-dir $WORK_DIR/spec"
+      - "Select the conditional generator options per the skill's rule table: for Reduction categories choose --axis-source (fixed / implicit_all / input_tensor) by the operator's interface; add --paradigm-groups combination when the operator has mode-switch attributes; add --format-variants when computation differs by data layout."
+      - "Hand-fill the required TODO fields per the skill: math_semantics.formula, reference_oracle.api, dtype_policy.supported_combinations, numerical_tolerance.per_dtype, op.platform_constraints.supported_chips, outputs[].shape_rule/dtype_rule, and determinism (accumulation_order / bitwise_reproducible); for VariableOutput/DynamicShape operators declare outputs[].shape_rule_kind: data_dependent with shape_rule_description + shape_bounds.max_elements instead of a shape_rule expression; review boundary_conditions / extreme_inputs / format_variants as needed. The formula form must match the 'core formula' row in REQUIREMENTS section 6 step by step."
+      - "Pin the io table to the official truth (dtype-and-naming fence): build dtype_policy.supported_combinations and the input/output NAMES from the authoritative IR the requirement research identified — the built-in proto at $ASCEND_OPP_PATH/built-in/op_proto/inc/ when the operator exists there, else the competitor IR the REQUIREMENTS names as its semantic baseline — never from an aclnn capability list (§8.2.1-style union tables list what the API layer COULD carry, not what this operator commits to). The spec's per-input dtype set must equal the IR's per-input dtype set; every dtype the IR lists appears in the spec, every dtype the spec lists appears in the IR. When a genuinely wider set is a deliberate decision, keep it OUT of supported_combinations and record it as a separate expansion note in REQUIREMENTS instead — supported_combinations stays IR-pinned. Input/output tensor names likewise copy the IR names verbatim (a proto input named 'input' is 'input' in the spec, not 'x')."
+      - "Run python3 the ops-spec-gen skill's scripts/validate_spec.py $WORK_DIR/spec/spec.yaml; fix and rerun on any FAIL until overall: PASS (exit 0); a stage SKIP (e.g. stage 9 without torch, stage 10 with unreachable oracle) counts as pass."
+      - "Self-verify: stop and report if any spec-owned field conflicts with REQUIREMENTS rather than choosing silently."
+    acceptance:
+      - "$WORK_DIR/spec/spec.yaml exists, is non-empty, and parses as YAML: python3 -c \"import yaml; yaml.safe_load(open('$WORK_DIR/spec/spec.yaml'))\" exits 0."
+      - "11-stage validation passes: python3 the ops-spec-gen skill's scripts/validate_spec.py $WORK_DIR/spec/spec.yaml ends with overall: PASS (exit 0)."
+      - "No TODO or placeholder residue: ! grep -qiE 'TODO|<[A-Z_]+>' $WORK_DIR/spec/spec.yaml."
+      - "dtype-and-naming fence holds: the io table is pinned to the IR the requirement research identified — for each input/output the spec's name equals the IR name and its dtype set equals the IR dtype set (equal, not superset); any deliberate expansion lives in REQUIREMENTS as a note, never in supported_combinations. The verifier re-derives the IR dtype set from the research intermediates (proto headers or the competitor source the REQUIREMENTS cites) and checks set equality per tensor; a mismatch is a fail, not a ⚠."
+      - "spec-verifier reviews per agents/spec-verifier.md (11-stage + SPEC-* clauses) and cross-checks every spec-owned field against $WORK_DIR/requirements/REQUIREMENTS.md item by item: no omission, no invented addition; all clauses must be ✓ or ⚠ (no ❌) — machine-checkable clauses pass, ⚠ hints do not block."
+    out_of_scope:
+      - "Produce only $WORK_DIR/spec/spec.yaml: do not create or modify any other file — including $WORK_DIR/requirements/REQUIREMENTS.md, LOG.md/LOG.json (logging is handled by the workflow runner), or any implementation code."
+    depends_on:
+      - analyze-requirements
+    max_retries: 1
+    on_exhaust: exit

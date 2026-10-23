@@ -1,0 +1,593 @@
+workflow: op-impl
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant
+  to this task, as development reference.
+nodes:
+- id: generate-prototype-subgraph
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Generate the per-branch direct-invoke prototype subgraph
+  goal:
+  - 'Read $WORK_DIR/design/BranchCatalog.md and produce $WORK_DIR/.workflow/prototype-sub-graph.yaml: a dict with exactly
+    one top-level key nodes holding M normal nodes, where M = the number of tilingKeys registered in BranchCatalog.md, discovered
+    at runtime and never assumed — one standalone direct-invoke prototype task per tilingKey, all mutually independent so
+    the orchestrator runs them concurrently (gen-golden completes before prototype-impl starts, so every prototype may cross-check
+    against $WORK_DIR/golden.py). Nothing in this task may hardcode an operator name, a tilingKey set, or a branch count.'
+  approach:
+  - 'Node schema = op-develop.yaml normal task (id, task_type: normal, title, goal, approach, acceptance, out_of_scope, depends_on,
+    executor, verifier, max_retries: 2, on_exhaust: exit). Write the file as a YAML mapping whose sole top-level key is nodes
+    (a bare list is invalid). goal / approach / acceptance / out_of_scope must each be a non-empty LIST of non-empty strings
+    (a plain string is rejected by the schema check); depends_on lists only ids that exist in the same file, and a node with
+    no dependencies uses an empty list.'
+  - 'Enumerate the tilingKeys in BranchCatalog.md registration order, m = 1..M; per key (with its DESIGN-BRANCH-<key>.md),
+    generate one node:'
+  - 'prototype-branch-<key> — executor kernel-developer, verifier kernel-verifier: prove this branch''s compute functionality
+    as a standalone Ascend C direct-invoke prototype before any package integration, following the toolkit''s direct-invoke
+    sample recipe: one self-contained .asc under $WORK_DIR/op/tests/prototype/branch-<key>/ (main.asc) holding BOTH the device
+    kernel (taking a plain tiling struct by value) and a host test harness that queries the core count and UB size at runtime
+    and launches the kernel directly — no op-package machinery. A standalone CMakeLists.txt beside the .asc builds it with
+    the cann toolkit environment for the target NPU architecture recorded in $WORK_DIR/npu-arch.json.'
+  - 'Derive the kernel logic ONLY from $WORK_DIR/design/ Overview + Interface + Validation and DESIGN-BRANCH-<key>.md compute
+    semantics (data flow, dtype/cast contract, broadcast, boundary and special-value behavior) — do not copy the design''s
+    Tiling/Kernel implementation: a simple self-made runtime split (runtime core/UB query) is enough, correctness over performance.'
+  - 'Functional gate for prototype-branch-<key>: the harness embeds an independent CPU golden built from the same design semantics
+    (dtype/cast contract, broadcast, boundary and special-value behavior); it drives the branch''s cases from DESIGN-BRANCH-<key>.md
+    verification points and the Validation.md matrix rows routed to this branch; it prints a per-case PASS/FAIL summary and
+    exits 0 only when every case passes; evidence in $WORK_DIR/op/tests/prototype/branch-<key>/prototype.log.'
+  - 'Dependencies inside the subgraph: none — every prototype-branch-<key> has depends_on: [] (disjoint directories under
+    $WORK_DIR/op/tests/prototype/, no shared build tree), so different branches'' prototypes run concurrently.'
+  - Every node's goal must state its completion gate explicitly and reference its authoritative design docs by absolute path.
+  acceptance:
+  - 'Contract-valid: ORCH_SKILL=the workflow-orchestrator skill directory ; python3 -c "import sys; sys.path.insert(0,\"$ORCH_SKILL/scripts\");
+    import get_task; nodes,err=get_task.load_subgraph(\"$WORK_DIR/.workflow/prototype-sub-graph.yaml\"); assert not err, err"
+    exits 0.'
+  - $WORK_DIR/.workflow/prototype-sub-graph.yaml exists; M equals the tilingKey count in $WORK_DIR/design/BranchCatalog.md;
+    python3 -c "import yaml; d=yaml.safe_load(open('$WORK_DIR/.workflow/prototype-sub-graph.yaml')); assert isinstance(d,dict)
+    and set(d)=={'nodes'} and len(d['nodes'])==M" exits 0.
+  - Node ids are exactly prototype-branch-<key> for the tilingKeys registered in BranchCatalog.md, in BranchCatalog.md registration
+    order; each node's DESIGN-BRANCH-<key>.md reference matches its tilingKey.
+  - 'Every node satisfies the normal-task schema with executor kernel-developer, verifier kernel-verifier, and depends_on:
+    [] (full branch concurrency); every node''s acceptance is checkable (exit codes / file paths / log contents).'
+  - 'Golden independence: every generated prototype node''s goal/approach requires its harness expected values to be cross-checked
+    against $WORK_DIR/golden.py, and the harness cites the golden derivation (verifier traces one case per branch).'
+  out_of_scope:
+  - Do not create or modify any file other than $WORK_DIR/.workflow/prototype-sub-graph.yaml; do not write kernel code; do
+    not execute any prototype task.
+  depends_on: []
+  max_retries: 2
+  on_exhaust: exit
+- id: prototype-impl
+  task_type: subgraph
+  file: .workflow/prototype-sub-graph.yaml
+  depends_on:
+  - generate-prototype-subgraph
+  - gen-golden
+  - setup-op-package
+- id: setup-op-package
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Initialize and verify the operator package from the registry-invoke template
+  goal:
+  - Initialize the complete operator package from the ascendc-registry-invoke-template skill into $WORK_DIR/op/, rename it
+    to the target operator, and verify the template's example test.
+  approach:
+  - 'Derive the operator''s three name forms from spec.yaml: OP_SNAKE = op.name, OP_PASCAL = PascalCase, OP_UPPER = UPPER_SNAKE.'
+  - 'Resolve the template through the relative skill symlink: WORKFLOW_YAML=$(python3 -c "import json; print(json.load(open(''$WORK_DIR/.workflow/status.json''))[''workflow''])")
+    ; TEMPLATE_DIR=$(dirname "$(dirname "$WORKFLOW_YAML")")/skills/ascendc-registry-invoke-template ; test -f $TEMPLATE_DIR/SKILL.md
+    && test -d $TEMPLATE_DIR/references/add_example.'
+  - 'Create a fresh package from the template: rm -rf $WORK_DIR/op && mkdir -p $WORK_DIR/op && cp -a $TEMPLATE_DIR/references/add_example/.
+    $WORK_DIR/op/ && rm -rf $WORK_DIR/op/tests. Keep the template''s ACLNN example as the baseline.'
+  - 'Rename every file under $WORK_DIR/op/ whose name contains add_example to OP_SNAKE, then replace all sample name forms
+    in file contents: add_example->OP_SNAKE, AddExample->OP_PASCAL, ADD_EXAMPLE->OP_UPPER; set the root CMake package_name
+    to OP_PASCAL and update any ACLNN symbol references to aclnn<OP_PASCAL>.'
+  - Build the initialized package with its template build.sh for the lab NPU generation, install the generated .run into $WORK_DIR/dev-package,
+    then run the template's eager example from $WORK_DIR/op/examples/. Point the example at $WORK_DIR/dev-package/vendors/<OP_PASCAL>
+    by exporting ASCEND_CUSTOM_OPP_PATH and placing that vendor's op_api/lib first in LD_LIBRARY_PATH; do not fall back to
+    the system opp vendors directory. Write the example output and environment evidence to $WORK_DIR/op/examples/verify.log.
+  acceptance:
+  - '$WORK_DIR/op/ contains the package skeleton: test -d $WORK_DIR/op/op_host && test -d $WORK_DIR/op/op_kernel && test -d
+    $WORK_DIR/op/op_graph && test -f $WORK_DIR/op/build.sh && test -f $WORK_DIR/op/CMakeLists.txt && test -f $WORK_DIR/op/README.md
+    && test ! -e $WORK_DIR/op/tests.'
+  - 'No sample-name residue: ! grep -RniE ''add_example|AddExample|ADD_EXAMPLE|addExample'' $WORK_DIR/op/.'
+  - 'Run package installed into dev-package: OP_PASCAL=$(python3 -c "import yaml; n=yaml.safe_load(open(''$WORK_DIR/spec/spec.yaml''))[''op''][''name''];
+    print(''''.join(w.capitalize() for w in n.split(''_'')))") ; test -s $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so.'
+  - 'Template example passes: cd $WORK_DIR/op/examples && ./run.sh --eager > verify.log 2>&1 && ! grep -qF ''FAILED'' verify.log
+    && grep -qF ''PASS'' verify.log.'
+  - 'The example library resolves from dev-package: OP_PASCAL=$(python3 -c "import yaml; n=yaml.safe_load(open(''$WORK_DIR/spec/spec.yaml''))[''op''][''name''];
+    print(''''.join(w.capitalize() for w in n.split(''_'')))") ; ldd $WORK_DIR/op/examples/build-eager/bin/test_aclnn_$OP_PASCAL
+    | grep -F ''libcust_opapi.so'' | grep -qF $WORK_DIR/dev-package/vendors/$OP_PASCAL.'
+  - 'verify.log records the dev-package runtime path: test -s $WORK_DIR/op/examples/verify.log && grep -qF ''ASCEND_CUSTOM_OPP_PATH''
+    $WORK_DIR/op/examples/verify.log && grep -qF $WORK_DIR/dev-package/vendors/$OP_PASCAL $WORK_DIR/op/examples/verify.log.'
+  out_of_scope:
+  - Only create or modify files under $WORK_DIR/op/ and $WORK_DIR/dev-package/.
+  - Keep the template's operator semantics unchanged (input count and kernel math change in later tasks).
+  depends_on: []
+  max_retries: 2
+  on_exhaust: exit
+- id: update-opdef
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Transcribe the OpDef from Interface.md; keep the kernel entry as a compiling no-op stub
+  goal:
+  - 'Rewrite $WORK_DIR/op/op_host/*_def.cpp so its `class ... : public OpDef` body matches the `## OpDef 代码片段` fenced cpp
+    block in $WORK_DIR/design/Interface.md exactly.'
+  - Align the kernel entry's param list — in the $WORK_DIR/op/op_kernel/ source declaring the `__global__ __aicore__` entry
+    — to the `Kernel 入口` section of $WORK_DIR/design/Kernel.md as a no-op stub (no compute yet); it only needs to compile.
+  approach:
+  - Read the `## OpDef 代码片段` fenced cpp block in $WORK_DIR/design/Interface.md — the authoritative, already-resolved OpDef;
+    record its Input/Output names in declaration order.
+  - 'Rewrite $WORK_DIR/op/op_host/*_def.cpp: keep the file header, `#include "register/op_def_registry.h"`, and the `namespace
+    ops { ... }` wrapper; replace only the `class ... : public OpDef` body (from `class` to its closing `};`) and the `OP_ADD(...)`
+    macro with the snippet''s — do not paste the snippet''s `namespace ops { ... }` wrapper, the file already has one.'
+  - Read the `Kernel 入口` section of $WORK_DIR/design/Kernel.md for the kernel entry signature (symbol name + param list);
+    this is the authoritative source for the entry, not the OpDef names.
+  - 'Rewrite the kernel-entry source (the $WORK_DIR/op/op_kernel/ file declaring the `__global__ __aicore__` entry): take
+    the entry symbol name and param list (input tensors in order, then output tensors, then workspace, then tiling) from Kernel.md''s
+    入口 code, keeping the package''s existing entry boilerplate (`extern "C" __global__ __aicore__ void <op>`, `__gm__ uint8_t*`
+    params) and the tiling readout (REGISTER_TILING_DEFAULT + GET_TILING_DATA); drop the compute (no kernel class call), leaving
+    a no-op stub (InitSocState + tiling readout + PipeBarrier). Silence an unused `tilingData` with `(void)tilingData;`, and
+    drop the kernel-header include if the stub no longer uses it.'
+  - 'Build the package with its build.sh for the target NPU architecture recorded in $WORK_DIR/npu-arch.json (pass the SoC
+    argument the script requires) — exit 0. The build''s CMake falls back to $ENV{ASCEND_HOME_PATH} when CANN_HOME is unset;
+    only if both are unset, source the toolkit''s bin/set_env.bash first.'
+  acceptance:
+  - 'Package builds for the target architecture: cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture
+    recorded in $WORK_DIR/npu-arch.json exits 0.'
+  - 'def.cpp transcribes the snippet: the `this->Input("...")` / `this->Output("...")` names in $WORK_DIR/op/op_host/*_def.cpp
+    appear in the same order as in the `## OpDef 代码片段` fenced block of $WORK_DIR/design/Interface.md (same names, same order,
+    no extras or missing).'
+  - 'No placeholder residue: ! grep -qF ''{OP}'' $WORK_DIR/op/op_host/*_def.cpp && ! grep -qE ''<(Op|op|in[0-9]*|out[0-9]*|optional_in|attr|req_attr|bool_attr|default|soc)>''
+    $WORK_DIR/op/op_host/*_def.cpp.'
+  out_of_scope:
+  - Only $WORK_DIR/op/op_host/*_def.cpp and the $WORK_DIR/op/op_kernel/ kernel-entry source (the file declaring the `__global__
+    __aicore__` entry) may change (plus build/ regenerated by build.sh).
+  - Do not implement the compute — the kernel body is written by the kernel task from design/Kernel.md.
+  - Do not touch _infershape.cpp, tiling, CMakeLists, or tests; the ACLNN test is stale after the interface change and is
+    updated by the downstream implementation workflow.
+  depends_on:
+  - setup-op-package
+  max_retries: 2
+  on_exhaust: exit
+- id: update-op-api
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Rewrite the aclnn L2/L0 API from Interface.md and prove it in aclnn invocation mode
+  goal:
+  - 'Rewrite the four files under $WORK_DIR/op/op_api/ — aclnn_<op>.h / aclnn_<op>.cpp (L2 API) and <op>.h
+    / <op>.cpp (L0 API), with <op> the operator''s snake_case name from $WORK_DIR/spec/spec.yaml — so the
+    package''s aclnn API is the operator''s real interface: the template''s add_example interface (x1, x2,
+    out) must be fully replaced by the inputs, attrs, and outputs of $WORK_DIR/design/Interface.md''s ##
+    算子原型, in its declaration order (the aclnnGetWorkspaceSize parameter list is exactly: inputs in
+    order, then attrs in order, then outputs in order).'
+  - 'Prove the rewritten API works in aclnn invocation mode — the mode every external caller uses (TTK
+    aclnn, the bench, downstream frameworks): a single-case ttk aclnn run against the independent golden
+    $WORK_DIR/golden.py precision-PASSes.'
+  approach:
+  - '$WORK_DIR/design/Interface.md is the authoritative interface: ## 算子原型 (prototype, Inputs/Outputs/Attrs
+    with names, semantics, shape contract, optionality, defaults) plus ## OpDef 代码片段 (the resolved OpDef).
+    Interface.md''s ## 算子规格(受支持 dtype 组合) table is the dtype-support truth for the L0 checks.'
+  - 'Keep the template''s proven l0op-style structure in both files — null/dtype checks, Contiguous handling,
+    executor creation, and the launcher-list registration — transcribing the operator''s real names: OP_INPUT
+    and OP_OUTPUT lists carry the operator''s input/output names, and every attr declared in Interface.md is
+    carried from the L2 API into the executor (the TilingFunc reads attrs from the framework context); an
+    attr is never dropped or renamed. Consult the ascendc-registry-invoke-template skill''s add_example
+    op_api pair for the code pattern; consult the samples corpus (runtime shallow clone: if $WORK_DIR/cannbot-skills has no .git, git clone --depth 1 https://gitcode.com/cann/cannbot-skills.git $WORK_DIR/cannbot-skills; use its ops/samples) when the template pattern does not cover
+    this operator''s aclnn conventions.'
+  - 'Rebuild and reinstall: cd $WORK_DIR/op && ./build.sh with the SoC argument for the architecture
+    recorded in $WORK_DIR/npu-arch.json exits 0; install the generated .run into $WORK_DIR/dev-package the
+    way setup-op-package did (replacing the template install).'
+  - 'aclnn-mode smoke: write a one-case CSV under $WORK_DIR/op/tests/aclnn/ modeled on the ops-test-kit
+    aclnn case format (columns testcase_name, api_name, tensor_view_shapes, tensor_dtypes, ...,
+    attributes — see $WORK_DIR/ops-test-kit/examples/case_store/aclnn/cases.csv), taking the case from the
+    first plain positive row of $WORK_DIR/design/Validation.md''s 端到端测试用例矩阵 (first supported dtype,
+    a representative shape, default attrs). Run it via TTK aclnn mode against the golden: cd
+    $WORK_DIR/ops-test-kit && python3 -m ttk aclnn -i <smoke csv> --compare stat_rel_err --plugin
+    $WORK_DIR/golden.py, with the dev-package vendors tree made visible to the runtime (ASCEND_CUSTOM_OPP_PATH
+    and the vendor''s op_api/lib first in LD_LIBRARY_PATH — consult the blackbox-tester skill for the
+    aclnn-mode invocation contract). Save the full output to $WORK_DIR/op/tests/aclnn/smoke.log; the case
+    must precision-PASS.'
+  acceptance:
+  - 'Four files exist for the operator''s own name: OP_SNAKE=$(python3 -c "import yaml;
+    print(yaml.safe_load(open(''$WORK_DIR/spec/spec.yaml''))[''op''][''name''])") ; test -f
+    $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.cpp && test -f
+    $WORK_DIR/op/op_api/${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.cpp.'
+  - 'Build and exported symbols: cd $WORK_DIR/op && ./build.sh with the SoC argument exits 0, and the
+    installed libcust_opapi.so under $WORK_DIR/dev-package/vendors/<OP_PASCAL> exports the L2 pair:
+    nm -D <that .so> | grep -cE '' T aclnn<OP_PASCAL>(GetWorkspaceSize)?$'' equals 2.'
+  - 'Signature matches Interface.md, machine-checked: a python check parses aclnn_${OP_SNAKE}.h''s
+    aclnn<OP_PASCAL>GetWorkspaceSize parameter list and asserts it equals Interface.md''s ## 算子原型
+    inputs, then attrs, then outputs — same names, same order, tensor for every input/output and the
+    attr''s numeric/string type per its declaration (the check script and its PASS output are recorded in
+    $WORK_DIR/op/tests/aclnn/signature_check.log).'
+  - 'aclnn smoke green: $WORK_DIR/op/tests/aclnn/smoke.log exists, is non-empty, and shows the smoke case
+    precision-PASS (TTK summary FAIL : 0 for the case).'
+  out_of_scope:
+  - 'Modify only $WORK_DIR/op/op_api/ (the four files), the artifacts build.sh regenerates (build/,
+    dev-package/), and $WORK_DIR/op/tests/aclnn/ (the smoke CSV, smoke.log, signature_check.log).
+    op_host/, op_kernel/, op_graph/, tests/tiling/, tests/prototype/, package-root CMakeLists.txt /
+    build.sh, and every design/spec/requirements file are read-only.'
+  - 'Do not change the kernel or tiling behavior; this task only re-exposes the operator''s real interface
+    at the aclnn API layer and proves it in aclnn mode.'
+  depends_on:
+  - update-opdef
+  - gen-golden
+  max_retries: 2
+  on_exhaust: exit
+- id: gen-golden
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Generate the TestSpec golden.py and its invariant self-check
+  goal:
+  - Produce $WORK_DIR/golden.py as a TTK TestSpec-format golden (independent of the kernel under test) for the operator in
+    $WORK_DIR/spec/spec.yaml, plus $WORK_DIR/golden_invariant_check.py which proves the golden satisfies the spec's math_semantics
+    invariants on random inputs.
+  approach:
+  - Read $WORK_DIR/spec/spec.yaml's reference_oracle and math_semantics; consult the ttk-how-write-plugin skill under $WORK_DIR/ops-test-kit/
+    for TestSpec conventions, plus $WORK_DIR/ops-test-kit/ttk/test_spec/examples/.
+  - 'Write $WORK_DIR/golden.py in TestSpec format: __spec__ registration + class with golden and tolerance; implement the
+    reference math from spec.yaml only — never import or reuse anything from $WORK_DIR/op/ (kernel artifacts).'
+  - 'Pick the golden body''s implementation backend by this fixed priority ladder, stopping at the first tier that holds (equivalent
+    = same semantics as the spec''s math_semantics.formula, including optional-input pairing and attr behavior): tier 1 single
+    PyTorch API — one equivalent torch API exists, build the golden body on it. tier 2 single TensorFlow API — one equivalent
+    TF API exists, build the golden body on it. tier 3 PyTorch API composition — no single equivalent API in either framework,
+    but a composition of torch APIs implements the full formula, build the golden body from it. tier 4 TensorFlow API composition
+    — same via a composition of TF APIs. tier 5 NumPy — hand-implement the formula with numpy primitives. When a torch/TF
+    tier is taken, the golden must CALL the chosen API(s) for every part they cover, casting inputs to float64 around each
+    call; re-implementing an API''s internals with elementary tensor ops is a tier-5 hand implementation, not a composition
+    — the API''s own numerics (including boundary-value behaviour) are the expected values. Record in golden.py''s module
+    docstring the tier taken, the exact API(s) chosen, and what each skipped tier lacked.'
+  - 'Float64 accumulation rule (workflow-mandated, overrides any lower accumulator dtype declared in the spec): wherever the
+    golden performs floating-point accumulation, lift the values to float64 first, accumulate in float64, and cast the final
+    result back to the target output dtype — torch: x.to(torch.float64) -> sum -> .to(out_dtype); tensorflow: tf.cast(x, tf.float64)
+    -> reduce_sum -> tf.cast(out_dtype); numpy: x.astype(np.float64) -> sum -> .astype(out_dtype). Never accumulate in float16/float32.'
+  - 'Memory-safe golden: the float64 lift must never fail on large inputs — accumulate/chunk element-by-element or block-wise
+    when a whole-tensor float64 materialization would exceed host memory; the numerical result must equal the unchunked
+    float64 computation within the output dtype''s rounding.'
+  - 'When any torch/TF tier (1–4) supplies the golden body — single API or composition — compose it with the float64 rule:
+    cast every input to float64, call the torch/TF API(s), cast the outputs back once to the target dtypes — the framework''s
+    internal accumulation then runs in float64.'
+  - 'Derive tolerance.standard from $WORK_DIR/spec.yaml, never from the operator name. Default classification by op.paradigms
+    (compute paradigms with float output -> stat_rel_err; pure data-reorganization -> binary_equal; int output -> binary_equal;
+    quantization -> quant — the enum set defined by the ttk test_spec validator is authoritative), overridable by the spec''s
+    numerical_tolerance. cross_check override (the spec''s top-level cross_check block is always present — generate-spec writes
+    it for every operator): set each float16/bfloat16/float32 dtype''s tolerance to {standard: cross_check, level: the spec''s
+    cross_check.level}; other dtypes keep their classification. Declare the reference_oracle competitor API as third_party
+    — cross_check requires third_party; competitor APIs are reached via the third_party declaration, not an in-process import.
+    A third_party class''s __init__/__call__ parameter names must match the op''s attribute names verbatim — the xpu-server
+    binds by name, so a camelCase attr never feeds a snake_case parameter and the class silently runs with its default.'
+  - 'Write $WORK_DIR/golden_invariant_check.py: build 3+ random legal input sets, run every value-level invariant in spec
+    math_semantics.invariants against the golden, print PASS per invariant, exit 0 only if all pass.'
+  acceptance:
+  - '$WORK_DIR/golden.py exists and parses: python3 -c "import ast; ast.parse(open(''$WORK_DIR/golden.py'').read())" exits
+    0; it contains __spec__ registration and a class definition (TestSpec format).'
+  - 'Oracle independence: ! grep -qE ''from op|import op/'' $WORK_DIR/golden.py (no kernel artifact reuse); golden math matches
+    spec.yaml reference_oracle semantics.'
+  - 'Backend priority traceable: golden.py''s module docstring names the priority tier taken (torch single API / tensorflow
+    single API / torch composition / tensorflow composition / numpy) and the exact API(s) used; for every skipped higher tier
+    it states what equivalent API the search lacked.'
+  - 'Float64 accumulation: the golden''s accumulation path casts to float64 before summing and casts back to the output dtype
+    after (torch: .to(torch.float64); tensorflow: tf.cast(x, tf.float64); numpy: astype(np.float64) -> np.sum -> astype(out_dtype));
+    no float16/float32 accumulation anywhere in the reduction.'
+  - $WORK_DIR/golden_invariant_check.py exists and python3 $WORK_DIR/golden_invariant_check.py exits 0 with every invariant
+    PASS — deleting or relaxing invariants to force green is forbidden.
+  out_of_scope:
+  - Create only $WORK_DIR/golden.py and $WORK_DIR/golden_invariant_check.py; do not modify spec.yaml, design docs, or anything
+    under $WORK_DIR/op/.
+  depends_on: []
+  max_retries: 2
+  on_exhaust: exit
+- id: write-tiling-ut
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Write the Tiling gtest unit test (TDD red baseline, only the exempt tiling(nullptr) case passes)
+  goal:
+  - 'Rewrite $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp as the complete Tiling UT for the operator in $WORK_DIR/spec/spec.yaml:
+    one TEST_F per host-tiling feature and per validation/exception exit, expectations from an independent hand-written oracle,
+    following the tiling-developer TDD discipline.'
+  - 'Exception coverage is checklist-driven: load the tiling-exception-coverage skill (mandatory) and work its full checklist
+    per its procedure (the item set and its mandatory/conditional classification are the skill''s own definition, not restated
+    here), recording the coverage matrix as a comment block inside $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp (this workflow
+    relocates the skill''s matrix in-file; no separate matrix file); the skill''s completion criterion defines done — every
+    item covered or N/A with spec evidence, no third state.'
+  - 'Install and build the UT in isolation under $WORK_DIR/op/tests/tiling/dev-package/, run it against the red-phase stub,
+    and record the red baseline in $WORK_DIR/op/tests/tiling/ut-baseline.log: every scenario failed except the exempt tiling(nullptr)
+    case; the log must show which .so was loaded.'
+  approach:
+  - Load the tiling-exception-coverage skill first (mandatory); its checklist procedure and assertion playbook are the authority
+    for every exception case below.
+  - Load the tiling-ut-harness skill first (mandatory); its platform-mock mapping table, compile-link recipe, and env_doctor
+    verification are the authority for the mock harness below — do not reverse-engineer SDK binaries when env_doctor returns
+    VERIFIED.
+  - 'Derive the case set and the oracle from these sources; each line states what the file provides and the exhaustiveness
+    bar it drives:'
+  - $WORK_DIR/design/HostTiling.md -> every shared tiling formula becomes a labeled oracle rule, each exercised at its exact
+    threshold and +-1 (core-count, alignment, buffer budget), plus tail-block and multi-loop paths; every 异常值校验 exit becomes
+    one GRAPH_FAILED case.
+  - $WORK_DIR/design/TilingData.md section 1 -> the expected TilingData layout, transcribed into the test file (success cases
+    assert every field + blockDim + tilingKey + workspace); section 2 -> per-field semantics.
+  - '$WORK_DIR/design/TilingKey.md + BranchCatalog.md -> the authoritative tilingKey set: one routed success case per key.
+    $WORK_DIR/design/BranchRoute.md -> each key''s entry condition, and which error scenarios are rejections (never routed
+    to a key).'
+  - $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md 「具体切分计算 (Tiling formulas)」-> per-branch oracle constants and formulas.
+  - $WORK_DIR/design/Interface.md 算子规格 table -> one success case per supported dtype-combination row; the OpDef contract ->
+    how the TilingContext is built (IO count, attrs).
+  - $WORK_DIR/design/Kernel.md -> which TilingData fields the kernel reads on degenerate/short-circuit paths; pin only those
+    on such paths.
+  - '$WORK_DIR/spec/spec.yaml -> error_codes, boundary_conditions (empty tensor, rank 0, max rank), shape_constraints/rank_range:
+    one boundary or rejection case each.'
+  - 'the tiling-exception-coverage skill -> the exception-coverage floor: walk every checklist item per the skill''s procedure
+    against the Interface.md IO table / OpDef attrs / spec.yaml constraints; every hit item becomes one TEST_F using the skill''s
+    construction recipe and assertion playbook, and the disposition of every item lands as a coverage-matrix comment block
+    inside test_tiling_gtest.cpp, in the skill''s row format, as the task''s checklist audit trail.'
+  - 'Establish the red-phase stub first: the package still ships the sample''s working tiling, so reduce TilingFunc in $WORK_DIR/op/op_host/arch35/*_tiling_arch35.cpp
+    to the red-phase stub per the tiling-developer TDD discipline before running the UT. The tiling(nullptr) guard case already
+    passes against the stub and is exempt from the 0-passed bar; write it as a normal expect-failure case and record the exemption
+    in the in-file coverage matrix.'
+  - 'Harness: keep the sample tests/tiling/ pattern B (registry dlopen of the installed op_host .so; fe::PlatFormInfos mock
+    for per-case core count / UB size - at least one non-default value of each wherever a formula consumes it).'
+  - 'SUT-invocation proof (machine-checked, plugin-owned): after writing the UT, run python3
+    the tiling-ut-harness skill''s scripts/check_sut_invocation.py $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp —
+    it must exit 0 (every TEST_F transitively reaches a call through the loaded TilingFunc handle via local helpers; a
+    helper like ExpectSuccess that never invokes the SUT makes its callers assert fixture defaults, not TilingFunc
+    behavior). Repair the UT until it passes; append the checker''s output to ut-baseline.log next to the red baseline.'
+  - 'Isolation: point run.sh''s --install-path and CMake''s OPP_INSTALL_DIR at $WORK_DIR/op/tests/tiling/dev-package/ (replacing
+    the sample''s install/); the .so and headers resolve only under its vendors/<OpPascal>/ tree, and OP_HOST_SO_ABS / LD_LIBRARY_PATH
+    agree with it. The shared $WORK_DIR/dev-package/ stays byte-identical for parallel tasks.'
+  - 'Evidence: keep the setup print of the loaded .so path.'
+  - Where a design doc leaves a short-circuit path's fields undefined, assert only the pinned contract and comment the gap
+    in the test.
+  - 'Run `cd $WORK_DIR/op/tests/tiling && ./run.sh` (non-zero exit expected) and save the full output to ut-baseline.log.
+    Any case beyond the exemptions recorded in the coverage matrix passing against the stub does not discriminate the unimplemented
+    state: sharpen that expectation until the baseline shows only the exemption case(s) passed.'
+  - 'Red-phase failure anatomy: inspect every FAILED case in ut-baseline.log — its first failing assertion must be one a correct
+    TilingFunc can turn green (an oracle comparison on TilingFunc outputs/effects, or the expected error-return/log-anchor
+    the stub does not produce). A case failing at a harness or oracle-internal assertion that no TilingFunc implementation
+    can flip (a construction recipe the SDK contradicts, an oracle helper rejecting its own input, a builder rejecting the
+    test''s own config) is a defective test, not a red case: repair the construction, the harness usage, or the oracle helper
+    code and rerun until every red failure sits behind the TilingFunc call.'
+  acceptance:
+  - 'UT artifacts exist with a single source file: test -s $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp && test -f $WORK_DIR/op/tests/tiling/CMakeLists.txt
+    && test -f $WORK_DIR/op/tests/tiling/run.sh && test $(find $WORK_DIR/op/tests/tiling -maxdepth 1 -name ''*.cpp'' | wc
+    -l) -eq 1.'
+  - 'Isolated install: test -d $WORK_DIR/op/tests/tiling/dev-package/vendors && find $WORK_DIR/op/tests/tiling/dev-package/vendors
+    -name ''libcust_opmaster_rt2.0.so'' | grep -q .'
+  - 'Loaded-library evidence: grep -qF ''loading op_host .so'' $WORK_DIR/op/tests/tiling/ut-baseline.log && grep -qF $WORK_DIR/op/tests/tiling/dev-package
+    $WORK_DIR/op/tests/tiling/ut-baseline.log.'
+  - 'Oracle independence: ! grep -qE ''#include[[:space:]]+"[^"]*(tiling_struct|tiling_arch35)[.]h"'' $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp.'
+  - 'Red baseline recorded: test -s $WORK_DIR/op/tests/tiling/ut-baseline.log && grep -qF ''[==========]'' $WORK_DIR/op/tests/tiling/ut-baseline.log
+    && grep -qF ''[  FAILED  ]'' $WORK_DIR/op/tests/tiling/ut-baseline.log, and the passed set is exactly the exemption rows
+    recorded in the in-file coverage matrix (cases the red-phase stub''s own pinned contract satisfies, i.e. the tiling(nullptr)
+    guard) — no other case passes.'
+  - 'SUT-invocation check green and recorded: python3 the tiling-ut-harness skill''s scripts/check_sut_invocation.py
+    $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp exits 0, and ut-baseline.log contains its
+    "SUT INVOCATION CHECK: PASS" line (the verifier re-runs the checker itself; a UT whose TEST_Fs never
+    reach the TilingFunc call is rejected regardless of its gtest output).'
+  - 'Red failures are stub-caused: for every FAILED case in ut-baseline.log, the first failing gtest assertion is downstream
+    of the TilingFunc call (an oracle comparison on its outputs/effects or an expected-error anchor the stub does not produce),
+    never a harness/construction/oracle-internal assertion independent of the implementation; tiling-verifier re-judges this
+    from ut-baseline.log and the test source.'
+  - 'Exception checklist audited in-file: every checklist item the tiling-exception-coverage skill defines appears exactly
+    once in the coverage-matrix comment block of $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp (IDs are whatever the skill
+    currently defines).'
+  - 'Checklist row content: every TEST_F name cited in the in-file coverage matrix grep-matches a TEST_F in test_tiling_gtest.cpp;
+    every covered row names its interception layer (infer / tiling / platform); every covered expect-failure row names its
+    asserted log anchor; every N/A row cites Interface.md or spec.yaml as evidence, and the citation is valid only when the
+    quoted clause grep-matches the file it cites (verifier re-greps each quote against its named file).'
+  - 'Broadly-applicable items never N/A by default: for the checklist items the skill marks as applying to nearly every operator,
+    N/A is legitimate only when the op spec provably lacks that degree of freedom (e.g. a single-input operator makes the
+    cross-input-dtype item vacuous — the N/A row must say so by quoting the IO table).'
+  - tiling-verifier reviews per agents/tiling-verifier.md in TilingUT/red-baseline mode, with UT artifacts rooted at $WORK_DIR/op/tests/tiling/
+    and design docs at $WORK_DIR/design/ (not the operators/{OP}_package / docs/{OP} layout shown in the agent doc), tracing
+    every exhaustiveness bar in this task's approach source list to at least one TEST_F; all clauses pass.
+  - 'tiling-verifier additionally re-judges every N/A row of the in-file coverage matrix against the op spec: an N/A whose
+    trigger actually fires (e.g. an operator with broadcast semantics marking the broadcast-rule item N/A) fails the review.'
+  out_of_scope:
+  - Only create or modify files under $WORK_DIR/op/tests/tiling/ (including the build/, dev-package/ and ut-baseline.log artifacts
+    run.sh generates there); the one exception is $WORK_DIR/op/op_host/arch35/*_tiling_arch35.cpp, which may only be reduced
+    to the red-phase stub. $WORK_DIR/dev-package/, op_kernel/, op_graph/, package-root CMakeLists.txt / build.sh and all design
+    docs stay unchanged.
+  - 'Do not turn the red baseline green here: the TilingFunc stays stub-only; record design gaps as test comments only.'
+  depends_on:
+  - prototype-impl
+  - update-opdef
+  - gen-golden
+  max_retries: 2
+  on_exhaust: exit
+- id: implement-tiling
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Implement the real host Tiling so the entire Tiling UT suite passes (TDD green)
+  goal:
+  - Replace the stub TilingFunc currently in $WORK_DIR/op/op_host/arch35/*_tiling_arch35.cpp with the real TilingFunc for
+    the operator in $WORK_DIR/spec/spec.yaml — TilingData struct, common split formulas, branch determination with tilingKey
+    setting, validation/short-circuit exits, and the IMPL_OP_OPTILING registration — transcribed from the same $WORK_DIR/design/
+    docs the UT oracle was derived from.
+  - 'Make the complete Tiling UT pass, with the UT itself as the pinned oracle: cd $WORK_DIR/op/tests/tiling && ./run.sh exits
+    0 with every TEST_F passed and 0 failed, recorded as $WORK_DIR/op/tests/tiling/ut-green.log.'
+  approach:
+  - 'The Tiling UT at $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp is the read-only pinned oracle (independent hand-written
+    formulas, success and exception cases alike): implement until it passes; the oracle itself is never edited. The completion
+    gate is strict: run.sh exits 0 with every TEST_F passed and 0 failed.'
+  - 'Implement from the design docs; the UT oracle was derived from the same files, so any deviation shows up as exactly one
+    red case:'
+  - 'The per-branch standalone prototypes under $WORK_DIR/op/tests/prototype/ are this operator''s proven compute/data-flow
+    reference — they already run the full host+kernel E2E on the NPU with every case green. Port their validated split logic
+    (core-count/UB budget queries, tile shape and loop-structure choices, special-value handling) into TilingData/TilingFunc
+    field-for-field, changing only the plumbing: TilingContext/CompileInfo inputs replace the prototype''s runtime platform
+    queries, the package build replaces the standalone CMake, and TilingData fields replace the prototype''s plain struct.
+    The prototype''s host harness is the executable spec of what TilingFunc must produce (which fields the kernel actually
+    consumes, how the split behaves at boundaries); the framework contract (registration, builder, UT harness) is the only
+    part to learn from the SDK. Do not re-derive a split the prototype already validated — adapt it, then let the UT oracle
+    arbitrate.'
+  - $WORK_DIR/design/TilingData.md section 1 -> $WORK_DIR/op/op_kernel/arch35/*_tiling_struct.h rewritten field-for-field
+    (no missing, no extra field; units per section 2).
+  - '$WORK_DIR/design/HostTiling.md -> the common TilingFunc: shared split formulas, every 异常值校验 exit as a GRAPH_FAILED return,
+    the short-circuit/early-return paths it documents (empty tensor among them), TilingData fill + SetBlockDim + workspace
+    sizes, and the determinism guarantees (accumulation_order / bitwise_reproducible) honored in the split order it records.'
+  - '$WORK_DIR/design/TilingKey.md + BranchRoute.md -> the authoritative key set: branch determination and SetTilingKey per
+    BranchRoute.md''s entry conditions, using the bit encoding fixed at design time (GET_TPL_TILING_KEY or literal, exactly
+    as TilingKey.md documents).'
+  - $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md 「具体切分计算」 sections -> per-branch constants and formulas transcribed verbatim
+    into constexpr — never from memory.
+  - $WORK_DIR/design/Kernel.md -> which TilingData fields degenerate/short-circuit paths read (fill exactly those); $WORK_DIR/spec.yaml
+    boundary_conditions -> the boundary cases the UT pins; $WORK_DIR/design/Interface.md's OpDef contract -> the IO/attr view
+    TilingFunc reads.
+  - 'Iterate: implement the common formulas first, then branch by branch, rerunning the full suite after each increment —
+    gtest''s failed list is the worklist, and regression means the whole suite stays green, never a subset.'
+  - Reuse the existing harness under $WORK_DIR/op/tests/tiling/ as-is (run.sh, CMakeLists.txt, and the isolated install under
+    dev-package/); consume platform facts (coreNum / ubSize) from CompileInfo when present, with the platform-info fallback
+    the tiling-developer agent doc documents.
+  - 'Conflict rule: when an oracle expectation and the implementation disagree, the design doc is the arbiter, and the implementation
+    side is the only side this task may fix. If a case cannot pass without deviating from the design, leave it red and report
+    the conflict as the task outcome — that is a UT defect, and absorbing it by editing the oracle is forbidden.'
+  - 'Evidence: cd $WORK_DIR/op/tests/tiling && ./run.sh > ut-green.log 2>&1 (exit 0, all pass, loaded-.so print retained);
+    ut-baseline.log stays untouched.'
+  acceptance:
+  - 'Green baseline fully green: cd $WORK_DIR/op/tests/tiling && ./run.sh > ut-green.log 2>&1 exits 0, and test -s $WORK_DIR/op/tests/tiling/ut-green.log
+    && grep -qF ''[  PASSED  ]'' $WORK_DIR/op/tests/tiling/ut-green.log && ! grep -qF ''[  FAILED  ]'' $WORK_DIR/op/tests/tiling/ut-green.log
+    && test -x $WORK_DIR/op/tests/tiling/build/test_tiling_gtest.'
+  - 'Loaded-library evidence: grep -qF ''loading op_host .so'' $WORK_DIR/op/tests/tiling/ut-green.log && grep -qF $WORK_DIR/op/tests/tiling/dev-package
+    $WORK_DIR/op/tests/tiling/ut-green.log.'
+  - 'No hidden registration failure: ! grep -qi ''do not registe tiling struct'' $WORK_DIR/op/tests/tiling/ut-green.log.'
+  - 'The oracle ran unchanged: the green run''s total test count (the `[==========] N tests from M test suites ran` line of
+    ut-green.log) equals the total recorded in $WORK_DIR/op/tests/tiling/ut-baseline.log (its `Running N tests` count); every
+    test name listed in ut-baseline.log appears as a TEST_F in test_tiling_gtest.cpp; the source file remains the sole .cpp:
+    test $(find $WORK_DIR/op/tests/tiling -maxdepth 1 -name ''*.cpp'' | wc -l) -eq 1.'
+  - 'Oracle independence unchanged: ! grep -qE ''#include[[:space:]]+"[^"]*(tiling_struct|tiling_arch35)[.]h"'' $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp.'
+  - 'tiling-verifier reviews per agents/tiling-verifier.md in 「Tiling 实现」 mode, with UT artifacts rooted at $WORK_DIR/op/tests/tiling/
+    and design docs at $WORK_DIR/design/ (not the operators/{OP}_package / docs/{OP} layout shown in the agent doc): dimensions
+    0/1/2/3/4/5 all pass — TilingData struct fields match TilingData.md (no missing, no extra), branch constants match the
+    DESIGN-BRANCH-<key>.md 「具体切分计算」 sections, SetTilingKey routing matches BranchRoute.md (literal or GET_TPL_TILING_KEY —
+    no literal grep), and the UT source and harness (test_tiling_gtest.cpp, CMakeLists.txt, run.sh) are untouched.'
+  out_of_scope:
+  - 'Modifiable scope (exhaustive): $WORK_DIR/op/op_kernel/arch35/*_tiling_struct.h, $WORK_DIR/op/op_host/arch35/*_tiling_arch35.h
+    and *_tiling_arch35.cpp, and the artifacts run.sh regenerates under $WORK_DIR/op/tests/tiling/ (build/, dev-package/,
+    ut-green.log). Everything else is read-only, including the pinned-oracle files: test_tiling_gtest.cpp, CMakeLists.txt,
+    run.sh, and ut-baseline.log.'
+  - Do not touch $WORK_DIR/op/op_host/*_def.cpp or *_infershape.cpp, the op_kernel compute sources (the `__global__ __aicore__`
+    kernel-entry source and kernel templates — everything under $WORK_DIR/op/op_kernel/ except the TilingData struct header
+    named in the modifiable scope), op_graph/, package-root CMakeLists.txt / build.sh, $WORK_DIR/dev-package/, or any file
+    under $WORK_DIR/design/.
+  depends_on:
+  - write-tiling-ut
+  max_retries: 2
+  on_exhaust: exit
+- id: generate-kernel-subgraph
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Generate the kernel-implementation branch subgraph kernel-sub-graph.yaml
+  goal:
+  - 'Read $WORK_DIR/design/BranchCatalog.md and produce $WORK_DIR/.workflow/kernel-sub-graph.yaml: a dict with exactly one
+    top-level key nodes holding 5*M normal nodes, where M = the number of tilingKeys registered in BranchCatalog.md, discovered
+    at runtime and never assumed — one five-task chain per tilingKey, driving kernel development with whitebox cases (the
+    per-branch direct-invoke functional prototype was already proven by the prototype-impl stage). Nothing in this task
+    may hardcode an operator name, a tilingKey set, or a branch count.'
+  approach:
+  - 'Node schema = op-develop.yaml normal task (id, task_type: normal, title, goal, approach, acceptance, out_of_scope, depends_on,
+    executor, verifier, max_retries: 2, on_exhaust: exit). Write the file as a YAML mapping whose sole top-level key is nodes
+    (a bare list is invalid). goal / approach / acceptance / out_of_scope must each be a non-empty LIST of non-empty strings
+    (a plain string is rejected by schema validation) — write each item as a separate list entry with the ''- '' prefix, never
+    as one long string.'
+  - 'Enumerate the tilingKeys in BranchCatalog.md registration order, m = 1..M; per key (with its DESIGN-BRANCH-<key>.md),
+    generate these five chained nodes (ids branch-<m>-<step>):'
+  - '1. branch-<m>-whitebox-gen — executor whitebox-designer, verifier st-verifier: generate this branch''s TTK kernel-mode
+    whitebox case set under $WORK_DIR/op/tests/whitebox/branch-<m>/ (design_doc_cases.json + ttk_design_doc_cases.csv) from
+    $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md §9 branch-verification points and $WORK_DIR/design/Validation.md''s matrix
+    rows for this branch; expected values computed by the independent golden $WORK_DIR/golden.py; coverage audit passes; no
+    hardcoded case counts or hand-written CSV. Every design verification point routed to this branch must have at least one
+    case whose generated inputs actually exercise it (the value ranges and special values the design doc specifies for that
+    point — a case that only references a point without feeding it exercising inputs does not cover it), and the csv rows
+    are ordered so the design''s precision-critical and special-value scenarios land in the earliest rows, letting the staged
+    20%/50% batch gates catch them before the full-batch run. No deferral: when the case generator cannot express an input
+    pattern a design point requires, extend the generator as part of this task — recording a gap instead of producing the
+    case is a defect.'
+  - '2. branch-<m>-kernel-bringup — executor kernel-developer, verifier kernel-verifier: implement this branch''s kernel per
+    $WORK_DIR/design/Kernel.md and DESIGN-BRANCH-<key>.md §3–§5, adapting the validated branch-<m> prototype''s proven compute/data-flow
+    into the package''s separated Tiling/Kernel structure (the prototype is the working reference for this branch, not throwaway);
+    select the first row of this branch''s ttk_design_doc_cases.csv as the bring-up case; run it via ttk kernel (cd $WORK_DIR/ops-test-kit;
+    python3 -m ttk kernel -i <branch csv> --compare stat_rel_err --plugin $WORK_DIR/golden.py, single-case filtering per the
+    ttk skill''s selection mechanism — phase 1 without cross_check; if it fails, rerun with --compare cross_check --config
+    $WORK_DIR/ttk.conf.yaml to adjudicate before entering precision fix); acceptance: package builds for the target architecture
+    recorded in $WORK_DIR/npu-arch.json (build.sh with the required SoC argument exits 0), that one case''s precision PASSes,
+    and the four ops-impl-review scripts (scalar_mainchain_check, vf_reachability_check,
+    workspace_consistency_check, non3510_scaffold_check) exit 0 against $WORK_DIR/op.'
+  - '3. branch-<m>-run-20pct — executor kernel-developer, verifier st-verifier: batch-run the first ceil(20%) in-fence rows of
+    this branch''s csv (case-size fence, batch-gate semantics (d) below) via ttk kernel under the two-phase execution contract
+    ((c) below); fix kernel/tiling per DESIGN-BRANCH-<key>.md until every one of them precision-PASSes; never edit cases, golden,
+    or tolerances; log the exact row set used — executed and fence-excluded rows separately.'
+  - '4. branch-<m>-run-50pct — executor kernel-developer, verifier st-verifier: same as step 3 but the batch is the first
+    ceil(50%) in-fence rows (cumulative superset of step 3); all must precision-PASS, earlier rows must not regress.'
+  - '5. branch-<m>-run-100pct — executor kernel-developer, verifier st-verifier: full-branch batch of the in-fence rows, every
+    in-fence case precision-PASS (hard gate), zero skip/fail among them, fence-excluded rows recorded per (d), earlier stages
+    regress-checked; results recorded under $WORK_DIR/op/tests/whitebox/branch-<m>/.'
+  - 'Batch-gate semantics (applies to steps 3–5, bake into every generated batch node): (a) positive/negative split — a row
+    is negative iff the case set marks it expect_error (or names it a rejection scenario); positive rows must precision-PASS
+    and negative rows must be REJECTED by the operator (a precision PASS on a negative row is a defect); report both counts
+    in the evidence. (b) Precision is judged per the design authority — $WORK_DIR/design/Validation.md 精度验收标准 and
+    DESIGN-BRANCH-<key>.md (per-dtype pointwise rtol/atol). DEFAULT: `--compare stat_rel_err` with the per-dtype thresholds
+    from Validation.md expresses the criterion, and its per-case result IS the design-criterion check — do NOT build a
+    --dump-based checker in that case (no NPY dump pass, no duplicate rerun of green rows). EXCEPTION: a --dump-based
+    machine-checkable design-criterion checker is built ONLY when the op''s design criterion contains a clause the ttk
+    comparator demonstrably cannot express — e.g. small-value/subnormal guards or cross-case consistency the comparator
+    has no flag for; the stage RECORD.md must then name the exact criterion clause, the comparator limitation, and the
+    checker''s clause-by-clause mapping. Silently relaxing or swapping the criterion is forbidden in all cases. (c) Two-phase
+    execution contract (steps 2–5): phase 1 runs without cross_check — --compare stat_rel_err, no --config, local golden
+    comparison only; phase 2 reruns every FAILED positive row with -t adding --compare cross_check --config
+    $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server); cross_check-passing rows are adjudicated green,
+    rows still failing enter precision localization and fix; phase 2 is skipped when phase 1 is all-green. Negative rows
+    follow (a) — REJECTED is their green; adjudicate anomalies likewise. (d) Case-size fence — bake it into the goal AND the
+    acceptance of every generated batch node: the executed row set is this branch''s csv rows whose total input elements
+    (per input the product of its input_shapes dims, summed over inputs) are ≤ 2**22 (4,194,304); a row over the fence is
+    excluded by design — whitebox gates verify precision semantics, which are shape-size-independent for this operator class,
+    and full-scale memory/perf behavior is the independent judge''s bench. Mechanism (ttk has no shape filter and its -l
+    per-case budget is integer-GB, coarser than these sizes): a recorded python pre-pass (ast.literal_eval each csv
+    input_shapes; numel = product of dims; keep total ≤ 2**22) derives the executed name list, and every ttk invocation of
+    steps 3–5 — phase 1, phase-2 reruns, and any failure-localization rerun — runs with -t <comma-separated in-fence case
+    names> (exact-name match; the -t list must equal the recorded pre-pass output). Every excluded row (name → shape → total
+    elements) is listed in the stage RECORD.md. If the fence would exclude the only case exercising a design verification
+    point, that is a whitebox-gen defect: regenerate a smaller case for that point (same dtype(s), rank, alignment class,
+    value pattern) — coverage is never silently lost. The zero-skip hard gate of step 5 applies to the in-fence set; the fence
+    value is fixed workflow contract, never widened to make a failing case disappear.'
+  - 'Dependencies inside the subgraph: each branch''s five nodes chain linearly (gen → bringup → 20 → 50 → 100); every branch-<m>-whitebox-gen
+    has no intra-subgraph dependency (whitebox generation of different branches writes disjoint directories and may run in
+    parallel); for m ≥ 2, branch-<m>-kernel-bringup depends on BOTH branch-<m>-whitebox-gen AND branch-<m-1>-run-100pct —
+    kernel-touching steps of different branches never run concurrently (no resource locks in this orchestrator; shared op_kernel/
+    entry and aclnn build tree). Every bringup step starts from the functionally-validated per-branch direct-invoke prototype
+    at $WORK_DIR/op/tests/prototype/branch-<key>/main.asc produced by the earlier prototype-impl stage (read-only reference:
+    port its proven compute/data-flow into the package''s separated Tiling/Kernel structure; never edit the prototype).'
+  - Every node's goal must state its completion gate explicitly and reference its authoritative design docs by absolute path.
+  acceptance:
+  - 'Contract-valid: ORCH_SKILL=the workflow-orchestrator skill directory ; python3 -c "import sys; sys.path.insert(0,\"$ORCH_SKILL/scripts\");
+    import get_task; nodes,err=get_task.load_subgraph(\"$WORK_DIR/.workflow/kernel-sub-graph.yaml\"); assert not err, err"
+    exits 0.'
+  - $WORK_DIR/.workflow/kernel-sub-graph.yaml exists; M equals the tilingKey count in $WORK_DIR/design/BranchCatalog.md; python3
+    -c "import yaml; d=yaml.safe_load(open('$WORK_DIR/.workflow/kernel-sub-graph.yaml')); assert isinstance(d,dict) and set(d)=={'nodes'}
+    and len(d['nodes'])==5*M" exits 0.
+  - Node ids are exactly branch-<m>-<step> for m = 1..M and step in {whitebox-gen, kernel-bringup, run-20pct, run-50pct, run-100pct},
+    in BranchCatalog.md registration order; each chain's DESIGN-BRANCH-<key>.md reference matches its m-th tilingKey.
+  - Every node satisfies the normal-task schema; executor/verifier pairs are exactly (whitebox-designer, st-verifier) for
+    the M gen nodes, (kernel-developer, kernel-verifier) for the M bringup nodes, and (kernel-developer, st-verifier) for
+    the 3*M batch nodes; dependency edges match the approach (linear chains per branch; for m ≥ 2 branch-<m>-kernel-bringup
+    depends on branch-<m>-whitebox-gen and branch-<m-1>-run-100pct).
+  - Each node's acceptance is checkable (exit codes / file paths) and the 20%/50% sampling rule is deterministic (first-N
+    rows, cumulative).
+  out_of_scope:
+  - Do not create or modify any file other than $WORK_DIR/.workflow/kernel-sub-graph.yaml; do not execute any branch task;
+    do not write kernel code.
+  depends_on:
+  - implement-tiling
+  max_retries: 2
+  on_exhaust: exit
+- id: kernel-impl
+  task_type: subgraph
+  file: .workflow/kernel-sub-graph.yaml
+  depends_on:
+  - generate-kernel-subgraph

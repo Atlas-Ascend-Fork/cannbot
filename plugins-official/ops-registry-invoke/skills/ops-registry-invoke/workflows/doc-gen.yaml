@@ -1,0 +1,211 @@
+# Documentation module, extracted from the op-develop monolith (doc-gen +
+# docs-consistency-check) with a verify-inputs module boundary gate ahead of
+# them. Input: a complete op-impl run's artifacts (op/ package with its op_api
+# sources, golden.py, spec/, design/, requirements/, npu-arch.json) and the
+# deployed vendor package under dev-package/. Output: the paired public docs —
+# aclnn API interface doc plus README linking it — generated from verifiable
+# facts, validated by the deterministic paired-docs validator, and empirically
+# consistency-checked against the final package through TTK probes. Complements
+# op-impl.yaml / blackbox.yaml; runs standalone on a finished work_dir. The
+# orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
+# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+workflow: doc-gen
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore the operator package under $WORK_DIR/op/ and the requirements under $WORK_DIR/requirements/ relevant to this task, as documentation reference.
+nodes:
+- id: verify-inputs
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Module boundary gate - verify the doc-input artifacts contract and rebuild the deployment
+  goal:
+  - 'Prove the frozen op-impl artifacts in $WORK_DIR satisfy the doc-gen module''s input
+    contract before any documentation work starts: the doc fact inputs exist (spec, design,
+    requirements, package sources), the hand-written op_api public header is present, the
+    package rebuilds for the target SoC, and its aclnn API installs into $WORK_DIR/dev-package
+    with the exported L2 symbol pair — so the docs describe a known-good deployment of this
+    work_dir''s own package.'
+  - 'Completion gate: the build exits 0, the installed libcust_opapi.so exports the
+    aclnn<OpPascal>GetWorkspaceSize / aclnn<OpPascal> symbol pair, and every input-contract
+    file check passes.'
+  approach:
+  - 'This node verifies, never fixes: the inputs are final op-impl products. A failing check
+    is a module-boundary violation (a fixture defect), reported as FAILED with the failing
+    check named — do not edit any source to make a check pass.'
+  - 'Derive the operator''s name forms from spec.yaml: OP_SNAKE = op.name, OP_PASCAL = PascalCase.'
+  - 'Input-contract files (the docs'' fact inputs): $WORK_DIR/golden.py, $WORK_DIR/spec/spec.yaml,
+    $WORK_DIR/requirements/REQUIREMENTS.md, $WORK_DIR/design/ (with Interface.md and Validation.md),
+    $WORK_DIR/npu-arch.json; the package skeleton $WORK_DIR/op/op_host/, $WORK_DIR/op/op_kernel/,
+    $WORK_DIR/op/op_api/, $WORK_DIR/op/op_graph/, $WORK_DIR/op/build.sh, $WORK_DIR/op/CMakeLists.txt;
+    the hand-written public header $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h (the interface-family
+    fact anchor — the doc''s function prototype must be confirmed against it, never guessed from
+    directory names); the installed header under $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/include/
+    when present.'
+  - 'Rebuild the package from its own sources: cd $WORK_DIR/op && ./build.sh with the SoC argument
+    required for the architecture recorded in $WORK_DIR/npu-arch.json exits 0 (the build''s CMake
+    falls back to $ENV{ASCEND_HOME_PATH} when CANN_HOME is unset; only if both are unset, source
+    the toolkit''s set_env.sh first).'
+  - 'Reinstall into this work_dir''s own deployment: rm -rf $WORK_DIR/dev-package, then install
+    the produced run package $WORK_DIR/op/build/custom_opp_ubuntu_x86_64.run with bash <run package>
+    --quiet --nox11 --force --install-path=$WORK_DIR/dev-package (the --force skips the installer''s
+    bundled-python pre-validation, which cannot load in this container).'
+  acceptance:
+  - 'Input-contract files present: test -s $WORK_DIR/golden.py && test -s $WORK_DIR/spec/spec.yaml
+    && test -s $WORK_DIR/requirements/REQUIREMENTS.md && test -s $WORK_DIR/design/Interface.md
+    && test -s $WORK_DIR/design/Validation.md && test -s $WORK_DIR/npu-arch.json && test -d $WORK_DIR/op/op_host
+    && test -d $WORK_DIR/op/op_kernel && test -d $WORK_DIR/op/op_api && test -d $WORK_DIR/op/op_graph
+    && test -f $WORK_DIR/op/build.sh && test -f $WORK_DIR/op/CMakeLists.txt.'
+  - 'Hand-written public header present: test -s $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h.'
+  - 'Build passes: cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture
+    recorded in $WORK_DIR/npu-arch.json exits 0.'
+  - 'Deployment installed: test -s $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so.'
+  - 'L2 symbol pair exported: nm -D $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so
+    | grep -cE '' T aclnn<OP_PASCAL>(GetWorkspaceSize)?$'' equals 2 (with <OP_PASCAL> substituted
+    from spec.yaml).'
+  - 'Installed public header present: test -s $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/include/aclnn_${OP_SNAKE}.h.'
+  out_of_scope:
+  - 'Verify only: no file under $WORK_DIR/op/, golden.py, spec/, design/, requirements/, npu-arch.json
+    or ttk.conf.yaml is modified; the only writes are the build artifacts under $WORK_DIR/op/build/
+    and the fresh $WORK_DIR/dev-package/ install.'
+  - 'Do not generate any documentation or run any device test in this node; do not fix a failing
+    check — report it.'
+  depends_on: []
+  max_retries: 2
+  on_exhaust: exit
+- id: doc-gen
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Generate the paired public docs (aclnn API doc + linked README) and pass the validator
+  goal:
+  - 'Execute the ascendc-docs-gen skill for the finished operator package at $WORK_DIR/op:
+    generate the paired public docs — the aclnn API interface doc $WORK_DIR/op/docs/aclnn{OperatorName}.md
+    first, then $WORK_DIR/op/README.md linking it (README delivery mode fixed to full; the package
+    ships real kernel source) — and expose both under $WORK_DIR/docs/.'
+  - '{OperatorName} is the actual public interface family name aclnn<OpPascal> (<OpPascal>
+    derived from $WORK_DIR/spec/spec.yaml op.name), confirmed against the hand-written public
+    header $WORK_DIR/op/op_api/aclnn_<op_name>.h — never guessed from directory names.'
+  - 'Completion gate: the deterministic paired-docs validator passes — python3
+    the ascendc-docs-gen skill''s scripts/validate_operator_docs.py --operator-dir
+    $WORK_DIR/op exits 0 with STATUS: PASSED as its last output line.'
+  approach:
+  - 'Load the ascendc-docs-gen skill first (mandatory — it is the single execution authority
+    for doc structure, evidence sourcing, community-template fetching, and the paired delivery
+    order); run as agents/docs-writer.md.'
+  - 'Workflow overlays on the agent/skill docs (where an overlay differs, the overlay wins):
+    the operator root is $WORK_DIR/op (not operators/{OP}_package); the fact inputs are
+    $WORK_DIR/spec/spec.yaml, $WORK_DIR/requirements/REQUIREMENTS.md, $WORK_DIR/design/*.md,
+    the package sources under $WORK_DIR/op/ (op_host/, op_kernel/, op_graph/, op_api/,
+    CMakeLists.txt, build.sh), the installed public header under
+    $WORK_DIR/dev-package/vendors/<OpPascal>/op_api/include/, and the reproducible verification
+    results under $WORK_DIR/op/tests/ (not the docs/{OP}/... layout the agent doc shows).'
+  - 'The validator requires the docs inside the operator root: write
+    $WORK_DIR/op/docs/aclnn{OperatorName}.md and overwrite the sample-derived $WORK_DIR/op/README.md.
+    Once they validate, expose them at the workflow-level path: ln -sfn op/docs $WORK_DIR/docs
+    ($WORK_DIR/docs exists only as this symlink).'
+  - 'Iterate until green: on non-zero exit or a last line other than STATUS: PASSED, fix per
+    the validator''s ERROR list from verifiable facts and rerun.'
+  - 'Do not append to any LOG file and do not reply DONE — logging is the workflow runner''s
+    job; follow this task prompt''s reply protocol.'
+  acceptance:
+  - 'OP_PASCAL=$(python3 -c "import yaml; n=yaml.safe_load(open(''$WORK_DIR/spec/spec.yaml''))[''op''][''name''];
+    print(''''.join(w.capitalize() for w in n.split(''_'')))") ; test -s $WORK_DIR/op/docs/aclnn${OP_PASCAL}.md
+    && test -s $WORK_DIR/op/README.md && test -s $WORK_DIR/docs/aclnn${OP_PASCAL}.md.'
+  - 'Paired validation passes: python3 the ascendc-docs-gen skill''s scripts/validate_operator_docs.py
+    --operator-dir $WORK_DIR/op > /tmp/doc-gen-validate.log 2>&1 exits 0 and tail -1 /tmp/doc-gen-validate.log
+    is exactly STATUS: PASSED.'
+  - 'README links the doc it ships with: grep -qF "docs/aclnn${OP_PASCAL}.md" $WORK_DIR/op/README.md.'
+  out_of_scope:
+  - 'Write only $WORK_DIR/op/docs/, $WORK_DIR/op/README.md, and the $WORK_DIR/docs symlink;
+    do not modify package sources, tests, CMake, $WORK_DIR/spec/, $WORK_DIR/design/,
+    $WORK_DIR/requirements/, or $WORK_DIR/dev-package/.'
+  - 'Do not change the public aclnn signature or any package source to make documentation
+    easier; the docs document the existing interface.'
+  depends_on:
+  - verify-inputs
+  max_retries: 2
+  on_exhaust: exit
+- id: docs-consistency-check
+  task_type: normal
+  executor: general-executor
+  verifier: general-verifier
+  title: Docs consistency check - verify every checkable doc claim empirically; fix doc deltas only
+  goal:
+  - 'Empirically verify the public docs of the finished operator ($WORK_DIR/op/docs/aclnn{OperatorName}.md
+    and $WORK_DIR/op/README.md, exposed via the $WORK_DIR/docs symlink) against the final package:
+    extract every machine-checkable claim — supported dtypes, formats, shape/rank ranges, attribute
+    defaults, empty-tensor stances, constraints, and error semantics — and drive each through the
+    real aclnn interface via TTK.'
+  - 'Two case families, both derived FROM the docs: positive cases for every documented capability
+    (expect success), and negative cases for abnormal inputs plus scenarios OUTSIDE the documented
+    support range (undocumented dtype/format, out-of-range shape/rank, empty tensor where the doc
+    says unsupported — expect a clean ACLNN rejection, not a crash and not silent execution).'
+  - 'Mismatch rule (hard): any behavior deviating from the doc, in EITHER direction — a documented
+    feature that fails, or an out-of-scope input that executes/crashes — is fixed by editing the
+    DOC to match the observed code behavior; the code is never touched in this task.'
+  - 'Completion gate: every extracted claim is settled in $WORK_DIR/docs-consistency/REPORT.md
+    (match / mismatch-fixed naming the doc edit / N/A with reason), and the paired-docs validator
+    exits 0 with STATUS: PASSED on the final doc tree.'
+  approach:
+  - 'Load the ascendc-docs-gen skill first (mandatory — it is the authority for doc structure,
+    evidence rules, and the closing validator gate); do not restate or bypass its procedure.'
+  - 'Inventory the claims: read both doc files end to end and list every checkable claim with
+    its file:line, cross-checked against $WORK_DIR/spec/spec.yaml and the installed header
+    $WORK_DIR/dev-package/vendors/<OpPascal>/op_api/include/aclnn_<op_name>.h; this list becomes
+    REPORT.md''s claim table (unique ID per claim).'
+  - 'Build the probe cases under $WORK_DIR/docs-consistency/cases/ — a positive CSV and a negative
+    CSV, header per the blackbox ttk CSV contract with api_name = aclnn<OpPascal>; project rows
+    from known-green $WORK_DIR/op/tests/blackbox/ttk/blackbox_l0.csv rows where possible (record
+    the claim-to-case mapping); keep every dtype/format token a valid TTK token so a rejection
+    happens at the operator, not at case parse.'
+  - 'Execute both CSVs from $WORK_DIR/ops-test-kit: rm -f the -o target, then python3 -m ttk
+    aclnn -i <cases.csv> --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist
+    uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/docs-consistency/results/result_<positive|negative>.csv
+    — golden as-is, never modified.'
+  - 'Judge every row against its doc-derived expectation: a documented-capability case must
+    PASS; an out-of-scope case must be cleanly rejected — FAIL with NO_OUTPUT and a
+    GetWorkspaceSize/ACLNN param error in the log. An executed case with output, a
+    percentage/GOLDEN_FAILURE cell, a crash, or an infra token (TENSOR_DTYPES_INVALID /
+    PARAM_COUNT_MISMATCH / OP_API_NOT_FOUND) is NOT a clean rejection: an infra token means the
+    probe case is buggy (fix the case and rerun); an executed out-of-scope case is a mismatch
+    (the doc is too narrow — widen it).'
+  - 'Fix discipline: settle every mismatch by editing only the two doc files from the observed
+    evidence — widen or narrow the support cells, flip the empty-tensor stance, adjust constraint
+    wording, add error rows citing a concrete aclnnStatus only when that return was actually
+    observed; respect the validator''s anchored regions (prototype text and order, parameter-table
+    row order, the exact empty-tensor stance phrasing the validator requires, compile-checked
+    example). Zero mismatches -> edit no doc, write the zero-mismatch record, and stop.'
+  - 'Re-validate after every doc edit and once on the final tree: python3
+    the ascendc-docs-gen skill''s scripts/validate_operator_docs.py --operator-dir
+    $WORK_DIR/op — exit 0, last line STATUS: PASSED; iterate per its ERROR list until green.'
+  - 'Evidence: $WORK_DIR/docs-consistency/REPORT.md holds the claim table (ID | doc claim with
+    file:line | case name | observed result cell | verdict), the commands run, and the fix
+    history (mismatch ID -> doc edit); a code-side defect suspected behind a mismatch is
+    attributed there, never patched in the doc''s place.'
+  acceptance:
+  - 'test -s $WORK_DIR/docs-consistency/REPORT.md exits 0 and it holds the settled claim table:
+    every checkable claim from both doc files appears exactly once with a verdict of match,
+    mismatch-fixed (naming the doc location edited), or N/A with reason; the zero-mismatch case
+    is explicitly recorded as a no-op with no doc modified.'
+  - 'Cases cover the claims: the positive and negative CSVs under $WORK_DIR/docs-consistency/cases/
+    are non-empty, and every executable claim maps to at least one case row recorded in REPORT.md.'
+  - 'Full execution: each result CSV under $WORK_DIR/docs-consistency/results/ exists, is non-empty,
+    and covers its cases CSV''s full row set (no unexecuted rows, no unexplained skips).'
+  - 'Validator green on the final tree: python3 the ascendc-docs-gen skill''s scripts/validate_operator_docs.py
+    --operator-dir $WORK_DIR/op > /tmp/docs-consistency-validate.log 2>&1 exits 0 and tail -1
+    /tmp/docs-consistency-validate.log is exactly STATUS: PASSED.'
+  - 'Frozen assets unchanged: $WORK_DIR/op package sources (op_host/, op_kernel/, op_graph/,
+    op_api/, CMakeLists.txt), $WORK_DIR/golden.py, $WORK_DIR/spec/spec.yaml, and every test
+    suite under $WORK_DIR/op/tests/ are unmodified (verifier checks against the pre-task state).'
+  out_of_scope:
+  - 'Write only under $WORK_DIR/docs-consistency/ and, for mismatch fixes, the two doc files
+    $WORK_DIR/op/docs/aclnn{OperatorName}.md and $WORK_DIR/op/README.md; the $WORK_DIR/docs
+    symlink stays as doc-gen created it.'
+  - 'Never modify package sources, the public aclnn signature, golden.py, tolerances, test
+    suites, TTK, or design docs to make a doc claim true — doc follows code, never the reverse;
+    a suspected code defect is attributed in REPORT.md and left to the kernel tasks.'
+  - 'Do not regenerate the docs wholesale; this task patches deltas found by empirical checks only.'
+  depends_on:
+  - doc-gen
+  max_retries: 2
+  on_exhaust: exit

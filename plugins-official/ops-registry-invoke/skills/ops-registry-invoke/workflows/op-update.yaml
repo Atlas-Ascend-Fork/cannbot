@@ -1,0 +1,204 @@
+# Incremental-development module (op-update). Applies a bounded capability delta to
+# an EXISTING operator package without re-designing it: the delta requirement is
+# caller-supplied ($WORK_DIR/需求分析.md — goal / acceptance / scope / out-of-scope,
+# written by the new-features skill or by the caller) and the package under
+# $WORK_DIR/op/ is the artifact under change; the pre-change state is frozen as a
+# boundary-gate baseline so no pass can come from silently editing the oracle.
+# Input: the delta requirement, the existing operator package (one op or several
+# variants) with its existing suites, and the frozen anchors golden.py, spec/ or
+# design/ when present, npu-arch.json, ttk.conf.yaml, ops-test-kit/. Output: the
+# package extended for the delta (op_host/op_kernel/op_api of the target op only),
+# its suites extended with delta UT/ST cases, regression-green on the frozen full
+# suite plus the new delta cases through TTK aclnn mode, with a recorded code review
+# and the paired interface docs. This is ONE concrete composition the new-features
+# skill can emit for the common delta shape; it runs standalone on any work_dir that
+# holds the frozen inputs. The orchestrator wires the Codex layout
+# ($WORK_DIR/.agents/skills plus $WORK_DIR/.codex/agents) automatically via
+# link_agent_config.py.
+workflow: op-update
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore the existing operator package under $WORK_DIR/op/ and the delta requirement under $WORK_DIR/需求分析.md relevant to this task, as development reference.
+nodes:
+  - id: verify-baseline
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Module boundary gate - verify the existing-package contract and freeze the pre-change baseline
+    goal:
+      - 'Prove the frozen inputs in $WORK_DIR satisfy the op-update module input contract before any change starts: the delta requirement $WORK_DIR/需求分析.md parses with its goal / acceptance / scope / out-of-scope parts, the existing operator package under $WORK_DIR/op/ is present and rebuilds green for the recorded SoC, installs into this work_dir own dev-package, and exports the aclnn L2 symbol pair — so the delta is applied to a known-good, proven package.'
+      - 'Completion gate: the package shape and build entry are resolved and recorded in $WORK_DIR/update/target-op.json (never assumed from a fixed template layout), the rebuild through that resolved entry exits 0, the delta requirement four parts are present, a baseline oracle exists at $WORK_DIR/golden.py (the package own oracle, or one this node establishes from the package own reference assets when the staging authority recorded it absent), the aclnn symbol pair is exported whenever the package carries an aclnn op_api layer, and the pre-change baseline digest file is written with absolute paths so no downstream pass can come from silently editing the oracle.'
+    approach:
+      - 'This node verifies, never fixes: the inputs are final caller products. A failing check is a module-boundary violation (a fixture defect), reported as FAILED with the failing check named — do not edit any input to make a check pass.'
+      - 'Derive and record the target operator name forms: read the target operator(s) named by $WORK_DIR/需求分析.md; when $WORK_DIR/spec/spec.yaml is present the spec is the identifier-of-record for the name. Write $WORK_DIR/update/target-op.json as {"snake": OP_SNAKE, "pascal": OP_PASCAL, "variants": [each variant/operator subtree under $WORK_DIR/op/ the delta names]} — this is the name contract every later node reads.'
+      - 'Input contract: the delta requirement $WORK_DIR/需求分析.md (goal / acceptance / scope / out-of-scope); the EXISTING package $WORK_DIR/op/ copied from a read-only repo clone, always carrying op_host/ (def/infershape/tiling), op_kernel/, CMakeLists.txt and its existing tests/, and carrying op_graph/, a package-local build.sh and an aclnn op_api layer (at the package root op_api/ or nested under op_host/op_api/) only when that operator package really has them — the package shape is discovered at runtime, never asserted; the frozen anchors $WORK_DIR/npu-arch.json, $WORK_DIR/ttk.conf.yaml, $WORK_DIR/ops-test-kit/ (and $WORK_DIR/golden.py when the package carries an oracle, else established below); $WORK_DIR/spec/ and $WORK_DIR/design/ when present (optional for a delta on an existing op).'
+      - 'Rebuild the EXISTING package from its own sources for the recorded SoC: cd $WORK_DIR/op && ./build.sh with the SoC argument required for the architecture recorded in $WORK_DIR/npu-arch.json exits 0 (the CMake falls back to $ENV{ASCEND_HOME_PATH} when CANN_HOME is unset; only if both are unset, source the toolkit set_env.sh first). Then rm -rf $WORK_DIR/dev-package and install the produced run package $WORK_DIR/op/build/custom_opp_ubuntu_x86_64.run with bash <run package> --quiet --nox11 --force --install-path=$WORK_DIR/dev-package.'
+      - 'Freeze the pre-change baseline by copy + digest (the aclnn-migrate PROTOTYPE_BASELINE pattern): copy the EXISTING operator sources under $WORK_DIR/op/ — op_host/, op_kernel/, op_graph/ and the resolved op_api_dir, each only when the package actually carries it — to $WORK_DIR/update/baseline/sources/, and the EXISTING case sets under $WORK_DIR/op/tests/ to $WORK_DIR/update/baseline/cases/ (excluding any build/ and dev-package/ artifacts). These frozen copies are the delta provenance anchor and the frozen full suite node 6 re-runs; the live copies are the ones the delta edits.'
+      - 'Resolve and record the package contract at runtime (the corpus is real repo operator packages, not template-built ones): into $WORK_DIR/update/target-op.json record the shape this node observed — build.entry (the build entry the package actually carries: a package-local ./build.sh when it exists, else the enclosing operator repository build entry reachable from the package and invoked for this operator with the recorded SoC), op_api_dir (the ABSOLUTE path of the directory actually carrying the aclnn L2/L0 quadruple, or null only when the package genuinely carries no aclnn op_api layer), and an op_api present flag. Every later acceptance reads this record instead of re-deriving or assuming a layout, and the recorded op_api_dir is cross-checked against the package (a null record over a package that does have an op_api directory is a defect).'
+      - 'Establish the frozen oracle when the package carries none: the staging authority records golden.py absent and leaves establishing it to this node. Derive the baseline oracle from the package own reference assets (a *golden*.py under the package tests, the package reference implementation, or the reference formula the delta requirement declares), write it to $WORK_DIR/golden.py, and record the derivation source and method in BASELINE.md (absence is recorded, never fabricated silently; an existing package oracle is used as-is and never overwritten). If no oracle can be established, this node FAILs with that attribution — the module never proceeds without a baseline oracle.'
+      - 'Write $WORK_DIR/update/BASELINE.sha256 in sha256sum format covering the frozen baseline copies under $WORK_DIR/update/baseline/ AND the live oracle $WORK_DIR/golden.py, with ABSOLUTE paths so sha256sum -c is location-independent; downstream nodes run sha256sum -c --quiet against it (nothing in that set is edited by any later node — a mismatch means the frozen baseline or the golden oracle was silently edited to force a pass).'
+      - 'Write $WORK_DIR/update/BASELINE.md recording the resolved target-op.json, the before-state digests of the existing sources and existing case sets (what each frozen copy preserves), the existing suite data-row counts as the pre-change full-suite baseline, and the pre-change closing-regression green state (the tiling / op_api UT 0-failed result) — so the delta can be attributed file-by-file after the fact.'
+    acceptance:
+      - 'Target op resolved: test -s $WORK_DIR/update/target-op.json && python3 -c "import json;d=json.load(open(''$WORK_DIR/update/target-op.json''));assert d.get(''snake'') and d.get(''pascal'')" exits 0.'
+      - 'Delta requirement present: test -s $WORK_DIR/需求分析.md.'
+      - 'Package core present: test -d $WORK_DIR/op/op_host && test -d $WORK_DIR/op/op_kernel && test -f $WORK_DIR/op/CMakeLists.txt && test -d $WORK_DIR/op/tests; the rest of the shape (op_api/ at the package root or nested under op_host/op_api/, op_graph/, a package-local build.sh) is resolved at runtime into $WORK_DIR/update/target-op.json, never asserted from a template layout.'
+      - 'Target op_api quadruple present wherever the package carries an aclnn op_api layer (fail-closed: a recorded-absent op_api layer is rejected if an op_api directory actually exists, so the gate can never be dodged by recording null): OP_SNAKE=$(python3 -c "import json;print(json.load(open(''$WORK_DIR/update/target-op.json''))[''snake''])") ; OA=$(python3 -c "import json;print(json.load(open(''$WORK_DIR/update/target-op.json'')).get(''op_api_dir'') or '''')") ; if [ -z "$OA" ]; then ! find $WORK_DIR/op -maxdepth 2 -type d -name op_api | grep -q . ; else test -f "$OA/aclnn_${OP_SNAKE}.h" && test -f "$OA/aclnn_${OP_SNAKE}.cpp" && test -f "$OA/${OP_SNAKE}.h" && test -f "$OA/${OP_SNAKE}.cpp" ; fi.'
+      - 'Frozen anchors present (the oracle is established just below when the package carried none): test -s $WORK_DIR/golden.py && test -s $WORK_DIR/npu-arch.json && test -s $WORK_DIR/ttk.conf.yaml && test -d $WORK_DIR/ops-test-kit.'
+      - 'Build passes for the recorded SoC through the resolved build entry: the build.entry recorded in $WORK_DIR/update/target-op.json (a package-local ./build.sh when the package is self-contained, else the enclosing operator repository build entry invoked for this operator with the SoC recorded in $WORK_DIR/npu-arch.json) exits 0; if no build entry is resolvable from the staged package the node FAILs with that fixture attribution rather than assuming ./build.sh exists.'
+      - 'Deployment installed: OP_PASCAL=$(python3 -c "import json;print(json.load(open(''$WORK_DIR/update/target-op.json''))[''pascal''])") ; OA=$(python3 -c "import json;print(json.load(open(''$WORK_DIR/update/target-op.json'')).get(''op_api_dir'') or '''')") ; test -d $WORK_DIR/dev-package && { [ -z "$OA" ] || test -s $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so ; }.'
+      - 'L2 symbol pair exported whenever the package carries an aclnn op_api layer: when op_api_dir in $WORK_DIR/update/target-op.json is non-null, nm -D $WORK_DIR/dev-package/vendors/$OP_PASCAL/op_api/lib/libcust_opapi.so | grep -cE " T aclnn<OP_PASCAL>(GetWorkspaceSize)?$" equals 2 (with <OP_PASCAL> read from target-op.json); when it is null this check is recorded not-applicable, never silently dropped.'
+      - 'Baseline frozen and well-formed: test -s $WORK_DIR/update/BASELINE.md && test -s $WORK_DIR/update/BASELINE.sha256 && test -d $WORK_DIR/update/baseline && sha256sum -c --quiet $WORK_DIR/update/BASELINE.sha256 exits 0.'
+    out_of_scope:
+      - 'Verify only: no file under $WORK_DIR/op/, $WORK_DIR/spec/, $WORK_DIR/design/, $WORK_DIR/npu-arch.json, $WORK_DIR/ttk.conf.yaml or $WORK_DIR/需求分析.md is modified, and an existing $WORK_DIR/golden.py is never overwritten; the only writes are $WORK_DIR/update/target-op.json, $WORK_DIR/update/BASELINE.md, $WORK_DIR/update/BASELINE.sha256, the frozen copies under $WORK_DIR/update/baseline/, $WORK_DIR/golden.py when the package carried no oracle and this node establishes one, and the fresh $WORK_DIR/dev-package/ install plus the build artifacts the resolved build entry regenerates under $WORK_DIR/op/build/.'
+      - 'Do not run any device test, ttk batch, tiling UT or whitebox batch in this node; do not fix a failing check — report it.'
+    depends_on: []
+    max_retries: 2
+    on_exhaust: exit
+  - id: analyze-delta
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Analyze the delta - impact surface and scenario decomposition
+    goal:
+      - 'Read the delta requirement $WORK_DIR/需求分析.md and walk the EXISTING package under $WORK_DIR/op/, then produce $WORK_DIR/delta/ANALYSIS.md: the bounded capability delta restated (it adds support for a case; it does not re-design the operator), the impact-surface table mapping each design intent to a file:line in op_host/op_kernel/op_api with a reuse/extend/new-branch/new-validation verdict, and the scenario decomposition the fan-out subgraph is built from.'
+      - 'Completion gate: ANALYSIS.md exists non-empty with its delta restatement, its impact-surface table and its scenario table (## 影响面 and ## 场景分解 sections); every impact row names a real file:line under op_host/, op_kernel/ or op_api/ and a verdict; every scenario cell names its owning operator/variant subtree, its impact rows and a machine-checkable acceptance; and the scenario table is mirrored as the machine-readable $WORK_DIR/delta/scenarios.json that generate-update-subgraph reads.'
+    approach:
+      - 'Restate the delta as a bounded capability delta against the EXISTING implementation and keep the existing contract fixed: the change adds a case / branch / validation, it does not re-design the operator. Name the repo shape, operator, snake/Pascal/UPPER name forms, variant/tilingKey set and SoC from $WORK_DIR/update/target-op.json and $WORK_DIR/npu-arch.json — a combination outside this surface stops and is reported, it never borrows a neighbour diff.'
+      - 'Build the impact surface by walking the existing host/kernel/api call chain (the operator own source under $WORK_DIR/op/op_host/, op_kernel/, op_api/) and diffing the intended delta against the code: for each design intent of $WORK_DIR/需求分析.md record one impact row — design intent -> file:line in op_host/op_kernel/op_api -> verdict in {reuse, extend, new-branch, new-validation}. reuse means the branch already implements the intent; new-validation means a rejected case the requirement demands (a violating case that PASSes means a missing validation, not a missing feature). Every row must cite a real file:line.'
+      - 'Decompose the delta into scenario cells for fan-out: the cells are the (operator/variant x scenario) pairs of the delta — generic, driven by the requirement, never hardcoded (e.g. an empty-tensor delta yields per-variant x {legal-empty accepted, non-empty-output rejected, dtype/alias compatibility} cells; the cell set is whatever the delta acceptance admits). Each cell lists the impact rows it realizes, its owning operator/variant subtree under $WORK_DIR/op/, and its acceptance restated as a machine-checkable check.'
+      - 'Write $WORK_DIR/delta/scenarios.json as the machine contract: a list of {"id", "op", "subtree", "scenario", "impact_rows", "acceptance"} in the ANALYSIS.md table order — generate-update-subgraph reads it to emit one child node per cell. The markdown table in ANALYSIS.md and scenarios.json carry the same cells in the same order (one source of truth, two views).'
+      - 'Classify each cell failure vocabulary with the workflow triage line so the later fix loop routes correctly: build failure -> ascendc-compile-debug; AIC error, crash, error codes, hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug; TTK-framework-level failure -> ttk-how-diagnose.'
+    acceptance:
+      - 'Analysis present: test -s $WORK_DIR/delta/ANALYSIS.md && test -s $WORK_DIR/delta/scenarios.json.'
+      - 'Delta restatement and impact surface present: grep -q "影响面" $WORK_DIR/delta/ANALYSIS.md and grep -q "场景分解" $WORK_DIR/delta/ANALYSIS.md; the impact-surface table has at least one row; every row cites a file:line under op_host/, op_kernel/ or op_api/ and a verdict in {reuse, extend, new-branch, new-validation} (verifier cross-checks each cited file:line against $WORK_DIR/op/).'
+      - 'Scenario table well-formed: python3 -c "import json;d=json.load(open(''$WORK_DIR/delta/scenarios.json''));assert isinstance(d,list) and d and all(x.get(''id'') and x.get(''op'') and x.get(''subtree'') and x.get(''scenario'') and x.get(''impact_rows'') and x.get(''acceptance'') for x in d)" exits 0.'
+      - 'Views agree: the number of cells in the ANALYSIS.md scenario table equals len(scenarios.json) and the ids match in order (verifier checks both).'
+      - 'Every impact row is consumed: the union of the cells impact_rows covers every non-reuse impact row of the table (a new-branch/new-validation/extend row assigned to no cell fails the review).'
+    out_of_scope:
+      - 'Write only $WORK_DIR/delta/; do not modify any file under $WORK_DIR/op/ (this node analyses, it does not change code), $WORK_DIR/golden.py, $WORK_DIR/spec/, $WORK_DIR/update/ or the delta requirement.'
+    depends_on:
+      - verify-baseline
+    max_retries: 2
+    on_exhaust: exit
+  - id: generate-update-subgraph
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the per-scenario update subgraph update-sub-graph.yaml
+    goal:
+      - 'Read $WORK_DIR/delta/scenarios.json (and $WORK_DIR/delta/ANALYSIS.md) and produce $WORK_DIR/.workflow/update-sub-graph.yaml: a dict with exactly one top-level key nodes holding K normal nodes, one per scenario cell, id update-scenario-<k> — each child contract is to implement that cell delta rows under the fix whitelist, rebuild and redeploy green, and make the cell acceptance green. Nothing in this task may hardcode an operator name, a scenario set or a cell count.'
+      - 'Completion gate: the subgraph file loads through the harness validator (get_task.load_subgraph returns no error), K equals the scenarios.json cell count, and every child satisfies the 12-key normal-task schema with executor general-executor, verifier general-verifier, max_retries 2, on_exhaust exit.'
+    approach:
+      - 'Node schema = the harness normal task (id, task_type: normal, title, goal, approach, acceptance, out_of_scope, depends_on, executor, verifier, max_retries: 2, on_exhaust: exit) — exactly these 12 keys. Write the file as a YAML mapping whose sole top-level key is nodes (a bare list is invalid). goal / approach / acceptance / out_of_scope must each be a non-empty LIST of non-empty strings (a plain string is rejected by schema validation); depends_on lists only ids that exist in the same file, and a node with no dependencies uses an empty list.'
+      - 'Enumerate the scenario cells in scenarios.json order, k = 1..K; per cell generate one node update-scenario-<k> — executor general-executor, verifier general-verifier. Its contract: implement exactly the cell impact rows (from $WORK_DIR/delta/ANALYSIS.md) inside the fix whitelist — op_host/, op_kernel/ and the resolved op_api_dir of the cell TARGET operator/variant subtree only, never a neighbour subtree — then rebuild and redeploy (through the build.entry resolved in $WORK_DIR/update/target-op.json for the recorded SoC, reinstall into $WORK_DIR/dev-package) and make the cell acceptance check green. It cites the cell ANALYSIS.md rows by id.'
+      - 'Serialization (the build tree and dev-package are resources with no lock in this orchestrator, and they are shared by EVERY cell, not only by cells of one subtree): a child edits sources, then rebuilds through the resolved build entry and reinstalls into $WORK_DIR/dev-package — so no two children may rebuild or redeploy concurrently, whatever their subtree. Enumerate the cells in $WORK_DIR/delta/scenarios.json order and emit a single linear chain: child k (k = 1..K) depends_on child k-1, and child 1 uses depends_on: []. Source-disjointness alone does NOT make concurrent rebuilds safe (the build tree $WORK_DIR/op/build and $WORK_DIR/dev-package are shared), so subtree-scoping is never the serialization rule — this mirrors op-impl.yaml rule that kernel-touching steps of different branches never run concurrently.'
+      - 'Each child acceptance is machine-checkable and stated concretely: the cell delta rows are realized at the cited file:line (the verifier re-reads the location), the package rebuilds for the recorded SoC (build.sh exits 0), the redeployment exports the aclnn symbol pair, and the cell own acceptance check (from scenarios.json) passes — expressed with exit codes / grep / row counts, never a self-declaration.'
+      - 'Every child goal states its completion gate explicitly and references its authoritative ANALYSIS.md rows and target subtree by absolute path; every child out_of_scope names the frozen assets (golden.py, $WORK_DIR/update/baseline/, neighbour subtrees, $WORK_DIR/需求分析.md) read-only and forbids fixes outside its own subtree.'
+    acceptance:
+      - 'Contract-valid: ORCH_SKILL=the workflow-orchestrator skill directory ; python3 -c "import sys; sys.path.insert(0,\"$ORCH_SKILL/scripts\"); import get_task; nodes,err=get_task.load_subgraph(\"$WORK_DIR/.workflow/update-sub-graph.yaml\"); assert not err, err" exits 0.'
+      - 'File shape: test -s $WORK_DIR/.workflow/update-sub-graph.yaml && python3 -c "import yaml,json; s=json.load(open(''$WORK_DIR/delta/scenarios.json'')); d=yaml.safe_load(open(''$WORK_DIR/.workflow/update-sub-graph.yaml'')); assert isinstance(d,dict) and set(d)=={''nodes''} and len(d[''nodes''])==len(s)" exits 0.'
+      - 'Node ids are exactly update-scenario-<k> for k = 1..K in scenarios.json order, one per cell, and each child cites its cell ANALYSIS.md impact rows.'
+      - 'Every child satisfies the 12-key normal-task schema with executor general-executor, verifier general-verifier, max_retries 2, on_exhaust exit; every child acceptance is checkable (exit codes / file paths / row counts).'
+      - 'Serialization encoded: the children form one linear chain in scenarios.json order — update-scenario-k depends_on update-scenario-(k-1), and update-scenario-1 depends_on [] — so no two children can rebuild or redeploy the shared build tree / dev-package concurrently; the verifier confirms this shape from the file (a total chain is the only shape that makes the shared build tree safe), and get_task.load_subgraph above confirms every depends_on resolves inside the file.'
+      - 'Whitelist encoded: every child out_of_scope restricts edits to op_host/op_kernel/op_api of its own target subtree only.'
+    out_of_scope:
+      - 'Do not create or modify any file other than $WORK_DIR/.workflow/update-sub-graph.yaml; do not write operator code; do not execute any scenario task.'
+    depends_on:
+      - analyze-delta
+    max_retries: 2
+    on_exhaust: exit
+  - id: update-scenarios
+    task_type: subgraph
+    file: .workflow/update-sub-graph.yaml
+    depends_on:
+      - generate-update-subgraph
+  - id: update-ut-st
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Extend the test suites for the delta - new UT/ST cases, existing suites untouched and green
+    goal:
+      - 'Extend the operator test suites for the delta: add UT and ST cases covering each scenario cell of $WORK_DIR/delta/scenarios.json — following op-impl.yaml write-tiling-ut and whitebox-gen node patterns, with cases derived from the delta acceptance semantics and ordered risk-first so the precision-critical and rejection scenarios run earliest — while every existing suite stays untouched (delta cases land in new files) and green.'
+      - 'Completion gate: new UT cases exist for the delta host-visible branches (tiling validation / op_api L2), the host UT suites pass green under the isolated harness, the new ST device cases are declared for full-regression, and the existing suites row counts equal the baseline (nothing removed or rewritten).'
+    approach:
+      - 'Source the case set from the delta acceptance semantics: $WORK_DIR/delta/ANALYSIS.md impact rows and $WORK_DIR/需求分析.md acceptance — one case per scenario cell semantic (acceptance) and per new-validation (rejection) so every new branch has a regression guard. Risk-order: the precision-critical and rejection cases land in the earliest rows.'
+      - 'UT: follow op-impl.yaml write-tiling-ut discipline for host-visible delta branches — one TEST_F per new tiling validation/short-circuit exit and per new op_api L2 branch, expectations from an independent hand-written oracle (never by including the implementation own tiling_struct/tiling headers), covering boundary values and the exact threshold +-1 where the delta introduces one. Run cd $WORK_DIR/op/tests/tiling && ./run.sh green (0 failed) and the op_api UT likewise; record the output in $WORK_DIR/update/ut-delta.log.'
+      - 'ST: declare the new device cases as NEW CSV files under $WORK_DIR/op/tests/ following the standard L0/L1/L2 layer layout, using exactly the suffixes the blackbox-tester merge step globs — positive *_l0_functional.csv / *_l1_functional.csv and negative *_l2_exception.csv — so the merge step sees every delta case (a case written to any other suffix would be invisible to merge_cases.py and silently dropped from the regression); do not hand-edit existing case CSVs (the existing suite is frozen).'
+      - 'Where the delta adds a validation, guard it with a failing case that actually feeds the relation the branch checks (mount the optional inputs the branch keys off, at the indices that are actually instanced); a case that only names a branch without exercising it does not cover it, and where the generator cannot express a required input pattern, extend it rather than record a gap.'
+      - 'Guard the frozen baseline: compare the existing case sets under $WORK_DIR/op/tests/ against $WORK_DIR/update/baseline/cases/ — the pre-existing files/rows are unchanged (delta cases are additions in new files); record the existing row count and the delta row count.'
+      - 'Evidence: $WORK_DIR/update/ut-st-delta.RECORD.md records the new case set (per scenario cell), the running counts, and the existing-suite untouched confirmation.'
+    acceptance:
+      - 'Host UT green: when the package ships a tiling UT, cd $WORK_DIR/op/tests/tiling && ./run.sh exits 0 with 0 failed, recorded in $WORK_DIR/update/ut-delta.log; the op_api UT suite under $WORK_DIR/op/tests/ likewise runs green (0 failed) when the delta touches op_api.'
+      - 'Coverage of every scenario cell: every scenario cell in $WORK_DIR/delta/scenarios.json has at least one new UT or ST case citing it (recorded in ut-st-delta.RECORD.md); the verifier cross-checks cell-by-cell.'
+      - 'New ST cases declared: new *_l0_functional.csv / *_l1_functional.csv / *_l2_exception.csv files exist under $WORK_DIR/op/tests/ and each is non-empty — these are exactly the suffixes merge_cases.py globs (positive *_l0_functional.csv / *_l1_functional.csv, negative *_l2_exception.csv), so no delta case is written to a suffix the merge step cannot see.'
+      - 'Existing suites untouched: the pre-existing case files/rows under $WORK_DIR/op/tests/ are byte-unchanged versus $WORK_DIR/update/baseline/cases/ (new cases live in new files); the existing data-row count equals the baseline count recorded by verify-baseline.'
+      - 'Oracle independence: the UT does not include the implementation own tiling_struct/tiling_arch35 headers (verifier checks the UT source); every new expect-failure case feeds the relation its validation checks.'
+      - 'Evidence recorded: test -s $WORK_DIR/update/ut-st-delta.RECORD.md.'
+    out_of_scope:
+      - 'Modify only $WORK_DIR/op/tests/ (new UT/ST files) and $WORK_DIR/update/; the existing case sets are not edited (frozen); $WORK_DIR/golden.py, the tolerances and $WORK_DIR/update/baseline/ are read-only.'
+    depends_on:
+      - update-scenarios
+    max_retries: 2
+    on_exhaust: exit
+  - id: full-regression
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Full regression - the frozen full suite plus the new delta cases green through TTK aclnn mode
+    goal:
+      - 'Prove the extended package still reproduces the frozen full suite and additionally lands the delta: run the frozen full suite (the verified baseline case sets) PLUS the new delta cases through TTK aclnn mode — every positive case precision-PASS and every negative case rejected — and re-run the host UT suites green when the delta changed code.'
+      - 'Completion gate: the positive suite is all-green (parse_result.py --expect-total N exits 0), the negative suite is all-rejected (parse_result.py --negative exits 0), check_op_binpath proves the tested kernel came from THIS work_dir deployment, and the frozen baseline digest verifies (sha256sum -c exits 0).'
+    approach:
+      - 'Merge the suites with the blackbox-tester skill merge_cases.py (column-union, offset normalization; its exact-suffix matching keeps *_oversized.csv side tables out by construction). merge_cases.py takes ONE case directory and globs *_l0_functional.csv / *_l1_functional.csv as positive and *_l2_exception.csv as negative, so stage a merge input directory holding the frozen baseline case sets under $WORK_DIR/update/baseline/cases/ (the pre-change full suite, proven intact by the baseline digest) PLUS ONLY the new delta case files under $WORK_DIR/op/tests/ — never also the live copies of the pre-existing cases, which are the same rows as the frozen set and would be double-counted. Run it into a positive suite $WORK_DIR/op/tests/regression/blackbox_all.csv and a negative suite $WORK_DIR/op/tests/regression/blackbox_l2_neg.csv; record each suite data-row count — the --expect-total value — and the split (frozen count + delta count).'
+      - 'Run TTK aclnn mode from $WORK_DIR/ops-test-kit (the blackbox-tester skill is the invocation authority for environment, vendor visibility, bin-path proof and result parsing): positive suite full (rm -f the result file first; python3 -m ttk aclnn -i $WORK_DIR/op/tests/regression/blackbox_all.csv --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/op/tests/regression/result.csv), negative suite likewise to result_l2.csv; resumes and reruns only via -t by name; the suite stays whole, never staged or sampled.'
+      - 'Phase 2 - adjudicate failed positive rows: rerun each non-PASS row with -t by name adding --compare cross_check --config $WORK_DIR/ttk.conf.yaml, writing result-crosscheck.csv; a case passing under cross_check is adjudicated green; a still-failing case enters precision localization and fix. Skip this phase when phase 1 is all-green.'
+      - 'Gate with the blackbox-tester skill parse_result.py: python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/regression/result.csv --expect-total <frozen+delta count> exits 0 (pass==total, fail==skip==0); the negative suite python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/regression/result_l2.csv --negative --expect-total <neg count> exits 0 (pass==0, every row rejected).'
+      - 'Operator-source proof before trusting any result: python3 the blackbox-tester skill''s check_op_binpath.py on the debug log with --optype $OP_PASCAL --expect-dir $WORK_DIR/dev-package/vendors/$OP_PASCAL --require exits 0 — the tested kernel must come from this work_dir own deployment, never a built-in or stale vendor.'
+      - 'Closing regression for the changed code: re-run the host UT suites (cd $WORK_DIR/op/tests/tiling && ./run.sh, 0 failed) and any existing whitebox branch batches, and re-run the frozen full suite after the last code change — a code touch re-greens the whole frozen suite, not just the delta own cases.'
+      - 'Oracle-frozen check: sha256sum -c --quiet $WORK_DIR/update/BASELINE.sha256 exits 0 — the frozen baseline copies and golden.py are byte-identical to the verify-baseline baseline; a mismatch means the baseline or the oracle was silently edited to make the delta pass, which is a FAIL, not a pass.'
+      - 'Fix discipline: reproduce each failure first with -t by name, then route by class (build failure -> ascendc-compile-debug; AIC error, crash, error codes, hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug; TTK-framework-level failure -> ttk-how-diagnose); fixes stay inside the whitelist ($WORK_DIR/op/op_host/, op_kernel/, op_api/, op_graph/); after any code change rebuild and redeploy before rerunning; never edit golden.py, the tolerances, the frozen baseline or the existing case sets to force green.'
+      - 'Evidence: $WORK_DIR/update/regression.RECORD.md records suite row counts (frozen + delta), per-case results, the fix history, the commands run, the bin-path proof and the baseline-frozen check.'
+    acceptance:
+      - 'Suites built: test -s $WORK_DIR/op/tests/regression/blackbox_all.csv && test -s $WORK_DIR/op/tests/regression/blackbox_l2_neg.csv; the two --expect-total counts equal their suites data-row counts; the positive count equals the frozen full-suite count plus the new delta-case count.'
+      - 'Positive gate all-green: after adjudication every case in the suite is green — all-green phase 1 is exactly python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/regression/result.csv --expect-total <frozen+delta count> exits 0; otherwise parse_result.py $WORK_DIR/op/tests/regression/result-crosscheck.csv --expect-total <phase-1 non-PASS count> also exits 0 and the union covers the suite.'
+      - 'Negative gate all-rejected: python3 the blackbox-tester skill''s parse_result.py $WORK_DIR/op/tests/regression/result_l2.csv --negative --expect-total <neg count> exits 0 (pass==0, every row rejected).'
+      - 'Operator source proven: python3 the blackbox-tester skill''s check_op_binpath.py <debug log> --optype $OP_PASCAL --expect-dir $WORK_DIR/dev-package/vendors/$OP_PASCAL --require exits 0.'
+      - 'Frozen baseline and oracle untouched: sha256sum -c --quiet $WORK_DIR/update/BASELINE.sha256 exits 0; the frozen subset data-row count in the merged suite equals the baseline count recorded by verify-baseline (no frozen case silently dropped).'
+      - 'Host UT green when code changed: cd $WORK_DIR/op/tests/tiling && ./run.sh exits 0 with 0 failed; the op_api UT likewise when op_api changed.'
+      - 'Evidence recorded: test -s $WORK_DIR/update/regression.RECORD.md.'
+    out_of_scope:
+      - 'Modification whitelist: $WORK_DIR/op/op_host/, op_kernel/, op_api/, op_graph/ and the test artifacts regenerated under $WORK_DIR/op/tests/; everything else is read-only — $WORK_DIR/update/baseline/ (never modify), $WORK_DIR/golden.py (never modify), the tolerances, the existing case sets, $WORK_DIR/npu-arch.json, $WORK_DIR/ttk.conf.yaml, the delta requirement.'
+      - 'A case that cannot pass without deviating from the delta requirement stays red with its attribution (requirement/oracle defect); the frozen full suite runs whole, never staged or sampled.'
+    depends_on:
+      - update-ut-st
+    max_retries: 2
+    on_exhaust: exit
+  - id: review-docs
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Code-review the changed surface (fix within op/) and generate the paired interface docs
+    goal:
+      - 'Code-review the delta changed surface and generate the operator docs: run the ascendc-code-review skill over the changed files under $WORK_DIR/op/ (diff-scoped: the delta touched op_host/op_kernel/op_api files), producing the report $WORK_DIR/code-review/CODE_REVIEW.md with its verdict on the first line; close every blocking (FAIL) finding inside $WORK_DIR/op/ and re-run the full-regression gates green; then run the ascendc-docs-gen skill to emit the paired interface docs.'
+      - 'Completion gate: the report exists with a verdict line, no FAIL finding is left unresolved (each closed in $WORK_DIR/code-review/CODE_REVIEW_FIX.md, or a zero-findings no-op recorded), the paired docs exist non-empty, the delta provenance is recorded, and — when a fix touched $WORK_DIR/op/ — the full-regression gates hold on regenerated results.'
+    approach:
+      - 'Load the ascendc-code-review skill first (mandatory) and run its review workflow (rule routing, per-clause review, line verification) with this workflow overlay: the review inputs are the CHANGED files of $WORK_DIR/op/ (op_host/, op_kernel/, op_api/), diff-scoped against $WORK_DIR/update/baseline/sources/ so unchanged code is discounted (out of review scope) but stays in regression scope; the report lands at $WORK_DIR/code-review/CODE_REVIEW.md. Every FAIL / SUSPICIOUS finding keeps a unique F / S id, a full path and a line-verified line number.'
+      - 'The report first line is a single status — **状态**: ✅通过 when no FAIL finding is listed, **状态**: ❌失败 otherwise.'
+      - 'Fix loop (this node owns it): confirm each FAIL at its cited location, fix only inside $WORK_DIR/op/ (op_host/, op_kernel/, op_api/, op_graph/), rebuild and redeploy, and re-run the full-regression gates (the TTK aclnn suites and the host UT) until they hold again; record every closure in $WORK_DIR/code-review/CODE_REVIEW_FIX.md. Zero FAIL findings -> record the no-op and change no code. A finding that cannot be fixed without deviating from the delta requirement stays open with its attribution.'
+      - 'Then load the ascendc-docs-gen skill (mandatory — the single execution authority for doc structure and the paired delivery order) and generate the paired public docs from verifiable facts: the aclnn API interface doc $WORK_DIR/op/docs/aclnn<OpPascal>.md and $WORK_DIR/op/README.md, reflecting the delta (the new supported case/branch and any interface behavior change the requirement declares); expose both under the workflow path with ln -sfn op/docs $WORK_DIR/docs. <OpPascal> is confirmed against the hand-written public header $WORK_DIR/op/op_api/aclnn_<snake>.h, never guessed from directory names.'
+      - 'Record the delta provenance: $WORK_DIR/code-review/DELTA.md maps each changed file under $WORK_DIR/op/ to the ANALYSIS.md impact row it serves and each deliberate deviation with its reason (the delta-change record aclnn-migrate keeps as MIGRATION.md).'
+      - 'Do not append to any LOG file and do not reply DONE — logging is the workflow runner job.'
+    acceptance:
+      - 'Review report present with a verdict: test -s $WORK_DIR/code-review/CODE_REVIEW.md exits 0 and python3 -c "import sys;l=open(sys.argv[1],encoding=''utf-8'').readline().strip();assert l.startswith(''**状态**:'') and (''✅通过'' in l or ''❌失败'' in l)" $WORK_DIR/code-review/CODE_REVIEW.md exits 0.'
+      - 'Blocking findings closed: test -s $WORK_DIR/code-review/CODE_REVIEW_FIX.md exits 0 and every FAIL finding id in CODE_REVIEW.md appears in CODE_REVIEW_FIX.md (verifier cross-checks the ids one by one), or the zero-findings no-op is explicitly recorded with no code modified.'
+      - 'Paired docs present: OP_PASCAL=$(python3 -c "import json;print(json.load(open(''$WORK_DIR/update/target-op.json''))[''pascal''])") ; test -s $WORK_DIR/op/docs/aclnn${OP_PASCAL}.md && test -s $WORK_DIR/op/README.md && test -s $WORK_DIR/docs/aclnn${OP_PASCAL}.md.'
+      - 'README links the doc it ships with: grep -qF "docs/aclnn${OP_PASCAL}.md" $WORK_DIR/op/README.md.'
+      - 'Delta provenance recorded: test -s $WORK_DIR/code-review/DELTA.md and every changed file under $WORK_DIR/op/ appears in it (verifier diffs the changed set against $WORK_DIR/update/baseline/sources/).'
+      - 'Regression holds when code changed: when this task modified any file under $WORK_DIR/op/, the full-regression was re-run green — parse_result.py <positive result.csv> --expect-total <count> exits 0, the negative gate exits 0, check_op_binpath.py --require exits 0, and sha256sum -c --quiet $WORK_DIR/update/BASELINE.sha256 exits 0.'
+      - 'Frozen assets unchanged: $WORK_DIR/update/baseline/, $WORK_DIR/golden.py, the tolerances, the existing case sets and $WORK_DIR/需求分析.md are unmodified (verifier checks against the pre-task state).'
+    out_of_scope:
+      - 'Modify only $WORK_DIR/code-review/, $WORK_DIR/op/docs/, $WORK_DIR/op/README.md, the $WORK_DIR/docs symlink, and (for fixes) $WORK_DIR/op/op_host/, op_kernel/, op_api/, op_graph/ plus the build/dev-package artifacts they regenerate; everything else is read-only.'
+      - 'Never modify $WORK_DIR/update/baseline/, $WORK_DIR/golden.py, the tolerances, the regression case set or $WORK_DIR/npu-arch.json to make a gate green; a suspected defect is attributed in the report, never patched in the doc place.'
+    depends_on:
+      - full-regression
+    max_retries: 3
+    on_exhaust: exit

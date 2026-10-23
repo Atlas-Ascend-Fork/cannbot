@@ -1,0 +1,166 @@
+# Minimal op-develop workflow driving the shared workflow-orchestrator skill.
+# The orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
+# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+workflow: env-setup
+max_parallel: 10
+system_prompt: If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant to this task, as development reference.
+nodes:
+  - id: knowledge-preflight
+    task_type: normal
+    title: Set up and query the cannbot-knowledge knowledge base
+    executor: general-executor
+    verifier: general-verifier
+    depends_on: []
+    goal:
+      - "Set up the cannbot-knowledge knowledge base at $WORK_DIR/cannbot-knowledge and query it for knowledge relevant to the operator in the task prompt; write the distilled findings to $WORK_DIR/cannbot-knowledge/artifacts/preflight.md."
+    approach:
+      - "The knowledge root is $WORK_DIR/cannbot-knowledge. If it has no .git subdirectory, run `git clone --depth 1 https://gitcode.com/cann/cannbot-knowledge.git $WORK_DIR/cannbot-knowledge`; otherwise skip the clone."
+      - "If $WORK_DIR/cannbot-knowledge/artifacts/indexes/knowledge.sqlite3 is missing, run `python3 -m pip install -r $WORK_DIR/cannbot-knowledge/requirements.txt`, `bash $WORK_DIR/cannbot-knowledge/get_resources.sh`, and `python3 $WORK_DIR/cannbot-knowledge/.agents/skills/knowledge-query/scripts/knowledge_index.py --knowledge-root $WORK_DIR/cannbot-knowledge build`; if the index already exists, skip all three."
+      - "Run `python3 $WORK_DIR/cannbot-knowledge/.agents/skills/knowledge-query/scripts/knowledge_query.py --knowledge-root $WORK_DIR/cannbot-knowledge discover` once, then query for the operator name, its math semantics, and the key CANN/Ascend C APIs mentioned in the task prompt."
+      - "For each promising hit, read the full card at the returned path; follow card resource/sources links only when the card is insufficient."
+      - "Write $WORK_DIR/cannbot-knowledge/artifacts/preflight.md: per topic, the distilled facts (API contracts, platform limits, tiling/UB constraints, known pitfalls), each citing its source card path. Record zero-hit queries explicitly as 'no coverage' — do not treat them as errors."
+    acceptance:
+      - "$WORK_DIR/cannbot-knowledge/artifacts/preflight.md exists and is non-empty."
+      - "Every fact in it cites a card path under $WORK_DIR/cannbot-knowledge; queries with no hits are listed explicitly."
+    out_of_scope:
+      - "The knowledge repository is read-only except for its own setup artifacts (indexes, downloaded resources); do not modify any knowledge card."
+      - "Do not create or modify any file outside $WORK_DIR/cannbot-knowledge/."
+    max_retries: 1
+    on_exhaust: continue
+  - id: detect-npu-arch
+    task_type: normal
+    title: Detect the current platform's NPU arch
+    executor: general-executor
+    verifier: general-verifier
+    depends_on: []
+    goal:
+      - Run `asys info -r hardware` to query the current platform's hardware information, extract the NPU architecture, and write it to $WORK_DIR/npu-arch.json.
+    approach:
+      - Run `asys info -r hardware` and capture its full output.
+      - Identify the NPU architecture in that output.
+      - Create $WORK_DIR/ if it does not already exist, then write the architecture as JSON to $WORK_DIR/npu-arch.json.
+    acceptance:
+      - $WORK_DIR/npu-arch.json exists and parses as valid JSON.
+      - The file records the NPU architecture, and the recorded value matches what `asys info -r hardware` reports for this platform.
+    out_of_scope:
+      - Do not create or modify any file other than $WORK_DIR/npu-arch.json.
+      - Do not install, upgrade, or reconfigure anything; only read the environment.
+    max_retries: 2
+    on_exhaust: exit
+  - id: create-requirements-dir
+    task_type: normal
+    title: Create the requirements analysis directory
+    executor: general-executor
+    verifier: general-verifier
+    depends_on: []
+    goal:
+      - Create the requirements analysis directory at $WORK_DIR/requirements/.
+    approach:
+      - Create $WORK_DIR/ if it does not already exist.
+      - Create $WORK_DIR/requirements/ under it.
+    acceptance:
+      - $WORK_DIR/requirements/ exists and is a directory.
+    out_of_scope:
+      - Do not create or modify any file other than the $WORK_DIR/requirements/ directory.
+    max_retries: 2
+    on_exhaust: exit
+  - id: setup-reference-repos
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Shallow-clone the reference source repos
+    goal:
+      - "Create $WORK_DIR/requirements/references/ and shallow-clone (--depth 1) the reference source repos required by the requirement analysis into cann/, ascend/, competitor/ subdirectories."
+    approach:
+      - "Create $WORK_DIR/requirements/references/ if it does not already exist, then create cann/, ascend/, competitor/ subdirectories under it."
+      - "For each clone command below, skip it if the target directory already contains a .git subdirectory; otherwise run it as-is."
+      - "git clone --depth 1 https://gitcode.com/cann/ops-nn.git $WORK_DIR/requirements/references/cann/ops-nn"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-math.git $WORK_DIR/requirements/references/cann/ops-math"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-transformer.git $WORK_DIR/requirements/references/cann/ops-transformer"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-cv.git $WORK_DIR/requirements/references/cann/ops-cv"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-rand.git $WORK_DIR/requirements/references/cann/ops-rand"
+      - "git clone --depth 1 https://gitcode.com/cann/canndev.git $WORK_DIR/requirements/references/cann/canndev"
+      - "git clone --depth 1 https://gitcode.com/Ascend/op-plugin.git $WORK_DIR/requirements/references/ascend/op-plugin"
+      - "git clone --depth 1 https://gitcode.com/Ascend/torchair.git $WORK_DIR/requirements/references/ascend/torchair"
+      - "git clone --depth 1 https://github.com/pytorch/pytorch.git $WORK_DIR/requirements/references/competitor/pytorch"
+      - "git clone --depth 1 https://github.com/tensorflow/tensorflow.git $WORK_DIR/requirements/references/competitor/tensorflow"
+      - "Report which repos were cloned, skipped (already present), or failed to clone."
+    acceptance:
+      - "$WORK_DIR/requirements/references/ exists and contains cann/, ascend/, competitor/ subdirectories."
+      - "Each of these ten target directories contains a .git subdirectory: cann/ops-nn, cann/ops-math, cann/ops-transformer, cann/ops-cv, cann/ops-rand, cann/canndev, ascend/op-plugin, ascend/torchair, competitor/pytorch, competitor/tensorflow."
+    out_of_scope:
+      - "Do not modify any repo's contents, checkout a different branch, or run any build inside the repos."
+      - "Do not create or modify any file outside $WORK_DIR/requirements/references/."
+    depends_on:
+      - create-requirements-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: setup-ops-test-kit
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Clone the ops-test-kit repo
+    goal:
+      - "Clone the ops-test-kit repository into $WORK_DIR/ops-test-kit."
+    approach:
+      - "Create $WORK_DIR/ if it does not already exist."
+      - "Skip the clone if $WORK_DIR/ops-test-kit already contains a .git subdirectory; otherwise run `git clone --depth 1 https://gitcode.com/cann/ops-test-kit $WORK_DIR/ops-test-kit`."
+    acceptance:
+      - "$WORK_DIR/ops-test-kit exists and contains a .git subdirectory."
+    out_of_scope:
+      - "Do not modify the repo's contents, checkout a different branch, or run any build inside the repo."
+      - "Do not create or modify any file outside $WORK_DIR/ops-test-kit/."
+    depends_on: []
+    max_retries: 2
+    on_exhaust: exit
+  - id: verify-ops-test-kit
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Verify TTK works in the current environment
+    goal:
+      - "Determine whether TTK works in the current environment, for later operator functional and performance verification."
+      - "Faithfully run the environment check and the three shipped sample test commands (kernel, geir, aclnn; the e2e path is excluded), save each command's output to disk, and report the results exactly as produced (PASS or FAIL, as-is)."
+    approach:
+      - "Change into the cloned repo: `cd $WORK_DIR/ops-test-kit` (TTK commands must run from the ops-test-kit directory)."
+      - "Run every command below in a login-environment shell (e.g. `bash -lc '<cmd>'`, or source /etc/profile in the current shell first). Agent shells are often non-login and can miss environment entries (PATH, LD_LIBRARY_PATH) that the python3 interpreter and native libraries need to load; an interpreter-level ImportError from a bare `python3 -m ttk` in such a shell is an environment issue, not a TTK result."
+      - "Create the output directory: `mkdir -p ttk-verify`."
+      - "Run the environment check and save its output: `python3 -m ttk info > ttk-verify/env-info.txt 2>&1`."
+      - "Pick the input files at runtime instead of hardcoding them: for kernel and geir pick any one file from `examples/case_store/kernel/*.csv`, for aclnn pick any one from `examples/case_store/aclnn/*.csv` (e.g. the first match of `ls <dir>/*.csv | head -1`). Record which file each command used."
+      - "Run the three runnable sample test paths in order with the picked files, each saving its full output to a log file under ttk-verify/ (skip the e2e path entirely — it is out of scope for this verification). For each path, append `--ti=0` to run only the first case in the picked CSV; do not run the full CSV:"
+      - "`python3 -m ttk kernel -i <picked-kernel.csv> --ti=0 > ttk-verify/kernel.log 2>&1`"
+      - "`python3 -m ttk geir -i <picked-kernel.csv> --ti=0 > ttk-verify/geir.log 2>&1`"
+      - "`python3 -m ttk aclnn -i <picked-aclnn.csv> --ti=0 > ttk-verify/aclnn.log 2>&1`"
+    acceptance:
+      - "Every command was actually executed and its output saved: $WORK_DIR/ops-test-kit/ttk-verify/ contains env-info.txt (non-empty, with a `Found N device(s)` block) and the three logs kernel.log, geir.log, aclnn.log (each non-empty, containing a `TTK Test Summary` block). e2e.log is not required."
+      - "The environment is verified OK: each of the three logs' `TTK Test Summary` block shows `FAIL     : 0` and `PassRate : 100.00%`. Any FAIL means the environment is not usable, so the task fails and the workflow exits."
+    out_of_scope:
+      - "Do not fix or work around any failure: do not edit example CSVs, docs, or source, do not modify or reinstall anything, and do not retry or patch commands to force a pass; report results exactly as produced."
+      - "Write outputs only under $WORK_DIR/ops-test-kit/ttk-verify/ (build/cache artifacts the repo generates under itself are expected)."
+    depends_on:
+      - setup-ops-test-kit
+    max_retries: 0
+    on_exhaust: continue
+  - id: setup-xpu-server
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Bring up the local xpu-server for cross_check third_party execution
+    goal:
+      - "Start a local xpu-server that executes the golden plugin's third_party reference (competitor torch) for cross_check comparison, and write $WORK_DIR/ttk.conf.yaml pointing TTK at it; every later ttk invocation (kernel and aclnn flows) carries --config $WORK_DIR/ttk.conf.yaml."
+    approach:
+      - "The server ships inside the ops-test-kit clone. Make its package importable and start it detached: mkdir -p $WORK_DIR/xpu-run && ln -sfn $WORK_DIR/ops-test-kit/ttk/remote/server $WORK_DIR/xpu-run/xpu_server."
+      - "Start with --devices cpu always: (cd $WORK_DIR/xpu-run && PYTHONPATH=$WORK_DIR/xpu-run setsid python3 -m xpu_server.xpu_server --port 9090 --devices cpu </dev/null > $WORK_DIR/xpu-run/xpu-server.log 2>&1 &). A bare start (without --devices cpu) auto-detects no hardware, falls back to cpu, yet keeps use_device=true with device_ids=[cpu] — the dispatcher then computes max_attempts=0 and every /v1/run silently returns 500 'internal error' leaving no log."
+      - "Reuse an already-listening server on 127.0.0.1:9090 (TCP connect succeeds AND GET http://127.0.0.1:9090/v1/heartbeat returns HTTP 200 with JSON containing \"status\":\"ok\" and \"providers\" including \"torch\") instead of starting a second one — this allows multiple operators to share one xpu-server on the same machine. If the existing server is not a healthy xpu_server with the torch provider, kill it and start a fresh one with the command above."
+      - "If you started a new server, wait up to 60s for the port to accept connections."
+      - "Write $WORK_DIR/ttk.conf.yaml with remote: endpoints: [{host: 127.0.0.1, port: 9090}]."
+    acceptance:
+      - "127.0.0.1:9090 accepts a TCP connection (python3 -c \"import socket; s=socket.create_connection(('127.0.0.1',9090),5); s.close()\" exits 0)."
+      - "GET http://127.0.0.1:9090/v1/heartbeat returns HTTP 200 with JSON body containing \"status\":\"ok\" and \"providers\" including \"torch\" (python3 -c \"import urllib.request,json; r=urllib.request.urlopen('http://127.0.0.1:9090/v1/heartbeat',timeout=5); d=json.loads(r.read()); assert r.status==200 and d.get('status')=='ok' and 'torch' in d.get('providers',[]), d\" exits 0)."
+      - "$WORK_DIR/ttk.conf.yaml exists, parses as YAML, and its remote.endpoints[0] is host 127.0.0.1 port 9090."
+    out_of_scope:
+      - "Create only $WORK_DIR/ttk.conf.yaml and the $WORK_DIR/xpu-run/ directory; modify nothing under $WORK_DIR/ops-test-kit."
+    depends_on:
+      - setup-ops-test-kit
+    max_retries: 2
+    on_exhaust: exit
