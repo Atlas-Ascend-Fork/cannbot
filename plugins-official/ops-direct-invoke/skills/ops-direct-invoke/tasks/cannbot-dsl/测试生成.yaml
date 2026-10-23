@@ -1,28 +1,56 @@
 title: 测试生成｜Golden、白盒与 Unit TDD
 goal:
-- 生成独立 Golden、白盒与 Unit TDD 用例，以及可供调度的实现子图。
+- 生成独立 Golden、白盒与 Unit TDD 用例，完成 case 静态审查，确保全部 active case 的适用 CPU 检查结果符合预期，并生成可供调度的实现子图。
 approach:
-- 先运行 `scripts/validate_unit_contracts.py --units-dir "$WORK_DIR/design/units"` 确认规划产物仍满足交接契约；加载 `cannbot-dsl-test-generator` Skill，将 `$WORK_DIR/design/doc/spec.yaml`、汇总的 `$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/design/units/` 和 `$WORK_DIR/operators/<op>/test/` 分别作为规格、设计、检验义务与测试目录传入。黑盒模块先于本节点写入同一 CSV。
-- 按该 Skill 的 Golden 与测试入口模块生成独立 CPU Golden 和固定入口，完成静态校验及 CPU 样例、边界数值复核，保存原始证据。
-- 按该 Skill 的白盒模块，将设计中的执行路径与验证矩阵转换为 whitebox 用例及有依据的排除项，完成校验并保留证据。
-- 按该 Skill 的 TDD 模块为原生 Unit 的每项可执行验证义务生成并校验用例；纯结构承诺通过 review_evidence 验收，保留设计承诺、义务、用例及白盒分支的关联证据。
-- 对每项 Unit 验证义务建立到 TDD case 和相关白盒分支的可追溯关系；缺少可区分测试时记录对应验证义务与缺项并终止本节点，由框架处理结果。
-- 使用 `scripts/build_implementation_subgraph.py --output-dir $WORK_DIR --harness-script <workflow-orchestrator/scripts/get_task.py>` 从 Unit 和 testcase.csv 生成 `.workflow/implementation-tasks.yaml`；生成器独立复查 Unit 契约，按能力拓扑排序后为重叠或未知写集添加串行依赖，不依赖文件编号顺序。
-- 全部 Unit 叶子汇入 `implementation-fix`，再进入 `unit-integration` 与 `implementation-review`；回滚目标和重试预算沿用本工作流设置。生成节点展开任务 YAML 内容，并通过 harness 校验子图。
-- 编排层负责将 Unit 的 verification_obligations 交给测试生成，将 design_constraints、feasibility_checks 的 obligation_ids 对应到已覆盖义务，将 review_evidence 的产物、检查方法和通过判据交给实现与检视节点。测试 Skill 只负责检验义务到用例的转换与校验，输入物化与公开行为断言须可复核；序列与重复要求使用固定 runner 支持的契约，无法表达时记录具体缺口并终止。
-- 将节点执行过程写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
+- >-
+  【读取输入】
+  运行 `scripts/validate_unit_contracts.py --units-dir "$WORK_DIR/design/units"` 检查上游 Unit 契约；加载 `cannbot-dsl-test-generator` Skill，提供 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/design/units/` 和测试目录 `$WORK_DIR/operators/<op>/test/`，复用已有 testcase.csv 的黑盒用例。业务纠错依据为 `$WORK_DIR/design/doc/REQUIREMENTS.md` 和 spec。
+- |-
+  【并行准备 Golden 与白盒】
+  并行派发以下两个子任务，替代 Skill 默认的先 Golden 后白盒顺序：
+  - 子任务 A：按 Skill 生成独立 CPU Golden、测试入口及辅助模块，完成静态校验、CPU 样例和边界数值复核；只写这些文件。
+  - 子任务 B：按 Skill 根据设计分支及验证矩阵生成并校验白盒 case，保留有依据的排除项；只写 testcase.csv 的 whitebox 分组。
+  两个子任务只读规格与设计，不并发修改同一文件；均完成并保留校验证据后再生成 Unit TDD。
+- >-
+  【生成并绑定 Unit TDD】
+  按 Skill 为每个 Unit 的可执行验证义务生成并校验 TDD case，绑定对应 Unit 和相关白盒分支；输入与断言必须能够检验该义务，无法覆盖时记录具体缺口，不交接未完成的测试。
+- |-
+  【并行开展静态审查与 CPU 检查】
+  三组用例生成完成后，记录当前 CSV、Golden 和辅助模块的版本或哈希，对同一版本并行开展以下工作；检查期间不修改这些文件：
+  - 独立 case 审查子 Agent：只读需求、spec、设计、Unit 和测试资产，检查业务预期、边界与异常条件、白盒覆盖，以及 Unit 与 TDD 的对应关系、真实输入和断言能否识别相应错误；核对 Skill 的静态校验记录。只报告问题、case ID、依据和建议，不修改文件。
+  - 执行者：完成下面的全量 CPU 检查，保留命令、退出码和逐例结果。
+- >-
+  【全量 CPU 检查】
+  遍历 blackbox、whitebox、tdd 三组全部 active case 及其调用序列，物化真实输入；数值用例执行 Golden，检查输出数量、shape、dtype、NaN/Inf 语义及适用业务断言，可复用当前版本的有效 Golden 缓存。异常用例核对输入违反指定规格条件且预期错误码正确，行为用例执行适用 CPU 检查；设备专属行为记录为待设备验证。不导入目标实现，不以输入或缓存生成成功、Golden 自比较代替结果符合预期。
+- >-
+  【检查与修复闭环】
+  汇合独立审查和 CPU 检查结果，依据需求与 spec 判断修 case 还是 Golden，在本节点内完成纠错；允许有业务依据地纠正既有黑盒行，保留 case ID、原始失败、修改依据和前后差异。禁止删除用例、禁止改为 excluded 以及禁止通过放宽预期来掩盖失败。修改后重新执行受影响的静态校验、独立审查和 CPU 检查，确认最终版本全部 active case 均有适用检查结论且符合预期，所有阻断问题已解决；未采纳的审查意见说明依据。需求、spec 或设计本身冲突时记录阻塞，不自行改写或宣告完成。
+- >-
+  【生成实现子图】
+  检查闭环完成后，运行 `scripts/build_implementation_subgraph.py --output-dir $WORK_DIR --harness-script <workflow-orchestrator/scripts/get_task.py>`，使用最终 Unit 和 testcase.csv 生成并校验 `.workflow/implementation-tasks.yaml`，为每个 implementation-loop 子节点绑定对应 TDD case；命令必须成功，后续测试资产变化时重新生成。
+- >-
+  【记录与交接】
+  将独立审查结论、问题处理、静态校验、按分组与 case_id 的 CPU 结果及设备待验证项、子图生成记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；记录最终测试资产与实现子图的版本或哈希。完成上述检查后提交验收，验收通过后冻结 case 与 Golden，供实现子图使用。
 procedure:
-- 核对 Golden 独立于待测实现、设计引用有效，静态校验与 CPU 样例及边界数值复核证据齐备；静态通过不能代替数值正确性。
-- 核对白盒分支使用公开输入并覆盖设计中的真实路径、尾块、同步、dtype、shape、layout 与边界。
-- 核对每项 Unit 验证义务对应至少一个可区分的 TDD 用例；黑盒分组在本节点写白盒和 TDD 后逐行不变；三个分组非空、Case ID 唯一，校验记录对应当前 CSV。
-- 用 harness `get_task.py` 核对实现子图无未知依赖、无环、无孤立 Unit，回滚目标为同子图的传递上游。
-- 核对 Unit 能力依赖、证据关联与实际输入条件校验通过；逐项审查 must_distinguish、coverage_axes 与真实取值和判定的对应关系，脚本通过不代替设计符合性。纯结构承诺由后续 verifier 按 review_evidence 验收，不以生成用例或静态配置证明设备时序。
-- 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`。
+- >-
+  【审查闭环】
+  核对执行者已完成独立 case 静态审查及 Skill 要求的校验，阻断问题均已解决，未采纳意见有依据；不重复开展逐项白盒和 TDD 设计审查。
+- >-
+  【全集结果】
+  对照当前 CSV 核对三组全部 active case 及调用序列均有检查结果：数值用例 Golden 计算及适用结果检查通过，异常用例有非法条件与预期错误码依据，行为用例的 CPU 检查通过，设备专属行为明确待验证。无遗漏或未解决失败，不将任意报错、输入或缓存准备成功当作通过；已有完整有效证据时不重复运行全集。
+- >-
+  【版本与交付】
+  核对审查、校验和运行证据对应最终 CSV、Golden 及辅助模块，子图由最终 Unit 与 case 成功生成，包含全部 Unit 并绑定各自 TDD case；过期或缺失的证据不予通过，由执行者在本节点补齐。
+- >-
+  【验收结论与冻结】
+  将结论及证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；上述要求全部满足才通过并冻结测试资产，失败交由 harness 按本节点既有预算重试。
 acceptance:
-- Unit 契约校验退出码为 0，记录对应本轮 Unit 文件；设计约束与补证关联无缺项。
+- 独立 case 静态审查与相关脚本校验完成，无未解决阻断问题；最终版本全部 active case 的适用 CPU 检查结果符合预期，逐例证据与纠错依据可追溯，验收通过后冻结。
 - test -s "$WORK_DIR/operators/<op>/test/<op>_golden.py"
 - test -s "$WORK_DIR/operators/<op>/test/test_<op>.py"
 - test -s "$WORK_DIR/operators/<op>/test/testcase.csv"
 - test -s "$WORK_DIR/.workflow/implementation-tasks.yaml"
 out_of_scope:
-- 本节点负责生成和验证 Golden；不修改冻结的 spec、设计、Unit、数学及异常语义或精度阈值，不实现算子，不运行 NPU 精度与性能验证。
+- 不修改冻结的 spec、设计、Unit、数学及异常语义或精度阈值，不实现算子，不运行 NPU 精度与性能验证。
+- 禁止删除用例、禁止改为 excluded 以及禁止通过放宽预期来掩盖失败。
+- 不跳过独立静态审查或遗漏 active case 的适用 CPU 检查；不以过期证据、输入或缓存准备成功、Golden 自比较或任意报错宣称通过，不将设备待验证项标为已通过。
