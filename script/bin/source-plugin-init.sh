@@ -97,4 +97,4 @@ fi
 INSTALL_PATH="${INSTALL_PATH:-${REPOSITORY_ROOT}}"
 
 exec node "${CLI}" install "${PLUGIN_ID}" \
-  --tool "${TOOL}" --target "${INSTALL_PATH}" --source "${REPOSITORY_ROOT}" --plugin-dir "${PLUGIN_DIR}" "${SKILLS_ARGS[@]}"
+  --tool "${TOOL}" --target "${INSTALL_PATH}" --source "${REPOSITORY_ROOT}" --plugin-dir "${PLUGIN_DIR}" ${SKILLS_ARGS[@]+"${SKILLS_ARGS[@]}"}

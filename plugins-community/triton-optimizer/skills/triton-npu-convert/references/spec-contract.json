@@ -1,0 +1,18 @@
+{
+  "language": "selected target implementation language. Allowed values: `triton`, `tilelang`, `ascendc`.",
+  "api": {
+    "kind": "public API form preserved from the original operator. Allowed values: `torch-function` or `torch-module`.",
+    "name": "public API symbol name preserved from the original operator.",
+    "signature": "call signature of the public API as a compact human-readable string.",
+    "inputs": "ordered input contract preserved from the original operator. Each input entry records the argument name, dtype, shape, device, and any other semantic constraints needed to generate deterministic tests.",
+    "outputs": "ordered output contract preserved from the original operator. Each output entry records dtype, shape, device, and any other semantic constraints needed to generate deterministic tests."
+  },
+  "kernels": "ordered list of kernels planned for the converted implementation. Each item records a name and a short description of what the kernel does. Do not pin kernel signatures; finalize them during implementation.",
+  "semantics": {
+    "operation": "short description of what the operator computes, derived from the original operator.",
+    "edge_cases": "important semantic edge cases, shape constraints, rounding boundaries, or other conditions that the conversion must preserve."
+  },
+  "testing": {
+    "plan": "resolved test coverage plan: the existing suitable test file and mode to reuse, or the standalone or differential test cases to generate when no suitable test exists."
+  }
+}

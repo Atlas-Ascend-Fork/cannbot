@@ -1,0 +1,742 @@
+{
+  "schema_version": 2,
+  "max_submitted": 5,
+  "unknown_id": "unknown",
+  "symptoms": [
+    {
+      "id": "a5-simt-discrete-launch",
+      "summary": "On A5, irregular discrete access is a better match for an explicitly SIMT execution path.",
+      "evidence_hint": "The target is A5 and the hot loop contains fixed-field or discrete accesses; the profile or IR shows SIMT is active or is the selected execution model.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "a5-force-simt-only-discrete-access"
+      ]
+    },
+    {
+      "id": "affine-address-indirect-lowering",
+      "summary": "An affine address is lowered as a gather because unnecessary clamps or pointer expressions hide regularity.",
+      "evidence_hint": "IR contains an indirect/gather load for an address that source strides and bounds prove affine, with a clamp or pointer expression hiding that fact.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "mask-only-affine-addressing"
+      ]
+    },
+    {
+      "id": "argextremum-dual-reduction",
+      "summary": "Finding both an extremum and its first index performs two reductions over the same tile.",
+      "evidence_hint": "The same tile computes both an extremum and its first-index tie break, and IR shows two reduction traversals or equivalent duplicate reduction work.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "packed-key-argmax-single-reduction"
+      ]
+    },
+    {
+      "id": "attention-hidden-work",
+      "summary": "Attention performs internal work or materializes intermediate tiles that the public code does not make obvious.",
+      "evidence_hint": "Profile or IR attributes materialized QK, probability, recurrence, or key-tile work to the attention path that the source-level graph does not expose.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "attention-work-deletion",
+        "attention-intermediate-vector-work-reduction"
+      ]
+    },
+    {
+      "id": "autotune-parameter-sensitivity",
+      "summary": "The structure is already sound but performance may depend on a bounded tile or launch parameter search.",
+      "evidence_hint": "At least two legal tile, split, or compile-option values produce materially different benchmark results while the algorithm and correctness remain unchanged.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "autotune"
+      ]
+    },
+    {
+      "id": "compile-option-pipeline",
+      "summary": "A supported compile option changes a repeated Cube/Vector pipeline and needs a controlled ablation.",
+      "evidence_hint": "The kernel uses a supported Cube/Vector pipeline option and a controlled on/off capture changes pipeline waits or engine overlap.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "ascend-cv-compile-option-ablation"
+      ]
+    },
+    {
+      "id": "compiler-lowering-hint-gap",
+      "summary": "The source proves alignment, contiguity, or padding facts that lowering does not use.",
+      "evidence_hint": "Source proves alignment, contiguity, or dot padding, but generated IR or assembly still uses conservative alignment, padding, or access lowering.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "compile-hint"
+      ]
+    },
+    {
+      "id": "cube-vector-handshake-stall",
+      "summary": "Cube and Vector phases wait on an avoidable cross-engine dependency or synchronization point before the next phase can issue useful work.",
+      "evidence_hint": "Timeline or IR shows Cube-to-Vector or Vector-to-Cube waits, flags, barriers, or a serialized phase boundary.",
+      "common_non_matches": [
+        "Do not submit this symptom for a pure intermediate layout conversion; use `cube-vector-intermediate-layout-mismatch` instead."
+      ],
+      "candidate_patterns": [
+        "ascend-cv-compile-option-ablation",
+        "attention-intermediate-vector-work-reduction"
+      ]
+    },
+    {
+      "id": "cube-vector-intermediate-layout-mismatch",
+      "summary": "A Cube-produced tile uses a physical orientation that makes the following Vector or Cube access perform an avoidable transpose, rearrangement, or layout conversion.",
+      "evidence_hint": "IR or source inspection identifies a Cube output whose strides or tile orientation do not match the next consumer's scan order.",
+      "common_non_matches": [
+        "Do not submit this symptom when the main delay is a flag, wait, or cross-engine dependency; use `cube-vector-handshake-stall` for that case."
+      ],
+      "candidate_patterns": [
+        "cube-vector-intermediate-tile-orientation"
+      ]
+    },
+    {
+      "id": "dense-sparse-attention-crossover",
+      "summary": "Dense substitution and sparse selection change order across shape or sparsity regimes.",
+      "evidence_hint": "Matched measurements across sparsity or shape show dense substitution wins in one regime and indexed selection wins in another.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "dense-substitution-fine-grained-sparse-attention"
+      ]
+    },
+    {
+      "id": "duplicate-reference-work",
+      "summary": "The same selected input element is processed repeatedly, and the duplicate rate is measurable.",
+      "evidence_hint": "Index counts show the same source element is selected more than once, and the duplicate multiplicity is large enough to affect the measured path.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "repeated-reference-dedup-exact-compensation"
+      ]
+    },
+    {
+      "id": "exact-tile-boundary-mask",
+      "summary": "Compile-time divisibility is known but the fast path still carries boundary masks.",
+      "evidence_hint": "Dispatch proves the active extent is divisible by the tile, while IR still contains boundary predicates or masked load/store operations.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "exact-tile-no-boundary-fast-path"
+      ]
+    },
+    {
+      "id": "fixed-window-a5-tuning",
+      "summary": "A fixed sliding-window kernel on A5 has a stable feature or tile choice that needs targeted tuning.",
+      "evidence_hint": "A5 runs the same fixed window across a multi-shape harness and one feature, tile, or SIMT choice changes geomean without changing semantics.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "a5-simt-sliding-window-tuning"
+      ]
+    },
+    {
+      "id": "fusion-boundary-materialization",
+      "summary": "A producer-consumer boundary creates an avoidable full-size intermediate or extra launch.",
+      "evidence_hint": "The operator launches separate producer/consumer kernels or writes a full GM intermediate that is immediately consumed by the next stage.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "attention-work-deletion",
+        "fusion-placement-and-materialization"
+      ]
+    },
+    {
+      "id": "host-launch-overhead",
+      "summary": "The host repeatedly launches small independent kernels for one logical operation.",
+      "evidence_hint": "Host trace shows repeated launches of the same small kernel for independent segments within one logical operator call.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "host-launch-coalescing"
+      ]
+    },
+    {
+      "id": "idempotent-masked-tail",
+      "summary": "An idempotent reduction has a masked final tile that can be safely overlapped or handled specially.",
+      "evidence_hint": "The reduction is idempotent, the final tile is partial, and overlapping the final valid work does not change the reduction result.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "overlap-tail-load-mask-free"
+      ]
+    },
+    {
+      "id": "indirect-global-access",
+      "summary": "Runtime indices form data-dependent GM addresses on the hot path.",
+      "evidence_hint": "Pointer values loaded from runtime indices feed GM addresses in the hot loop; the address cannot be derived from compile-time strides alone.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "discrete-access-ub-staging",
+        "indirect-access-densification"
+      ]
+    },
+    {
+      "id": "integer-compare-scalarization",
+      "summary": "Hot-path integer comparisons create explicit Vector or scalar control work outside normal masks.",
+      "evidence_hint": "IR or profile shows explicit i32/i64 comparisons and branches outside ordinary load/store masks on the hot path.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "vec-cmp"
+      ]
+    },
+    {
+      "id": "intermediate-live-set-pressure",
+      "summary": "A single temporary value or chain stays live across much of the program and dominates the UB or on-chip budget independently of tile size.",
+      "evidence_hint": "Allocation or liveness evidence shows one temporary chain dominates the budget and shrinking tile dimensions does not remove the overflow.",
+      "common_non_matches": [
+        "Do not submit this symptom when the overflow is tile-proportional, with operands and accumulator scaling alongside the BLOCK dimensions; use `tile-footprint-too-large` instead."
+      ],
+      "candidate_patterns": [
+        "slice-intermediate"
+      ]
+    },
+    {
+      "id": "layout-materialization-copy",
+      "summary": "A transpose, permute, contiguous, clone, or copy exists only to create a different physical layout.",
+      "evidence_hint": "Code or IR contains a transpose, permute, contiguous, clone, or copy whose only consumer needs a different physical layout.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "layout-materialization-elision"
+      ]
+    },
+    {
+      "id": "loop-invariant-recompute",
+      "summary": "Loop iterations repeat shape, mask, pointer, or control calculations that could be hoisted.",
+      "evidence_hint": "The same shape, mask, pointer base, or control expression is recomputed in every hot-loop iteration despite unchanged inputs.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "loop-invariant-hoisting"
+      ]
+    },
+    {
+      "id": "manual-matmul-reduction",
+      "summary": "A regular matmul is implemented as a scalar or manually assembled reduction.",
+      "evidence_hint": "Source implements a regular MxNxK contraction with scalar loads and a manual accumulation loop instead of a Cube matmul form.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "classic-matmul"
+      ]
+    },
+    {
+      "id": "native-int8-dot-path",
+      "summary": "The operator matches a native int8 dot and int32 accumulation path.",
+      "evidence_hint": "Inputs are int8, accumulation is int32, and the operator semantics permit the target native int8 dot path without an extra widening step.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "native-int8-dot-int32-acc-default"
+      ]
+    },
+    {
+      "id": "neutral-padding-amortization",
+      "summary": "Padding or a preparation pass can remove repeated boundary handling across several consumers.",
+      "evidence_hint": "Several consumers repeatedly handle the same boundary padding, while one padded producer layout or preparation pass could serve all of them.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "amortized-neutral-padding-layout"
+      ]
+    },
+    {
+      "id": "nonlast-reduction-layout-copy",
+      "summary": "Reducing a non-last dimension requires a separate transpose or contiguous layout copy.",
+      "evidence_hint": "The reduced axis is not last in contiguous storage and IR includes a movedim/transpose/contiguous copy before the reduction.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "strided-layout-reduction"
+      ]
+    },
+    {
+      "id": "padded-tail-work",
+      "summary": "A tile or loop executes a measurable number of inactive lanes or iterations after the useful extent ends.",
+      "evidence_hint": "Shape arithmetic shows the selected tile covers a padded suffix or partial final tile.",
+      "common_non_matches": [
+        "Do not submit this symptom when the boundary is already handled by a cheap hardware mask with negligible work.",
+        "Do not use it for an entire loop whose range is inactive; use `redundant-padded-loop-work` when the loop iterations themselves are redundant."
+      ],
+      "candidate_patterns": [
+        "padded-row-col-copy",
+        "amortized-neutral-padding-layout",
+        "effective-extent-tiling"
+      ]
+    },
+    {
+      "id": "padded-task-domain-mismatch",
+      "summary": "A ragged rectangular grid submits many whole-invalid programs even though runtime metadata can enumerate the live tile domain.",
+      "evidence_hint": "Segment-local tile counts are available from authoritative launch metadata, and profile evidence shows that the residual early-return program population or its wave composition is material after tile-body elision.",
+      "common_non_matches": [
+        "Do not submit this symptom when compact decode requires heavier per-program arithmetic than the early-return work it removes.",
+        "Do not submit it when the rectangular grid already has useful wave balance and few invalid programs.",
+        "Do not submit it for a static task table whose guard does not validate the complete runtime segment metadata that defines the mapping.",
+        "Do not submit it while whole-invalid programs still execute material tile-body work; first use `ragged-grid-empty-programs` to isolate body elision from launch remapping."
+      ],
+      "candidate_patterns": [
+        "engine-aware-grid-wave-scheduling"
+      ]
+    },
+    {
+      "id": "partial-state-split-opportunity",
+      "summary": "A reduction can be split into associative partial state to increase independent work.",
+      "evidence_hint": "The reduction state is associative and the grid is underfilled; splitting the reduction would create independent partial programs without changing the final combine.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "axis-split-partial-state-combine"
+      ]
+    },
+    {
+      "id": "precision-accuracy-regression",
+      "summary": "A structural rewrite changes accumulation order and causes a measured accuracy regression.",
+      "evidence_hint": "A structural candidate changes accumulation order and the correctness comparison reports an accuracy failure while magnitude error remains small.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "fp16-hilo-compensated-mma"
+      ]
+    },
+    {
+      "id": "precision-throughput-opportunity",
+      "summary": "Operand precision is higher than needed for the target throughput path while accuracy can be preserved.",
+      "evidence_hint": "Dot operands use a wider precision than the target faster supported pair, and a lower-precision trial passes the accuracy gate.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "dot-operand-precision-ablation"
+      ]
+    },
+    {
+      "id": "preprocessing-rebuild",
+      "summary": "The same read-only input representation is rebuilt or transferred on every call.",
+      "evidence_hint": "Repeated operator calls rebuild or transfer the same packed, padded, transposed, or indexed read-only representation.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "invariant-preprocessing-cache"
+      ]
+    },
+    {
+      "id": "ragged-grid-empty-programs",
+      "summary": "A global padded grid launches whole program tiles outside segment-local valid rectangles.",
+      "evidence_hint": "Per-segment length arithmetic proves a program tile origin is beyond a local row or column extent, and code or IR shows expensive work remains reachable before an early return.",
+      "common_non_matches": [
+        "Do not submit this symptom for a partially valid edge tile; retain boundary masking for that tile.",
+        "Do not submit it when invalid programs have required side effects or the host already launches only live tiles.",
+        "Do not submit it when whole-invalid programs already return before material body work and the remaining issue is submitted-task count or wave composition; use `padded-task-domain-mismatch`.",
+        "Do not submit it for inactive iterations inside a live program; use `redundant-padded-loop-work` when the loop itself runs past the useful extent."
+      ],
+      "candidate_patterns": [
+        "ragged-padded-grid-whole-tile-elision"
+      ]
+    },
+    {
+      "id": "read-transfer-pressure",
+      "summary": "Repeated, narrow, or poorly reused GM reads dominate the measured path.",
+      "evidence_hint": "Profile or IR attributes a large share of time to repeated/narrow GM reads, and the read addresses or bytes are the dominant movement cost.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "stencil-resize-gm-to-ub-staging",
+        "sliding-window-inner-w-slab-gather"
+      ]
+    },
+    {
+      "id": "reduction-grid-underfill",
+      "summary": "A reduction-shaped kernel walks a long reduction axis inside every program while its grid has no reduction-axis factor, so the small non-reduction shapes launch far fewer programs than the device can run and the kernel becomes latency/issue bound at low occupancy.",
+      "evidence_hint": "Launch size (or `Profile Block Num`) is far below the physical core count on the slow shapes while the same kernel fills the device on larger shapes.",
+      "common_non_matches": [
+        "A grid that already fills the device: splitting adds state traffic for nothing.",
+        "Slow shapes that are transfer-bound rather than occupancy-bound.",
+        "Splits that drop per-program work below the work floor (too few reduction iterations pay more in launch/state overhead than they save).",
+        "A split depth derived from a pre-batching program count: re-derive it after any consumer-grid change (head batching halves the base program count)."
+      ],
+      "candidate_patterns": [
+        "axis-split-partial-state-combine"
+      ]
+    },
+    {
+      "id": "redundant-algorithmic-work",
+      "summary": "The current algebra repeats or expands work that can be removed or regrouped.",
+      "evidence_hint": "Equivalent code paths or algebraic inspection show the same reduction, traversal, or intermediate is performed more than once.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "algebraic-optimization"
+      ]
+    },
+    {
+      "id": "redundant-padded-loop-work",
+      "summary": "A tiled loop runs inactive padded iterations after the useful extent ends.",
+      "evidence_hint": "A loop executes complete iterations after runtime metadata proves its tile range is inactive or beyond the useful extent.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing.",
+        "Do not submit it when whole program tiles lie outside a segment-local extent and never hold a live iteration; use `ragged-grid-empty-programs` for that program-level case."
+      ],
+      "candidate_patterns": [
+        "ascend-redundant-loop-work-deletion"
+      ]
+    },
+    {
+      "id": "reference-schedule-mismatch",
+      "summary": "A proven schedule or tile does not transfer directly because the current layout or lowering differs.",
+      "evidence_hint": "A known-good implementation uses a different tile or schedule, and direct transplantation is blocked by a documented layout or lowering difference.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "schedule-coupled-tile-transplant"
+      ]
+    },
+    {
+      "id": "regular-tile-lowering",
+      "summary": "A regular rectangular tile is expressed with scalar pointer arithmetic instead of a block representation.",
+      "evidence_hint": "A rectangular, affine tile is represented by per-element pointer arithmetic even though block-pointer metadata can express its shape and strides.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "block-pointer-dimensionality"
+      ]
+    },
+    {
+      "id": "reorder-load-scheduling",
+      "summary": "Independent loads can be reordered to improve latency hiding or on-chip pressure.",
+      "evidence_hint": "Two independent loads can move relative to computation without changing addresses, masks, dependencies, or values, and timeline gaps indicate latency pressure.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "reorder-load"
+      ]
+    },
+    {
+      "id": "row-batch-underfill",
+      "summary": "A row-wise kernel maps only one or a few rows to each program, so per-program work is too small to amortize launch and control overhead.",
+      "evidence_hint": "The grid has one program per row or per small row group, and measured work per program is too small to amortize setup and control.",
+      "common_non_matches": [
+        "Do not submit this symptom when the kernel is not row-wise; use `tiny-device-programs` for general per-program work starvation."
+      ],
+      "candidate_patterns": [
+        "program-multiple-rows"
+      ]
+    },
+    {
+      "id": "scalar-address-generation",
+      "summary": "Scalar pointer updates, integer division, modulo, clamps, or loop-carried addresses dominate the hot loop.",
+      "evidence_hint": "IR shows loop-carried pointer updates, runtime div/mod, clamps, or wide integer address expressions dominating a regular tile loop.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "block-pointer-dimensionality",
+        "loop-invariant-hoisting",
+        "scalar-latency-trap-removal"
+      ]
+    },
+    {
+      "id": "scalar-index-decode",
+      "summary": "A flat element stream repeatedly decodes multidimensional coordinates with division or modulo.",
+      "evidence_hint": "A flat numel loop contains repeated division/modulo by shape dimensions to recover row and column coordinates.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "padded-row-col-copy",
+        "logical-layout-tiling",
+        "a5-force-simt-only-discrete-access"
+      ]
+    },
+    {
+      "id": "scattered-transfer-batching",
+      "summary": "Many scattered transfers can be batched into fewer contiguous or UB-local transfers.",
+      "evidence_hint": "Many small scatter/gather transfers address nearby data that can be grouped into contiguous or UB-local slices.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "slice-coalesce"
+      ]
+    },
+    {
+      "id": "shape-regime-divergence",
+      "summary": "A single optimization has a stable benefit in one shape regime and a stable regression in another because the implementation crosses a tile, tail, occupancy, or legality boundary.",
+      "evidence_hint": "Matched baseline and candidate measurements show the same candidate moving in opposite directions across clearly defined shape regimes.",
+      "common_non_matches": [
+        "Do not submit this symptom for a noisy outlier or for a uniform slowdown with no shape-dependent cause.",
+        "Do not submit it when the evidence only says that speedups differ; the causal regime boundary must be identified."
+      ],
+      "candidate_patterns": [
+        "shape-regime-specialized-dispatch"
+      ]
+    },
+    {
+      "id": "shared-operand-consumer-reread",
+      "summary": "Several consumer programs re-read the same read-only operand tile (one KV head's K/V rows, a shared weight tile, a broadcast activation) because the grid has one program per consumer, so operand traffic and per-program staging work scale with the consumer count instead of being paid once.",
+      "evidence_hint": "The grid contains `G` programs per shared-operand index, each issuing identical DMA or identical gathered row loads.",
+      "common_non_matches": [
+        "The shared operand is small or cache-resident enough that grouping adds accumulators, masks, or control without reducing transfer.",
+        "`G == 1` (no sharing), or the operand is per-consumer (nothing to reuse).",
+        "A group width chosen without re-deriving the UB/L0C budget: a width that overflowed at parent operand precision can become legal once the operand footprint shrinks.",
+        "Uniform group width across head counts: a group width that is wider than the consumer count wastes lanes on masked rows, so keep a narrower consumer tile for the low-head-count regime."
+      ],
+      "candidate_patterns": [
+        "gqa-kv-shared-row-batching"
+      ]
+    },
+    {
+      "id": "shared-producer-recompute",
+      "summary": "Independent consumers recompute the same expensive producer result.",
+      "evidence_hint": "Multiple consumer programs execute the same producer computation for the same logical input, confirmed by matched addresses or instrumentation.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "cross-program-recompute-materialization",
+        "algebraic-optimization"
+      ]
+    },
+    {
+      "id": "shift-mask-materialization",
+      "summary": "A simple shift is assembled through a larger two-dimensional mask or temporary.",
+      "evidence_hint": "A previous-element or previous-position relation is implemented with a 2D mask or temporary whose values can be derived from a 1D lane stream.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "shift-2d-mask-to-1d-index-stream"
+      ]
+    },
+    {
+      "id": "sibling-projection-redundancy",
+      "summary": "Sibling dense projections reload the same input and repeat setup work.",
+      "evidence_hint": "Sibling projections have the same input, reduction extent, and compatible dtypes but each reloads and stages the input independently.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "common-input-projection-packing"
+      ]
+    },
+    {
+      "id": "sparse-gather-densification",
+      "summary": "Scattered selected rows can be staged into a dense buffer before regular compute.",
+      "evidence_hint": "Selected rows are scattered in GM but the selected volume is streamable and the consumer performs regular dense dot/reduction work.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "indirect-access-densification"
+      ]
+    },
+    {
+      "id": "special-function-normalization-cost",
+      "summary": "A special-function and normalization or conversion chain is on the measured critical path.",
+      "evidence_hint": "Profile or IR places exp/reciprocal/normalization and its conversion chain on the critical path rather than only on an inactive branch.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "exponential-base-convention-ablation"
+      ]
+    },
+    {
+      "id": "stencil-ub-densify-copy",
+      "summary": "A stencil path copies strided UB data into a dense UB layout before reuse.",
+      "evidence_hint": "IR shows strided UB-to-UB copy or densification before stencil reuse, and the copied values are consumed more than once.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "stencil-resize-gm-to-ub-staging"
+      ]
+    },
+    {
+      "id": "store-granularity",
+      "summary": "Adjacent output elements are emitted as many small stores.",
+      "evidence_hint": "Adjacent output addresses are emitted as many small stores with compatible masks that could be combined into a wider store.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "merge-adjacent-stores"
+      ]
+    },
+    {
+      "id": "store-layout-mismatch",
+      "summary": "The accumulator layout does not match the output layout, causing inefficient stores or a store-time transpose.",
+      "evidence_hint": "Accumulator strides differ from output strides and IR shows a transpose-like store path or scalarized element stores.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "accumulator-layout-alignment"
+      ]
+    },
+    {
+      "id": "tile-footprint-too-large",
+      "summary": "The chosen tile dimensions make a program's operand and accumulator working set exceed a practical UB or on-chip budget.",
+      "evidence_hint": "Tiling or allocation diagnostics show the overflow scales with the tile constants, so shrinking a BLOCK dimension shrinks the overflow proportionally.",
+      "common_non_matches": [
+        "Do not submit this symptom when one temporary or chain dominates the budget independently of tile size; use `intermediate-live-set-pressure` instead."
+      ],
+      "candidate_patterns": [
+        "tiling",
+        "coupled-tile-legality-ablation"
+      ]
+    },
+    {
+      "id": "tile-traversal-order",
+      "summary": "The order in which programs visit tiles causes avoidable cache or bank reuse loss even though each tile's local access is regular.",
+      "evidence_hint": "The same input or cache regions are touched by nearby programs in an order that prevents reuse or creates conflict-like access patterns.",
+      "common_non_matches": [
+        "Do not submit this symptom when the access itself is data-dependent or when the primary issue is an on-chip capacity limit."
+      ],
+      "candidate_patterns": [
+        "diagonal-block-traversal"
+      ]
+    },
+    {
+      "id": "tiny-device-programs",
+      "summary": "A launch spreads a flat or nested work space across many programs, leaving each program only a few elements or a tiny tile of useful work.",
+      "evidence_hint": "Core mapping or profile shows many programs each covering only a few elements or a tiny inner extent, with high fixed setup relative to useful work, in a kernel whose programs are not row units.",
+      "common_non_matches": [
+        "Do not submit this symptom for a row-wise kernel that maps one or a few rows to each program; use `row-batch-underfill` instead."
+      ],
+      "candidate_patterns": [
+        "grid-flatten-and-ub-buffering"
+      ]
+    },
+    {
+      "id": "transfer-compute-overlap-gap",
+      "summary": "The timeline shows avoidable gaps between data movement and the compute that consumes it.",
+      "evidence_hint": "Timeline shows movement ending, then a measurable idle interval, then the dependent compute issuing on the same launch.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "software-pipeline"
+      ]
+    },
+    {
+      "id": "transpose-like-matmul-access",
+      "summary": "A matmul operand is stored in one orientation but accessed as if it were transposed.",
+      "evidence_hint": "A [N,K] operand is read with [K,N] logical indexing and the resulting stride pattern is not the intended Cube layout.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "implicit-transpose-elimination"
+      ]
+    },
+    {
+      "id": "true-discrete-access",
+      "summary": "The access pattern is genuinely irregular, so contiguous staging must be evaluated against direct indexed loads.",
+      "evidence_hint": "Runtime indices select non-affine addresses even after checking for removable clamps or regular strides; direct gather semantics are real.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "discrete-access-ub-staging"
+      ]
+    },
+    {
+      "id": "vector-core-underuse",
+      "summary": "Independent Vector work is serialized even though additional Vector-core parallelism is available.",
+      "evidence_hint": "Two independent Vector computations run serially and the profile shows available Vector-core capacity or idle parallel lanes.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "parallel"
+      ]
+    },
+    {
+      "id": "wave-underfill-or-imbalance",
+      "summary": "Waves run unevenly or the final physical wave is only partly filled, either because the launch has too few programs to fill the device or because the program-to-core mapping spreads work unevenly.",
+      "evidence_hint": "Core or timeline data shows uneven program durations, idle cores within a wave, or a last wave with a measured active-program deficit under the current grid mapping.",
+      "common_non_matches": [
+        "Do not submit this symptom for repeated host launches of small independent kernels; use `host-launch-overhead` when the fix is coalescing launches rather than remapping one launch.",
+        "Do not submit it for a high whole-invalid population alone without measured wave imbalance or underfill; use `ragged-grid-empty-programs` or `padded-task-domain-mismatch` according to whether tile-body work still executes."
+      ],
+      "candidate_patterns": [
+        "engine-aware-grid-wave-scheduling",
+        "grid-flatten-and-ub-buffering"
+      ]
+    },
+    {
+      "id": "window-mask-count-work",
+      "summary": "A fixed window spends noticeable work building per-tap validity masks or clipped counts.",
+      "evidence_hint": "A fixed-window IR loop recomputes per-tap valid masks or clipped counts, and the instruction/profile cost scales with window width.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "a5-simt-sliding-window-tuning",
+        "simt-clip-window-closed-reduction"
+      ]
+    },
+    {
+      "id": "window-overlap-reload",
+      "summary": "Overlapping sliding-window positions reload the same input values.",
+      "evidence_hint": "Adjacent output positions load overlapping input elements separately instead of reusing a staged slab.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "sliding-window-inner-w-slab-gather"
+      ]
+    },
+    {
+      "id": "write-transfer-pressure",
+      "summary": "Fragmented, masked, strided, or multi-destination stores dominate movement cost.",
+      "evidence_hint": "Profile or IR attributes time to fragmented, masked, strided, or multi-destination GM stores rather than reads or compute.",
+      "common_non_matches": [
+        "Do not submit this symptom when only a broad transfer, scalar, or locality label is available and the distinguishing structural evidence is missing."
+      ],
+      "candidate_patterns": [
+        "merge-adjacent-stores"
+      ]
+    }
+  ]
+}

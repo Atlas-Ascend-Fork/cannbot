@@ -8,6 +8,7 @@
 | [`model-train-precision-diagnose`](../plugins-community/model-train-precision-diagnose/) | PyTorch on Ascend NPU 训练精度异常诊断 |
 | [`tilelang2ascendc-ops-generator`](../plugins-community/tilelang2ascendc-ops-generator/) | Ascend C 算子自动生成（双路径设计表达 + AscendC 转译） |
 | [`triton-auto-evolve`](../plugins-community/triton-auto-evolve/) | Triton-Ascend 算子多轮自动优化 |
+| [`triton-optimizer`](../plugins-community/triton-optimizer/) | Triton Ascend NPU 算子优化与 PyTorch 算子转换 |
 
 ## ascendc-port-orchestrator
 
@@ -70,3 +71,15 @@ cd plugins-community/triton-auto-evolve && bash init.sh project claude
 ```
 
 使用方式与配置见 [README.md](../plugins-community/triton-auto-evolve/README.md)。
+
+## triton-optimizer
+
+Triton Ascend NPU 算子优化与转换工作流：优化入口 `triton-npu-optimize` 按 canonical baseline + 多轮 round 迭代，经过正确性与性能门禁推进；转换入口 `triton-npu-convert` 以 spec-first 方式将 PyTorch 算子转换为 Triton Ascend NPU 实现并完成验证。16 个 Skills 自包含于插件内，附带 workflow 状态 hooks（`.helix/`，仅 Claude Code 生效）。
+
+安装（hooks 当前面向 Claude Code）：
+
+```bash
+cd plugins-community/triton-optimizer && bash init.sh project claude
+```
+
+各客户端安装参数与使用方式见 [quickstart.md](../plugins-community/triton-optimizer/quickstart.md)。

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "triton-optimizer",
+  "version": "0.1.0",
+  "description": "Triton Ascend NPU 算子优化与转换工作流插件。优化入口 triton-npu-optimize 按 canonical baseline + 多轮 round 迭代，经过正确性与性能门禁推进；转换入口 triton-npu-convert 以 spec-first 方式将 PyTorch 算子转换为 Triton Ascend NPU 实现并验证。附带 14 个支撑 skill 与 workflow 状态 hooks（.helix/）。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0"
+}
