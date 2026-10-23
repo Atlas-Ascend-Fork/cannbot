@@ -17,6 +17,8 @@ description: AscendC 算子性能优化工作流的五阶段主编排入口（�
 
 ## 编排
 
+派发任何阶段前，必须完成 `workflows/task-prompts.md` 的「派发前检查」：读取本次 `ROLE` 的 `workflows/prompts/<role>.md` 并按模板逐字段填信封、信封与工作流脚本路径使用绝对路径。只凭通用信封手写派发视为准备未完成。
+
 | 项目 | `standard`（默认） | `generalization` |
 |---|---|---|
 | 执行范围 | 指定性能 case 与独立功能库存 | 泛化性能/功能合一全集 |
@@ -28,6 +30,7 @@ description: AscendC 算子性能优化工作流的五阶段主编排入口（�
 ## 全局底线
 
 - 用例、目标、接口和验证范围是冻结输入；共享实现先复制后单独路由，非目标芯片族和未涉及模板保持原路径。只在已审核 scope 内允许原工程回写。
+- 派发信封中的路径一律是解析后的绝对路径；`$WORKFLOW_ROOT`/`$WORKFLOW_SCRIPTS` 只在主 Agent 侧作为变量。子 agent 调用工作流脚本用信封绝对路径，工作目录内的常规相对操作不受限。
 - `known_baseline_failure` 经证据确认且不恶化时为 `conditional_pass`，不因此终止任务；新失败或恶化只淘汰/修复该候选。未证实的失败不得冒充基线失败。
 - 精度诊断固定持续执行，不设总时长、轮次、Agent turn 或 token 上限；命令防挂死措施不等于诊断预算。
 - 每次交接复核产物身份与门禁；主 Agent 不替代阶段执行采集、分析或修改方案。需要检查门禁依据时才加载 `ops-perf-acceptance-criteria` 的相应参考。

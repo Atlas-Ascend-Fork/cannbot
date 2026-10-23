@@ -7,6 +7,8 @@ description: 用于已接收的算子性能任务：检查环境/NPU、冻结或
 
 从派发信封读取 `WORKFLOW_ROOT`、`WORKFLOW_SCRIPTS`、`REQUEST`、`RUN_MANIFEST`、`WORKFLOW_STATE`、`CODE_DIR`、`TARGET_SOCS` 和输入/输出路径；基线 freeze 前 manifest/state 可为 pending。只执行当前阶段，返回状态、产物绝对路径、源码/二进制 SHA、门禁与缺口。缺少输入或写入范围时返回主 Agent。
 
+信封中的路径均为解析后的绝对路径；调用工作流脚本（`scripts/` 目录下）必须直接使用这些绝对路径，不要把 `$WORKFLOW_ROOT`/`$WORKFLOW_SCRIPTS` 当作环境变量。工作目录内对普通文件的常规相对路径操作不受此限制。
+
 ## 执行与交付
 
 1. 确认 REQUEST 已存在且已获用户确认；读取 [input-freezing.md](references/input-freezing.md) 执行依赖预检、freeze 和集合接入。确认意图由主 Agent 完成，本阶段不重复询问已有信息。

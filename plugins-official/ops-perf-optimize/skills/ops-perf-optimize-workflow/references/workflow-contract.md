@@ -93,6 +93,8 @@ generalization 保留既有规则：
 
 读取 `$WORKFLOW_ROOT/workflows/task-prompts.md`，按 ROLE 只取对应模板；通用信封的字段定义以该稳定派发入口为准。传入 WORKFLOW_ROOT、WORKFLOW_SCRIPTS、REQUEST、RUN_MANIFEST、WORKFLOW_STATE、TUNING_MODE、TARGET_SOCS、ROUND、CODE_DIR、KB_ROOT（或省略）、输入/输出、ACCEPTANCE 和条件技能；不把整个编排契约复制给 subagent。
 
+派发前主 Agent 必须读取本次 `ROLE` 对应的 `workflows/prompts/<role>.md` 并按模板逐字段填写信封；只凭通用信封手写视为派发准备未完成。信封内路径与工作流脚本调用必须是解析后的绝对路径，`$WORKFLOW_ROOT`/`$WORKFLOW_SCRIPTS` 是主 Agent 侧占位符而非环境变量；子 agent 在自己工作目录内的常规相对路径操作不受影响。同一 `ROLE` 已有 `in_progress` 或取消中的会话时，先核对保存点与产物再决定是否补派；预计超过 2 分钟的命令建议后台执行并轮询日志。
+
 使用 `$WORKFLOW_SCRIPTS/workflow_state.py` 管理状态，具体命令和字段按需读取 `$WORKFLOW_ROOT/workflows/references/state-reporting.md`。主 Agent 派发前 mark in_progress，验收后 complete；诊断假设/候选变化时记录 progress。阶段没有真实开始时间就保留未知，不伪造耗时。
 
 保留 `phase.baseline/preparation/analysis/implementation/integration` 和原 round/gen 保存点。phase.analysis 记录初次交接，轮内重复诊断用细粒度键；phase.implementation 在最终 demo 全集验收后完成。每轮 complete 前登记所保留实现的本轮与累计摘要，二者引用同一候选 CSV；原始基线不能换成上一轮基线或连乘加速比。
