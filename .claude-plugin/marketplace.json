@@ -165,6 +165,23 @@
       ]
     },
     {
+      "name": "pypto-pro-op-orchestrator",
+      "source": "./plugins-community/pypto-pro-op-orchestrator",
+      "description": "PyPTO-Pro 算子开发、验证与性能优化：主 agent 按需调度 6 个专职 subagent（planner/coder/debugger/verifier/optimizer/tool），交付算子实现、验证证据与性能报告；pypto-pro-kernel Skill 在安装时从 cannbot-skills 仓拉取并即时软链；references 随插件分发。",
+      "version": "3.0.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "pypto",
+        "pypto-pro",
+        "operator",
+        "kernel",
+        "multi-agent"
+      ],
+      "category": "development"
+    },
+    {
       "name": "cake",
       "source": "./plugins-community/collaborative-agent-kernel-evolution",
       "description": "CAKE2 - Collaborative Ascend Kernel Evolution. AI-powered AscendC operator generation for Ascend NPU.",

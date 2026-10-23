@@ -1,0 +1,32 @@
+{
+  "name": "pypto-pro-op-orchestrator",
+  "version": "3.0.0",
+  "description": "PyPTO-Pro 算子开发、验证与性能优化：主 agent 按需调度 6 个专职 subagent（planner/coder/debugger/verifier/optimizer/tool），交付算子实现、验证证据与性能报告；pypto-pro-kernel Skill 在安装时从 cannbot-skills 仓拉取并即时软链；references 随插件分发。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "pypto",
+    "pypto-pro",
+    "operator",
+    "kernel",
+    "multi-agent"
+  ],
+  "interface": {
+    "displayName": "PyPTO-Pro 算子开发编排",
+    "shortDescription": "PyPTO-Pro 算子开发、验证与性能优化（主 agent 直调模式）",
+    "longDescription": "PyPTO-Pro 算子开发、验证与性能优化：主 agent 按需调度 6 个专职 subagent（planner/coder/debugger/verifier/optimizer/tool），交付算子实现、验证证据与性能报告；pypto-pro-kernel Skill 在安装时从 cannbot-skills 仓拉取并即时软链；references 随插件分发。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills",
+      "Agents"
+    ],
+    "defaultPrompt": [
+      "请生成一个 pypto-pro 实现的 sigmoid 算子。"
+    ]
+  }
+}

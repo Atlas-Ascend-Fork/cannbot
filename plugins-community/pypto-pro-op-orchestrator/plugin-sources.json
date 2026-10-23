@@ -1,0 +1,5 @@
+{
+  "skillsRepository": ".",
+  "skillInstallMode": "symlink",
+  "skills": []
+}

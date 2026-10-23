@@ -1,0 +1,13 @@
+{
+  "dependencies": [
+    {
+      "name": "cannbot-skills",
+      "repository": "https://gitcode.com/cann/cannbot-skills.git",
+      "ref": "master",
+      "assets": {
+        "plugin": ".",
+        "skills": { "dir": "community/ops", "names": ["pypto-pro-kernel"] }
+      }
+    }
+  ]
+}
