@@ -223,7 +223,7 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
   const skillCommit = revision.stdout.match(/commit ([0-9a-f]+)\t/)?.[1];
   assert.ok(skillSourceUrl, "missing Skill submodule URL");
   assert.match(skillCommit, /^[0-9a-f]{40}$/);
-  const expectedPlugins = ["hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "ops-perf-optimize", "triton-op-generator"];
+  const expectedPlugins = ["catlass-op-generator", "hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "ops-perf-optimize", "triton-op-generator"];
   // Only bundled plugins have manifests; source-only workflow entries are not packaged.
   // A community plugin is bundled under its directory name, which need not match its
   // manifest name, so only official-directory entries belong to this official list;
@@ -964,6 +964,27 @@ test("dependency assets install Skills, hooks and instructions from the dependen
     readFileSync(join(target, "AGENTS.md"), "utf8").match(/<!-- cannbot:asset-fixture:start -->/g)?.length,
     1,
   );
+});
+
+test("Codex native plugin receives dependency Skills", () => {
+  const sandbox = createSandbox("cannbot-dep-assets-codex-");
+  const dependency = createDependencyRepository(sandbox, "skills-repository", manifestSkillFiles);
+  const bundleRoot = createAssetsPluginBundle(sandbox, [{
+    name: "skills-repository",
+    repository: dependency,
+    assets: { plugin: "plugins-official/demo-plugin" },
+  }]);
+  const target = join(sandbox, "project");
+
+  const result = installAssetsFixture(bundleRoot, target, sandbox, "codex");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const checkoutSkill = join(target, ".cannbot", "dependencies", "asset-fixture", "skills-repository", "ops", "demo-skill");
+  const projectSkill = join(target, ".agents", "skills", "demo-skill");
+  const nativeSkill = join(sandbox, "home", "plugins", "asset-fixture", "skills", "demo-skill");
+  assert.equal(realpathSync(projectSkill), realpathSync(checkoutSkill));
+  assert.equal(existsSync(join(nativeSkill, "SKILL.md")), true);
+  assert.equal(readFileSync(join(nativeSkill, "SKILL.md"), "utf8"),
+    readFileSync(join(checkoutSkill, "SKILL.md"), "utf8"));
 });
 
 test("dependency hooks register in Claude settings with the assembled plugin root", () => {

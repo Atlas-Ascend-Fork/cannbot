@@ -199,8 +199,10 @@ function installSkill(source, destination, mode) {
       }
       rmSync(destination, { force: true });
     }
-    const linkTarget = relative(dirname(destination), source) || ".";
-    symlinkSync(linkTarget, destination, "dir");
+    const linkTarget = process.platform === "win32"
+      ? resolve(source)
+      : relative(dirname(destination), source) || ".";
+    symlinkSync(linkTarget, destination, process.platform === "win32" ? "junction" : "dir");
     return;
   }
   rmSync(destination, { recursive: true, force: true });
@@ -1022,8 +1024,15 @@ function install(options) {
   const provisioned = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
   const dependencies = provisioned.map((provision) => provision.path);
   const dependencyAssets = installDependencyAssets(provisioned, plugin, options.target, options.tool);
+  const nativeSkills = [
+    ...resolvedSkills,
+    ...dependencyAssets.flatMap((asset) => asset.skills.map((name) => ({
+      name,
+      source: join(skillsDir, name),
+    }))),
+  ];
   const nativePlugin = options.tool === "codex"
-    ? installCodexPlugin(plugin, resolvedSkills, options.target, skillInstallMode)
+    ? installCodexPlugin(plugin, nativeSkills, options.target, skillInstallMode)
     : options.tool === "opencode"
       ? installOpenCodePlugin(options.target)
       : { initializer: null, discovery: `${toolConfigDir("", options.tool)}/skills` };

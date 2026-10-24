@@ -1,0 +1,12 @@
+{
+  "name": "catlass-op-generator-dev",
+  "interface": {"displayName": "CATLASS C++ Operator Generator"},
+  "plugins": [
+    {
+      "name": "catlass-op-generator",
+      "source": {"source": "url", "url": "./"},
+      "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+      "category": "Developer Tools"
+    }
+  ]
+}

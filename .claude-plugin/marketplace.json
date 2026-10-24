@@ -126,6 +126,22 @@
       "category": "development"
     },
     {
+      "name": "catlass-op-generator",
+      "source": "./plugins-official/catlass-op-generator",
+      "description": "CATLASS C++ 通用与注意力算子五阶段开发工作流。",
+      "version": "0.1.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "catlass",
+        "cpp",
+        "operator",
+        "npu"
+      ],
+      "category": "development"
+    },
+    {
       "name": "model-infer-optimize",
       "source": "./plugins-official/model-infer-optimize",
       "description": "NPU 模型推理端到端优化 Team。涵盖从零适配到 baseline 的固定阶段优化（并行、KVCache/FA、融合算子、量化、图模式），以及 baseline 之上 profiling 驱动的探索式优化（多方向发现候选、Plan/round 自循环，按需调用多流、预取、SuperKernel 等单点优化）。含两条 workflow 与 9 个 Subagent。",
