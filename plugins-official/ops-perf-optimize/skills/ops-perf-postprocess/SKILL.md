@@ -13,7 +13,7 @@ description: 用于将验收后的性能优化 demo 回集成原工程，保护�
 
 1. 读取 [postprocessing.md](references/postprocessing.md)，核对最终 demo 全集证据、剥离映射、原快照、兼容矩阵和冻结集合。
 2. 按 [writeback.md](references/writeback.md) 执行回写；计划提交主 Agent 冻结后实施，注册/直调均保持原入口。发现原工程并发改动先返回冲突证据。
-3. 加载 共享源码隔离路由（`$WORKFLOW_ROOT/workflows/references/source-isolation.md`）与 `ops-perf-acceptance-criteria` 的精度、性能采集与抖动路由；芯片族归类统一查询 `npu-arch` skill（按其 NpuArch 代际划分归族），任何族归类结论不扩大精确 TARGET_SOCS；回写 diff 中不得写死核数/UB/L2 等硬件参数（同 NpuArch 内取值范围以 npu-arch 硬件参数表核对）。
+3. 加载 共享源码隔离路由（`$WORKFLOW_ROOT/workflows/references/source-isolation.md`）与 `ops-perf-acceptance-criteria` 的精度、性能采集与抖动路由；芯片族归类统一查询 `npu-arch` skill（按其 NpuArch 代际划分归族），A2/A3 共用同一套实现与验证结论，可复用代表 SoC 的证据；其他族归类结论不扩大精确 TARGET_SOCS；回写 diff 中不得写死核数/UB/L2 等硬件参数（同 NpuArch 内取值范围以 npu-arch 硬件参数表核对）。
 4. 执行原工程前后功能全集、性能全集精度与逐 case 性能检查；冻结的预期报错行按参考文档检查前后错误语义，不编造 kernel 耗时。有效退化范围按真实输入谓词回原代码，新身份完整复验。无优化时仍交付有覆盖证据的 no-op。
 5. generalization 继续涉及/不涉及路由核验并按共享 ratio 复核最终达标；仅用户要求 CANN-Bench 时读取 `$WORKFLOW_ROOT/workflows/cannbench-a5-baseline-collection.md`。
 6. 交付安全/精度 gates、每 SoC `postprocess-performance-<soc>.json`、回路由证据和 `VERIFY_REPORT.md`；两个全集无有效回退方可完成，最终报告引用集成后的真实身份。

@@ -13,14 +13,14 @@
 | `TARGET_SOCS` | `run-manifest.json` | 本次完成构建、功能、性能验证的代际 |
 | `SUPPORTED_SOCS` | 目标工程 build config、`SocVersion`、架构目录、kernel 入口 | 原工程承诺支持的代际 |
 
-若 `SUPPORTED_SOCS - TARGET_SOCS` 非空，目标实现不得覆盖共享路径。先观察同仓其他算子的既有风格，再选择同一种隔离轴：
+比较 `SUPPORTED_SOCS - TARGET_SOCS` 时，目标已验证 A2/A3 之一时，另一型号复用其实现与验证结果，视为已覆盖；仍有未覆盖型号时，目标实现不得覆盖共享路径。先观察同仓其他算子的既有风格，再选择同一种隔离轴：
 
 1. 已有 `arch35/`、`v35/` 等目录：target kernel/tiling 数据结构放同代目录，共享入口只增加编译期/运行期接线；
 2. host 已用 `SocVersion`：在进入 A5 专用 UB/核数/VF 模型前分流，非 target 调用原 legacy 函数；
 3. 已有 TilingKey/模板轴：增加 target 专用 key/轴，未命中 target guard 时保持原 key；
 4. build config 按 SoC 分源：沿用 config，不另造平行机制。
 
-合格 diff 必须同时证明：target 路由可达、每个非目标 SoC 仍落到 legacy fallback、原公开接口/约束/dtype 零差异。典型不合格形态是“新 kernel 放在 `arch35/`，但公共 tiling 的 UB 模型已经被 A5 版本整体替换”——kernel 文件隔离不能抵消 host 共享逻辑污染。
+合格 diff 必须同时证明：target 路由可达、未被目标验证结果覆盖的 SoC 仍落到 legacy fallback、原公开接口/约束/dtype 零差异。典型不合格形态是“新 kernel 放在 `arch35/`，但公共 tiling 的 UB 模型已经被 A5 版本整体替换”——kernel 文件隔离不能抵消 host 共享逻辑污染。
 
 `integration-safety-scope.json` 最小结构：
 

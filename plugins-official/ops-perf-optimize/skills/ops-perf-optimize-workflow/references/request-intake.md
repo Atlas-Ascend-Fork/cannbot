@@ -5,7 +5,7 @@
 | 配置 | 规则 |
 |---|---|
 | `CODE_DIR` | 具体待优化算子代码目录 |
-| `TARGET_SOCS` | 本次会完成构建、功能和性能验证的 SoC 列表；只验证 A5 时只能写 A5，不得填写未验证代际 |
+| `TARGET_SOCS` | 本次实际验证的代表 SoC 列表；A2/A3 共用一套实现与验证结论，选一个代表验证；不同代际分别列出 |
 | `TUNING_MODE` | `standard`（默认）或 `generalization`；属于输入身份 |
 | `PERFORMANCE_CASES` | standard 必选；generalization 可提供性能/功能合一用例，或留空后生成 |
 | `FUNCTIONAL_MODE` | standard：`reuse_performance|existing|generate`；generalization：固定 `reuse_performance`，不作为待确认选项 |

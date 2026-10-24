@@ -4,7 +4,7 @@
 
 ## 环境与用例
 
-调用 `$WORKFLOW_SCRIPTS/preflight_dependencies.py --request <request>`，按 `ascendc-env-check` 核对必要依赖、NPU 型号/数量/设备初始化、CANN、Python、编译与性能工具。TTK 由预检统一接入：未找到 ops-test-kit 时自动 `git clone --depth=1` 上游最新到 `/tmp/ops-test-kit` 并校验可导入，随后把 TTK 仓自带 4 个标准 skill（`$TTK/.claude/skills/` 下的 `ttk-how-run-test`/`ttk-how-write-case`/`ttk-how-write-plugin`/`ttk-how-diagnose`）软链到当前部署客户端的 skills 目录（opencode→`.opencode/skills`，claude→`.claude/skills`，codex→`.agents/skills`，codearts→`.codeartsdoer/skills`，项目级与全局级均已存在的全部链接）；后续所有 TTK 操作直接加载这 4 个 skill。每个 `TARGET_SOCS` 必须有对应可用设备和环境证据，多机分别运行预检并汇总；不能用当前一张 950 卡证明 910b 可用。正式评估不得使用 `--skip-device` 或 `--skip-build`。无 fail 后 freeze；warn 的处理理由写入报告。
+调用 `$WORKFLOW_SCRIPTS/preflight_dependencies.py --request <request>`，按 `ascendc-env-check` 核对必要依赖、NPU 型号/数量/设备初始化、CANN、Python、编译与性能工具。TTK 由预检统一接入：未找到 ops-test-kit 时自动 `git clone --depth=1` 上游最新到 `/tmp/ops-test-kit` 并校验可导入，随后把 TTK 仓自带 4 个标准 skill（`$TTK/.claude/skills/` 下的 `ttk-how-run-test`/`ttk-how-write-case`/`ttk-how-write-plugin`/`ttk-how-diagnose`）软链到当前部署客户端的 skills 目录（opencode→`.opencode/skills`，claude→`.claude/skills`，codex→`.agents/skills`，codearts→`.codeartsdoer/skills`，项目级与全局级均已存在的全部链接）；后续所有 TTK 操作直接加载这 4 个 skill。每个 `TARGET_SOCS` 必须有对应可用设备和环境证据；A2/A3 共用同一套实现，验证结果可互换，选一个代表准备设备与构建/加载证据即可。多机分别运行预检并汇总；不能用当前一张 950 卡证明 910b 可用。正式评估不得使用 `--skip-device` 或 `--skip-build`。无 fail 后 freeze；warn 的处理理由写入报告。
 
 产出 `环境检查报告.md`：请求 SHA、真实设备与 SoC 映射、依赖版本/路径、检查状态、warn 理由、失败修复证据及 `preflight-report.json` 引用。不把“脚本存在”当作设备可用。
 

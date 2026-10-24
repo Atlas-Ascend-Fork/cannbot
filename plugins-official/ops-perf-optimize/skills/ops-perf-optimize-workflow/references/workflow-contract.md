@@ -20,6 +20,8 @@
 
 ## 2. 请求接入
 
+`TARGET_SOCS` 记录实际验证的 SoC。A2/A3 共用同一套 arch22（DAV_2201）实现，验证结果可互换；同时作为目标时，在冻结请求前选一个代表 SoC，兼容矩阵为另一型号引用同一份证据并保留实际测试型号。不同代际仍分别验证。
+
 已有 request：`$WORKFLOW_SCRIPTS/prepare_case_sets.py validate-request` 校验后复用。缺少或失效时按 [request-intake.md](request-intake.md) 收集代码、精确 TARGET_SOCS、模式、用例、对标来源、停止目标、优化意图、可选性能锚点、Python/CANN 环境，生成用户已确认的 request。无交互环境必须提供已确认 request，不猜测环境或目标。
 
 `OPTIMIZATION_INTENT`（`safe_incremental` 默认 / `pursue_optimal`）与 `REFERENCE_PERF` 是可选输入身份，写入 request/manifest：前者决定是否把**结构性重写**（融合/数据布局/精度方案/内部格式转换，公开契约仍不变）纳入方案空间并放宽"最小 scope"偏好；后者是同算子/同族更优实现或竞品的 `case_id,ref_total_us`（或参考实现工程路径，由 prepare 采同协议基线），提供后分析以"实测 vs 参考"的差距为绝对参照，缺省则以算子内在最小成本 roofline 为唯一普适锚点。

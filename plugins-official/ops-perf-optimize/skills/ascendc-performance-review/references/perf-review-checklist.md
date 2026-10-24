@@ -6,7 +6,7 @@ status: ready
 
 当前版本范围：通用架构与平台事实、tiling 切分、SIMD-MemBase 数据流、MemBase 矢量计算、RegBase/VF、SIMT、标量与头开销，以及 **arch22 MatMul/FlashAttention 专项检查点**。除已登记的 arch22 MatMul/FA 外，其他 Cube/CV 混合通路仍需目标专项知识，不能从 A5 卡片自动外推。 该静态检查点范围不排除对 Cube/MatMul 的族级分析；融合算子内嵌 MM 仍按 MatMul 族规则分析，不能因本清单缺少 Cube 检查点就推导 AIV 替换。
 
-知识来源与抓取口径：cann-samples@6e6260c8（2026-08-24，全部 dav-3510 实测样例，第一优先证据源）；华为官方《Ascend C 最佳实践》（CANN 商用版 9.0.0，机制类补充，部分收益数字仅 A2 平台）；cann/ops-nn 与 ops-transformer 在库 A5(arch35) 纯 Vector 算子 tiling 源码对照分析（2026-08-27，11 个算子，dav-3510，结构判定为主、收益数字未单独上板的条目标 draft）；A5 UB bank 上板微基准实测（2026-08-27，Ascend950PR_9579，bank_probe：1R1W 无感、2R 错位 32B 约 +2%、16KB 对齐无惩罚，供 PRC-MEM-009）；arch22 MatMul 证据来自 asc-devkit 的 `dav-2201` Matmul 样例，arch22 FA 证据来自 ops-transformer FIA 的 `op_host/op_kernel/arch22` 源码。后两类当前完成源码/样例级验证，未把 A2 收益写成 A3 已上板结论。
+知识来源与抓取口径：cann-samples@6e6260c8（2026-08-24，全部 dav-3510 实测样例，第一优先证据源）；华为官方《Ascend C 最佳实践》（CANN 商用版 9.0.0，机制类补充，部分收益数字仅 A2 平台）；cann/ops-nn 与 ops-transformer 在库 A5(arch35) 纯 Vector 算子 tiling 源码对照分析（2026-08-27，11 个算子，dav-3510，结构判定为主、收益数字未单独上板的条目标 draft）；A5 UB bank 上板微基准实测（2026-08-27，Ascend950PR_9579，bank_probe：1R1W 无感、2R 错位 32B 约 +2%、16KB 对齐无惩罚，供 PRC-MEM-009）；arch22 MatMul 证据来自 asc-devkit 的 `dav-2201` Matmul 样例，arch22 FA 证据来自 ops-transformer FIA 的 `op_host/op_kernel/arch22` 源码。后两类当前完成源码/样例级验证，A2/A3 可互换验证结论，收益数值保留实际测试平台。
 
 ## 使用方式
 
@@ -16,7 +16,7 @@ status: ready
 4. 对应条目的**误报边界**（含证伪知识）与命中条件同等重要，报出前必须逐条核对；
 5. **凡结论依赖 `#if` 架构宏取值的（不限于 PRC-ARCH-001），一律先按 PRC-ARCH-001 的打表命令取证目标 SoC 的宏取值，禁止从宏名反推平台**；未打表就断言某分支在目标平台不生效的，属证据不足，不得报出，也不得作为其它 finding 的前提。
 6. **平台参数（核数 / UB / L2）先看代码怎么取的，再谈数值**：按 PRC-ARCH-002 确认 host 是否从平台接口获取、取到的值是否真正参与切分表达式——写死或"取了不用"本身就是 finding。检视时目标平台的真实取值（运行时 `acl.get_soc_name()` / `GetCoreNumAiv()`，或对应 SocVersion 的 ini）写进报告元信息段，**仅用于核对代码算出的数**，不单独构成 finding；同代芯片核数并不唯一（950 有 8/16/56/64/72 五档），样例仓与最佳实践文档里的数字是示意值，不可代入。**环境取不到平台数值时注明"不可得"即可，不得据此标 blocker 或跳过任何检查点**——ARCH-002 / MEM-011 / MEM-012 的命中形态均为结构判定。
-7. arch22（A2/A3）目标先完整读取 [arch22 检视适用性矩阵](skill:ascendc-performance-best-practices) `references/common/arch22/perf_review_applicability.md`，按矩阵加载通用卡片，再加载本索引的 `PRC-MM-*` / `PRC-FA-*`；A5 目标不得加载这七条 arch22 专项卡片。A2 证据不能表述为 A3 已验证，缺少 A3 实测时写明 `A3_not_run`。
+7. arch22（A2/A3）目标先完整读取 [arch22 检视适用性矩阵](skill:ascendc-performance-best-practices) `references/common/arch22/perf_review_applicability.md`，按矩阵加载通用卡片，再加载本索引的 `PRC-MM-*` / `PRC-FA-*`；A5 目标不得加载这七条 arch22 专项卡片。A2/A3 共用同一套实现，验证结论可互换；保留实际测试型号与证据引用，无需分别上板。
 
 ## 目录约定
 

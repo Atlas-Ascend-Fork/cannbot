@@ -8,7 +8,7 @@
 
 在回写和长构建前，对照最终候选实际 diff 与原工程路由检查隔离前提；信封中的门控描述只作为待核事实。范围或隔离不成立时先修复/返回裁决，不能凭“已验收”推迟到全集跑完才处理。原工程构建复用基线记录的工作目录与单算子命令，剥离 demo 的构建命令不能直接替代原工程入口。
 
-芯片族归类（哪些 SocVersion 同属一族）统一查询 `npu-arch` skill，按其 NpuArch 代际划分归族（同一 NpuArch 为一族）；实际 SocVersion、宏和构建路由必须从原工程/SDK 取证。族别用于检查影响范围，不能替代精确 `TARGET_SOCS`：只验证族内某一型号时，不能自动启用同族其他型号的优化。
+芯片族归类（哪些 SocVersion 同属一族）统一查询 `npu-arch` skill，按其 NpuArch 代际划分归族（同一 NpuArch 为一族）；实际 SocVersion、宏和构建路由必须从原工程/SDK 取证。A2/A3 共用同一套实现与验证结果，全集验证只需覆盖冻结的代表 SoC；其他型号不能仅凭同族归类启用优化。
 
 硬件参数写死检查：回写范围内扫描核数、UB/L2/L0 容量、频率等硬件参数字面量（含 tiling 中的魔数与注释中的"当前平台取值"断言）。同一 NpuArch 内这些参数随子型号不同而变化，取值范围以 `npu-arch` 的硬件参数表（platform_config ini 口径）核对；写死即 finding，须改为运行时接口（PlatformAscendC / GetCoreNumAiv / GetCoreMemSize 等）获取或纳入目标守卫隔离。判定细则可加载 `ascendc-performance-review` 的 PRC-ARCH-002。
 

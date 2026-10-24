@@ -42,7 +42,7 @@
 
 先做集合比较：`TARGET_SOCS` 是本次真正完成构建、功能、性能验证的集合；`SUPPORTED_SOCS` 必须从目标工程 build config、`SocVersion` 路由、架构目录和入口分派取证。不得用当前设备或 A5 工作基线推断工程只支持 A5。
 
-共享代码被多个 SoC 或模板分支使用时，必须先复制再单独路由；本次用例不涉及的模板也必须保持不变。若 `SUPPORTED_SOCS - TARGET_SOCS` 非空，按目标工程已有风格做代际隔离：
+共享代码被多个 SoC 或模板分支使用时，必须先复制再单独路由；本次用例不涉及的模板也必须保持不变。比较 `SUPPORTED_SOCS - TARGET_SOCS` 时，目标已验证 A2/A3 之一时，另一型号共用同一套实现与验证结果，视为已覆盖；仍有未覆盖型号时，按目标工程已有风格做代际隔离：
 
 - kernel 优先放入工程既有 target 架构目录/编译宏分支，新入口只在 target 编译或分派；legacy kernel 保持不变且对非目标 SoC 可达；
 - host tiling 先按工程既有 `SocVersion`、TilingKey 或 build config 选 target 路由；A5 专用 UB/核数/VF 模型不得覆盖共享 legacy 计算；
@@ -64,7 +64,7 @@
 - 公开契约面清单及 pre-integration SHA；
 - 目标工程代际隔离风格证据、所有将修改的共享 host/kernel 文件、逐文件 target guard 与 non-target fallback 计划。
 
-兼容矩阵中未上板的 SoC 标记 `not_verified_preserved_by_isolation`，不得写 PASS；每代的 host/kernel 路由与 fallback 分别留证。
+兼容矩阵为 A2/A3 中未单独上板的型号标明验证结果复用及实际测试型号、证据引用；其他未上板的 SoC 标记 `not_verified_preserved_by_isolation`，不得写 PASS；每代的 host/kernel 路由与 fallback 分别留证。
 
 同时写 `integration-safety-scope.json`，严格使用 `$WORKFLOW_SCRIPTS/validate_integration_safety.py` 的 schema：`target_socs` 与 `verified_socs` 必须等于 manifest 的 `TARGET_SOCS`；`supported_socs` 每项带源码证据，并与脚本从未注释 `AICore().AddConfig(...)` 自动发现的集合精确一致；存在未验证 SoC 时填写项目隔离风格、path markers、route tokens 和每个共享变更文件的双路由证据。非 `AddConfig` 工程仍须人工交叉检查 build config、`SocVersion`、架构目录和入口，不能因自动发现为空就把支持集合报成只有 target。计划阶段不得预填尚不存在的集成后行号，集成完成后再补齐并运行门禁。
 
