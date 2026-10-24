@@ -6,6 +6,7 @@
 *.h   text eol=lf
 *.hpp text eol=lf
 *.hh  text eol=lf
+*.asc text eol=lf
 
 # Python
 *.py text eol=lf

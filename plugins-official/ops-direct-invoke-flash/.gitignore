@@ -1,0 +1,14 @@
+.opencode/
+.claude/
+.trae/
+.marscode/
+.traecli/
+.cursor/
+.codex/
+.agents/
+.codeartsdoer/
+.github/
+.copilot/
+__pycache__/
+*.pyc
+.pytest_cache/

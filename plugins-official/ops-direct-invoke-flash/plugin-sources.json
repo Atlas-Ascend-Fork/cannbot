@@ -1,0 +1,9 @@
+{
+  "skillsRepository": ".",
+  "skillInstallMode": "symlink",
+  "preserveSkillInvocationPolicy": true,
+  "skills": [
+    "vendor/cannbot-skills/ops/ascendc-st-design",
+    "vendor/cannbot-skills/ops/ascendc-whitebox-design"
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "ops-direct-invoke-flash",
+  "version": "1.2.2",
+  "description": "当需要从 CPU 函数、数学公式、代码片段或文本描述出发构建全新的 Ascend C 或 Ascend950 Reg API 核函数时使用。覆盖从规格定义到验证通过的 NPU 核函数的完整路径。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "ascend-c",
+    "reg-api",
+    "ascend950",
+    "dav-3510",
+    "npu",
+    "huawei",
+    "kernel",
+    "operator",
+    "port",
+    "porting",
+    "convert",
+    "cann"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "核函数从零构建工作流",
+    "shortDescription": "Ascend C / Ascend950 Reg API 核函数从零构建工作流",
+    "longDescription": "当需要从 CPU 函数、数学公式、代码片段或文本描述出发构建全新的 Ascend C 或 Ascend950 Reg API 核函数时使用。覆盖从规格定义到验证通过的 NPU 核函数的完整路径。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "根据 relu.py 构建一个 relu 核函数。"
+    ]
+  }
+}

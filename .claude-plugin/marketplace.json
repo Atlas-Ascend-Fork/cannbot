@@ -416,6 +416,23 @@
         "ops-perf-optimize-skills",
         "ops-perf-optimize-kb-skills"
       ]
+    },
+    {
+      "name": "ops-direct-invoke-flash",
+      "source": "./plugins-official/ops-direct-invoke-flash",
+      "description": "当需要从 CPU 函数、数学公式、代码片段或文本描述出发构建全新的 Ascend C 或 Ascend950 Reg API 核函数时使用。覆盖从规格定义到验证通过的 NPU 核函数的完整路径。",
+      "version": "1.2.2",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "ascendc",
+        "reg-api",
+        "ascend950",
+        "kernel",
+        "operator"
+      ],
+      "category": "development"
     }
   ]
 }
