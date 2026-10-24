@@ -27,6 +27,7 @@ const installerPackage = readJson(new URL("../package.json", import.meta.url));
 const OPENCODE_PLUGIN_SPEC = `${installerPackage.name}@${installerPackage.version}`;
 const BUNDLED_REPOSITORY = fileURLToPath(new URL("../", import.meta.url));
 const PACKAGE_CACHEBUSTER = `cannbot-${installerPackage.version.replaceAll(".", "-")}`;
+const INSTALL_NAME_PATTERN = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
 const TOOL_DIRECTORIES = Object.freeze({
   opencode: { configDirs: [".opencode"], defaultConfigDir: ".opencode", skillsDir: [".agents", "skills"] },
   codex: { configDirs: [".codex"], defaultConfigDir: ".codex", skillsDir: [".agents", "skills"] },
@@ -81,6 +82,12 @@ function fail(message) {
   process.exit(1);
 }
 
+function validateInstallName(name, label) {
+  if (typeof name !== "string" || !INSTALL_NAME_PATTERN.test(name)) {
+    fail(`${label} must be a path-safe identifier: ${name}`);
+  }
+}
+
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" });
   if (result.error) fail(`${command} failed: ${result.error.message}`);
@@ -97,6 +104,7 @@ function parseArgs(argv) {
   if (command !== "install" || !pluginId) {
     fail(`usage: cannbot install <plugin> --tool <${TOOL_NAMES.join("|")}> [--target <dir>] [--source <repository>] [--plugin-dir <dir>] [--override-skills <dir>] [--skills <SHA|path>]`);
   }
+  validateInstallName(pluginId, "plugin id");
   const options = { command, pluginId, target: process.cwd() };
   for (let index = 0; index < rest.length; index += 1) {
     const key = rest[index];
@@ -305,6 +313,7 @@ function resolveSkills(plugin, pluginDir) {
     if (!existsSync(skillPath)) fail(`skill is missing SKILL.md: ${source}`);
     const name = readFileSync(skillPath, "utf8").match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim();
     if (!name) fail(`skill is missing a frontmatter name: ${skillPath}`);
+    validateInstallName(name, "Skill name");
     skills.set(name, source);
   };
 
@@ -335,6 +344,7 @@ function resolveSourceSkills(repositoryRoot, sourceDefinition, sharedSkillsRoot 
     if (!existsSync(skillPath)) fail(`skill is missing SKILL.md: ${source}`);
     const name = readFileSync(skillPath, "utf8").match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim();
     if (!name) fail(`skill is missing a frontmatter name: ${skillPath}`);
+    validateInstallName(name, "Skill name");
     if (skills.has(name)) fail(`duplicate Skill name in ${label}: ${name}`);
     skills.set(name, source);
   };
@@ -364,6 +374,7 @@ function parseAgent(markdown) {
   const name = frontmatter.match(/^name:\s*(.+)$/m)?.[1]?.trim();
   const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim();
   if (!name || !description) fail("agent markdown requires name and description frontmatter");
+  validateInstallName(name, "agent name");
   return { name, description, body };
 }
 
@@ -981,6 +992,7 @@ function install(options) {
     fail(`plugin not found: ${options.pluginId}`);
   }
   const plugin = readJson(manifestPath);
+  validateInstallName(plugin.name, "plugin manifest name");
   if (plugin.name !== options.pluginId) {
     fail(`plugin name mismatch: requested ${options.pluginId}, manifest declares ${plugin.name}`);
   }

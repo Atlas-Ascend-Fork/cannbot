@@ -33,6 +33,14 @@ function createSandbox(prefix) {
   return sandbox;
 }
 
+function createRepoSandbox(prefix) {
+  const temporaryRoot = join(repositoryRoot, ".tmp");
+  mkdirSync(temporaryRoot, { recursive: true });
+  const sandbox = mkdtempSync(join(temporaryRoot, prefix));
+  temporarySandboxes.add(sandbox);
+  return sandbox;
+}
+
 test("model-train-precision-diagnose resolves its community Skill sources", () => {
   const definition = pluginSourceDefinition(repositoryRoot, "model-train-precision-diagnose");
   assert.equal(
@@ -671,6 +679,75 @@ test("source install preserves an existing real Skill directory", () => {
   assert.match(result.stderr, /Skill destination already exists and is not a symlink/);
   assert.equal(readFileSync(sentinel, "utf8"), "keep\n");
   assert.equal(lstatSync(destination).isDirectory(), true);
+});
+
+test("source install rejects plugin and Skill names that escape their install roots", () => {
+  const sandbox = createRepoSandbox("cannbot-unsafe-install-name-");
+  const sourceRoot = join(sandbox, "source");
+  const pluginRoot = join(sourceRoot, "plugins-official", "fixture-directory");
+  const skillSource = join(pluginRoot, "skills", "fixture-skill");
+  const victim = join(sandbox, "victim");
+  const sentinel = join(victim, "sentinel.txt");
+  mkdirSync(join(pluginRoot, ".claude-plugin"), { recursive: true });
+  mkdirSync(skillSource, { recursive: true });
+  mkdirSync(victim, { recursive: true });
+  writeFileSync(sentinel, "preserve this file\n");
+
+  const runInstall = (pluginId, target) => spawnSync(process.execPath, [
+    cli,
+    "install",
+    pluginId,
+    "--tool",
+    "dsh",
+    "--target",
+    target,
+    "--source",
+    sourceRoot,
+    "--plugin-dir",
+    pluginRoot,
+  ], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: join(sandbox, "home"),
+      CANNBOT_SKIP_DEPENDENCY_REPOS: "1",
+    },
+  });
+
+  writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({
+    name: "../../../victim",
+    version: "1.0.0",
+    description: "fixture plugin",
+  }));
+  writeFileSync(join(skillSource, "SKILL.md"), "---\nname: safe-skill\ndescription: fixture\n---\n");
+  const unsafePlugin = runInstall("fixture-plugin", join(sandbox, "plugin-target"));
+  assert.notEqual(unsafePlugin.status, 0);
+  assert.match(unsafePlugin.stderr, /plugin manifest name must be a path-safe identifier/);
+  assert.equal(readFileSync(sentinel, "utf8"), "preserve this file\n");
+
+  writeFileSync(join(pluginRoot, ".claude-plugin", "plugin.json"), JSON.stringify({
+    name: "fixture-plugin",
+    version: "1.0.0",
+    description: "fixture plugin",
+  }));
+  writeFileSync(join(skillSource, "SKILL.md"), "---\nname: ../../../victim\ndescription: fixture\n---\n");
+  const unsafeSkill = runInstall("fixture-plugin", join(sandbox, "skill-target"));
+  assert.notEqual(unsafeSkill.status, 0);
+  assert.match(unsafeSkill.stderr, /Skill name must be a path-safe identifier/);
+  assert.equal(readFileSync(sentinel, "utf8"), "preserve this file\n");
+
+  const unsafeId = runInstall("../../../victim", join(sandbox, "plugin-id-target"));
+  assert.notEqual(unsafeId.status, 0);
+  assert.match(unsafeId.stderr, /plugin id must be a path-safe identifier/);
+  assert.equal(readFileSync(sentinel, "utf8"), "preserve this file\n");
+
+  writeFileSync(join(skillSource, "SKILL.md"), "---\nname: safe-skill\ndescription: fixture\n---\n");
+  const safeTarget = join(sandbox, "safe-target");
+  const safeInstall = runInstall("fixture-plugin", safeTarget);
+  assert.equal(safeInstall.status, 0, safeInstall.stderr || safeInstall.stdout);
+  assert.equal(readFileSync(sentinel, "utf8"), "preserve this file\n");
+  assert.equal(existsSync(join(safeTarget, ".dsh", "skills", "safe-skill", "SKILL.md")), true);
 });
 
 test("reinstall preserves user instructions and keeps one managed block", () => {
