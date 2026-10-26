@@ -160,7 +160,7 @@ nodes:
     happens at the operator, not at case parse.'
   - 'Execute both CSVs from $WORK_DIR/ops-test-kit: rm -f the -o target, then python3 -m ttk
     aclnn -i <cases.csv> --pc=1 --task-prof false --run 1 --device-whitelist 0 --input-dist
-    uniform --compare stat_rel_err --plugin $WORK_DIR/golden.py -o $WORK_DIR/docs-consistency/results/result_<positive|negative>.csv
+    uniform --compare mixed --plugin $WORK_DIR/golden.py -o $WORK_DIR/docs-consistency/results/result_<positive|negative>.csv
     — golden as-is, never modified.'
   - 'Judge every row against its doc-derived expectation: a documented-capability case must
     PASS; an out-of-scope case must be cleanly rejected — FAIL with NO_OUTPUT and a

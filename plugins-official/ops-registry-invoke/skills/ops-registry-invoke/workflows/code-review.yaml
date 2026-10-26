@@ -163,7 +163,7 @@ nodes:
   - 'Tiling UT (when present): cd $WORK_DIR/op/tests/tiling && ./run.sh exits 0 with 0 failed;
     the pinned oracle files (test_tiling_gtest.cpp, CMakeLists.txt, run.sh) stay untouched.'
   - 'Whitebox branch full batches (when present): for every $WORK_DIR/op/tests/whitebox/branch-*/,
-    re-run the full batch under the two-phase method (phase 1 --compare stat_rel_err without
+    re-run the full batch under the two-phase method (phase 1 --compare mixed without
     --config; failed rows adjudicated with -t by name adding --compare cross_check --config
     $WORK_DIR/ttk.conf.yaml); every row green.'
   - 'Blackbox suites (when present): blackbox_l0.csv / blackbox_l1.csv / blackbox_l2_neg.csv

@@ -111,7 +111,7 @@ COPY: research/cann/formula.md（如存在；Kernel 缺失时为文档公式推�
 | 路线 | 工具 | 适用条件 | 本算子是否适用 |
 |:-----|:-----|:---------|:--------------|
 | A 竞品实测（优先） | `ops-competitor-profiling` | workspace 存在 `competitor-environment.json` 且 `check-competitor-env.sh` 预检通过 | |
-| B 理论评估（兜底） | `ascendc-performance-evaluation` | 无竞品环境；且本算子是 Ascend950 纯 Vector（cube / cube-vector 混合不适用） | |
+| B 理论评估（兜底） | `ops-theoretical-performance-estimation` | 无竞品环境；且本算子是 Ascend950 纯 Vector（cube / cube-vector 混合不适用） | |
 
 **判定结论**：选定路线 = A / B / 两条均不适用（后者须写明原因，「性能目标」据此记「无目标值」）。
 

@@ -185,7 +185,7 @@ nodes:
     attributes — see $WORK_DIR/ops-test-kit/examples/case_store/aclnn/cases.csv), taking the case from the
     first plain positive row of $WORK_DIR/design/Validation.md''s 端到端测试用例矩阵 (first supported dtype,
     a representative shape, default attrs). Run it via TTK aclnn mode against the golden: cd
-    $WORK_DIR/ops-test-kit && python3 -m ttk aclnn -i <smoke csv> --compare stat_rel_err --plugin
+    $WORK_DIR/ops-test-kit && python3 -m ttk aclnn -i <smoke csv> --compare mixed --plugin
     $WORK_DIR/golden.py, with the dev-package vendors tree made visible to the runtime (ASCEND_CUSTOM_OPP_PATH
     and the vendor''s op_api/lib first in LD_LIBRARY_PATH — consult the blackbox-tester skill for the
     aclnn-mode invocation contract). Save the full output to $WORK_DIR/op/tests/aclnn/smoke.log; the case
@@ -252,7 +252,7 @@ nodes:
     cast every input to float64, call the torch/TF API(s), cast the outputs back once to the target dtypes — the framework''s
     internal accumulation then runs in float64.'
   - 'Derive tolerance.standard from $WORK_DIR/spec.yaml, never from the operator name. Default classification by op.paradigms
-    (compute paradigms with float output -> stat_rel_err; pure data-reorganization -> binary_equal; int output -> binary_equal;
+    (compute paradigms with float output -> mix_tolerance; pure data-reorganization -> binary_equal; int output -> binary_equal;
     quantization -> quant — the enum set defined by the ttk test_spec validator is authoritative), overridable by the spec''s
     numerical_tolerance. cross_check override (the spec''s top-level cross_check block is always present — generate-spec writes
     it for every operator): set each float16/bfloat16/float32 dtype''s tolerance to {standard: cross_check, level: the spec''s
@@ -513,7 +513,7 @@ nodes:
     $WORK_DIR/design/Kernel.md and DESIGN-BRANCH-<key>.md §3–§5, adapting the validated branch-<m> prototype''s proven compute/data-flow
     into the package''s separated Tiling/Kernel structure (the prototype is the working reference for this branch, not throwaway);
     select the first row of this branch''s ttk_design_doc_cases.csv as the bring-up case; run it via ttk kernel (cd $WORK_DIR/ops-test-kit;
-    python3 -m ttk kernel -i <branch csv> --compare stat_rel_err --plugin $WORK_DIR/golden.py, single-case filtering per the
+    python3 -m ttk kernel -i <branch csv> --compare mixed --plugin $WORK_DIR/golden.py, single-case filtering per the
     ttk skill''s selection mechanism — phase 1 without cross_check; if it fails, rerun with --compare cross_check --config
     $WORK_DIR/ttk.conf.yaml to adjudicate before entering precision fix); acceptance: package builds for the target architecture
     recorded in $WORK_DIR/npu-arch.json (build.sh with the required SoC argument exits 0), that one case''s precision PASSes,
@@ -532,14 +532,14 @@ nodes:
     is negative iff the case set marks it expect_error (or names it a rejection scenario); positive rows must precision-PASS
     and negative rows must be REJECTED by the operator (a precision PASS on a negative row is a defect); report both counts
     in the evidence. (b) Precision is judged per the design authority — $WORK_DIR/design/Validation.md 精度验收标准 and
-    DESIGN-BRANCH-<key>.md (per-dtype pointwise rtol/atol). DEFAULT: `--compare stat_rel_err` with the per-dtype thresholds
+    DESIGN-BRANCH-<key>.md (per-dtype pointwise rtol/atol). DEFAULT: `--compare mixed` with the per-dtype thresholds
     from Validation.md expresses the criterion, and its per-case result IS the design-criterion check — do NOT build a
     --dump-based checker in that case (no NPY dump pass, no duplicate rerun of green rows). EXCEPTION: a --dump-based
     machine-checkable design-criterion checker is built ONLY when the op''s design criterion contains a clause the ttk
     comparator demonstrably cannot express — e.g. small-value/subnormal guards or cross-case consistency the comparator
     has no flag for; the stage RECORD.md must then name the exact criterion clause, the comparator limitation, and the
     checker''s clause-by-clause mapping. Silently relaxing or swapping the criterion is forbidden in all cases. (c) Two-phase
-    execution contract (steps 2–5): phase 1 runs without cross_check — --compare stat_rel_err, no --config, local golden
+    execution contract (steps 2–5): phase 1 runs without cross_check — --compare mixed, no --config, local golden
     comparison only; phase 2 reruns every FAILED positive row with -t adding --compare cross_check --config
     $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server); cross_check-passing rows are adjudicated green,
     rows still failing enter precision localization and fix; phase 2 is skipped when phase 1 is all-green. Negative rows
