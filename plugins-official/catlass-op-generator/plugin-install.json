@@ -1,25 +1,6 @@
 {
   "dependencies": [
     {
-      "name": "cannbot-skills",
-      "repository": "https://gitcode.com/cann/cannbot-skills.git",
-      "ref": "master",
-      "assets": {
-        "plugin": "ops",
-        "skills": {
-          "dir": "ops",
-          "names": [
-            "catlass-cpp-interface",
-            "catlass-cpp-reference",
-            "catlass-cpp-design",
-            "catlass-cpp-develop",
-            "catlass-cpp-test",
-            "catlass-cpp-knowledge"
-          ]
-        }
-      }
-    },
-    {
       "name": "cannbot-knowledge",
       "repository": "https://gitcode.com/cann/cannbot-knowledge.git",
       "ref": "master"

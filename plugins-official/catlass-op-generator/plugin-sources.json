@@ -1,5 +1,13 @@
 {
-  "skillsRepository": ".",
+  "skillsRepository": "vendor/cannbot-skills",
   "skillInstallMode": "symlink",
-  "skills": []
+  "preserveSkillInvocationPolicy": true,
+  "skills": [
+    "ops/catlass-cpp-interface",
+    "ops/catlass-cpp-reference",
+    "ops/catlass-cpp-design",
+    "ops/catlass-cpp-develop",
+    "ops/catlass-cpp-test",
+    "ops/catlass-cpp-knowledge"
+  ]
 }

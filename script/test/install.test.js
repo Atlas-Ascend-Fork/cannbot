@@ -286,9 +286,8 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
     if (manifest.dependencies) {
       assert.deepEqual(marketplaceSkills.sort(), sourceDefinition.skills.sort());
     } else {
-      assert.equal(sourceDefinition.skillsRepository, '.');
       for (const skill of sourceDefinition.skills) {
-        assert.ok(existsSync(join(repositoryRoot, skill, 'SKILL.md')), skill);
+        assert.ok(existsSync(join(repositoryRoot, sourceDefinition.skillsRepository, skill, 'SKILL.md')), skill);
       }
     }
 
