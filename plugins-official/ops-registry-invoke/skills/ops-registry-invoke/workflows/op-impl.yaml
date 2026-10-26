@@ -509,11 +509,18 @@ nodes:
     20%/50% batch gates catch them before the full-batch run. No deferral: when the case generator cannot express an input
     pattern a design point requires, extend the generator as part of this task — recording a gap instead of producing the
     case is a defect.'
+  - 'Include this reuse rule in every whitebox-gen approach and acceptance: reuse successfully generated cases for export-only,
+    ordering or notes changes without repeating Golden probes. Record fingerprints of the case model, generation inputs,
+    Golden and generator; changes to any of these or case content require full regeneration. For export-only changes,
+    use cases-to-ttk <cases.json> <opspec.json> <cases.csv> in a separate directory, with helper-supported thresholds within
+    task resource limits. Preserve every required case and the complete record multiset across main CSV and oversized sidecar,
+    including all fields and duplicate counts; sorting moves whole records. Retain successful full-generation evidence and
+    recheck coverage, execution eligibility and CSV validity after reuse.'
   - '2. branch-<m>-kernel-bringup — executor kernel-developer, verifier kernel-verifier: implement this branch''s kernel per
     $WORK_DIR/design/Kernel.md and DESIGN-BRANCH-<key>.md §3–§5, adapting the validated branch-<m> prototype''s proven compute/data-flow
     into the package''s separated Tiling/Kernel structure (the prototype is the working reference for this branch, not throwaway);
     select the first row of this branch''s ttk_design_doc_cases.csv as the bring-up case; run it via ttk kernel (cd $WORK_DIR/ops-test-kit;
-    python3 -m ttk kernel -i <branch csv> --compare mixed --plugin $WORK_DIR/golden.py, single-case filtering per the
+    python3 -m ttk kernel -i <branch csv> -c -d --compile-opts op_debug_config=oom --compare mixed --plugin $WORK_DIR/golden.py, single-case filtering per the
     ttk skill''s selection mechanism — phase 1 without cross_check; if it fails, rerun with --compare cross_check --config
     $WORK_DIR/ttk.conf.yaml to adjudicate before entering precision fix); acceptance: package builds for the target architecture
     recorded in $WORK_DIR/npu-arch.json (build.sh with the required SoC argument exits 0), that one case''s precision PASSes,
@@ -539,7 +546,7 @@ nodes:
     comparator demonstrably cannot express — e.g. small-value/subnormal guards or cross-case consistency the comparator
     has no flag for; the stage RECORD.md must then name the exact criterion clause, the comparator limitation, and the
     checker''s clause-by-clause mapping. Silently relaxing or swapping the criterion is forbidden in all cases. (c) Two-phase
-    execution contract (steps 2–5): phase 1 runs without cross_check — --compare mixed, no --config, local golden
+    execution contract (steps 2–5): all existing Kernel commands, including adjudication and repaired reruns, retain -c -d --compile-opts op_debug_config=oom (merge oom into existing op_debug_config options; retain binary tests); phase 1 runs without cross_check — --compare mixed, no --config, local golden
     comparison only; phase 2 reruns every FAILED positive row with -t adding --compare cross_check --config
     $WORK_DIR/ttk.conf.yaml (third_party torch via the local xpu-server); cross_check-passing rows are adjudicated green,
     rows still failing enter precision localization and fix; phase 2 is skipped when phase 1 is all-green. Negative rows
@@ -579,6 +586,9 @@ nodes:
     depends on branch-<m>-whitebox-gen and branch-<m-1>-run-100pct).
   - Each node's acceptance is checkable (exit codes / file paths) and the 20%/50% sampling rule is deterministic (first-N
     rows, cumulative).
+  - Every whitebox-gen node carries the reuse rule in approach and acceptance; its verifier checks successful generation and
+    unchanged-content evidence for reuse alongside all existing coverage, shape, CSV, actual-input-pattern and priority gates.
+  - "Every generated bringup/batch node must include this acceptance in addition to its existing precision/rejection gates: Check Const/Dynamic instrumentation in this run and resolve CHECKER to workflows/scripts/check_runtime_result.py under the installed ops-registry-invoke skill; python3 \"$CHECKER\" oom --cases <branch CSV> --case-names <all selected positive names> --attempt <result CSV> <TTK log> exits 0 (repeat --attempt oldest to newest for split/repaired results). Keep original compilation/results/logs; precision PASS cannot replace OOM PASS."
   out_of_scope:
   - Do not create or modify any file other than $WORK_DIR/.workflow/kernel-sub-graph.yaml; do not execute any branch task;
     do not write kernel code.

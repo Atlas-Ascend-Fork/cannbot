@@ -167,14 +167,36 @@ nodes:
       - "Gate script: run the parse_result.py script under the blackbox-tester skill on <result.csv> with --expect-total <N>; it exits 0 if and only if pass==total and fail==skip==0; for the negative suite add --negative — exit 0 if and only if pass==0 (every row rejected)."
       - "Failure triage: reproduce each failure first with -t by case name, then load the skill for its class and record conclusions and fixes in the evidence file — build failure (build.sh error / no artifacts) -> ascendc-compile-debug; AIC Error, runtime crash, error codes (161xxx/361xxx/507xxx/561xxx), hang, timeout -> ascendc-runtime-debug; wrong precision -> ascendc-precision-debug (criteria: $WORK_DIR/design/Validation.md per-dtype rtol/atol); TTK-framework-level failure (malformed results / GOLDEN_FAILURE / OOM / killed) -> ttk-how-diagnose."
       - "Fix discipline: reproduce before attributing; code fixes stay inside the out_of_scope whitelist; after any code change run cd $WORK_DIR/op && ./build.sh to rebuild and deploy into dev-package before rerunning; suite CSVs, golden.py, tolerances and isolation thresholds stay as-is; a failure that cannot be fixed without deviating from design stays red with its attribution (oracle/design defect)."
-      - "Closing regression: when this task changed code, result_l0.csv and result_l1.csv are rerun in full and still meet their gates; the tiling UT (cd $WORK_DIR/op/tests/tiling && ./run.sh, 0 failed) and every whitebox branch full batch (ttk kernel mode over the branch CSVs under $WORK_DIR/op/tests/whitebox/branch-*/) stay green under the same two-phase method (phase 1 --compare mixed without --config; failed rows adjudicated with --compare cross_check --config); record the evidence in $WORK_DIR/op/tests/blackbox/ttk/regression.RECORD.md."
+      - "Closing regression: when this task changed code, result_l0.csv and result_l1.csv are rerun in full and still meet their gates; the tiling UT (cd $WORK_DIR/op/tests/tiling && ./run.sh, 0 failed) and every whitebox branch full batch (ttk kernel mode over the branch CSVs under $WORK_DIR/op/tests/whitebox/branch-*/) stay green under the same two-phase method (add -c -d --compile-opts op_debug_config=oom to these Kernel commands and their reruns, preserving other compile options; phase 1 --compare mixed without --config; failed rows adjudicated with --compare cross_check --config); record the evidence in $WORK_DIR/op/tests/blackbox/ttk/regression.RECORD.md."
       - "Evidence: $WORK_DIR/op/tests/blackbox/ttk/run-l2-100pct.RECORD.md records the full row set, per-row rejection status, fixes and attributions, and the commands run."
     acceptance:
       - "Gate: parse_result.py $WORK_DIR/op/tests/blackbox/ttk/result_l2.csv --negative --expect-total <L2 data-row count> exits 0 (pass==0, every row rejected), with phase-2 adjudication evidence for any row that phase 1 did not reject cleanly."
       - "Coverage: result_l2.csv's case set equals the suite's full row set, generated after the last build."
       - "Closing regression: tiling UT and whitebox branch full batches stay green, regression.RECORD.md non-empty; if this task changed code, result_l0.csv and result_l1.csv were regenerated and still meet their gates."
+      - "Whitebox OOM: Check Const/Dynamic instrumentation in this run and resolve CHECKER to workflows/scripts/check_runtime_result.py under the installed ops-registry-invoke skill; python3 \"$CHECKER\" oom --cases <branch CSV> --case-names <all selected positive names> --attempt <result CSV> <TTK log> exits 0 (repeat --attempt oldest to newest for split/repaired results). Keep original compilation/results/logs; precision PASS cannot replace OOM PASS."
     out_of_scope:
       - "Modification whitelist: $WORK_DIR/op/op_host/ (host/tiling code), $WORK_DIR/op/op_kernel/ (kernel code) and $WORK_DIR/op/op_api/ (aclnn L2/L0 API code); everything else stays as-is — the TTK framework ($WORK_DIR/ops-test-kit), all case CSVs, $WORK_DIR/golden.py (never modify), tolerances and isolation thresholds, $WORK_DIR/design/ docs, whitebox case sets."
       - "Performance stages belong to other tasks; the L2 suite runs whole, never staged or sampled."
+    max_retries: 2
+    on_exhaust: exit
+  - id: blackbox-determinism-l0
+    task_type: normal
+    title: Verify full L0 determinism after blackbox testing
+    executor: general-executor
+    verifier: general-verifier
+    goal:
+      - "After blackbox L0/L1/L2 testing, check the frozen blackbox_l0.csv once in full, repeating each case 10 times with the same initial inputs; deliver results under $WORK_DIR/op/tests/blackbox/ttk/determinism/."
+    approach:
+      - "Run: reuse the full-suite ACLNN command and environment recorded in $WORK_DIR/op/tests/blackbox/ttk/run-l0-100pct.RECORD.md, using the same blackbox_l0.csv and Golden. Replace --run 1 with --run 10 and add --dl 1; keep all other execution options unchanged. Write each attempt to a fresh directory under $WORK_DIR/op/tests/blackbox/ttk/determinism/, retaining result.csv, INFO-level ttk.log and the real exit status. Confirm the same initial inputs and all-output comparison across repeats."
+      - "Check: resolve CHECKER to workflows/scripts/check_runtime_result.py under the installed ops-registry-invoke skill; run python3 \"$CHECKER\" determinism --cases <frozen L0 CSV> --attempt <result.csv> <ttk.log>. Record the checker output in RECORD.md; reconcile split/repaired attempts oldest to newest with repeated --attempt arguments, preserving originals."
+      - "Evidence: write RECORD.md with the L0 case inventory, commands, exit status, original result/log paths and observed repeat counts; report precision and determinism separately."
+    acceptance:
+      - "Gate: resolve CHECKER to workflows/scripts/check_runtime_result.py under the installed ops-registry-invoke skill; independently run python3 \"$CHECKER\" determinism --cases <frozen L0 CSV> --attempt <result.csv> <ttk.log> (oldest to newest for multiple attempts), exiting 0. Every L0 case has deterministic_status PASS and native evidence of 10 repeated executions in the same attempt; missing/skip results, insufficient repeats and mismatch cannot pass."
+      - "Evidence: RECORD.md and the original results/logs exist under $WORK_DIR/op/tests/blackbox/ttk/determinism/. Verify successful TTK exit status, the unchanged L0 execution options, same initial inputs and all-output comparison. Precision or cross_check PASS does not establish determinism."
+      - "Coverage: the case set equals the frozen blackbox_l0.csv suite with its original oversized exclusions."
+    out_of_scope:
+      - "Operator sources, Golden, TTK, case CSVs, tolerances and isolation thresholds stay unchanged."
+    depends_on:
+      - "blackbox-run-l2-100pct"
     max_retries: 2
     on_exhaust: exit
