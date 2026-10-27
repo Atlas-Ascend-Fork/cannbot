@@ -11,6 +11,7 @@
       "ops-registry-invoke",
       "workflow-orchestrator",
       "workflow-dispatch",
+      "ops-incremental",
       "ops-requirement-analysis",
       "design-template",
       "ascendc-build-system",
