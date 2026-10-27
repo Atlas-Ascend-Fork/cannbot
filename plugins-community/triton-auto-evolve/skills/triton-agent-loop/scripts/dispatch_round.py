@@ -15,10 +15,9 @@ dispatch_round.py — 启动一个独立的子 Claude Code CLI 执行单个 roun
     python3 dispatch_round.py \
         --manifest triton_ascend_output/{op_name}-{algorithm}-{run_tag}/.task_manifest_{N}.json \
         [--timeout 7200] \
-        [--command-template 'claude -p --plugin-dir {plugin_dir} \
-            --system-prompt-file {sub_reference} \
-            --allowed-tools Bash,Read,Write,Edit,Glob,Grep \
-            "Execute round worker. Manifest: {manifest_path}"']
+        [--command-template 'claude -p --plugin-dir {plugin_dir} '
+                            '--system-prompt-file {sub_reference} --allowed-tools Bash,Read,Write,Edit,Glob,Grep '
+                            '"Execute round worker. Manifest: {manifest_path}"']
 
 环境变量:
     TRITON_WORKER_COMMAND_TEMPLATE: 覆盖默认命令模板
@@ -53,11 +52,13 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from log_parser import StreamJsonReadableParser
 import check_npu_idle
+import preflight as preflight_mod
 
 logger = logging.getLogger(__name__)
 
@@ -249,8 +250,7 @@ def build_command(
         "TRITON_WORKER_COMMAND_TEMPLATE", DEFAULT_COMMAND_TEMPLATE
     )
 
-    # Support shell-style quoting in the template; the caller splits it with
-    # shlex so the worker can be spawned with shell=False.
+    # Support shell-style quoting in template by using shell=True
     cmd = template.format(
         manifest_path=str(manifest_path),
         work_dir=str(work_dir),
@@ -261,8 +261,30 @@ def build_command(
     return cmd
 
 
-def _read_stream(stream, prefix: str, chunks: list[str], log_f, parser) -> None:
-    """Read a sub-process stream, tee it to the log, and feed the parser."""
+def _terminate_process_tree(proc: subprocess.Popen[str], hard: bool = False) -> None:
+    """A4: 整组击杀（start_new_session 的子进程自成一组），失败退回直杀。
+
+    只 terminate/kill 直接子进程（shell 或 claude CLI）时，其存活中的 bash
+    子进程会孤儿化并继承 stdout 管道写端，_stream_subprocess 末尾的读线程
+    join 因 EOF 永不到来而挂死。
+    """
+    sig = signal.SIGKILL if hard else signal.SIGTERM
+    try:
+        os.killpg(os.getpgid(proc.pid), sig)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.send_signal(sig)
+        except ProcessLookupError:
+            pass
+    except OSError:
+        try:
+            proc.send_signal(sig)
+        except ProcessLookupError:
+            pass
+
+
+def _stream_reader(stream, prefix: str, chunks: list[str], log_f, parser) -> None:
+    """Read one stream line-by-line into chunks and the log/parser."""
     for line in iter(stream.readline, ""):
         chunks.append(line)
         formatted = f"{prefix}{line}"
@@ -272,23 +294,77 @@ def _read_stream(stream, prefix: str, chunks: list[str], log_f, parser) -> None:
             parser.feed_line(formatted)
 
 
-def _stream_subprocess(
+def _wait_for_completion(
     proc: subprocess.Popen[str],
-    work_dir: Path,
-    cmd: str,
-    timeout: int | None,
-) -> tuple[int, str, str, bool]:
-    """Stream sub CLI stdout/stderr to disk while the round is running.
+    deadline: float | None,
+    completion_signal: Path | None,
+    completion_grace: float,
+    signal_floor: float,
+) -> tuple[int, bool, bool]:
+    """Wait for the subprocess exit or completion signal; returns (rc, timed_out, harvested)."""
+    grace_started: float | None = None
+    while True:
+        try:
+            rc = proc.wait(timeout=0.5)
+            return rc, False, False
+        except subprocess.TimeoutExpired:
+            pass
+        if deadline is not None and time.monotonic() >= deadline:
+            _terminate_process_tree(proc, hard=True)
+            return proc.wait(), True, False
+        if completion_signal is None or completion_grace <= 0:
+            continue
+        try:
+            signal_mtime = completion_signal.stat().st_mtime
+        except OSError:
+            continue
+        if signal_mtime < signal_floor:
+            continue
+        if grace_started is None:
+            grace_started = time.monotonic()
+            continue
+        if time.monotonic() - grace_started < completion_grace:
+            continue
+        _terminate_process_tree(proc, hard=False)
+        try:
+            rc = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(proc, hard=True)
+            rc = proc.wait()
+        return rc, False, True
 
-    Writes the raw stream to ``work_dir/sub_agent.log`` and a human-readable
-    summary to ``work_dir/sub_agent_readable.log``.  This lets operators tail
-    the round progress without waiting for the sub CLI to finish.
-    """
+
+@dataclass
+class CompletionCfg:
+    """Gene-fusion completion-signal harvest configuration."""
+
+    signal: Path | None = None
+    grace: float = 0.0
+    floor: float = 0.0
+
+
+@dataclass
+class StreamCtx:
+    """Everything needed to stream a sub CLI run to disk and harvest it."""
+
+    proc: subprocess.Popen[str]
+    work_dir: Path
+    cmd: str
+    timeout: int | None
+    completion: CompletionCfg
+
+
+def _stream_subprocess(ctx: StreamCtx) -> tuple[int, str, str, bool, bool]:
+    """Stream sub CLI stdout/stderr to disk while the round is running."""
+    proc, work_dir = ctx.proc, ctx.work_dir
+    cmd, timeout = ctx.cmd, ctx.timeout
+    completion = ctx.completion
     log_path = work_dir / "sub_agent.log"
     readable_log_path = work_dir / "sub_agent_readable.log"
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
     timed_out = False
+    harvested = False
 
     with open(log_path, "w", encoding="utf-8") as log_f, \
          open(readable_log_path, "w", encoding="utf-8") as readable_f:
@@ -300,34 +376,32 @@ def _stream_subprocess(
 
         parser = StreamJsonReadableParser(readable_f)
         t_out = threading.Thread(
-            target=_read_stream,
+            target=_stream_reader,
             args=(proc.stdout, "[sub-agent stdout] ", stdout_chunks, log_f, parser),
             daemon=True,
         )
         t_err = threading.Thread(
-            target=_read_stream,
+            target=_stream_reader,
             args=(proc.stderr, "[sub-agent stderr] ", stderr_chunks, log_f, parser),
             daemon=True,
         )
         t_out.start()
         t_err.start()
 
-        try:
-            rc = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            proc.kill()
-            rc = proc.wait()
+        deadline = time.monotonic() + timeout if timeout else None
+        rc, timed_out, harvested = _wait_for_completion(
+            proc, deadline, completion.signal, completion.grace, completion.floor
+        )
 
         t_out.join()
         t_err.join()
         parser.flush()
 
         log_f.write("\n" + "-" * 80 + "\n")
-        log_f.write(f"# Exit code: {rc}  timed_out={timed_out}\n")
+        log_f.write(f"# Exit code: {rc}  timed_out={timed_out}  harvested={harvested}\n")
         log_f.flush()
 
-    return rc, "".join(stdout_chunks), "".join(stderr_chunks), timed_out
+    return rc, "".join(stdout_chunks), "".join(stderr_chunks), timed_out, harvested
 
 
 @contextmanager
@@ -358,7 +432,7 @@ def _child_process_scope(proc: subprocess.Popen[str]):
                 proc.kill()
                 proc.wait(timeout=5)
             except Exception as exc:
-                logger.debug("failed to kill sub CLI during cleanup: %s", exc)
+                logger.warning("failed to kill process tree: %s", exc)
 
     try:
         signal.signal(signal.SIGINT, _forward)
@@ -382,62 +456,208 @@ def wait_for_round_result(work_dir: Path, timeout: float, interval: float = 2.0)
     return None
 
 
-def _select_idle_npu(work_dir: Path, env: dict[str, str]) -> str | None:
-    """Select an idle NPU and set its env vars; return an error message or None."""
-    if check_npu_idle.should_skip_idle_check():
+def _run_worker_preflight(timeout: float = 30.0, attempts: int = 2) -> dict[str, Any]:
+    """A3: 派发前 ~30s 预检模型可用性。
+
+    与 worker 命令模板同形态（裸 ``claude --print``，模型由 claude settings
+    解析，不带 --model），因此预检通过即代表 worker CLI 能正常出字。
+    瞬时故障（网关抖动）重试 ``attempts`` 次，全部失败才判不可派发，
+    避免一次网络抖动误杀整轮。
+    """
+    data: dict[str, Any] | None = None
+    error: str | None = None
+    elapsed = 0.0
+    used = 0
+    for attempt in range(max(attempts, 1)):
+        used = attempt + 1
+        data, error, elapsed = preflight_mod.run_claude(
+            "Reply with exactly one word: ok", None, timeout
+        )
+        if error is None:
+            break
+        if attempt + 1 < max(attempts, 1):
+            time.sleep(5)
+    model_ok = False
+    if error is None and data is not None:
+        text = str(data.get("result") or "").strip()
+        if data.get("is_error"):
+            error = f"model returned error: {text[:200]}"
+        elif not text:
+            error = f"empty response (subtype={data.get('subtype', '?')})"
+        else:
+            model_ok = True
+    return {
+        "model_ok": model_ok,
+        "model": "inherit-from-claude-settings",
+        "latency_s": round(elapsed, 2),
+        "attempts_used": used,
+        "error": error,
+    }
+
+
+def _round_dir_key(path: Path) -> tuple[int, int]:
+    """round_N 目录的数值排序键（round_2 < round_10）。"""
+    try:
+        return (0, int(path.name.rsplit("_", 1)[-1]))
+    except ValueError:
+        return (1, 0)
+
+
+def _iter_summary(iter_dir: Path) -> dict[str, Any] | None:
+    """A5: 从 route 的 ``output/round_N/`` 提取一次完成迭代的结论摘要。
+
+    ``perf_result.json`` 存在视为该迭代完成（benchmark 跑完是迭代的最后一步）；
+    字段全部 best-effort 提取，缺啥省啥，不让对账失败阻塞续跑。
+    """
+    perf_path = iter_dir / "perf_result.json"
+    if not perf_path.is_file():
+        return None  # 无 perf = 迭代未完成（正是断点场景），跳过
+    perf = load_json(perf_path)
+    if not perf:
+        return None
+    fw = (perf.get("framework") or {}).get("avg_latency_ms")
+    impl = (perf.get("implementation") or {}).get("avg_latency_ms")
+    speedup = None
+    try:
+        if fw and impl:
+            speedup = round(float(fw) / float(impl), 4)
+    except (TypeError, ValueError, ZeroDivisionError):
+        speedup = None
+    verify_path = iter_dir / "verify" / "verify_result.json"
+    verify = load_json(verify_path) if verify_path.is_file() else {}
+    total = perf.get("total_cases")
+    passed = verify.get("passed_cases", perf.get("passed_cases"))
+    precision_pass = None
+    try:
+        if total is not None and passed is not None:
+            precision_pass = int(passed) == int(total)
+    except (TypeError, ValueError):
+        precision_pass = None
+    try:
+        iteration = int(iter_dir.name.rsplit("_", 1)[-1])
+    except ValueError:
+        return None
+    return {
+        "iteration": iteration,
+        "speedup": speedup,
+        "precision_pass": precision_pass,
+        "framework_avg_ms": fw,
+        "implementation_avg_ms": impl,
+        "perf_cases": f"{passed}/{total}" if passed is not None else None,
+        "artifacts_dir": f"output/round_{iteration}",
+    }
+
+
+def _build_resume_context(work_dir: Path) -> dict[str, Any] | None:
+    """A5: 扫描各 route 已完成迭代（重派断点续跑用），无完成迭代返回 None。
+
+    完成判定：``route-*/output/round_N/perf_result.json`` 存在。
+    整条 route 已写出 ``round_result.json`` 时标记 ``finished``，续跑方直接
+    收割不再迭代。
+    """
+    routes: dict[str, Any] = {}
+    for route_dir in sorted(work_dir.glob("route-*")):
+        out_dir = route_dir / "output"
+        if not out_dir.is_dir():
+            continue
+        summaries = [
+            s for s in (_iter_summary(d) for d in sorted(out_dir.glob("round_*"), key=_round_dir_key))
+            if s is not None
+        ]
+        finished = (route_dir / "round_result.json").is_file()
+        if not summaries and not finished:
+            continue
+        entry: dict[str, Any] = {"finished": finished}
+        if summaries:
+            entry["completed"] = summaries
+            entry["next_iteration"] = max(s["iteration"] for s in summaries) + 1
+        routes[route_dir.name] = entry
+    if not routes:
+        return None
+    return {
+        "purpose": "resume_after_redispatch: completed iterations below must NOT be redone",
+        "routes": routes,
+    }
+
+
+def _select_npu_device(env: dict[str, str], work_dir: Path, result: dict[str, Any]) -> dict[str, Any] | None:
+    """Select an idle NPU device and set env vars; returns an error dict on failure."""
+    npu_idle_check_enabled = not check_npu_idle.should_skip_idle_check()
+    if npu_idle_check_enabled and shutil.which("npu-smi") is None:
+        result["npu_idle_check"] = "skipped: npu-smi not found on this host"
+        npu_idle_check_enabled = False
+    if not npu_idle_check_enabled:
         return None
     try:
         device_info = check_npu_idle.select_idle_device(
             preferred_id=check_npu_idle.preferred_device_id()
         )
     except check_npu_idle.NpuIdleCheckError as exc:
-        return (
-            f"NPU idle check failed: {exc}\n"
-            f"details: {json.dumps(exc.details, indent=2, ensure_ascii=False)}"
-        )
-
+        return {
+            "status": "error",
+            "stderr": (
+                f"NPU idle check failed: {exc}\n"
+                f"details: {json.dumps(exc.details, indent=2, ensure_ascii=False)}"
+            ),
+        }
     device_id = device_info["device_id"]
     env["ASCEND_VISIBLE_DEVICES"] = str(device_id)
     env["NPU_CALCULATE_DEVICE"] = str(device_id)
-    # Some CANN / torch_npu versions honour ASCEND_RT_VISIBLE_DEVICES.
     env["ASCEND_RT_VISIBLE_DEVICES"] = str(device_id)
-
     try:
         (work_dir / "npu_device.json").write_text(
             json.dumps(device_info, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-    except OSError as exc:
-        logger.debug("failed to write npu_device.json: %s", exc)
+    except OSError:
+        pass
     return None
 
 
-def _spawn_worker(cmd: str, work_dir: Path, env: dict[str, str]) -> subprocess.Popen[str]:
-    """Launch the worker sub-CLI using shlex-split argv (no shell)."""
-    return subprocess.Popen(
-        shlex.split(cmd),
-        shell=False,
-        cwd=work_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
+def _stream_and_check(ctx: StreamCtx, result: dict[str, Any]) -> bool:
+    """Stream the subprocess and check timeout; returns True if the round timed out."""
+    with _child_process_scope(ctx.proc):
+        returncode, stdout, stderr, timed_out, harvested = _stream_subprocess(ctx)
+    result["stdout"] = stdout
+    result["stderr"] = stderr
+    result["returncode"] = returncode
+    if harvested:
+        result["completed_via_signal"] = True
+    if timed_out:
+        result["status"] = "timeout"
+    return timed_out
 
 
-def _read_round_result(work_dir: Path, result: dict[str, Any]) -> dict[str, Any]:
-    """Wait for and parse round_result.json, mutating and returning ``result``."""
+def _launch_subprocess(
+    cmd: str, work_dir: Path, env: dict[str, str], result: dict[str, Any],
+) -> subprocess.Popen | None:
+    """Launch the sub CLI; returns None and sets result.stderr on failure."""
+    try:
+        return subprocess.Popen(
+            shlex.split(cmd),
+            shell=False,
+            cwd=work_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        result["stderr"] = f"failed to start sub CLI: {exc}"
+        return None
+
+
+def _collect_round_result(work_dir: Path, result: dict[str, Any]) -> None:
+    """Wait for round_result.json and load it into result."""
     result_path = wait_for_round_result(work_dir, timeout=30.0)
     if result_path is None:
-        # Fallback: search for round_result.json in work_dir
         candidates = list(work_dir.glob("round_result.json"))
         if candidates:
             result_path = candidates[0]
-
     if result_path is None or not result_path.is_file():
         result["status"] = "no_result"
-        return result
-
+        return
     try:
         round_result = load_json(result_path)
         result["round_result"] = round_result
@@ -446,7 +666,46 @@ def _read_round_result(work_dir: Path, result: dict[str, Any]) -> dict[str, Any]
         result["status"] = "error"
         result["stderr"] += f"\nfailed to parse round_result.json: {exc}"
 
-    return result
+
+def _resolve_completion_signal(
+    manifest: dict[str, Any], work_dir: Path,
+) -> CompletionCfg:
+    """Resolve the gene-fusion completion signal and grace period."""
+    completion_signal = None
+    completion_grace = 0.0
+    signal_floor = time.time()
+    if manifest.get("algorithm") == "gene-fusion":
+        completion_signal = work_dir / "round_result.json"
+        try:
+            completion_grace = float(os.environ.get("TRITON_ROUND_COMPLETION_GRACE", "60"))
+        except ValueError:
+            completion_grace = 60.0
+    return CompletionCfg(signal=completion_signal, grace=completion_grace, floor=signal_floor)
+
+
+def _prepare_gene_fusion(
+    manifest: dict[str, Any], manifest_path: Path, work_dir: Path, result: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Run gene-fusion preflight and resume-context injection; returns error dict on preflight failure."""
+    if manifest.get("algorithm") == "gene-fusion" and os.environ.get("TRITON_SKIP_PREFLIGHT") != "1":
+        preflight = _run_worker_preflight()
+        result["preflight"] = preflight
+        if not preflight.get("model_ok"):
+            return {
+                "stderr": "preflight failed, dispatch aborted: "
+                + json.dumps(preflight, ensure_ascii=False),
+            }
+    if manifest.get("algorithm") == "gene-fusion":
+        resume_context = _build_resume_context(work_dir)
+        if resume_context:
+            manifest["resume_context"] = resume_context
+            try:
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except OSError:
+                pass
+    return None
 
 
 def dispatch_round(
@@ -467,8 +726,6 @@ def dispatch_round(
     work_dir = Path(manifest.get("work_dir", manifest_path.parent)).expanduser().resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    prepare_isolated_claude(work_dir, plugin_dir)
-
     result: dict[str, Any] = {
         "status": "error",
         "round_result": None,
@@ -478,48 +735,51 @@ def dispatch_round(
         "pid": None,
     }
 
+    # ── A3/A5: gene-fusion 派发前预检 + 断点续跑上下文注入 ──
+    gf_error = _prepare_gene_fusion(manifest, manifest_path, work_dir, result)
+    if gf_error is not None:
+        result.update(gf_error)
+        return result
+
+    prepare_isolated_claude(work_dir, plugin_dir)
+
     cmd = build_command(manifest_path, work_dir, command_template)
 
     env = os.environ.copy()
     env["TRITON_OPTIMIZER_MODE"] = "worker"
 
     # ── Idle NPU selection (must run before launching the worker) ──
-    idle_error = _select_idle_npu(work_dir, env)
-    if idle_error is not None:
-        result["status"] = "error"
-        result["stderr"] = idle_error
+    npu_error = _select_npu_device(env, work_dir, result)
+    if npu_error is not None:
+        result.update(npu_error)
         return result
 
-    try:
-        proc = _spawn_worker(cmd, work_dir, env)
-    except OSError as exc:
-        result["stderr"] = f"failed to start sub CLI: {exc}"
+    # ── A4: gene-fusion 完成信号收割（round_result.json 落盘即视为完成） ──
+    completion = _resolve_completion_signal(manifest, work_dir)
+
+    proc = _launch_subprocess(cmd, work_dir, env, result)
+    if proc is None:
         return result
 
     result["pid"] = proc.pid
 
-    with _child_process_scope(proc):
-        returncode, stdout, stderr, timed_out = _stream_subprocess(proc, work_dir, cmd, timeout)
-
-    result["stdout"] = stdout
-    result["stderr"] = stderr
-    result["returncode"] = returncode
-
+    timed_out = _stream_and_check(
+        StreamCtx(proc=proc, work_dir=work_dir, cmd=cmd, timeout=timeout, completion=completion), result,
+    )
     if timed_out:
-        result["status"] = "timeout"
         return result
 
-    return _read_round_result(work_dir, result)
+    # Wait a bit for round_result.json flush, then load it.
+    _collect_round_result(work_dir, result)
+    return result
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description="Dispatch a per-round worker sub CLI")
     parser.add_argument("--manifest", required=True, help="Path to task_manifest.json")
     parser.add_argument(
-        "--timeout",
-        type=int,
-        default=DEFAULT_TIMEOUT_SECONDS,
+        "--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS,
         help="Sub CLI timeout in seconds (default: 7200)",
     )
     parser.add_argument("--command-template", default=None, help="Shell command template for launching sub CLI")

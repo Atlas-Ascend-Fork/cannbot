@@ -25,15 +25,26 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Callable
 
-from .config import (
-    C_UCT,
-    C_PW,
-    ALPHA,
-    FAILURE_THRESHOLD,
-    REWARD_OUTPUT_ERROR,
-    REWARD_COMPILE_ERROR,
-    reward_success,
-)
+try:
+    from .config import (
+        C_UCT,
+        C_PW,
+        ALPHA,
+        FAILURE_THRESHOLD,
+        REWARD_OUTPUT_ERROR,
+        REWARD_COMPILE_ERROR,
+        reward_success,
+    )
+except ImportError:
+    from config import (
+        C_UCT,
+        C_PW,
+        ALPHA,
+        FAILURE_THRESHOLD,
+        REWARD_OUTPUT_ERROR,
+        REWARD_COMPILE_ERROR,
+        reward_success,
+    )
 
 
 TREE_STATE_VERSION = "1.1.0"
@@ -148,8 +159,8 @@ class MCTSTree:
     c_pw: float = field(default=C_PW)
     alpha: float = field(default=ALPHA)
     failure_threshold: int = field(default=FAILURE_THRESHOLD)
-    reward_output_error: float = field(default=float(REWARD_OUTPUT_ERROR))
-    reward_compile_error: float = field(default=float(REWARD_COMPILE_ERROR))
+    reward_output_error: float = field(default=REWARD_OUTPUT_ERROR)
+    reward_compile_error: float = field(default=REWARD_COMPILE_ERROR)
     reward_success_fn: Callable[[float], float] = field(default=reward_success)
     pending_expansion: Optional[Dict[str, Any]] = field(default=None)
     round_dir_map: Dict[str, str] = field(default_factory=dict)
@@ -157,6 +168,7 @@ class MCTSTree:
 
     @staticmethod
     def _read_speedup(perf_result_path: Optional[str]) -> Optional[float]:
+        """读取 perf_result.json 的 speedup_vs_torch（缺失/损坏/非数值返回 None）。"""
         if not perf_result_path or not os.path.exists(perf_result_path):
             return None
         try:
@@ -498,9 +510,7 @@ class MCTSTree:
         return "\n".join(lines)
 
     def _compute_reward(
-        self,
-        verify_result_path: str,
-        perf_result_path: Optional[str],
+        self, verify_result_path: str, perf_result_path: Optional[str],
     ) -> tuple[float, str, Optional[float]]:
         """计算单个节点的奖励."""
         if not verify_result_path or not os.path.exists(verify_result_path):

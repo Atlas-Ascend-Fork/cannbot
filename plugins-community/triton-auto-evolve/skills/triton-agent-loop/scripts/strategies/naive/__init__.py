@@ -10,7 +10,6 @@
 # ----------------------------------------------------------------------------------------------------------
 """Naive strategy: catalog-based direction rotation with internal C3/D4 handling."""
 
-
 __all__ = ["NaiveStrategy"]
 
-from .strategy import NaiveStrategy
+from .strategy import NaiveStrategy  # noqa: E402

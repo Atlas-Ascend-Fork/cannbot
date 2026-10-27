@@ -26,8 +26,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from _common import is_worker_mode as _is_worker_mode
-from _common import resolve_workspace as _resolve_workspace
+from _hook_common import is_worker_mode, resolve_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +72,9 @@ def _cleanup_runtime_tree(runtime_dir: Path) -> None:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     # Workers are ephemeral; they do not own the orchestrator's runtime state.
-    if _is_worker_mode():
+    if is_worker_mode():
         return 0
 
     try:
@@ -85,7 +84,7 @@ def main() -> int:
         return 0
     if not isinstance(payload, dict):
         return 0
-    workspace = _resolve_workspace(payload)
+    workspace = resolve_workspace(payload)
     if workspace is None:
         return 0
 
@@ -95,7 +94,7 @@ def main() -> int:
 
     # ── Clean up operator-level transition locks (if any) ──
     # 锁文件现在存储在 triton_ascend_output/{op_name}-{algorithm}-{run_tag}/.transition_lock.json
-    # （算子级），不再存储在全局 .triton-agent/ 下。清理所有算子级锁文件。
+    #（算子级），不再存储在全局 .triton-agent/ 下。清理所有算子级锁文件。
     ascend_output = workspace / "triton_ascend_output"
     if ascend_output.is_dir():
         for lock_file in ascend_output.glob("*/.transition_lock.json"):

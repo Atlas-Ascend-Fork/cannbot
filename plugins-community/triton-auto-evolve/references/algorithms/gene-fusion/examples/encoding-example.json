@@ -1,0 +1,25 @@
+{
+  "route_id": "route-1",
+  "encoding": [
+    {
+      "ku_id": "K1",
+      "gene_id": "G001",
+      "category": "tiling",
+      "description": "沿 M 维度分块，块大小 128",
+      "source": "kb_guides",
+      "code_target": "grid / block size 参数",
+      "params": {"block_size_m": 128},
+      "status": "active"
+    },
+    {
+      "ku_id": "K2",
+      "gene_id": "G002",
+      "category": "memory",
+      "description": "使用 tl.dot 替代逐元素乘加，利用 TensorCore",
+      "source": "kb_guides",
+      "code_target": "核心计算循环",
+      "params": {},
+      "status": "active"
+    }
+  ]
+}

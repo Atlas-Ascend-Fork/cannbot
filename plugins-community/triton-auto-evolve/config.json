@@ -17,7 +17,7 @@
         "max_routes": 3,
         "min_expected_benefit": 0.05,
         "enable_math_transforms": true,
-        "route_timeout": 3600,
+        "route_timeout": 5400,
         "crossover_rate": 0.7,
         "mutation_rate": 0.15,
         "elite_count": 1,

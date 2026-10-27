@@ -82,6 +82,28 @@ class RoundDecision:
     selected_round_dir: str | None = None
 
 
+def decision_to_direction_selection(
+    decision: RoundDecision,
+    current_policy: str,
+    default_direction: str,
+    metadata: dict[str, Any] | None = None,
+) -> DirectionSelection:
+    """Convert a RoundDecision into the legacy DirectionSelection interface.
+
+    Shared by strategies that keep the deprecated select_next_direction()
+    entry point during migration. Pass ``metadata`` to override the decision's
+    own metadata (e.g. to inject baseline hints).
+    """
+    return DirectionSelection(
+        strategy=decision.round_strategy or "exploration",
+        analysis_policy=decision.analysis_policy or current_policy,
+        direction=decision.direction or default_direction,
+        hypothesis=decision.hypothesis or "",
+        evidence_sources=decision.evidence_sources,
+        metadata=metadata if metadata is not None else decision.metadata,
+    )
+
+
 class Strategy(ABC):
     """Abstract base class for optimization direction/baseline strategies."""
 
@@ -91,6 +113,9 @@ class Strategy(ABC):
     # Capability declaration. Orchestrator uses this to decide which fields of
     # RoundDecision it must fill in.
     capabilities: StrategyCapabilities = StrategyCapabilities()
+
+    # Default direction used by the legacy select_next_direction() conversion.
+    legacy_default_direction: str = "pattern: custom"
 
     # Algorithm-specific state files that must be inherited across rounds.
     # Each entry is a template string relative to the round directory and may
@@ -129,19 +154,14 @@ class Strategy(ABC):
     ) -> DirectionSelection:
         """Legacy interface preserved during migration.
 
-        New strategies should implement select_next_round() instead. The default
-        implementation delegates to select_next_round() and wraps the decision.
+        New code should call select_next_round() instead. The default
+        implementation delegates to select_next_round() and converts the
+        RoundDecision envelope; strategies only override this when they must
+        enrich the conversion (e.g. baseline hints in metadata).
         """
-        decision = self.select_next_round(
-            round_index, op_category, current_policy, context
-        )
-        return DirectionSelection(
-            strategy=decision.round_strategy or "exploration",
-            analysis_policy=decision.analysis_policy or current_policy,
-            direction=decision.direction or self._direction_fallback(),
-            hypothesis=decision.hypothesis or "",
-            evidence_sources=decision.evidence_sources,
-            metadata=decision.metadata,
+        decision = self.select_next_round(round_index, op_category, current_policy, context)
+        return decision_to_direction_selection(
+            decision, current_policy, self.legacy_default_direction
         )
 
     def score_baseline_for_direction(
@@ -164,20 +184,16 @@ class Strategy(ABC):
             target_strategy=target_strategy,
         )
 
+    @abstractmethod
     def classify_direction_yield(
         self,
         ctx: DirectionYieldContext,
     ) -> tuple[str, str, float]:
         """Classify the outcome of a direction attempt.
 
-        Defaults to the shared direction_selector classification; strategies
-        that need custom semantics (e.g. recording into persistent state) can
-        override it.
-
         Returns:
             (direction_yield, yield_reason, absolute_gain)
         """
-        return ds.classify_direction_yield(ctx)
 
     def init_for_operator(
         self,
@@ -230,7 +246,3 @@ class Strategy(ABC):
         if baseline.mode == "multiple" and baseline.round_dirs:
             return BaselineProposal(mode="single", round_dirs=[baseline.round_dirs[0]])
         return BaselineProposal(mode="none")
-
-    def _direction_fallback(self) -> str:
-        """Default direction string used when the decision leaves it empty."""
-        return "pattern: custom"

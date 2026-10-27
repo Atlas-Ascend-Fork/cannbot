@@ -7,6 +7,8 @@ description: triton-auto-evolve 的 Gene-Fusion 算法 Per-Round Worker 规范�
 > - 子 Agent 上下文**仅包含**：本文件、`task_manifest.json`、当前 `work_dir`、`baseline_dir`、标准 skill/reference。
 > - 子 Agent **禁止**读取历史 `round_index.json`、禁止做跨 round 停止/继续判定、禁止更新项目级经验模板、禁止修改 `.triton-agent/state-{op_name}-{algorithm}-{run_tag}.json`。
 > - 子 Agent 内部通过 `dispatch_parallel.py` 并行启动多个 **route 子 CLI**，每个 route 子 CLI 使用 `.claude/references/algorithms/gene-fusion/route.md` 作为参考规范。
+>
+> **⚠️ 生存纪律（先读，违反 = 整轮工作归零）**：你运行在 headless `-p` 会话中，**输出一条不带工具调用的文本即结束回合、进程即退出**，所有后台任务与子进程被连带杀死。因此 D0/G5 派发期间：`parallel_result.json` 解析完成前，**每条回复必须以工具调用结尾**（用 `await_file.py` 循环等待，见 §6.2/§6.3），**禁止输出"等待中/已完成派发"之类总结文本后停轮**。冒烟 #1/#2 均死于违反本条。
 
 ---
 
@@ -155,9 +157,10 @@ Round 1 通过 `npu-smi info` 检测，失败则用默认 `ascend910b1`。Round 
 
 ### 4.2 执行步骤
 
-1. 读取 `{work_dir}/{op_name}.py` 中的 `Model.forward()` 方法。
-2. 逐行分析计算图，识别每个独立计算操作。
-3. 输出原子序列表格：
+1. **基线耗时表（量化锚点）**：调用 `b1_profile_table.py`（`--csv <基线 op_summary CSV>`，可复用 verify 的 framework_profile 产物）生成 op 耗时/占比表，落到 `{work_dir}/baseline_op_table.md`。后续分解与融合判断以该表数据为准，禁止凭感觉估算 op 耗时。
+2. 读取 `{work_dir}/{op_name}.py` 中的 `Model.forward()` 方法。
+3. 逐行分析计算图，识别每个独立计算操作；耗时归属以步骤 1 的占比表为锚（占比 ≤1% 的 op 也要列出，但标注 low-priority，不作为融合主目标）。
+4. 输出原子序列表格：
 
 ```text
 | atom_id | op_type    | formula              | inputs         | outputs        | numerical_risk |
@@ -168,11 +171,11 @@ Round 1 通过 `npu-smi info` 检测，失败则用默认 `ascend910b1`。Round 
 | ...     | ...        | ...                  | ...            | ...            | ...            |
 ```
 
-4. 识别**可融合的相邻原子对/组**，标注 eliminated_intermediates。
+5. 识别**可融合的相邻原子对/组**，标注 eliminated_intermediates（LLM 只判断"哪些 op 可融合"，耗时收益引用步骤 1 表格数据）。
 
 ### 4.3 产物
 
-`{work_dir}/atom_decomposition.md` — 后续 round 中作为只读参考。
+`{work_dir}/atom_decomposition.md` 与 `{work_dir}/baseline_op_table.md` — 后续 round 中作为只读参考。
 
 ---
 
@@ -358,18 +361,52 @@ F1 x [G001, G004]              -> route-3  (变种: tiling+pipeline)
 
 - `fusion_plan`：唯一融合方案（所有 route 相同）
 - `optimization_genes`：基因列表（各 route 不同）
+- `resume`：若本轮 manifest 含 `resume_context`（A5 断点续跑：本轮此前派发被超时/早退打断，dispatch 已扫描出各 route 已完成迭代），把它按 `route_id` 拆片，将属于 route-N 的条目（`completed`/`next_iteration`/`finished`）原样放进该 route manifest 的 `resume` 字段；无此字段则全部省略
+- `bottleneck_card`：若本轮目录存在 `bottleneck_card.json`（transition 蒸馏自上一轮），将其**原文内联**进每条 route 的 manifest；三条 route 使用同一份卡片，保证原子分解结论一致。Round 1 无此文件则省略该字段
 - `genetic_metadata.gene_ids`：只包含基因 ID
 
 ### 6.2 调用 dispatch_parallel.py
 
+本 worker 运行在 headless `-p` 会话中：**回合结束（输出一条不带工具调用的文本）进程即退出**，且 Bash 工具单次调用超时上限约 10 分钟（5400s 的派发不可能单次前台跑完）。因此派发必须用下述 **"后台启动 + 循环等待"** 模式，两条腿缺一不可：
+
+**第 1 步 — 后台启动 dispatch（setsid + nohup，记录 PID）**：
+
 ```bash
-python3 .claude/skills/triton-agent-loop/scripts/dispatch_parallel.py \
+setsid nohup python3 .claude/skills/triton-agent-loop/scripts/dispatch_parallel.py \
     --manifests route-1/.task_manifest.json route-2/.task_manifest.json route-3/.task_manifest.json \
-    --timeout {route_timeout}
+    --timeout {route_timeout} \
+    --elite-route-timeout {elite_route_timeout:-2400} \
+    --crossover-route-timeout {crossover_route_timeout:-3600} \
+    --exploration-route-timeout {exploration_route_timeout:-5400} \
+    > dispatch_launch.log 2>&1 &
+echo "DISPATCH_PID=$!"
 ```
 
-### 6.3 约束
+（config `dispatch_parallel_script` 指定 wrapper 时，用其绝对路径替换脚本路径，其余不变。）
 
+**A6 超时分层**：dispatch_parallel 按 manifest `genetic_metadata.route_type` 子串匹配分层取超时
+（elite 2400 / crossover 3600 / exploration 5400，`initial_exploration` 归 exploration 层）；
+manifest 显式 `route_timeout` 字段最优先，`--timeout` 仅兜底。config 有
+`elite_route_timeout` / `crossover_route_timeout` / `exploration_route_timeout` 键则由 worker
+读出后显式传参覆盖默认。**预算护栏**：最长层超时 + 派发前后开销（约 15min）必须 ≤ worker
+自身剩余预算，超出时等比缩小三层取值（冒烟实证：route 5400s + 开销曾必然触发 worker 7200s
+超时重派，白损 ~20min）。
+
+**第 2 步 — 循环等待（唯一合法的等待方式）**：反复前台调用 await_file.py，**每次输出 `"done": false` 就立即再次调用**（靠工具调用链保持会话存活），直到 `"done": true` 才进入 Phase 4：
+
+```bash
+python3 .claude/skills/triton-agent-loop/scripts/await_file.py \
+    --path parallel_result.json --timeout 480 --pid {DISPATCH_PID} --require-json
+```
+
+等待期间可随时读 `parallel_result_partial_{route}.json`（A2 流式收集，先完成的 route 先落盘）观察各 route 进度与初步结论，**但完成判定只认 `parallel_result.json`**——禁止据 partial 提前结束等待或收工。
+
+### 6.3 约束（违反 = 35 分钟工作归零，冒烟两次实证）
+
+- **禁止结束回合（最高优先级）**：`parallel_result.json` 解析完毕之前，**每一条回复都必须以工具调用结尾**——禁止输出"等待中/派发已完成"之类不带工具调用的总结文本后停轮。本会话无"后台任务通知"可醒来：回合结束 = 进程退出 = dispatch 与全部 route 子进程被连带杀死（冒烟 #1/#2 均死于"后台派发 + 结束回合等待通知"）
+- **禁止自建监视器替代 await 循环**：等待只能靠 §6.2 第 2 步的 await_file.py 循环调用；不要用后台任务、`tail -f`、`while sleep` 长循环等替代——它们要么随回合结束一起死，要么撑爆单次工具调用超时
+- **禁止单次前台阻塞跑 dispatch**：Bash 工具单次调用约 10 分钟即被杀，5400s 派发前台跑必死；dispatch 只能按 §6.2 第 1 步 setsid 后台启动
+- await_file.py 报 `"dispatch_exited"` 类失败（PID 已死且无结果文件）时，读 dispatch_launch.log 排因后重试派发，不要干等
 - 所有 route 同时启动（ThreadPoolExecutor 并行）
 - 每个 route 子 CLI 完全隔离，不共享上下文
 - 某 route 超时/失败不影响其他 route
@@ -377,6 +414,17 @@ python3 .claude/skills/triton-agent-loop/scripts/dispatch_parallel.py \
 ---
 
 ## 七、Phase 4：结果收集 + 基因适应度赋值
+
+### 7.0 结果语义质检（H1，先质检后入账）
+
+每个 route 的 `round_result.json` 在入账/适应度赋值前先过规则质检（不再依赖父会话逐项人审）：
+
+```bash
+python3 .claude/skills/triton-agent-loop/scripts/validate_round_result.py \
+  --round-result {work_dir}/route-{N}/round_result.json --work-dir {work_dir}/route-{N}
+```
+
+规则：精度必须 PASS、`best_speedup` 越界 [0.3, 3.0] 拒收、代码 `code_sha256` 与产物文件不一致拒收、best 与 iterations 不自洽/锚臂偏差超阈值/提案结构畸形标 `suspicious`。exit 1 的 route **整条剔除**（不参与选优与适应度赋值），`suspicious` 项照常入账但在对比摘要中标注。
 
 ### 7.1-7.3
 
@@ -490,13 +538,31 @@ route-3 (explore):    F1 x [上轮优质基因 + 新候选基因*]
                                                     * = candidate
 ```
 
-所有路线的 `fusion_plan` 相同。调用 `dispatch_parallel.py`。
+**混合比自适应（G4）**：路线数量以上例 1/1/1 为默认；若 manifest 携带 `route_mix`（orchestrator strategy 按轮间走势自适应：连续 2 轮 best 无提升 → exploration+1，连续 2 轮有提升 → elite+1，总数仍 ≤ `max_routes`），则按 `route_mix.elite_count / crossover_count / exploration_count` 生成对应数量的路线（多路 elite 均为精英保真变体，多路 explore 各配不同新候选基因），并在本轮报告记录 `route_mix_adjust` 原因。
+
+所有路线的 `fusion_plan` 相同。调用 `dispatch_parallel.py`，严格按 §6.2 的"后台启动 + await_file.py 循环等待"两步执行，并遵守 §6.3（`parallel_result.json` 解析前每条回复必须以工具调用结尾，禁止结束回合）。
+
+**编排器直派（H1b，Round 2+ 可选）**：`TRITON_GF_DIRECT_DISPATCH=1` 时，Round 2+ 的本节派发改由 `orchestrator_loop.py` 的 `dispatch_gene_fusion_direct()` 脚本化执行——按同一语义选基因（select/crossover/mutate）、写各 route 的 `.task_manifest.json`（含 `route_mix` 与 `genetic_metadata.route_type`）、调 `TRITON_DISPATCH_PARALLEL` 指定的派发脚本（默认 `dispatch_parallel.py`，真跑指 ops wrapper 获钉卡）、再按 §7.0 质检与 §7.4 记账，worker 会话不再参与派发。默认 `0`（关）走本节 worker 会话路径；前置条件不满足（如缺 `gene_pool.json`）时自动回退父会话路径。
 
 ### Step G6：收集结果 + 更新适应度
 
+- 先按 §7.0 对每条 route 过 `validate_round_result.py` 语义质检，拒收 route 整条剔除
 - `new_fitness = 0.3 x old_fitness + 0.7 x route_speedup`（平滑更新）
 - 候选基因：有提升 -> active，无提升 -> discarded
 - 更新 `gene_pool.json`，选最优
+
+**proposed_genes 合并（H1 下沉契约）**：route 产物中的新基因提案（`knowledge.proposed_genes`，route 侧从 profiling 瓶颈信号提出，含 `bottleneck_tag` 依据与 `hypothesis` 假设）由本步骤收编入池——父侧**只做机械操作，不做推理**：按 `gene_id` 指纹去重（与池内既有基因/废弃基因查重，命中即丢弃提案）、范围校验（`category` 合法、字段齐全，质检脚本已查）、通过者以 `status: candidate, fitness: null` 登记进 `gene_pool.json`，下一轮由探索路线验证。
+
+**知识演化叙述（H2 分层模型）**：收集完成后调用 prose_render.py 生成 `{work_dir}/knowledge_evolution.md`（必须行文的知识散文由 headless 小模型会话渲染，不占父会话大模型 token）：
+
+```bash
+python3 .claude/skills/triton-agent-loop/scripts/prose_render.py \
+  --kind knowledge_evolution \
+  --json route-*/knowledge_pool_update.json \
+  --out {work_dir}/knowledge_evolution.md
+```
+
+prose_model 从 manifest `algorithm_params.prose_model` 读取（默认 haiku 级）。脚本失败（超时/非零退出）**直接跳过**，产物缺此文件不阻塞后续步骤，禁止重试超过 1 次。
 
 ```text
 ## Genetic Evolution Summary (Generation 2)
@@ -527,7 +593,7 @@ Best: route-1, speedup=1.92
 
 ### 9.2 写入 report.md
 
-包含：基本信息、B1/B2 摘要（Round1）、基因池状态（Round2+）、路线对比表、最终结果。
+包含：基本信息、B1/B2 摘要（Round1）、基因池状态（Round2+）、路线对比表、最终结果。表格与字段用模板渲染（render_report.py，零 token）；叙述性总结段可委托 prose_render.py（H2 小模型会话）行文，失败则跳过叙述段。
 
 ### 9.3 写入 `round_journal.md`
 
@@ -536,6 +602,8 @@ Best: route-1, speedup=1.92
 - **Round 1**：B1 原子分解思路、B2 融合分析决策、为何选择最终融合方案、各 route 设计差异。
 - **Round > 1**：上轮基因池摘要、本轮基因选择/交叉/变异/新增逻辑、各 route 进化方向、关键修复与瓶颈。
 - 每个 route 的简要 iter/opt_iter 摘要（尝试了哪些参数/融合组合、修复了什么问题、最终取舍）。
+
+**行文分层（H2）**：journal 的叙述部分可委托小模型会话行文——`python3 .claude/skills/triton-agent-loop/scripts/prose_render.py --kind round_journal --round-index {N} --json <本轮 JSON 产物...> --out {work_dir}/round_journal.md`，父会话只在其输出上补充推理性结论（设计取舍理由）；脚本失败则父会话自行撰写，不阻塞。
 
 建议格式：
 

@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "route_id": "route-1",
+  "fusion_id": "F1",
+  "gen_iterations": 2,
+  "internal_rounds": 3,
+  "best_speedup": 1.85,
+  "best_task_duration_us": 1234.5,
+  "convergence": {
+    "converged": true,
+    "rounds_completed": 3,
+    "last_2_rounds_change_pct": [1.2, 0.8],
+    "best_round": 3
+  },
+  "knowledge": {
+    "active_units": ["K1", "K2"],
+    "deleted_units": ["K3"],
+    "distilled": true,
+    "speedup_exceeds_10pct": true
+  },
+  "perf_data": "...同现有格式..."
+}

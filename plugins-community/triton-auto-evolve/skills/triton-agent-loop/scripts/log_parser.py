@@ -108,18 +108,54 @@ class StreamJsonReadableParser:
             return
 
         etype = event.get("type")
+
         if etype == "assistant":
-            self._handle_assistant(event)
-        elif etype == "user":
-            self._handle_user(event)
-        elif etype == "stream_event":
-            self._handle_stream_event(event)
-        elif etype == "system":
+            self._handle_assistant(event.get("message", {}))
+            return
+
+        if etype == "user":
+            msg = event.get("message", {})
+            for block in msg.get("content", []):
+                if block.get("type") == "tool_result":
+                    self._write_result(block.get("content"))
+            return
+
+        if etype == "system":
+            return
+
+        if etype == "stream_event":
+            se = event.get("event", {})
+            stype = se.get("type")
+
+            if stype == "thinking_delta":
+                delta = se.get("thinking", "")
+                if delta:
+                    self.thinking_buffer.append(delta)
+
+            elif stype == "text":
+                delta = se.get("text", "")
+                if delta:
+                    self.text_buffer.append(delta)
+
+            elif stype == "message_stop":
+                self._flush_thinking()
+                self._flush_text()
+
             return
 
     def flush(self) -> None:
         self._flush_thinking()
         self._flush_text()
+
+    def _handle_assistant(self, msg: dict) -> None:
+        for block in msg.get("content", []):
+            btype = block.get("type")
+            if btype == "tool_use":
+                self._write_tool(block.get("name", ""), block.get("input", {}))
+            elif btype == "text":
+                text = block.get("text", "").strip()
+                if text:
+                    self.text_buffer.append(text)
 
     def _flush_thinking(self) -> None:
         if self.thinking_buffer:
@@ -149,39 +185,6 @@ class StreamJsonReadableParser:
         self.out.write(f"[结果] {_format_tool_result(result)}\n")
         self.out.flush()
 
-    def _handle_assistant(self, event: Dict[str, Any]) -> None:
-        msg = event.get("message", {})
-        for block in msg.get("content", []):
-            btype = block.get("type")
-            if btype == "tool_use":
-                self._write_tool(block.get("name", ""), block.get("input", {}))
-            elif btype == "text":
-                text = block.get("text", "").strip()
-                if text:
-                    self.text_buffer.append(text)
-
-    def _handle_user(self, event: Dict[str, Any]) -> None:
-        msg = event.get("message", {})
-        for block in msg.get("content", []):
-            if block.get("type") == "tool_result":
-                self._write_result(block.get("content"))
-
-    def _handle_stream_event(self, event: Dict[str, Any]) -> None:
-        se = event.get("event", {})
-        stype = se.get("type")
-
-        if stype == "thinking_delta":
-            delta = se.get("thinking", "")
-            if delta:
-                self.thinking_buffer.append(delta)
-        elif stype == "text":
-            delta = se.get("text", "")
-            if delta:
-                self.text_buffer.append(delta)
-        elif stype == "message_stop":
-            self._flush_thinking()
-            self._flush_text()
-
 
 def parse_stream_json_log(raw_path: str, readable_path: str) -> None:
     if not raw_path or not readable_path:
@@ -197,7 +200,7 @@ def parse_stream_json_log(raw_path: str, readable_path: str) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     if len(sys.argv) < 3:
         logger.error("Usage: python log_parser.py <raw.log> <readable.log>")
         sys.exit(1)

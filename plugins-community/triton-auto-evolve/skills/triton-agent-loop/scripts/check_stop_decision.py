@@ -79,98 +79,80 @@ def _read_rounds_from_summaries(op_dir: Path) -> list[dict[str, Any]]:
     return rounds
 
 
-def _effective_best_speedup(
-    op_dir: Path,
-    best_speedup: float,
-    warnings: list[str],
+def _evaluate_c1(effective_best_speedup: float, target_speedup: float) -> tuple[bool, str]:
+    """Evaluate C1 (target reached)."""
+    if isinstance(effective_best_speedup, (int, float)) and isinstance(target_speedup, (int, float)):
+        if math.isfinite(effective_best_speedup) and target_speedup > 0:
+            c1_met = effective_best_speedup >= target_speedup
+            return c1_met, (
+                f"best_speedup({effective_best_speedup:.4f}) "
+                f"{'>=' if c1_met else '<'}"
+                f" target_speedup({target_speedup})"
+            )
+        return False, f"invalid values: best_speedup={effective_best_speedup}, target_speedup={target_speedup}"
+    return False, f"non-numeric values: best_speedup={effective_best_speedup}, target_speedup={target_speedup}"
+
+
+def _read_effective_best_speedup(
+    op_dir: Path, cli_best_speedup: float, result: dict[str, Any],
 ) -> tuple[float, list[dict[str, Any]]]:
-    """Read actual round data and reconcile it with the CLI best_speedup."""
+    """Read round data and compute the effective best speedup."""
     all_rounds = _read_rounds_from_summaries(op_dir)
-    non_idle_entries = [
-        r for r in all_rounds
-        if r.get("best_speedup", 0) > 0 or r.get("phase4_entered", False)
-    ]
-    actual_best_speedup = max(
-        (r.get("best_speedup", 0) for r in non_idle_entries), default=0
-    )
-    if (
-        best_speedup > 0
-        and actual_best_speedup > 0
-        and abs(best_speedup - actual_best_speedup) > 0.001
-    ):
-        warnings.append(
-            f"CLI best_speedup({best_speedup:.4f}) differs from actual max "
+    non_idle_entries = [r for r in all_rounds if r.get("best_speedup", 0) > 0 or r.get("phase4_entered", False)]
+    actual_best_speedup = max((r.get("best_speedup", 0) for r in non_idle_entries), default=0)
+    if cli_best_speedup > 0 and actual_best_speedup > 0 and abs(cli_best_speedup - actual_best_speedup) > 0.001:
+        result.setdefault("warnings", []).append(
+            f"CLI best_speedup({cli_best_speedup:.4f}) differs from actual max "
             f"from summary.json({actual_best_speedup:.4f}). Using actual value."
         )
-    return max(best_speedup, actual_best_speedup), non_idle_entries
-
-
-def _evaluate_c1(effective_best_speedup: float, target_speedup: float) -> tuple[bool, str]:
-    """Evaluate C1: target speedup reached."""
-    if not (
-        isinstance(effective_best_speedup, (int, float))
-        and isinstance(target_speedup, (int, float))
-    ):
-        return False, (
-            f"non-numeric values: best_speedup={effective_best_speedup}, "
-            f"target_speedup={target_speedup}"
-        )
-    if not (math.isfinite(effective_best_speedup) and target_speedup > 0):
-        return False, (
-            f"invalid values: best_speedup={effective_best_speedup}, "
-            f"target_speedup={target_speedup}"
-        )
-    met = effective_best_speedup >= target_speedup
-    detail = (
-        f"best_speedup({effective_best_speedup:.4f}) "
-        f"{'>=' if met else '<'} target_speedup({target_speedup})"
-    )
-    return met, detail
-
-
-def _evaluate_c2(non_idle_count: int, max_rounds: int) -> tuple[bool, str]:
-    """Evaluate C2: max rounds reached."""
-    met = non_idle_count >= max_rounds
-    detail = (
-        f"non-idle rounds({non_idle_count}) "
-        f"{'>=' if met else '<'} max_rounds({max_rounds})"
-    )
-    return met, detail
-
-
-def _write_stop_lock(
-    op_dir: Path,
-    current_round: int,
-    reason: str,
-    conditions_met: list[str],
-    warnings: list[str],
-) -> None:
-    """Persist the transition lock that releases the Phase 7 gate."""
-    lock = {
-        "action": "stop",
-        "transition_at": datetime.now(timezone.utc).isoformat(),
-        "reason": reason,
-        "from_round": current_round,
-        "state_after": {
-            "current_round": current_round,
-            "last_phase": 7,
-            "status": "completed" if current_round > 0 else "active",
-        },
-        "conditions_met": conditions_met,
-    }
-    lock_path = op_dir / ".transition_lock.json"
-    try:
-        lock_path.write_text(
-            json.dumps(lock, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8"
-        )
-    except OSError as exc:
-        warnings.append(f"failed to write stop lock: {exc}")
+    return max(cli_best_speedup, actual_best_speedup), non_idle_entries
 
 
 @dataclass
-class StopDecisionRequest:
-    """Inputs for the objective C1/C2 stop-condition evaluation."""
+class StopChecks:
+    """Stop condition evaluation results."""
+
+    c1_met: bool
+    c1_detail: str
+    c2_met: bool
+    c2_detail: str
+    strategy_stop_met: bool
+    strategy_detail: str
+
+
+def _assemble_result(result: dict[str, Any], checks: StopChecks) -> None:
+    """Assemble the stop decision result."""
+    conditions_met: list[str] = []
+    if checks.c1_met:
+        conditions_met.append("C1")
+    if checks.c2_met:
+        conditions_met.append("C2")
+    if checks.strategy_stop_met:
+        conditions_met.append("strategy_stop")
+
+    result["conditions_met"] = conditions_met
+    result["checks"] = {
+        "C1": {"met": checks.c1_met, "detail": checks.c1_detail},
+        "C2": {"met": checks.c2_met, "detail": checks.c2_detail},
+        "strategy_stop": {"met": checks.strategy_stop_met, "detail": checks.strategy_detail},
+    }
+
+    if checks.c1_met:
+        result["can_stop"] = True
+        result["reason"] = "C1: target_reached"
+    elif checks.c2_met:
+        result["can_stop"] = True
+        result["reason"] = "C2: max_rounds_reached"
+    elif checks.strategy_stop_met:
+        result["can_stop"] = True
+        result["reason"] = "strategy_recommends_stop"
+    else:
+        result["reason"] = "no stop condition met (C1/C2 not met)"
+
+
+@dataclass
+class StopDecisionSpec:
+    """Inputs for the C1/C2 stop-condition evaluation."""
 
     op_dir: Path | str
     current_round: int = 0
@@ -180,15 +162,14 @@ class StopDecisionRequest:
     algorithm_recommends_stop: bool = False
 
 
-def check_stop_decision(req: StopDecisionRequest) -> dict[str, Any]:
-    """Objectively evaluate C1/C2 stop conditions and strategy stop recommendation.
-
-    Reads round data DIRECTLY from opt-round-*/summary.json files.
-    Does NOT trust round_index.json (which the model can manipulate).
-
-    Returns a structured decision that the Agent MUST obey.
-    """
-    op_dir = req.op_dir
+def check_stop_decision(spec: StopDecisionSpec) -> dict[str, Any]:
+    """Objectively evaluate C1/C2 stop conditions from summary.json (not round_index.json)."""
+    op_dir = spec.op_dir
+    current_round = spec.current_round
+    best_speedup = spec.best_speedup
+    target_speedup = spec.target_speedup
+    max_rounds = spec.max_rounds
+    algorithm_recommends_stop = spec.algorithm_recommends_stop
     if isinstance(op_dir, str):
         op_dir = Path(op_dir)
     result: dict[str, Any] = {
@@ -197,46 +178,45 @@ def check_stop_decision(req: StopDecisionRequest) -> dict[str, Any]:
         "conditions_met": [],
         "checks": {},
     }
-    warnings: list[str] = result.setdefault("warnings", [])
 
-    effective_best_speedup, non_idle_entries = _effective_best_speedup(
-        op_dir, req.best_speedup, warnings
-    )
-    c1_met, c1_detail = _evaluate_c1(effective_best_speedup, req.target_speedup)
-    c2_met, c2_detail = _evaluate_c2(len(non_idle_entries), req.max_rounds)
+    # ── Read round data from summary.json (authoritative source) ──
+    effective_best_speedup, non_idle_entries = _read_effective_best_speedup(op_dir, best_speedup, result)
 
-    strategy_stop_met = req.algorithm_recommends_stop
-    strategy_detail = f"algorithm_recommends_stop={req.algorithm_recommends_stop}"
+    c1_met, c1_detail = _evaluate_c1(effective_best_speedup, target_speedup)
+    non_idle_count = len(non_idle_entries)
+    c2_met = non_idle_count >= max_rounds
+    c2_detail = f"non-idle rounds({non_idle_count}) {'>=' if c2_met else '<'} max_rounds({max_rounds})"
+    strategy_stop_met = algorithm_recommends_stop
+    strategy_detail = f"algorithm_recommends_stop={algorithm_recommends_stop}"
 
-    conditions_met: list[str] = []
-    if c1_met:
-        conditions_met.append("C1")
-    if c2_met:
-        conditions_met.append("C2")
-    if strategy_stop_met:
-        conditions_met.append("strategy_stop")
+    # ── Assemble result ──
+    _assemble_result(result, StopChecks(
+        c1_met=c1_met, c1_detail=c1_detail, c2_met=c2_met, c2_detail=c2_detail,
+        strategy_stop_met=strategy_stop_met, strategy_detail=strategy_detail,
+    ))
 
-    result["conditions_met"] = conditions_met
-    result["checks"] = {
-        "C1": {"met": c1_met, "detail": c1_detail},
-        "C2": {"met": c2_met, "detail": c2_detail},
-        "strategy_stop": {"met": strategy_stop_met, "detail": strategy_detail},
-    }
-
-    if c1_met:
-        result["can_stop"] = True
-        result["reason"] = "C1: target_reached"
-    elif c2_met:
-        result["can_stop"] = True
-        result["reason"] = "C2: max_rounds_reached"
-    elif strategy_stop_met:
-        result["can_stop"] = True
-        result["reason"] = "strategy_recommends_stop"
-    else:
-        result["reason"] = "no stop condition met (C1/C2 not met)"
-
+    # ── Write transition lock on stop decision (releases Phase 7 gate) ──
     if result["can_stop"]:
-        _write_stop_lock(op_dir, req.current_round, result["reason"], conditions_met, warnings)
+        lock = {
+            "action": "stop",
+            "transition_at": datetime.now(timezone.utc).isoformat(),
+            "reason": result["reason"],
+            "from_round": current_round,
+            "state_after": {
+                "current_round": current_round,
+                "last_phase": 7,
+                "status": "completed" if current_round > 0 else "active",
+            },
+            "conditions_met": result["conditions_met"],
+        }
+        lock_path = op_dir / ".transition_lock.json"
+        try:
+            lock_path.write_text(
+                json.dumps(lock, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8"
+            )
+        except OSError as exc:
+            result.setdefault("warnings", []).append(f"failed to write stop lock: {exc}")
 
     return result
 
@@ -264,16 +244,14 @@ def main() -> int:
         }) + "\n")
         return 1
 
-    result = check_stop_decision(
-        StopDecisionRequest(
-            op_dir=op_dir,
-            current_round=args.current_round,
-            best_speedup=args.best_speedup,
-            target_speedup=args.target_speedup,
-            max_rounds=args.max_rounds,
-            algorithm_recommends_stop=args.algorithm_recommends_stop,
-        )
-    )
+    result = check_stop_decision(StopDecisionSpec(
+        op_dir=op_dir,
+        current_round=args.current_round,
+        best_speedup=args.best_speedup,
+        target_speedup=args.target_speedup,
+        max_rounds=args.max_rounds,
+        algorithm_recommends_stop=args.algorithm_recommends_stop,
+    ))
     sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     return 0 if result["can_stop"] else 1
 

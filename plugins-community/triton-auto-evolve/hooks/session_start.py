@@ -25,8 +25,7 @@ import logging
 import sys
 from pathlib import Path
 
-from _common import is_worker_mode as _is_worker_mode
-from _common import resolve_workspace as _resolve_workspace
+from _hook_common import is_worker_mode, resolve_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +97,7 @@ def _build_context_for_tracker(tracker: dict[str, object]) -> list[str]:
 
 
 def _build_single_context(tracker: dict[str, object]) -> str:
+    """Build the context for a single existing tracker."""
     status = tracker.get("status", "unknown")
     round_num = tracker.get("current_round", 0)
     algorithm = tracker.get("algorithm")
@@ -110,36 +110,30 @@ def _build_single_context(tracker: dict[str, object]) -> str:
     ]
     if algorithm and run_tag:
         lines[-1] += f" Algorithm: `{algorithm}`, run_tag: `{run_tag}`."
-    # Reuse per-tracker formatting but strip the leading bullet header
     per_tracker_lines = _build_context_for_tracker(tracker)
     for line in per_tracker_lines[1:]:
-        if line.startswith("  - "):
-            lines.append(line)
-        else:
-            lines.append(f"  {line}")
+        lines.append(line if line.startswith("  - ") else f"  {line}")
 
     if status == "active":
-        lines.extend([
-            "",
-            "The last round appears to be incomplete. "
-            "You can resume by asking the agent to **continue the previous round**, "
-            "or start a fresh task to begin a new optimization session.",
-        ])
+        lines.extend(["", "The last round appears to be incomplete. You can resume by asking the agent to "
+                              "**continue the previous round**, or start a fresh task to begin a new "
+                              "optimization session."])
     elif status == "completed":
-        lines.extend([
-            "",
-            "The last round completed successfully. "
-            "You can continue with a new round or start a fresh task.",
-        ])
+        lines.extend(["", "The last round completed successfully. You can continue with a new round or "
+                              "start a fresh task."])
     elif status == "failed":
-        lines.extend([
-            "",
-            "The last round failed. You may retry or start a new task.",
-        ])
+        lines.extend(["", "The last round failed. You may retry or start a new task."])
     return "\n".join(lines)
 
 
-def _build_multi_context(trackers: list[dict[str, object]]) -> str:
+def _build_context(trackers: list[dict[str, object]]) -> str | None:
+    if not trackers:
+        return None
+
+    if len(trackers) == 1:
+        return _build_single_context(trackers[0])
+
+    # Multiple active/completed sessions
     lines = [
         "## Previous Optimization Sessions Detected",
         "",
@@ -166,18 +160,10 @@ def _build_multi_context(trackers: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
-def _build_context(trackers: list[dict[str, object]]) -> str | None:
-    if not trackers:
-        return None
-    if len(trackers) == 1:
-        return _build_single_context(trackers[0])
-    return _build_multi_context(trackers)
-
-
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     # Workers are spawned with a manifest; they do not need session recovery context.
-    if _is_worker_mode():
+    if is_worker_mode():
         return 0
 
     try:
@@ -189,7 +175,7 @@ def main() -> int:
     if not isinstance(payload, dict):
         return 0
 
-    workspace = _resolve_workspace(payload)
+    workspace = resolve_workspace(payload)
     if workspace is None:
         return 0
 

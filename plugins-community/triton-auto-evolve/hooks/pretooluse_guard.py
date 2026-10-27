@@ -83,14 +83,13 @@ def _hooks_dir() -> Path:
 _PROTECTED_PATH_PATTERNS: list[re.Pattern] | None = None
 
 
-def _compile_patterns(cfg: dict) -> list[re.Pattern]:
-    """Compile the ``protected_patterns`` entries, skipping malformed ones."""
+def _compile_patterns(patterns_cfg: list[str]) -> list[re.Pattern]:
+    """Compile protected patterns, ignoring malformed ones."""
     patterns: list[re.Pattern] = []
-    for raw in cfg.get("protected_patterns", []):
+    for p in patterns_cfg:
         try:
-            patterns.append(re.compile(raw))
+            patterns.append(re.compile(p))
         except re.error:
-            # Ignore malformed patterns silently
             pass
     return patterns
 
@@ -105,12 +104,12 @@ def _load_guard_config() -> list[re.Pattern]:
     if _PROTECTED_PATH_PATTERNS is not None:
         return _PROTECTED_PATH_PATTERNS
 
-    patterns: list[re.Pattern] = []
     config_path = get_plugin_root() / "hooks" / "guard-config.json"
+    patterns: list[re.Pattern] = []
     if config_path.is_file():
         try:
             cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            patterns = _compile_patterns(cfg)
+            patterns = _compile_patterns(cfg.get("protected_patterns", []))
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -544,35 +543,38 @@ def check_bash(tool_input: dict) -> str | None:
     if not command:
         return None
 
-    # Patterns that target hooks/ or infrastructure files
+    # Patterns that target hooks/ or infrastructure files.
+    # 收窄原则(R10 后实测误拦修复): ① 动词加 \b 词边界, 防 lsattr 等词内误匹配;
+    # ② [^;|&]*? 限定不跨命令分隔符(; | && ||)与 fd 复制目标(&), 防前段命令或
+    #    2>/dev/null、2>&1 的重定向段殃及后段路径; 裸 > 保留, 1>/2> 真覆写仍拦。
     dangerous_patterns = [
         # Direct file operations on hooks/
-        (r'(?:rm|mv|cp|chmod|chattr)\s+(?:-rf|-r|-f)?\s*.*?hooks/',
+        (r'\b(?:rm|mv|cp|chmod|chattr)\b[^;|&]*?hooks/',
          "禁止删除、移动或修改 hooks/ 目录下的文件"),
-        (r'rm\s+(?:-rf|-r|-f)?\s*.*?pretooluse_guard\.py',
+        (r'\brm\b(?:\s+-\w+)*\s+[^;|&]*?pretooluse_guard\.py',
          "禁止删除 guard 脚本"),
-        (r'>\s*.*?hooks/.*\.py',
+        (r'>\s*[^;|&]*?hooks/[^;|&]*?\.py',
          "禁止覆写 hooks/ 下的文件"),
         # chattr -i to remove protection
-        (r'chattr\s+-i.*?hooks/',
+        (r'\bchattr\s+-i[^;|&]*?hooks/',
          "禁止移除 hooks/ 文件的不可变属性"),
-        (r'chattr\s+-i.*?pretooluse_guard',
+        (r'\bchattr\s+-i[^;|&]*?pretooluse_guard',
          "禁止移除 guard 脚本的不可变属性"),
         # Editing AGENTS.md via bash
-        (r'(?:>|>>|cat\s+.*?>|sed\s+-i)\s*.*?AGENTS\.md',
+        (r'>\s*[^;|&]*?AGENTS\.md|sed\s+-i[^;|&]*?AGENTS\.md',
          "禁止通过 bash 覆写 AGENTS.md"),
         # Deleting settings.json
-        (r'rm\s+(?:-rf|-r|-f)?\s*.*?settings\.json',
+        (r'\brm\b(?:\s+-\w+)*\s+[^;|&]*?settings\.json',
          "禁止删除 hook 配置文件"),
         # Direct file operations on skills/triton-agent-loop/
-        (r'(?:rm|mv|chattr)\s+(?:-rf|-r|-f)?\s*.*?skills/triton-agent-loop',
+        (r'\b(?:rm|mv|chattr)\b[^;|&]*?skills/triton-agent-loop',
          "禁止删除、移动或修改 skills/triton-agent-loop/ 目录下的控制技能文件"),
-        (r'rm\s+(?:-rf|-r|-f)?\s*.*?triton-agent-loop',
+        (r'\brm\b(?:\s+-\w+)*\s+[^;|&]*?triton-agent-loop',
          "禁止删除 triton-agent-loop 控制技能"),
-        (r'>\s*.*?skills/triton-agent-loop.*\.py',
+        (r'>\s*[^;|&]*?skills/triton-agent-loop[^;|&]*?\.py',
          "禁止覆写 skills/triton-agent-loop/ 下的脚本"),
         # chattr -i on control skills
-        (r'chattr\s+-i.*?skills/triton-agent-loop',
+        (r'\bchattr\s+-i[^;|&]*?skills/triton-agent-loop',
          "禁止移除 control skills 的不可变属性"),
     ]
 
@@ -583,34 +585,8 @@ def check_bash(tool_input: dict) -> str | None:
     return None
 
 
-_DESTRUCTIVE_PATTERNS = [
-    (r'\brm\s+(?:-rf|-r|-f)?\s*', "删除"),
-    (r'\bmv\s+', "移动/重命名"),
-    (r'\bchmod\s+', "修改权限"),
-    (r'\bchattr\s+', "修改属性"),
-    (r'\bsed\s+-i', "原地编辑"),
-    (r'\btee\s+', "通过 tee 覆盖"),
-    (r'(?:>|>>)\s*', "通过重定向覆盖"),
-]
-
-_PY_WRITE_PATTERNS = [
-    # open() in write or append mode.
-    r"""open\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"][wa]['\"]""",
-    # Path.write_text() / Path.write_bytes().
-    r"""Path\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\.\s*write_(?:text|bytes)\s*\(""",
-    # json.dump()/dumps() writing through open().
-    r"""json\.dump(?:s)?\s*\([^,]+,\s*open\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"][wa]['\"]""",
-]
-
-
 def check_bash_protected_paths(tool_input: dict) -> str | None:
-    """Block destructive Bash commands against protected benchmark/user-data paths.
-
-    Read-only access (cat, head, python3 --source_path, cp from protected source
-    to work_dir) is intentionally allowed. Only deletes, moves, in-place edits,
-    permission changes, redirects/tee to, and Python writes into protected paths
-    are blocked.
-    """
+    """Block destructive Bash commands against protected benchmark/user-data paths."""
     command = tool_input.get("command", "")
     if not command:
         return None
@@ -623,7 +599,17 @@ def check_bash_protected_paths(tool_input: dict) -> str | None:
     if not protected_hits:
         return None
 
-    for prefix_pat, action in _DESTRUCTIVE_PATTERNS:
+    # Always-blocked destructive command prefixes
+    destructive_patterns = [
+        (r'\brm\s+(?:-rf|-r|-f)?\s*', "删除"),
+        (r'\bmv\s+', "移动/重命名"),
+        (r'\bchmod\s+', "修改权限"),
+        (r'\bchattr\s+', "修改属性"),
+        (r'\bsed\s+-i', "原地编辑"),
+        (r'\btee\s+', "通过 tee 覆盖"),
+        (r'(?:>|>>)\s*', "通过重定向覆盖"),
+    ]
+    for prefix_pat, action in destructive_patterns:
         if re.search(prefix_pat, command):
             return (
                 f"禁止{action}受保护的源 benchmark / 用户数据路径：{protected_hits[0]}。"
@@ -640,7 +626,13 @@ def check_bash_protected_paths(tool_input: dict) -> str | None:
                 "该路径只读。"
             )
 
-    for pat in _PY_WRITE_PATTERNS:
+    # 检测通过 Python 代码写入受保护路径的两种形态：
+    # 一是以写入/追加模式打开字面量路径的调用；二是 Path 对象的 write_text/write_bytes 调用
+    py_write_patterns = [
+        r"""open\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"][wa]['\"]""",
+        r"""Path\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\.\s*write_(?:text|bytes)\s*\(""",
+    ]
+    for pat in py_write_patterns:
         for m in re.finditer(pat, command):
             captured = m.group(1)
             if captured and _is_protected_path(captured):
@@ -653,7 +645,7 @@ def check_bash_protected_paths(tool_input: dict) -> str | None:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     tool_name, tool_input = get_tool_info()
     worker = _is_worker_mode()
 

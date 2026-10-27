@@ -46,12 +46,17 @@
     - algorithm 不再配置在 config.json 中；由用户在会话开始时选择，并写入 state。
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
+import os
+import random
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,109 +81,20 @@ REPO_OPS_CANDIDATES = [
     SCRIPT_DIR.parents[6] / "ops",
 ]
 
-
-@dataclass
-class MigrateLegacyRequest:
-    """Inputs for migrating a legacy workspace to the new naming scheme."""
-
-    cwd: Path
-    op_name: str
-    algorithm: str
-    run_tag: str
-    legacy_op_dir: Path
-    legacy_state: dict[str, Any]
+_ORCH_T0 = time.monotonic()
 
 
-@dataclass
-class WorkspaceSpec:
-    """Inputs for initializing a Round 1 workspace."""
+def _stage(label: str) -> None:
+    """A4: 轮内阶段打点，逐行 flush（本机 stdout 块缓冲已踩过坑）。
 
-    cwd: Path
-    op_name: str
-    op_dir: Path
-    mode: str
-    task_desc: Path
-    task_json: Path | None
-    gpu_kernel_ref: Path | None
-    gpu_perf_csv: Path | None
-    config: dict[str, Any]
-    algorithm: str
-    run_tag: str = "default"
-
-
-@dataclass
-class ManifestSpec:
-    """Inputs for building a round worker task_manifest.json."""
-
-    op_dir: Path
-    op_name: str
-    round_index: int
-    baseline_dir: Path | None
-    algorithm: str
-    round_strategy: str
-    analysis_policy: str
-    hypothesis: str
-    direction: str
-    evidence_sources: list[str]
-    mode: str
-    task_desc: Path
-    task_json: Path | None
-    gpu_kernel_ref: Path | None
-    gpu_perf_csv: Path | None
-    config: dict[str, Any]
-    arch: str = "ascend910b1"
-    lineage_summary: list[dict[str, Any]] | None = None
-    experience_file: str | None = None
-    global_baseline_dir: Path | None = None
-    global_baseline_speedup: float = 1.0
-    decision_metadata: dict[str, Any] | None = None
-
-
-@dataclass
-class StopDecisionRequest:
-    """Inputs for the stop-decision subprocess wrapper."""
-
-    op_dir: Path
-    current_round: int
-    best_speedup: float
-    target_speedup: float
-    max_rounds: int
-    algorithm_recommends_stop: bool = False
-
-
-@dataclass
-class PrepareNextRoundRequest:
-    """Inputs for preparing the next round via transition_next_round.py."""
-
-    op_dir: Path
-    current_round: int
-    decision: RoundDecision
-    config: dict[str, Any]
-    round_index: list[dict[str, Any]]
-    algorithm: str
-    op_category: str | None = None
-    global_baseline_dir: str | None = "global_baseline"
-    global_baseline_speedup: float = 1.0
-
-
-@dataclass
-class OrchestratorConfig:
-    """CLI-driven inputs for a full orchestrator run."""
-
-    cwd: Path
-    op_name: str
-    mode: str
-    task_desc: Path
-    task_json: Path | None
-    gpu_kernel_ref: Path | None
-    gpu_perf_csv: Path | None
-    timeout: int = 7200
-    op_category: str | None = None
-    arch: str = "ascend910b1"
-    algorithm: str | None = None
-    run_tag: str = "default"
-    migrate_legacy: str | None = None
-    detect_legacy: bool = False
+    定位 summary(N)→manifest(N+1) 轮间过渡异常的观测基础：各阶段耗时一目了然。
+    """
+    logger.info(
+        "[timing] +%8.1fs %s %s",
+        time.monotonic() - _ORCH_T0,
+        datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S"),
+        label,
+    )
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -226,7 +142,7 @@ def select_algorithm(
         raise ValueError("No algorithms are enabled in config.json")
 
     if state and isinstance(state.get("algorithm"), str):
-        algo = state["algorithm"]
+        algo = state.get("algorithm")
         if algo in enabled:
             return algo
 
@@ -255,15 +171,15 @@ def _find_legacy_workspace(
         return None
 
 
-def _first_round_algorithm(round_index_path: Path, discovered: set[str]) -> str | None:
-    """Read the algorithm from the first entry of a legacy round_index.json."""
+def _algorithm_from_round_index(round_index_path: Path, discovered: set[str]) -> str | None:
+    """round_index.json 首条记录的 algorithm 字段（合法且已启用才返回）。"""
     if not round_index_path.is_file():
         return None
     try:
         data = load_json(round_index_path)
     except ValueError:
         return None
-    if not (isinstance(data, list) and data):
+    if not isinstance(data, list) or not data:
         return None
     algo = data[0].get("algorithm")
     if isinstance(algo, str) and algo in discovered:
@@ -271,8 +187,8 @@ def _first_round_algorithm(round_index_path: Path, discovered: set[str]) -> str 
     return None
 
 
-def _summary_algorithm(legacy_op_dir: Path, discovered: set[str]) -> str | None:
-    """Read the algorithm from the first legacy summary.json that declares one."""
+def _algorithm_from_summaries(legacy_op_dir: Path, discovered: set[str]) -> str | None:
+    """opt-round-*/summary.json 中首个合法的 algorithm 字段。"""
     for summary_path in sorted(legacy_op_dir.glob("opt-round-*/summary.json")):
         try:
             algo = load_json(summary_path).get("algorithm")
@@ -292,12 +208,10 @@ def _infer_algorithm_from_legacy(
     state_algo = legacy_state.get("algorithm")
     if isinstance(state_algo, str) and state_algo in discovered:
         return state_algo
-
-    algo = _first_round_algorithm(legacy_op_dir / "round_index.json", discovered)
-    if algo is not None:
-        return algo
-
-    return _summary_algorithm(legacy_op_dir, discovered)
+    from_index = _algorithm_from_round_index(legacy_op_dir / "round_index.json", discovered)
+    if from_index is not None:
+        return from_index
+    return _algorithm_from_summaries(legacy_op_dir, discovered)
 
 
 def _discover_algorithm_from_new_state(cwd: Path, op_name: str) -> str | None:
@@ -380,29 +294,36 @@ def _build_legacy_report(
     }
 
 
-def _migrate_legacy_workspace(req: MigrateLegacyRequest) -> Path:
+def _migrate_legacy_workspace(
+    cwd: Path,
+    op_name: str,
+    algorithm: str,
+    run_tag: str,
+    legacy: tuple[Path, dict[str, Any]],
+) -> Path:
     """Migrate a legacy workspace to the new naming scheme.
 
     Returns the new operator directory path.
     """
-    new_op_dir = req.cwd / "triton_ascend_output" / f"{req.op_name}-{req.algorithm}-{req.run_tag}"
-    new_state_path = req.cwd / ".triton-agent" / f"state-{new_op_dir.name}.json"
+    legacy_op_dir, legacy_state = legacy
+    new_op_dir = cwd / "triton_ascend_output" / f"{op_name}-{algorithm}-{run_tag}"
+    new_state_path = cwd / ".triton-agent" / f"state-{new_op_dir.name}.json"
     if new_op_dir.exists():
         raise FileExistsError(f"Migration target already exists: {new_op_dir}")
 
-    req.legacy_op_dir.rename(new_op_dir)
+    legacy_op_dir.rename(new_op_dir)
 
-    current_round = req.legacy_state.get("current_round", 1)
+    current_round = legacy_state.get("current_round", 1)
     work_dir = new_op_dir / f"opt-round-{current_round}"
-    req.legacy_state.update(
+    legacy_state.update(
         {
-            "algorithm": req.algorithm,
-            "run_tag": req.run_tag,
-            "algorithm_reference": _algorithm_reference(req.algorithm),
+            "algorithm": algorithm,
+            "run_tag": run_tag,
+            "algorithm_reference": _algorithm_reference(algorithm),
             "work_dir": str(work_dir),
         }
     )
-    save_json(new_state_path, req.legacy_state)
+    save_json(new_state_path, legacy_state)
 
     # Ensure a round_index.json exists so the migration is treated as a recovery
     # rather than a fresh initialization.
@@ -410,7 +331,7 @@ def _migrate_legacy_workspace(req: MigrateLegacyRequest) -> Path:
     if not round_index_path.is_file():
         save_json(round_index_path, [])
 
-    legacy_state_path = req.cwd / ".triton-agent" / f"state-{req.op_name}.json"
+    legacy_state_path = cwd / ".triton-agent" / f"state-{op_name}.json"
     if legacy_state_path.is_file():
         legacy_state_path.write_text(
             json.dumps(
@@ -429,12 +350,13 @@ def _migrate_legacy_workspace(req: MigrateLegacyRequest) -> Path:
     return new_op_dir
 
 
-def _init_global_baseline(op_dir: Path, op_name: str, task_desc: Path) -> None:
+def _write_global_baseline(op_dir: Path, op_name: str, task_desc: Path) -> None:
     """Copy the user task file as the immutable global baseline."""
     global_baseline_dir = op_dir / "global_baseline"
     global_baseline_dir.mkdir(parents=True, exist_ok=True)
+    global_baseline_code = global_baseline_dir / f"{op_name}_generated.py"
     if task_desc.is_file():
-        shutil.copy2(task_desc, global_baseline_dir / f"{op_name}_generated.py")
+        shutil.copy2(task_desc, global_baseline_code)
     baseline_info = {
         "source_path": str(task_desc),
         "baseline_speedup": 1.0,
@@ -444,7 +366,7 @@ def _init_global_baseline(op_dir: Path, op_name: str, task_desc: Path) -> None:
 
 
 def _write_experience_file(op_dir: Path, op_name: str, algorithm: str, run_tag: str) -> None:
-    """Write the operator-level experience file (private to this run)."""
+    """Write the operator-level experience file."""
     experience_path = op_dir / "operator_experience.md"
     experience_path.write_text(
         f"# Operator Experience: {op_name} ({algorithm}/{run_tag})\n\n"
@@ -457,41 +379,32 @@ def _write_experience_file(op_dir: Path, op_name: str, algorithm: str, run_tag: 
     )
 
 
-@dataclass
-class InitialStateSpec:
-    """Inputs for writing the initial .triton-agent/ state file."""
-
-    cwd: Path
-    op_dir: Path
-    op_name: str
-    algorithm: str
-    run_tag: str
-    algorithm_ref: str
-    round_dir: Path
-
-
-def _write_initial_state(spec: InitialStateSpec) -> None:
-    """Write the initial .triton-agent/ state file."""
+def _write_initial_state(
+    cfg: OrchestratorConfig, op_dir: Path, algorithm: str, round_dir: Path, algorithm_ref: str,
+) -> None:
+    """Write the initial state file."""
     state = {
-        "op_name": spec.op_name,
-        "algorithm": spec.algorithm,
-        "run_tag": spec.run_tag,
+        "op_name": cfg.op_name,
+        "algorithm": algorithm,
+        "run_tag": cfg.run_tag,
         "status": "active",
         "current_round": 1,
-        "algorithm_reference": spec.algorithm_ref,
+        "algorithm_reference": algorithm_ref,
         "rounds": {"1": {"status": "active", "round_dir": "opt-round-1"}},
         "phase": "round_active",
-        "work_dir": str(spec.round_dir),
+        "work_dir": str(round_dir),
         "last_phase": 0,
         "performance_history": [],
         "direction_history": [],
     }
-    state_dir = spec.cwd / ".triton-agent"
+    state_dir = cfg.cwd / ".triton-agent"
     state_dir.mkdir(parents=True, exist_ok=True)
-    save_json(state_dir / f"state-{spec.op_dir.name}.json", state)
+    save_json(state_dir / f"state-{op_dir.name}.json", state)
 
 
-def _write_initial_summary(round_dir: Path, op_name: str, algorithm: str, config: dict[str, Any]) -> None:
+def _write_initial_summary(
+    round_dir: Path, op_name: str, algorithm: str, target_speedup: float,
+) -> None:
     """Write the Round 1 summary.json."""
     summary = {
         "round_index": 1,
@@ -507,13 +420,15 @@ def _write_initial_summary(round_dir: Path, op_name: str, algorithm: str, config
         "status": "active",
         "best_speedup": 0.0,
         "success": False,
-        "target_speedup": config.get("target_speedup", 5),
+        "target_speedup": target_speedup,
     }
     save_json(round_dir / "summary.json", summary)
 
 
-def _write_initial_round_index(op_dir: Path, op_name: str, algorithm: str, config: dict[str, Any]) -> None:
-    """Write the Round 1 round_index.json."""
+def _write_initial_round_index(
+    op_dir: Path, op_name: str, algorithm: str, target_speedup: float,
+) -> None:
+    """Write the initial round_index.json."""
     round_index = [{
         "round_index": 1,
         "round_dir": "opt-round-1",
@@ -535,35 +450,81 @@ def _write_initial_round_index(op_dir: Path, op_name: str, algorithm: str, confi
         "global_baseline_speedup": 1.0,
         "consecutive_low_gain_count": 0,
         "round_type": "active",
-        "target_speedup": config.get("target_speedup", 5),
+        "target_speedup": target_speedup,
     }]
     save_json(op_dir / "round_index.json", round_index)
 
 
-def init_workspace(spec: WorkspaceSpec) -> Path:
+def init_workspace(
+    cfg: OrchestratorConfig, op_dir: Path, config: dict[str, Any], algorithm: str,
+) -> Path:
     """Initialize workspace for Round 1."""
-    algorithm_ref = _algorithm_reference(spec.algorithm)
-
-    round_dir = spec.op_dir / "opt-round-1"
+    algorithm_ref = _algorithm_reference(algorithm)
+    round_dir = op_dir / "opt-round-1"
     round_dir.mkdir(parents=True, exist_ok=True)
-
-    _init_global_baseline(spec.op_dir, spec.op_name, spec.task_desc)
-    _write_experience_file(spec.op_dir, spec.op_name, spec.algorithm, spec.run_tag)
-    _write_initial_state(
-        InitialStateSpec(
-            cwd=spec.cwd,
-            op_dir=spec.op_dir,
-            op_name=spec.op_name,
-            algorithm=spec.algorithm,
-            run_tag=spec.run_tag,
-            algorithm_ref=algorithm_ref,
-            round_dir=round_dir,
-        )
+    init_cfg = OrchestratorConfig(
+        cwd=cfg.cwd, op_name=cfg.op_name, mode=cfg.mode, task_desc=cfg.task_desc,
+        task_json=cfg.task_json, gpu_kernel_ref=cfg.gpu_kernel_ref, gpu_perf_csv=cfg.gpu_perf_csv,
+        algorithm=algorithm, run_tag=cfg.run_tag,
     )
-    _write_initial_summary(round_dir, spec.op_name, spec.algorithm, spec.config)
-    _write_initial_round_index(spec.op_dir, spec.op_name, spec.algorithm, spec.config)
+    _write_global_baseline(op_dir, cfg.op_name, cfg.task_desc)
+    _write_experience_file(op_dir, cfg.op_name, algorithm, cfg.run_tag)
+    _write_initial_state(init_cfg, op_dir, algorithm, round_dir, algorithm_ref)
+    target_speedup = config.get("target_speedup", 5)
+    _write_initial_summary(round_dir, cfg.op_name, algorithm, target_speedup)
+    _write_initial_round_index(op_dir, cfg.op_name, algorithm, target_speedup)
 
     return round_dir
+
+
+@dataclass
+class ManifestSpec:
+    """Inputs for writing the round worker's task_manifest.json."""
+
+    op_dir: Path
+    op_name: str
+    round_index: int
+    baseline_dir: Path | None
+    algorithm: str
+    round_strategy: str
+    analysis_policy: str
+    hypothesis: str
+    direction: str
+    evidence_sources: list[str]
+    mode: str
+    task_desc: Path
+    task_json: Path | None
+    gpu_kernel_ref: Path | None
+    gpu_perf_csv: Path | None
+    config: dict[str, Any]
+    arch: str = "ascend910b1"
+    lineage_summary: list[dict[str, Any]] | None = None
+    experience_file: str | None = None
+    global_baseline_dir: Path | None = None
+    global_baseline_speedup: float = 1.0
+    decision_metadata: dict[str, Any] | None = None
+
+
+def _apply_decision_metadata(
+    manifest: dict[str, Any],
+    algorithm: str,
+    decision_metadata: dict[str, Any] | None,
+) -> None:
+    """Forward algorithm-specific metadata and gene-fusion route_mix into the manifest."""
+    if decision_metadata:
+        for key in ("mcts_parent_id", "mcts_selection_path", "mcts_pending_expansion"):
+            if key in decision_metadata:
+                manifest[key] = decision_metadata[key]
+    if algorithm == "gene-fusion" and isinstance(decision_metadata, dict):
+        route_mix = decision_metadata.get("route_mix")
+        if isinstance(route_mix, dict) and "elite_count" in route_mix:
+            manifest["route_mix"] = route_mix
+            adapted = dict(manifest["algorithm_params"] or {})
+            adapted["elite_count"] = route_mix["elite_count"]
+            adapted["exploration_count"] = route_mix["exploration_count"]
+            if route_mix.get("adjust_reason"):
+                adapted["route_mix_adjust"] = route_mix["adjust_reason"]
+            manifest["algorithm_params"] = adapted
 
 
 def build_manifest(spec: ManifestSpec) -> Path:
@@ -574,7 +535,6 @@ def build_manifest(spec: ManifestSpec) -> Path:
     algorithm_reference = _algorithm_reference(spec.algorithm)
     algorithm_params = get_algorithm_params(spec.config, spec.algorithm)
 
-    # Optionally surface the parent round's detailed journal to the sub-agent.
     parent_round_journal: str | None = None
     if spec.baseline_dir is not None:
         journal_path = Path(spec.baseline_dir) / "round_journal.md"
@@ -612,12 +572,7 @@ def build_manifest(spec: ManifestSpec) -> Path:
         "parent_round_journal": parent_round_journal,
     }
 
-    # Forward algorithm-specific metadata from the strategy decision envelope.
-    # For MCTS this includes mcts_parent_id, mcts_selection_path, etc.
-    if spec.decision_metadata:
-        for key in ("mcts_parent_id", "mcts_selection_path", "mcts_pending_expansion"):
-            if key in spec.decision_metadata:
-                manifest[key] = spec.decision_metadata[key]
+    _apply_decision_metadata(manifest, spec.algorithm, spec.decision_metadata)
 
     manifest_path = spec.op_dir / f".task_manifest_{spec.round_index}.json"
     save_json(manifest_path, manifest)
@@ -646,6 +601,472 @@ def dispatch_round(manifest_path: Path, timeout: int = 7200) -> dict[str, Any]:
             }
     except json.JSONDecodeError as exc:
         return {"status": "error", "stderr": f"invalid JSON from dispatch_round.py: {exc}"}
+
+
+def _run_helper(cmd: list[str], timeout: int = 600) -> tuple[int, str]:
+    """Run a helper script; return (returncode, combined output)."""
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return 1, str(exc)
+
+
+def _build_routes_spec(
+    pool: dict[str, Any],
+    params_cfg: dict[str, Any],
+    rng: random.Random,
+    elite_gene_ids: list[str],
+    mix: dict[str, Any],
+) -> list[tuple[str, str, list[str], str]]:
+    """Build the (route_id, route_type, gene_ids, hypothesis) route spec list."""
+    routes_spec: list[tuple[str, str, list[str], str]] = []
+    n_elite = int(mix.get("elite_count", 1) or 0)
+    n_cross = int(mix.get("crossover_count", 1) or 0)
+    n_expl = int(mix.get("exploration_count", 1) or 0)
+    idx = 0
+    for i in range(n_elite):
+        idx += 1
+        genes = elite_gene_ids if i == 0 else gene_ops.mutate(
+            pool, elite_gene_ids, 0.05, rng).get("genes", elite_gene_ids)
+        routes_spec.append((f"route-{idx}", "elite", genes,
+                            f"elite fidelity: {genes}"))
+    pick_i = 0
+    for _ in range(n_cross):
+        idx += 1
+        other = gene_ops.select_combo(pool, rng)
+        crossed = gene_ops.crossover(pool, elite_gene_ids, other,
+                                     float(params_cfg.get("crossover_rate", 0.7)), rng)
+        mutated = gene_ops.mutate(pool, crossed.get("child", elite_gene_ids),
+                                  float(params_cfg.get("mutation_rate", 0.15)), rng)
+        genes = mutated.get("genes", elite_gene_ids)
+        pick_i += 1
+        routes_spec.append((f"route-{idx}", "crossover", genes,
+                            f"crossover elite x pick{pick_i}: {genes}"))
+    for _ in range(n_expl):
+        idx += 1
+        picked = gene_ops.select_combo(pool, rng, include_candidates=True)
+        mutated = gene_ops.mutate(pool, picked, float(params_cfg.get("mutation_rate", 0.15)), rng)
+        genes = mutated.get("genes", picked)
+        routes_spec.append((f"route-{idx}", "exploration", genes,
+                            f"exploration (candidates preferred): {genes}"))
+    return routes_spec
+
+
+def _collect_and_validate(
+    work_dir: Path,
+    routes_spec: list[tuple[str, str, list[str], str]],
+    parallel: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], bool]:
+    """Collect and semantically validate each route; reject invalid ones wholesale."""
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    any_timeout = False
+    for route_id, route_type, gene_ids, _hyp in routes_spec:
+        res = parallel.get(route_id) or {}
+        route_dir = work_dir / route_id
+        rr_path = route_dir / "round_result.json"
+        if res.get("status") == "timeout" or not rr_path.is_file():
+            any_timeout = True
+            rejected.append({"route_id": route_id, "reason": "timeout or no round_result"})
+            continue
+        if res.get("status") != "success":
+            rejected.append({"route_id": route_id, "reason": f"dispatch status={res.get('status')}"})
+            continue
+        vrc, vout = _run_helper(
+            [sys.executable, str(SCRIPT_DIR / "validate_round_result.py"),
+             "--round-result", str(rr_path), "--work-dir", str(route_dir)])
+        try:
+            verdict = json.loads(vout)
+        except json.JSONDecodeError:
+            verdict = {"accepted": False, "rejected": ["verdict_unparseable"]}
+        if vrc != 0 or not verdict.get("accepted"):
+            rejected.append({"route_id": route_id,
+                             "reason": f"validate rejected: {verdict.get('rejected')}"})
+            continue
+        rr = load_json(rr_path)
+        accepted.append({
+            "route_id": route_id, "route_type": route_type, "gene_ids": gene_ids,
+            "speedup": rr.get("best_speedup", 0.0),
+            "best_task_duration_us": rr.get("best_task_duration_us"),
+            "status": "success",
+            "verdict_suspicious": verdict.get("suspicious", []),
+            "round_result": rr,
+        })
+    return accepted, rejected, any_timeout
+
+
+def _merge_proposals(
+    pool: dict[str, Any],
+    accepted: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """H1 下沉：合并 accepted route 的 proposed_genes（去重 + 范围校验，不做推理）。"""
+    allowed_categories = {"tiling", "memory", "compute", "pipeline", "vectorization", "structural"}
+    existing_ids = {g.get("gene_id") for g in pool.get("genes", [])}
+    next_gene_num = 1 + max(
+        (int(str(g.get("gene_id", "")).lstrip("G") or 0) for g in pool.get("genes", [])),
+        default=0,
+    )
+    merged_proposals: list[dict[str, Any]] = []
+    for acc in accepted:
+        for prop in (acc.get("round_result", {}).get("knowledge") or {}).get("proposed_genes") or []:
+            gid = prop.get("gene_id")
+            if not gid or gid in existing_ids:
+                continue
+            if prop.get("category") not in allowed_categories:
+                continue
+            new_gene = {
+                "gene_id": f"G{next_gene_num:03d}",
+                "ku_id": f"P{next_gene_num:03d}",
+                "category": prop["category"],
+                "description": prop.get("description", ""),
+                "source": "route_proposal",
+                "source_priority": 3,
+                "code_target": prop.get("code_target", "kernel body"),
+                "params": prop.get("params") or {},
+                "conflicts_with": [],
+                "status": "candidate",
+                "fitness": None,
+                "evidence": {"bottleneck_tag": prop.get("bottleneck_tag"),
+                             "hypothesis": prop.get("hypothesis"),
+                             "proposed_by": acc["route_id"]},
+            }
+            pool["genes"].append(new_gene)
+            existing_ids.add(new_gene["gene_id"])
+            merged_proposals.append({"gene_id": new_gene["gene_id"], "from": acc["route_id"]})
+            next_gene_num += 1
+    return merged_proposals
+
+
+@dataclass
+class ParentRRSpec:
+    """Inputs for assembling the parent-level round_result.json."""
+
+    work_dir: Path
+    current_round: int
+    config: dict[str, Any]
+    round_index: list[dict[str, Any]]
+    decision: Any
+    baseline_dir: Path
+    mix: dict[str, Any]
+    accepted: list[dict[str, Any]]
+    rejected: list[dict[str, str]]
+    any_timeout: bool
+    merged_proposals: list[dict[str, Any]]
+
+
+def _build_parent_round_result(spec: ParentRRSpec) -> dict[str, Any]:
+    """Assemble the parent-level round_result.json (same shape as parent session)."""
+    prev_best_speedup = max(
+        (float(r.get("best_speedup") or 0.0) for r in spec.round_index
+         if r.get("status") == "success" and r.get("round_index") < spec.current_round),
+        default=0.0,
+    )
+    best_acc = max(spec.accepted, key=lambda r: r["speedup"]) if spec.accepted else None
+    best_speedup = float(best_acc["speedup"]) if best_acc else 0.0
+    parent_rr = {
+        "round_index": spec.current_round,
+        "status": "success" if spec.accepted else ("timeout" if spec.any_timeout else "failed"),
+        "algorithm": "gene-fusion",
+        "best_speedup": best_speedup,
+        "best_task_duration_us": best_acc.get("best_task_duration_us") if best_acc else None,
+        "target_reached": bool(
+            best_speedup >= float(spec.config.get("target_speedup", 5) or 5)),
+        "improvement_made": bool(best_speedup > prev_best_speedup > 0 or
+                                 (best_speedup > 0 and prev_best_speedup == 0)),
+        "effective_metric_source": "kernel",
+        "direction": spec.decision.direction or "",
+        "hypothesis": spec.decision.hypothesis or "",
+        "round_strategy": spec.decision.round_strategy or "exploration",
+        "baseline_dir": str(spec.baseline_dir),
+        "design_summary": (
+            f"Round {spec.current_round} direct dispatch (H1, no parent session): "
+            f"route_mix={spec.mix.get('adjust_reason') or 'default 1/1/1'}; "
+            f"{len(spec.accepted)} accepted, {len(spec.rejected)} rejected"
+            + (f"; rejected: {[(r['route_id'], r['reason']) for r in spec.rejected]}"
+               if spec.rejected else "")
+            + (f"; proposed genes merged: {[p['gene_id'] for p in spec.merged_proposals]}"
+               if spec.merged_proposals else "")),
+        "iter_count": len(spec.accepted),
+        "opt_iter_count": 0,
+        "gene_fusion": {
+            "direct_dispatch": True,
+            "route_mix": spec.mix,
+            "accepted_routes": [a["route_id"] for a in spec.accepted],
+            "rejected_routes": spec.rejected,
+            "proposed_genes_merged": spec.merged_proposals,
+        },
+    }
+    return parent_rr
+
+
+@dataclass
+class GfContext:
+    """Resolved gene-fusion direct-dispatch context."""
+
+    pool: dict[str, Any]
+    fusion_plan: dict[str, Any]
+    decision: Any
+    mix: dict[str, Any]
+    rng: random.Random
+    params_cfg: dict[str, Any]
+    prev_best: str | None
+    elite_gene_ids: list[str]
+
+
+@dataclass
+class GfResolveSpec:
+    """Inputs for resolving the gene-fusion direct-dispatch context."""
+
+    op_dir: Path
+    current_round: int
+    baseline_dir: Path | None
+    config: dict[str, Any]
+    strategy: Any
+    round_index: list[dict[str, Any]]
+    op_category: str | None
+
+
+def _resolve_gf_context(spec: GfResolveSpec) -> GfContext | dict[str, Any]:
+    """Resolve the gene-fusion direct-dispatch context, or return a fallback dict."""
+    op_dir = spec.op_dir
+    current_round = spec.current_round
+    baseline_dir = spec.baseline_dir
+    config = spec.config
+    strategy = spec.strategy
+    round_index = spec.round_index
+    op_category = spec.op_category
+    if baseline_dir is None or not (baseline_dir / "gene_pool.json").is_file():
+        return {"status": "fallback", "reason": "baseline gene_pool.json missing"}
+    try:
+        pool = json.loads((baseline_dir / "gene_pool.json").read_text(encoding="utf-8"))
+        fusion_plan = json.loads((baseline_dir / "fusion_plan.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "fallback", "reason": f"baseline gene_pool/fusion_plan unreadable: {exc}"}
+
+    try:
+        decision = strategy.select_next_round(
+            round_index, op_category=op_category, current_policy="pattern_entry",
+            context={"op_dir": str(op_dir), "current_round": current_round},
+        )
+    except Exception as exc:
+        return {"status": "fallback", "reason": f"strategy decision failed: {exc}"}
+    mix = (decision.metadata or {}).get("route_mix") or {
+        "elite_count": 1, "crossover_count": 1, "exploration_count": 1, "adjust_reason": None,
+    }
+
+    rng = random.Random(os.environ.get("TRITON_GF_DIRECT_SEED") or None)
+    params_cfg = config.get("algorithms", {}).get("gene-fusion", {}).get("params", {})
+    prev_best = pool.get("best_route")
+    elite_gene_ids: list[str] = []
+    for res in pool.get("route_results", []):
+        if res.get("route_id") == prev_best:
+            elite_gene_ids = list(res.get("gene_ids") or [])
+            break
+    if not elite_gene_ids:
+        return {"status": "fallback", "reason": "gene_pool missing best_route gene_ids"}
+
+    return GfContext(
+        pool=pool, fusion_plan=fusion_plan, decision=decision, mix=mix,
+        rng=rng, params_cfg=params_cfg, prev_best=prev_best, elite_gene_ids=elite_gene_ids,
+    )
+
+
+@dataclass
+class RenderSpec:
+    """Inputs for rendering the per-route task manifests."""
+
+    work_dir: Path
+    baseline_dir: Path
+    pool: dict[str, Any]
+    routes_spec: list[tuple[str, str, list[str], str]]
+    op_name: str
+    current_round: int
+    fusion_plan: dict[str, Any]
+    mode: str
+    arch: str
+    task_desc: Path | None
+    task_json: Path | None
+    gpu_kernel_ref: Path | None
+    gpu_perf_csv: Path | None
+    prev_best: str | None
+
+
+def _render_route_manifests(spec: RenderSpec) -> list[Path]:
+    """Render the .task_manifest.json for each route in routes_spec."""
+    manifest_paths: list[Path] = []
+    for route_id, route_type, gene_ids, hypothesis in spec.routes_spec:
+        route_work_dir = spec.work_dir / route_id
+        route_work_dir.mkdir(parents=True, exist_ok=True)
+        fields = gene_ops.build_manifest_fields(
+            spec.pool, route_id, route_type, str(route_work_dir), str(spec.baseline_dir),
+            gene_ids, spec.op_name, spec.current_round, hypothesis=hypothesis,
+        )
+        fields.update({
+            "round_index": spec.current_round,
+            "round_strategy": "exploration",
+            "analysis_policy": "pattern_entry",
+            "fusion_plan": spec.fusion_plan,
+            "mode": spec.mode,
+            "arch": spec.arch,
+            "input_files": {
+                "task_desc": str(spec.task_desc) if spec.task_desc else None,
+                "task_json": str(spec.task_json) if spec.task_json else None,
+                "gpu_kernel_ref": str(spec.gpu_kernel_ref) if spec.gpu_kernel_ref else None,
+                "gpu_perf_csv": str(spec.gpu_perf_csv) if spec.gpu_perf_csv else None,
+            },
+            "genetic_metadata": {**(fields.get("genetic_metadata") or {}),
+                                 "route_type": route_type, "parent_routes": [spec.prev_best or ""]},
+        })
+        mpath = route_work_dir / ".task_manifest.json"
+        save_json(mpath, fields)
+        manifest_paths.append(mpath)
+    return manifest_paths
+
+
+def _dispatch_routes_parallel(
+    work_dir: Path,
+    params_cfg: dict[str, Any],
+    current_round: int,
+    manifest_paths: list[Path],
+) -> dict[str, Any]:
+    """Run dispatch_parallel over the route manifests; returns parallel result or a fallback."""
+    dispatch_script = Path(os.environ.get(
+        "TRITON_DISPATCH_PARALLEL", str(SCRIPT_DIR / "dispatch_parallel.py")))
+    route_timeout = int(params_cfg.get("route_timeout", 3600))
+    _stage(f"round {current_round}: direct dispatch_parallel {len(manifest_paths)} routes")
+    rc, output = _run_helper(
+        [sys.executable, str(dispatch_script),
+         "--manifests", *[str(p) for p in manifest_paths],
+         "--timeout", str(route_timeout)],
+        timeout=route_timeout * len(manifest_paths) + 600,
+    )
+    parallel_path = work_dir / "parallel_result.json"
+    if not parallel_path.is_file():
+        return {"status": "timeout" if rc != 0 else "failed",
+                "reason": f"direct dispatch produced no parallel_result.json: {output[-400:]}"}
+    return load_json(parallel_path)
+
+
+def _record_gene_pool(
+    pool: dict[str, Any],
+    accepted: list[dict[str, Any]],
+    current_round: int,
+    work_dir: Path,
+) -> None:
+    """G6 记账：适应度更新 + tested combos（update_fitness 原地改池，返回值仅 log）。"""
+    gene_ops.update_fitness(pool, accepted, round_index=current_round)
+    pool["route_results"] = [
+        {k: v for k, v in acc.items() if k != "round_result"} for acc in accepted
+    ]
+    if accepted:
+        best_acc = max(accepted, key=lambda r: r["speedup"])
+        pool["best_route"] = best_acc["route_id"]
+        pool["best_speedup"] = best_acc["speedup"]
+        pool["best_task_duration_us"] = best_acc.get("best_task_duration_us")
+    pool["generation"] = current_round - 1
+    pool["round_index"] = current_round
+    save_json(work_dir / "gene_pool.json", pool)
+
+
+def _render_gf_artifacts(work_dir: Path, current_round: int, params_cfg: dict[str, Any]) -> None:
+    """Render report.md and narrative artifacts (best-effort)."""
+    _run_helper([sys.executable, str(SCRIPT_DIR / "render_report.py"),
+                 "--round-result", str(work_dir / "round_result.json"),
+                 "--out", str(work_dir / "report.md")], timeout=120)
+    jp = [str(work_dir / "round_result.json"), str(work_dir / "gene_pool.json")]
+    prose_model = str(params_cfg.get("prose_model") or "claude-haiku-4-5-20251001")
+    _run_helper([sys.executable, str(SCRIPT_DIR / "prose_render.py"),
+                 "--kind", "knowledge_evolution", "--json", *jp,
+                 "--out", str(work_dir / "knowledge_evolution.md"),
+                 "--prose-model", prose_model], timeout=240)
+    _run_helper([sys.executable, str(SCRIPT_DIR / "prose_render.py"),
+                 "--kind", "round_journal", "--round-index", str(current_round),
+                 "--json", *jp,
+                 "--out", str(work_dir / "round_journal.md"),
+                 "--prose-model", prose_model], timeout=240)
+
+
+@dataclass
+class GfDirectSpec:
+    """Inputs for the gene-fusion direct-dispatch path (H1)."""
+
+    op_dir: Path
+    op_name: str
+    current_round: int
+    baseline_dir: Path | None
+    config: dict[str, Any]
+    strategy: Any
+    round_index: list[dict[str, Any]]
+    op_category: str | None
+    task_desc: Path | None
+    task_json: Path | None
+    gpu_kernel_ref: Path | None
+    gpu_perf_csv: Path | None
+    arch: str
+    mode: str
+
+
+def dispatch_gene_fusion_direct(spec: GfDirectSpec) -> dict[str, Any]:
+    """H1 Round 2+ 直派：跳过父 sub agent，编排器直接完成 G0-G6；前置不满足返回 fallback。"""
+    import gene_ops  # 同目录，延迟导入避免非 gene-fusion 路径的开销
+
+    op_dir, op_name = spec.op_dir, spec.op_name
+    current_round, baseline_dir = spec.current_round, spec.baseline_dir
+    config, strategy = spec.config, spec.strategy
+    round_index, op_category = spec.round_index, spec.op_category
+    task_desc, task_json = spec.task_desc, spec.task_json
+    gpu_kernel_ref, gpu_perf_csv = spec.gpu_kernel_ref, spec.gpu_perf_csv
+    arch, mode = spec.arch, spec.mode
+    work_dir = op_dir / f"opt-round-{current_round}"
+    gf = _resolve_gf_context(GfResolveSpec(
+        op_dir=op_dir, current_round=current_round, baseline_dir=baseline_dir, config=config,
+        strategy=strategy, round_index=round_index, op_category=op_category,
+    ))
+    if isinstance(gf, dict):
+        return gf
+    pool, fusion_plan = gf.pool, gf.fusion_plan
+    decision, mix = gf.decision, gf.mix
+    rng, params_cfg = gf.rng, gf.params_cfg
+    prev_best, elite_gene_ids = gf.prev_best, gf.elite_gene_ids
+
+    routes_spec = _build_routes_spec(pool, params_cfg, rng, elite_gene_ids, mix)
+
+    # 渲染 route manifest（build_manifest_fields 结构化字段 + 轮级公共字段）
+    manifest_paths = _render_route_manifests(RenderSpec(
+        work_dir=work_dir, baseline_dir=baseline_dir, pool=pool, routes_spec=routes_spec,
+        op_name=op_name, current_round=current_round, fusion_plan=fusion_plan, mode=mode,
+        arch=arch, task_desc=task_desc, task_json=task_json, gpu_kernel_ref=gpu_kernel_ref,
+        gpu_perf_csv=gpu_perf_csv, prev_best=prev_best,
+    ))
+
+    # 并行派发（TRITON_DISPATCH_PARALLEL 可覆盖为 ops wrapper 以获得钉卡）
+    parallel = _dispatch_routes_parallel(work_dir, params_cfg, current_round, manifest_paths)
+    if parallel.get("status") in ("timeout", "failed"):
+        return parallel
+
+    # 收集 + 语义质检（H1a）：拒收 route 整条剔除
+    accepted, rejected, any_timeout = _collect_and_validate(work_dir, routes_spec, parallel)
+
+    # G6 记账：适应度更新 + tested combos（update_fitness 原地改池，返回值仅 log）
+    _record_gene_pool(pool, accepted, current_round, work_dir)
+
+    # H1 下沉：proposed_genes 合并（去重 + 范围校验，不做推理）
+    merged_proposals = _merge_proposals(pool, accepted)
+    save_json(work_dir / "gene_pool.json", pool)
+
+    # 组装父级 round_result.json（与父会话路径格式一致，供 update_round_index 消费）
+    parent_rr = _build_parent_round_result(ParentRRSpec(
+        work_dir=work_dir, current_round=current_round, config=config, round_index=round_index,
+        decision=decision, baseline_dir=baseline_dir, mix=mix, accepted=accepted,
+        rejected=rejected, any_timeout=any_timeout, merged_proposals=merged_proposals,
+    ))
+    save_json(work_dir / "round_result.json", parent_rr)
+
+    # 产物渲染：report.md 走 python 模板（④s）；叙述类走 H2 小模型（best-effort）
+    _render_gf_artifacts(work_dir, current_round, params_cfg)
+
+    return {"status": parent_rr["status"], "round_result": parent_rr, "direct_dispatch": True}
 
 
 def update_round_index(
@@ -705,18 +1126,30 @@ def update_round_index(
     save_json(round_index_path, round_index)
 
 
-def check_stop_decision(req: StopDecisionRequest) -> dict[str, Any]:
+@dataclass
+class StopCheckArgs:
+    """CLI args for the check_stop_decision.py subprocess."""
+
+    op_dir: Path
+    current_round: int
+    best_speedup: float
+    target_speedup: float
+    max_rounds: int
+    algorithm_recommends_stop: bool = False
+
+
+def check_stop_decision(args: StopCheckArgs) -> dict[str, Any]:
     """Run check_stop_decision.py."""
     cmd = [
         sys.executable,
         str(SCRIPT_DIR / "check_stop_decision.py"),
-        "--op-dir", str(req.op_dir),
-        "--current-round", str(req.current_round),
-        "--best-speedup", str(req.best_speedup),
-        "--target-speedup", str(req.target_speedup),
-        "--max-rounds", str(req.max_rounds),
+        "--op-dir", str(args.op_dir),
+        "--current-round", str(args.current_round),
+        "--best-speedup", str(args.best_speedup),
+        "--target-speedup", str(args.target_speedup),
+        "--max-rounds", str(args.max_rounds),
     ]
-    if req.algorithm_recommends_stop:
+    if args.algorithm_recommends_stop:
         cmd.append("--algorithm-recommends-stop")
     try:
         output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
@@ -809,33 +1242,49 @@ def resolve_baseline(
     return None
 
 
-def prepare_next_round(req: PrepareNextRoundRequest) -> dict[str, Any]:
-    """Prepare the next round directory using transition_next_round.py."""
-    decision = req.decision
-    switch_marker = decision.switch_marker
-    algorithm_metadata = dict(decision.metadata or {})
-    algorithm_params = get_algorithm_params(req.config, req.algorithm)
+@dataclass
+class TransitionCmdSpec:
+    """Inputs for building the transition_next_round.py command line."""
 
+    op_dir: Path
+    current_round: int
+    decision: RoundDecision
+    algorithm: str
+    algorithm_params: dict[str, Any]
+    algorithm_metadata: dict[str, Any]
+    global_baseline_dir: str | None
+    global_baseline_speedup: float
+
+
+def _build_transition_cmd(spec: TransitionCmdSpec) -> list[str]:
+    """Build the transition_next_round.py command line."""
+    op_dir = spec.op_dir
+    current_round = spec.current_round
+    decision = spec.decision
+    algorithm = spec.algorithm
+    algorithm_params = spec.algorithm_params
+    algorithm_metadata = spec.algorithm_metadata
+    global_baseline_dir = spec.global_baseline_dir
+    global_baseline_speedup = spec.global_baseline_speedup
     cmd = [
         sys.executable,
         str(SCRIPT_DIR / "transition_next_round.py"),
-        "--op-dir", str(req.op_dir),
-        "--current-round", str(req.current_round),
+        "--op-dir", str(op_dir),
+        "--current-round", str(current_round),
         "--next-round-strategy", decision.round_strategy or "exploration",
         "--next-analysis-policy", decision.analysis_policy or "pattern_entry",
         "--next-hypothesis", decision.hypothesis or "",
         "--next-direction", decision.direction or "",
         "--next-evidence-sources", json.dumps(decision.evidence_sources, ensure_ascii=False),
-        "--strategy-name", req.algorithm,
+        "--strategy-name", algorithm,
         "--strategy-params", json.dumps(algorithm_params, ensure_ascii=False),
-        "--algorithm", req.algorithm,
+        "--algorithm", algorithm,
         "--algorithm-metadata", json.dumps(algorithm_metadata, ensure_ascii=False),
         "--current-success-criteria", "speedup_vs_baseline >= target",
         "--current-key-learnings", "",
-        "--global-baseline-dir", req.global_baseline_dir or "global_baseline",
-        "--global-baseline-speedup", str(req.global_baseline_speedup),
+        "--global-baseline-dir", global_baseline_dir or "global_baseline",
+        "--global-baseline-speedup", str(global_baseline_speedup),
     ]
-
     baseline = decision.baseline
     if baseline.mode == "single" and baseline.round_dirs:
         cmd.extend(["--baseline-dir", baseline.round_dirs[0]])
@@ -843,6 +1292,40 @@ def prepare_next_round(req: PrepareNextRoundRequest) -> dict[str, Any]:
         cmd.extend(["--baseline-dirs", json.dumps(baseline.round_dirs, ensure_ascii=False)])
         if baseline.combination_rule:
             cmd.extend(["--combination-rule", baseline.combination_rule])
+    return cmd
+
+
+@dataclass
+class PrepareNextRoundSpec:
+    """Inputs for preparing the next round directory via transition_next_round.py."""
+
+    op_dir: Path
+    current_round: int
+    decision: RoundDecision
+    algorithm: str
+    config: dict[str, Any]
+    global_baseline_dir: str | None
+    global_baseline_speedup: float
+
+
+def prepare_next_round(spec: PrepareNextRoundSpec) -> dict[str, Any]:
+    """Prepare the next round directory using transition_next_round.py."""
+    op_dir = spec.op_dir
+    current_round = spec.current_round
+    decision = spec.decision
+    algorithm = spec.algorithm
+    config = spec.config
+    global_baseline_dir = spec.global_baseline_dir
+    global_baseline_speedup = spec.global_baseline_speedup
+    switch_marker = decision.switch_marker
+    algorithm_metadata = dict(decision.metadata or {})
+    algorithm_params = get_algorithm_params(config, algorithm)
+
+    cmd = _build_transition_cmd(TransitionCmdSpec(
+        op_dir=op_dir, current_round=current_round, decision=decision, algorithm=algorithm,
+        algorithm_params=algorithm_params, algorithm_metadata=algorithm_metadata,
+        global_baseline_dir=global_baseline_dir, global_baseline_speedup=global_baseline_speedup,
+    ))
 
     if switch_marker is not None:
         cmd.extend([
@@ -858,17 +1341,37 @@ def prepare_next_round(req: PrepareNextRoundRequest) -> dict[str, Any]:
     return json.loads(output)
 
 
-def _replace_section(content: str, heading: str, section: str) -> str:
-    """Replace an existing section for the same operator, or append if absent."""
-    idx = content.find(f"\n{heading}")
-    if idx == -1:
-        idx = content.find(heading)
-    if idx != -1:
-        next_heading = content.find("\n## ", idx + 1)
-        if next_heading == -1:
-            return content[:idx] + section
-        return content[:idx] + section + content[next_heading + 1:]
-    return content.rstrip() + "\n\n" + section
+def _build_experience_section(
+    op_name: str,
+    best_round_entry: dict[str, Any] | None,
+    operator_experience_path: Path,
+) -> str:
+    """Build the operator experience section for the template."""
+    heading = f"## Experience: {op_name}"
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    best_round = best_round_entry.get("round_index") if best_round_entry else None
+    best_speedup = best_round_entry.get("best_speedup") if best_round_entry else None
+    target_reached = best_round_entry.get("target_reached") if best_round_entry else None
+    final_code = (
+        best_round_entry.get("artifacts", {}).get("generated_code")
+        if best_round_entry
+        else None
+    )
+    lines = [
+        heading,
+        "",
+        f"- **Updated**: {timestamp}",
+        f"- **Best round**: {best_round}",
+        f"- **Best speedup**: {best_speedup}",
+        f"- **Target reached**: {target_reached}",
+    ]
+    if final_code:
+        lines.append(f"- **Final code**: `{final_code}`")
+    if operator_experience_path.is_file():
+        exp_text = operator_experience_path.read_text(encoding="utf-8").strip()
+        if exp_text:
+            lines.extend(["", "### Operator experience", "", exp_text])
+    return "\n".join(lines) + "\n\n"
 
 
 def _update_global_template(
@@ -890,34 +1393,7 @@ def _update_global_template(
     template_path = template_dir / f"{category}.md"
 
     heading = f"## Experience: {op_name}"
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    best_round = best_round_entry.get("round_index") if best_round_entry else None
-    best_speedup = best_round_entry.get("best_speedup") if best_round_entry else None
-    target_reached = best_round_entry.get("target_reached") if best_round_entry else None
-    final_code = (
-        best_round_entry.get("artifacts", {}).get("generated_code")
-        if best_round_entry
-        else None
-    )
-
-    lines = [
-        heading,
-        "",
-        f"- **Updated**: {timestamp}",
-        f"- **Best round**: {best_round}",
-        f"- **Best speedup**: {best_speedup}",
-        f"- **Target reached**: {target_reached}",
-    ]
-    if final_code:
-        lines.append(f"- **Final code**: `{final_code}`")
-
-    if operator_experience_path.is_file():
-        exp_text = operator_experience_path.read_text(encoding="utf-8").strip()
-        if exp_text:
-            lines.extend(["", "### Operator experience", "", exp_text])
-
-    section = "\n".join(lines) + "\n\n"
+    section = _build_experience_section(op_name, best_round_entry, operator_experience_path)
 
     if template_path.is_file():
         content = template_path.read_text(encoding="utf-8")
@@ -925,167 +1401,44 @@ def _update_global_template(
         content = f"# {category.capitalize()} operator optimization experience\n\n"
 
     # Replace an existing section for the same operator, or append if not present.
-    content = _replace_section(content, heading, section)
+    idx = content.find(f"\n{heading}")
+    if idx == -1:
+        idx = content.find(heading)
+    if idx != -1:
+        next_heading = content.find("\n## ", idx + 1)
+        if next_heading == -1:
+            content = content[:idx] + section
+        else:
+            content = content[:idx] + section + content[next_heading + 1:]
+    else:
+        content = content.rstrip() + "\n\n" + section
 
     template_path.write_text(content, encoding="utf-8")
     return template_path
 
 
 @dataclass
-class StopReportSpec:
-    """Inputs for building the final stop report."""
+class OrchestratorConfig:
+    """Immutable orchestrator run configuration (CLI + strategy inputs)."""
 
     cwd: Path
-    op_dir: Path
-    op_name: str
-    op_category: str | None
-    round_index: list[dict[str, Any]]
-    target_speedup: float
-    non_idle_count: int
-    reason: str
-
-
-def _build_stop_report(spec: StopReportSpec) -> dict[str, Any]:
-    """Build the final stop report and copy the best generated code out."""
-    best_entry = max(
-        (r for r in spec.round_index if r.get("status") == "success"),
-        key=lambda r: r.get("best_speedup", 0.0),
-        default=None,
-    )
-    final_report: dict[str, Any] = {
-        "status": "stopped",
-        "reason": spec.reason,
-        "best_round": best_entry.get("round_index") if best_entry else None,
-        "best_speedup": best_entry.get("best_speedup", 0.0) if best_entry else 0.0,
-        "target_speedup": spec.target_speedup,
-        "total_rounds": spec.non_idle_count,
-    }
-    if best_entry:
-        src = spec.op_dir / best_entry["round_dir"] / f"{spec.op_name}_generated.py"
-        dst = spec.op_dir / f"{spec.op_name}_final.py"
-        shutil.copy2(src, dst)
-        final_report["final_code"] = str(dst)
-    _update_global_template(
-        spec.cwd, spec.op_name, spec.op_category, best_entry, spec.op_dir / "operator_experience.md"
-    )
-    return final_report
-
-
-def _needs_effective_baseline(
-    decision: RoundDecision,
-    proposed_dir: str,
-    concrete_file: Path | None,
-) -> bool:
-    """Return True when the proposal needs to be mapped to the global baseline."""
-    return (
-        decision.baseline.mode == "none"
-        or not proposed_dir
-        or concrete_file is None
-        or not concrete_file.is_file()
-    )
-
-
-def _fill_missing_direction(
-    strategy: Any,
-    decision: RoundDecision,
-    round_index: list[dict[str, Any]],
-    op_category: str | None,
-    current_policy: str,
-) -> None:
-    """Fill direction fields the strategy did not provide (LLM-driven)."""
-    if decision.direction is not None:
-        return
-    if strategy.capabilities.can_select_round:
-        # Round-selection strategies (e.g., MCTS) intentionally leave
-        # direction to the sub-agent.
-        return
-    if strategy.capabilities.can_propose_direction:
-        import direction_selector as ds
-        sel = ds.select_next_direction(
-            round_index,
-            op_category=op_category,
-            current_policy=current_policy,
-        )
-        decision.direction = sel.direction
-        decision.hypothesis = sel.hypothesis or decision.hypothesis
-        decision.round_strategy = sel.strategy or decision.round_strategy
-        decision.analysis_policy = sel.analysis_policy or decision.analysis_policy
-        decision.evidence_sources = sel.evidence_sources or decision.evidence_sources
-        if not decision.metadata:
-            decision.metadata = sel.metadata
-        return
-    decision.direction = "pattern: custom"
-
-
-def _resolve_next_baseline(
-    op_dir: Path,
-    decision: RoundDecision,
-    round_index: list[dict[str, Any]],
-    op_name: str,
-    strategy: Any,
-) -> Path | None:
-    """Pick and resolve the baseline for the next round."""
-    if decision.baseline.mode == "none" and decision.direction:
-        best_score = -1.0
-        best_entry: dict[str, Any] | None = None
-        for entry in round_index:
-            if entry.get("status") != "success":
-                continue
-            score = strategy.score_baseline_for_direction(
-                entry,
-                target_direction=decision.direction,
-                target_strategy=decision.round_strategy or "exploration",
-                context={"op_dir": str(op_dir)},
-            )
-            if score > best_score:
-                best_score = score
-                best_entry = entry
-        if best_entry:
-            decision.baseline = BaselineProposal(
-                mode="single", round_dirs=[best_entry["round_dir"]]
-            )
-
-    baseline_file = resolve_baseline(op_dir, decision, round_index, op_name)
-    if baseline_file is None:
-        return None
-
-    baseline_dir = baseline_file.parent
-    proposed_dir = decision.baseline.round_dirs[0] if decision.baseline.round_dirs else ""
-    concrete_file = (
-        op_dir / proposed_dir / f"{op_name}_generated.py" if proposed_dir else None
-    )
-    if _needs_effective_baseline(decision, proposed_dir, concrete_file):
-        effective_dir = baseline_dir.relative_to(op_dir).as_posix()
-        decision.baseline = BaselineProposal(mode="single", round_dirs=[effective_dir])
-    return baseline_dir
-
-
-@dataclass
-class _WorkspaceContext:
-    """Resolved workspace state handed from the prelude to the round loop."""
-
-    config: dict[str, Any]
-    target_speedup: float
-    max_rounds: int
-    max_worker_timeout: int
-    active_algorithm: str
-    op_dir: Path
-    state_path: Path
-    strategy: Any
     op_name: str
     mode: str
     task_desc: Path
     task_json: Path | None
     gpu_kernel_ref: Path | None
     gpu_perf_csv: Path | None
-    op_category: str | None
-    arch: str
-    cwd: Path
-    run_tag: str
+    timeout: int = 7200
+    op_category: str | None = None
+    arch: str = "ascend910b1"
+    algorithm: str | None = None
+    run_tag: str = "default"
+    migrate_legacy: str | None = None
+    detect_legacy: bool = False
 
 
 def _handle_detect_legacy(cfg: OrchestratorConfig, discovered: set[str]) -> dict[str, Any] | None:
-    """Handle the --detect-legacy early exit; returns None if not requested."""
+    """Handle --detect-legacy early exit; returns None if not requested."""
     if not cfg.detect_legacy:
         return None
     legacy = _find_legacy_workspace(cfg.cwd, cfg.op_name)
@@ -1097,34 +1450,6 @@ def _handle_detect_legacy(cfg: OrchestratorConfig, discovered: set[str]) -> dict
     report = _build_legacy_report(cfg.op_name, legacy_op_dir, legacy_state, inferred)
     sys.stdout.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     return {"_exit_code": 0}
-
-
-def _resolve_legacy_workspace(
-    cfg: OrchestratorConfig,
-    discovered: set[str],
-    existing_state_algorithms: dict[str, Path],
-    algorithm: str | None,
-) -> tuple[str | None, tuple | None] | dict[str, Any]:
-    """Infer the algorithm from a legacy workspace; returns (algorithm, legacy) or exit dict."""
-    if existing_state_algorithms:
-        return algorithm, None
-    legacy = _find_legacy_workspace(cfg.cwd, cfg.op_name)
-    if legacy is None:
-        return algorithm, None
-    legacy_op_dir, legacy_state = legacy
-    inferred = _infer_algorithm_from_legacy(legacy_state, legacy_op_dir, discovered)
-    if not cfg.migrate_legacy:
-        report = _build_legacy_report(cfg.op_name, legacy_op_dir, legacy_state, inferred)
-        sys.stderr.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-        return {"_exit_code": 3}
-    algorithm = cfg.migrate_legacy
-    if inferred and algorithm != inferred:
-        logger.warning(
-            "requested migration algorithm '%s' differs from "
-            "inferred '%s'. Using requested algorithm.",
-            algorithm, inferred,
-        )
-    return algorithm, legacy
 
 
 def _resolve_from_existing_state(
@@ -1159,15 +1484,43 @@ def _resolve_from_existing_state(
     return algorithm
 
 
+def _resolve_legacy_workspace(
+    cfg: OrchestratorConfig,
+    discovered: set[str],
+    existing_state_algorithms: dict[str, Path],
+    algorithm: str | None,
+) -> tuple[str | None, tuple | None] | dict[str, Any]:
+    """Infer the algorithm from a legacy workspace; returns (algorithm, legacy) or exit dict."""
+    if existing_state_algorithms:
+        return algorithm, None
+    legacy = _find_legacy_workspace(cfg.cwd, cfg.op_name)
+    if legacy is None:
+        return algorithm, None
+    legacy_op_dir, legacy_state = legacy
+    inferred = _infer_algorithm_from_legacy(legacy_state, legacy_op_dir, discovered)
+    if not cfg.migrate_legacy:
+        report = _build_legacy_report(cfg.op_name, legacy_op_dir, legacy_state, inferred)
+        sys.stderr.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        return {"_exit_code": 3}
+    algorithm = cfg.migrate_legacy
+    if inferred and algorithm != inferred:
+        logger.warning(
+            "WARN: requested migration algorithm '%s' differs from "
+            "inferred '%s'. Using requested algorithm.",
+            algorithm, inferred,
+        )
+    return algorithm, legacy
+
+
 def _resolve_algorithm(
-    cfg: OrchestratorConfig, config: dict[str, Any]
-) -> tuple[str, tuple | None] | dict[str, Any]:
-    """Resolve the active algorithm; returns (algorithm, legacy) or an early-exit dict."""
-    cwd = cfg.cwd
-    op_name = cfg.op_name
+    cfg: OrchestratorConfig,
+    config: dict[str, Any],
+    discovered: set[str],
+) -> tuple[str | None, tuple | None] | dict[str, Any]:
+    """Resolve the active algorithm from CLI/state/legacy/config; returns
+    ``(algorithm, legacy)`` or an ``_exit_code`` dict for early exits.
+    """
     algorithm = cfg.algorithm
-    run_tag = cfg.run_tag
-    discovered = _discovered_algorithm_names()
 
     early = _handle_detect_legacy(cfg, discovered)
     if early is not None:
@@ -1178,7 +1531,9 @@ def _resolve_algorithm(
             f"Algorithm '{algorithm}' not discovered. Available: {sorted(discovered)}"
         )
 
-    existing_state_algorithms = _list_new_state_algorithms(cwd, op_name, run_tag)
+    existing_state_algorithms = _list_new_state_algorithms(
+        cfg.cwd, cfg.op_name, cfg.run_tag
+    )
     algorithm = _resolve_from_existing_state(cfg, discovered, existing_state_algorithms, algorithm)
 
     resolved = _resolve_legacy_workspace(cfg, discovered, existing_state_algorithms, algorithm)
@@ -1188,37 +1543,14 @@ def _resolve_algorithm(
 
     if algorithm is None:
         algorithm = select_algorithm(config, None)
+
     if algorithm is None:
         raise ValueError(
             "No active algorithm selected. In the main Claude Code agent use "
             "AskUserQuestion; when running this script directly pass --algorithm."
         )
+
     return algorithm, legacy
-
-
-def _migrate_if_needed(
-    cfg: OrchestratorConfig,
-    op_dir: Path,
-    state_path: Path,
-    active_algorithm: str,
-    legacy: tuple | None,
-) -> tuple[Path, Path]:
-    """Migrate the legacy workspace if one exists and the new one does not."""
-    if legacy is None or op_dir.exists():
-        return op_dir, state_path
-    legacy_op_dir, legacy_state = legacy
-    op_dir = _migrate_legacy_workspace(
-        MigrateLegacyRequest(
-            cwd=cfg.cwd,
-            op_name=cfg.op_name,
-            algorithm=active_algorithm,
-            run_tag=cfg.run_tag,
-            legacy_op_dir=legacy_op_dir,
-            legacy_state=legacy_state,
-        )
-    )
-    state_path = cfg.cwd / ".triton-agent" / f"state-{op_dir.name}.json"
-    return op_dir, state_path
 
 
 def _init_workspace_and_strategy(
@@ -1226,15 +1558,18 @@ def _init_workspace_and_strategy(
     config: dict[str, Any],
     active_algorithm: str,
     legacy: tuple | None,
-) -> tuple[Path, Path, Any]:
-    """Create/migrate the workspace and load the strategy."""
-    cwd = cfg.cwd
-    op_name = cfg.op_name
-    run_tag = cfg.run_tag
+) -> tuple[Path, Path, Any, int]:
+    """Build the workspace path, migrate legacy if needed, initialize state, and
+    load the strategy; returns ``(op_dir, state_path, strategy, current_timeout)``.
+    """
+    op_dir = cfg.cwd / "triton_ascend_output" / f"{cfg.op_name}-{active_algorithm}-{cfg.run_tag}"
+    state_path = cfg.cwd / ".triton-agent" / f"state-{op_dir.name}.json"
 
-    op_dir = cwd / "triton_ascend_output" / f"{op_name}-{active_algorithm}-{run_tag}"
-    state_path = cwd / ".triton-agent" / f"state-{op_dir.name}.json"
-    op_dir, state_path = _migrate_if_needed(cfg, op_dir, state_path, active_algorithm, legacy)
+    if legacy is not None and not op_dir.exists():
+        op_dir = _migrate_legacy_workspace(
+            cfg.cwd, cfg.op_name, active_algorithm, cfg.run_tag, legacy
+        )
+        state_path = cfg.cwd / ".triton-agent" / f"state-{op_dir.name}.json"
 
     state: dict[str, Any] = {}
     if state_path.is_file():
@@ -1244,32 +1579,12 @@ def _init_workspace_and_strategy(
             state = {}
 
     if not state_path.is_file() or not (op_dir / "round_index.json").is_file():
-        init_workspace(
-            WorkspaceSpec(
-                cwd=cwd,
-                op_name=op_name,
-                op_dir=op_dir,
-                mode=cfg.mode,
-                task_desc=cfg.task_desc,
-                task_json=cfg.task_json,
-                gpu_kernel_ref=cfg.gpu_kernel_ref,
-                gpu_perf_csv=cfg.gpu_perf_csv,
-                config=config,
-                algorithm=active_algorithm,
-                run_tag=run_tag,
-            )
-        )
+        init_workspace(cfg, op_dir, config, active_algorithm)
         state = load_json(state_path)
 
     state["algorithm"] = active_algorithm
     save_json(state_path, state)
 
-    strategy = _load_strategy(config, active_algorithm, op_dir)
-    return op_dir, state_path, strategy
-
-
-def _load_strategy(config: dict[str, Any], active_algorithm: str, op_dir: Path) -> Any:
-    """Load the strategy and run its per-operator initialization."""
     strategy = load_strategy_for_algorithm(config, active_algorithm)
     round_index_for_init: list[dict[str, Any]] = []
     if (op_dir / "round_index.json").is_file():
@@ -1279,251 +1594,75 @@ def _load_strategy(config: dict[str, Any], active_algorithm: str, op_dir: Path) 
             pass
     if hasattr(strategy, "init_for_operator"):
         strategy.init_for_operator(op_dir, config, round_index_for_init)
-    return strategy
 
-
-def _resolve_and_init_workspace(cfg: OrchestratorConfig) -> _WorkspaceContext | dict[str, Any]:
-    """Resolve the algorithm, initialize the workspace, and load the strategy.
-
-    Returns a ``_WorkspaceContext`` on success, or a ``{"_exit_code": N}`` dict
-    for the detect-legacy / legacy-not-migrating early-exit paths.
-    """
-    config = read_config(cfg.cwd)
-
-    resolved = _resolve_algorithm(cfg, config)
-    if isinstance(resolved, dict):
-        return resolved
-    active_algorithm, legacy = resolved
-
-    op_dir, state_path, strategy = _init_workspace_and_strategy(cfg, config, active_algorithm, legacy)
-
-    return _WorkspaceContext(
-        config=config,
-        target_speedup=config.get("target_speedup", 5),
-        max_rounds=config.get("max_rounds", 10),
-        max_worker_timeout=config.get("max_worker_timeout", 28800),
-        active_algorithm=active_algorithm,
-        op_dir=op_dir,
-        state_path=state_path,
-        strategy=strategy,
-        op_name=cfg.op_name,
-        mode=cfg.mode,
-        task_desc=cfg.task_desc,
-        task_json=cfg.task_json,
-        gpu_kernel_ref=cfg.gpu_kernel_ref,
-        gpu_perf_csv=cfg.gpu_perf_csv,
-        op_category=cfg.op_category,
-        arch=cfg.arch,
-        cwd=cfg.cwd,
-        run_tag=cfg.run_tag,
-    )
+    return op_dir, state_path, strategy, cfg.timeout
 
 
 @dataclass
-class _SuccessCtx:
-    """State handed to the per-round success handler."""
+class StopReportSpec:
+    """Inputs for building the final 'stopped' report."""
 
-    strategy: Any
     op_dir: Path
     op_name: str
     op_category: str | None
-    current_round: int
-    work_dir: Path
-    state_path: Path
-    active_algorithm: str
-    target_speedup: float
-    max_rounds: int
     cwd: Path
-    summary: dict[str, Any]
-    round_result: dict[str, Any]
-    config: dict[str, Any]
-    global_baseline_speedup: float
+    round_index: list[dict[str, Any]]
+    target_speedup: float
+    non_idle_count: int
+    reason: str
 
 
-def _record_round_result(c: _SuccessCtx) -> None:
-    """Record the completed round in any state-aware strategy (e.g. MCTS)."""
-    if not hasattr(c.strategy, "record_round_result"):
-        return
-    try:
-        round_index = load_json(c.op_dir / "round_index.json")
-        current_entry = next(
-            (r for r in round_index if r.get("round_index") == c.current_round), None
-        )
-        if current_entry:
-            c.strategy.record_round_result(
-                current_entry,
-                c.work_dir,
-                context={"op_dir": str(c.op_dir), "current_round": c.current_round},
-            )
-    except Exception as exc:
-        logger.warning("[orchestrator] Strategy record_round_result warning: %s", exc)
-
-
-def _make_stop_report(
-    c: _SuccessCtx,
-    round_index: list[dict[str, Any]],
-    non_idle_count: int,
-    reason: str,
-) -> dict[str, Any]:
-    """Build the final stop report."""
-    return _build_stop_report(
-        StopReportSpec(
-            cwd=c.cwd,
-            op_dir=c.op_dir,
-            op_name=c.op_name,
-            op_category=c.op_category,
-            round_index=round_index,
-            target_speedup=c.target_speedup,
-            non_idle_count=non_idle_count,
-            reason=reason,
-        )
+def _build_stop_report(spec: StopReportSpec) -> dict[str, Any]:
+    """Build the final 'stopped' report and copy the best code to ``{op}_final.py``."""
+    best_entry = max(
+        (r for r in spec.round_index if r.get("status") == "success"),
+        key=lambda r: r.get("best_speedup", 0.0),
+        default=None,
     )
-
-
-def _check_stop(
-    c: _SuccessCtx,
-    round_index: list[dict[str, Any]],
-    non_idle_count: int,
-    decision: RoundDecision,
-    best_speedup: float,
-) -> dict[str, Any] | None:
-    """Run the stop gate; returns a stop report or None to continue."""
-    c1 = best_speedup >= c.target_speedup
-    c2 = non_idle_count >= c.max_rounds
-    if decision.algorithm_recommends_stop:
-        stop_check = check_stop_decision(
-            StopDecisionRequest(
-                op_dir=c.op_dir,
-                current_round=c.current_round,
-                best_speedup=best_speedup,
-                target_speedup=c.target_speedup,
-                max_rounds=c.max_rounds,
-                algorithm_recommends_stop=True,
-            )
-        )
-        if stop_check.get("can_stop", False) or c1 or c2:
-            return _make_stop_report(
-                c, round_index, non_idle_count,
-                decision.stop_reason or ("C1" if c1 else "C2"),
-            )
-    if c1 or c2:
-        stop_check = check_stop_decision(
-            StopDecisionRequest(
-                op_dir=c.op_dir,
-                current_round=c.current_round,
-                best_speedup=best_speedup,
-                target_speedup=c.target_speedup,
-                max_rounds=c.max_rounds,
-            )
-        )
-        if stop_check.get("can_stop", False):
-            return _make_stop_report(c, round_index, non_idle_count, "C1" if c1 else "C2")
-    return None
-
-
-def _update_state_and_prepare(
-    c: _SuccessCtx,
-    round_index: list[dict[str, Any]],
-    best_speedup: float,
-    decision: RoundDecision,
-) -> None:
-    """Update the state file and prepare the next round directory."""
-    state = load_json(c.state_path)
-    state.setdefault("performance_history", []).append({
-        "round": c.current_round,
-        "speedup_vs_torch": best_speedup,
-        "target_reached": best_speedup >= c.target_speedup,
-    })
-    state["direction_history"] = build_direction_history(round_index)
-    state["algorithm"] = c.active_algorithm
-    save_json(c.state_path, state)
-
-    prepare_next_round(
-        PrepareNextRoundRequest(
-            op_dir=c.op_dir,
-            current_round=c.current_round,
-            decision=decision,
-            config=c.config,
-            round_index=round_index,
-            algorithm=c.active_algorithm,
-            op_category=c.op_category,
-            global_baseline_dir="global_baseline",
-            global_baseline_speedup=c.global_baseline_speedup,
-        )
+    final_report = {
+        "status": "stopped",
+        "reason": spec.reason,
+        "best_round": best_entry.get("round_index") if best_entry else None,
+        "best_speedup": best_entry.get("best_speedup", 0.0) if best_entry else 0.0,
+        "target_speedup": spec.target_speedup,
+        "total_rounds": spec.non_idle_count,
+    }
+    if best_entry:
+        src = spec.op_dir / best_entry["round_dir"] / f"{spec.op_name}_generated.py"
+        dst = spec.op_dir / f"{spec.op_name}_final.py"
+        shutil.copy2(src, dst)
+        final_report["final_code"] = str(dst)
+    _update_global_template(
+        spec.cwd, spec.op_name, spec.op_category, best_entry,
+        spec.op_dir / "operator_experience.md",
     )
-
-
-def _process_success_round(c: _SuccessCtx) -> dict[str, Any] | None:
-    """Handle a successful round: stop gate, state update, next-round prep.
-
-    Returns a result dict for an early stop/failure, or ``None`` to continue.
-    """
-    update_round_index(c.op_dir, c.round_result, c.active_algorithm)
-    _record_round_result(c)
-
-    best_speedup = c.round_result.get("best_speedup", 0.0)
-    round_index = load_json(c.op_dir / "round_index.json")
-    non_idle_count = count_non_idle_rounds(round_index)
-
-    current_policy = c.summary.get("analysis_policy", "pattern_entry")
-    try:
-        decision = c.strategy.select_next_round(
-            round_index,
-            op_category=c.op_category,
-            current_policy=current_policy,
-            context={"op_dir": str(c.op_dir), "current_round": c.current_round},
-        )
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "reason": f"strategy.select_next_round failed: {exc}",
-            "round": c.current_round,
-        }
-
-    result = _check_stop(c, round_index, non_idle_count, decision, best_speedup)
-    if result is not None:
-        return result
-
-    _fill_missing_direction(c.strategy, decision, round_index, c.op_category, current_policy)
-    _resolve_next_baseline(c.op_dir, decision, round_index, c.op_name, c.strategy)
-    _update_state_and_prepare(c, round_index, best_speedup, decision)
-    return None
+    return final_report
 
 
 @dataclass
 class _RoundLoad:
-    """Per-round context loaded from the workspace."""
+    """Per-round context loaded at the top of the orchestrator loop."""
 
+    state: dict[str, Any]
+    current_round: int
+    work_dir: Path
+    summary: dict[str, Any]
+    round_index: list[dict[str, Any]]
     baseline_dir: Path | None
     global_baseline_dir: Path
     global_baseline_speedup: float
-    lineage_summary: list[dict[str, Any]]
     experience_file: Path
+    lineage_summary: str
     decision_metadata: dict[str, Any]
 
 
-def _read_global_baseline_speedup(op_dir: Path) -> float:
-    """Read the global baseline speedup, defaulting to 1.0."""
-    global_baseline_speedup = 1.0
-    baseline_info_path = op_dir / "global_baseline" / "baseline_info.json"
-    if baseline_info_path.is_file():
-        try:
-            baseline_info = load_json(baseline_info_path)
-            gbs = baseline_info.get("baseline_speedup", 1.0)
-            if isinstance(gbs, (int, float)) and gbs > 0:
-                global_baseline_speedup = float(gbs)
-        except (ValueError, TypeError):
-            pass
-    return global_baseline_speedup
-
-
-def _load_round_context(
-    op_dir: Path, current_round: int, active_algorithm: str, summary: dict[str, Any]
-) -> _RoundLoad:
-    """Load the per-round baseline, lineage, and decision metadata."""
+def _read_round_index_and_baseline(
+    op_dir: Path, current_round: int, summary: dict[str, Any],
+) -> tuple[list[dict[str, Any]], Path | None]:
+    """Read round_index.json and resolve the baseline directory."""
+    baseline_dir_name = None
     round_index_path = op_dir / "round_index.json"
     round_index: list[dict[str, Any]] = []
-    baseline_dir_name = None
     if round_index_path.is_file():
         try:
             round_index = load_json(round_index_path)
@@ -1537,7 +1676,37 @@ def _load_round_context(
     if not baseline_dir_name:
         baseline_dir_name = summary.get("baseline_dir")
     baseline_dir = op_dir / baseline_dir_name if baseline_dir_name else None
+    return round_index, baseline_dir
 
+
+def _read_global_baseline_speedup(op_dir: Path) -> float:
+    """Read the global baseline speedup from baseline_info.json."""
+    baseline_info_path = op_dir / "global_baseline" / "baseline_info.json"
+    if not baseline_info_path.is_file():
+        return 1.0
+    try:
+        baseline_info = load_json(baseline_info_path)
+        gbs = baseline_info.get("baseline_speedup", 1.0)
+        if isinstance(gbs, (int, float)) and gbs > 0:
+            return float(gbs)
+    except (ValueError, TypeError):
+        pass
+    return 1.0
+
+
+def _load_round_context(
+    state_path: Path,
+    op_dir: Path,
+    active_algorithm: str,
+) -> _RoundLoad:
+    """Load per-round state, summary, baseline, and decision metadata."""
+    state = load_json(state_path)
+    current_round = state.get("current_round")
+    work_dir = Path(state.get("work_dir"))
+    summary = load_json(work_dir / "summary.json")
+    _stage(f"round {current_round}: begin")
+
+    round_index, baseline_dir = _read_round_index_and_baseline(op_dir, current_round, summary)
     global_baseline_dir = op_dir / "global_baseline"
     global_baseline_speedup = _read_global_baseline_speedup(op_dir)
 
@@ -1547,8 +1716,8 @@ def _load_round_context(
     summary_algorithm = summary.get("algorithm")
     if summary_algorithm and summary_algorithm != active_algorithm:
         logger.warning(
-            "summary.json algorithm (%s) differs from active algorithm (%s); "
-            "using active algorithm.",
+            "WARN: summary.json algorithm (%s) differs from "
+            "active algorithm (%s); using active algorithm.",
             summary_algorithm, active_algorithm,
         )
     decision_metadata: dict[str, Any] = {}
@@ -1557,143 +1726,545 @@ def _load_round_context(
             decision_metadata[key] = summary[key]
 
     return _RoundLoad(
+        state=state,
+        current_round=current_round,
+        work_dir=work_dir,
+        summary=summary,
+        round_index=round_index,
         baseline_dir=baseline_dir,
         global_baseline_dir=global_baseline_dir,
         global_baseline_speedup=global_baseline_speedup,
-        lineage_summary=lineage_summary,
         experience_file=experience_file,
+        lineage_summary=lineage_summary,
         decision_metadata=decision_metadata,
     )
 
 
-def _dispatch_worker(
-    ctx: _WorkspaceContext,
-    manifest_path: Path,
-    work_dir: Path,
-    current_round: int,
-    current_timeout: int,
-) -> tuple[dict[str, Any], int]:
-    """Dispatch the worker and handle timeout, returning (result, new_timeout)."""
-    dispatch_result = dispatch_round(manifest_path, current_timeout)
+@dataclass
+class DispatchRequest:
+    """Inputs for dispatching a single round (H1 direct or manifest-based)."""
+
+    op_dir: Path
+    cfg: OrchestratorConfig
+    config: dict[str, Any]
+    strategy: Any
+    active_algorithm: str
+    ctx: _RoundLoad
+    round_index_path: Path
+    current_timeout: int
+
+
+def _dispatch_manifest(req: DispatchRequest) -> dict[str, Any]:
+    """Build the manifest and dispatch the round via dispatch_round.py."""
+    cfg = req.cfg
+    ctx = req.ctx
+    current_round = ctx.current_round
+    summary = ctx.summary
+    manifest_path = build_manifest(ManifestSpec(
+        op_dir=req.op_dir,
+        op_name=cfg.op_name,
+        round_index=current_round,
+        baseline_dir=ctx.baseline_dir,
+        algorithm=req.active_algorithm,
+        round_strategy=summary.get("round_strategy", "exploration"),
+        analysis_policy=summary.get("analysis_policy", "pattern_entry"),
+        hypothesis=summary.get("hypothesis", ""),
+        direction=summary.get("direction", ""),
+        evidence_sources=summary.get("evidence_sources", []),
+        mode=cfg.mode,
+        task_desc=cfg.task_desc,
+        task_json=cfg.task_json,
+        gpu_kernel_ref=cfg.gpu_kernel_ref,
+        gpu_perf_csv=cfg.gpu_perf_csv,
+        config=req.config,
+        arch=cfg.arch,
+        lineage_summary=ctx.lineage_summary,
+        experience_file=str(ctx.experience_file) if ctx.experience_file.is_file() else None,
+        global_baseline_dir=ctx.global_baseline_dir,
+        global_baseline_speedup=ctx.global_baseline_speedup,
+        decision_metadata=ctx.decision_metadata,
+    ))
+    _stage(f"round {current_round}: dispatch start (timeout={req.current_timeout}s)")
+    dispatch_result = dispatch_round(manifest_path, req.current_timeout)
     sub_pid = dispatch_result.get("pid")
     if sub_pid:
         logger.info("[orchestrator] Round %s sub-agent PID: %s", current_round, sub_pid)
         logger.info("[orchestrator] To kill manually: kill %s", sub_pid)
+    _stage(f"round {current_round}: dispatch done status={dispatch_result['status']}")
+    return dispatch_result
 
-    if dispatch_result["status"] != "timeout":
-        return dispatch_result, current_timeout
 
-    new_timeout = min(current_timeout * 2, ctx.max_worker_timeout)
-    logger.warning(
-        "[orchestrator] Round %s timed out after %ss; increasing timeout to %ss for next round",
+def _dispatch_worker(req: DispatchRequest) -> dict[str, Any]:
+    """H1 direct dispatch (gene-fusion) or normal manifest-based dispatch."""
+    cfg = req.cfg
+    ctx = req.ctx
+    current_round = ctx.current_round
+    dispatch_result: dict[str, Any] | None = None
+    if (
+        req.active_algorithm == "gene-fusion"
+        and current_round >= 2
+        and os.environ.get("TRITON_GF_DIRECT_DISPATCH", "0") == "1"
+    ):
+        _stage(f"round {current_round}: H1 direct dispatch attempt")
+        dispatch_result = dispatch_gene_fusion_direct(GfDirectSpec(
+            op_dir=req.op_dir, op_name=cfg.op_name, current_round=current_round,
+            baseline_dir=ctx.baseline_dir, config=req.config, strategy=req.strategy,
+            round_index=(load_json(req.round_index_path) if req.round_index_path.is_file() else []),
+            op_category=cfg.op_category, task_desc=cfg.task_desc, task_json=cfg.task_json,
+            gpu_kernel_ref=cfg.gpu_kernel_ref, gpu_perf_csv=cfg.gpu_perf_csv,
+            arch=cfg.arch, mode=cfg.mode,
+        ))
+        if dispatch_result.get("status") == "fallback":
+            logger.info(
+                "[orchestrator] H1 direct dispatch fallback: %s",
+                dispatch_result.get("reason"),
+            )
+            dispatch_result = None
+
+    if dispatch_result is None:
+        dispatch_result = _dispatch_manifest(req)
+
+    return dispatch_result
+
+
+def _handle_timeout(spec: _LoopSpec, ctx: _RoundLoad, current_timeout: int) -> int:
+    """Record a round timeout and double the worker timeout for the next round."""
+    current_round = ctx.current_round
+    new_timeout = min(current_timeout * 2, spec.max_worker_timeout)
+    logger.info(
+        "[orchestrator] Round %s timed out after %ss; "
+        "increasing timeout to %ss for next round",
         current_round, current_timeout, new_timeout,
     )
-    state = load_json(ctx.state_path)
+    state = load_json(spec.state_path)
     state.setdefault("performance_history", []).append({
         "round": current_round,
         "speedup_vs_torch": 0.0,
         "target_reached": False,
         "timeout": True,
     })
-    save_json(ctx.state_path, state)
-    if hasattr(ctx.strategy, "record_round_result"):
+    save_json(spec.state_path, state)
+    if hasattr(spec.strategy, "record_round_result"):
         try:
-            ctx.strategy.record_round_result(
+            spec.strategy.record_round_result(
                 {"round_index": current_round, "status": "timeout", "best_speedup": 0.0},
-                work_dir,
-                context={"op_dir": str(ctx.op_dir), "current_round": current_round},
+                ctx.work_dir,
+                context={"op_dir": str(spec.op_dir), "current_round": current_round},
             )
         except Exception as exc:
             logger.warning("[orchestrator] Strategy record_round_result warning: %s", exc)
-    return dispatch_result, new_timeout
+    return new_timeout
 
 
-def _build_manifest_path(
-    ctx: _WorkspaceContext,
-    summary: dict[str, Any],
-    current_round: int,
-    rl: _RoundLoad,
-) -> Path:
-    """Build the round worker's task_manifest.json and return its path."""
-    return build_manifest(
-        ManifestSpec(
-            op_dir=ctx.op_dir,
-            op_name=ctx.op_name,
-            round_index=current_round,
-            baseline_dir=rl.baseline_dir,
-            algorithm=ctx.active_algorithm,
-            round_strategy=summary.get("round_strategy", "exploration"),
-            analysis_policy=summary.get("analysis_policy", "pattern_entry"),
-            hypothesis=summary.get("hypothesis", ""),
-            direction=summary.get("direction", ""),
-            evidence_sources=summary.get("evidence_sources", []),
-            mode=ctx.mode,
-            task_desc=ctx.task_desc,
-            task_json=ctx.task_json,
-            gpu_kernel_ref=ctx.gpu_kernel_ref,
-            gpu_perf_csv=ctx.gpu_perf_csv,
-            config=ctx.config,
-            arch=ctx.arch,
-            lineage_summary=rl.lineage_summary,
-            experience_file=str(rl.experience_file) if rl.experience_file.is_file() else None,
-            global_baseline_dir=rl.global_baseline_dir,
-            global_baseline_speedup=rl.global_baseline_speedup,
-            decision_metadata=rl.decision_metadata,
+@dataclass
+class SuccessCtx:
+    """Inputs for handling a successfully dispatched round."""
+
+    req: DispatchRequest
+    round_result: dict[str, Any]
+    state_path: Path
+    target_speedup: float
+    max_rounds: int
+    cwd: Path
+    op_name: str
+
+
+@dataclass
+class StopCheckSpec:
+    """Inputs for the C1/C2 + strategy stop gate."""
+
+    op_dir: Path
+    op_name: str
+    op_category: str | None
+    cwd: Path
+    round_index: list[dict[str, Any]]
+    target_speedup: float
+    non_idle_count: int
+    best_speedup: float
+    max_rounds: int
+    current_round: int
+    decision: Any
+    c1: bool
+    c2: bool
+
+
+def _check_stop(sc: SuccessCtx, dc: DecisionCtx) -> dict[str, Any] | None:
+    """Run the C1/C2 + strategy stop gate; returns a stop report or None."""
+    spec = StopCheckSpec(
+        op_dir=sc.req.op_dir, op_name=sc.op_name, op_category=sc.req.cfg.op_category,
+        cwd=sc.cwd, round_index=dc.round_index, target_speedup=sc.target_speedup,
+        non_idle_count=dc.non_idle_count, best_speedup=dc.best_speedup, max_rounds=sc.max_rounds,
+        current_round=sc.req.ctx.current_round, decision=dc.decision, c1=dc.c1, c2=dc.c2,
+    )
+    if spec.decision.algorithm_recommends_stop:
+        stop_check = check_stop_decision(StopCheckArgs(
+            spec.op_dir, spec.current_round, spec.best_speedup, spec.target_speedup, spec.max_rounds,
+            algorithm_recommends_stop=True,
+        ))
+        if stop_check.get("can_stop", False) or spec.c1 or spec.c2:
+            return _build_stop_report(StopReportSpec(
+                op_dir=spec.op_dir,
+                op_name=spec.op_name,
+                op_category=spec.op_category,
+                cwd=spec.cwd,
+                round_index=spec.round_index,
+                target_speedup=spec.target_speedup,
+                non_idle_count=spec.non_idle_count,
+                reason=spec.decision.stop_reason or ("C1" if spec.c1 else "C2"),
+            ))
+
+    if spec.c1 or spec.c2:
+        stop_check = check_stop_decision(StopCheckArgs(
+            spec.op_dir, spec.current_round, spec.best_speedup, spec.target_speedup, spec.max_rounds
+        ))
+        if stop_check.get("can_stop", False):
+            return _build_stop_report(StopReportSpec(
+                op_dir=spec.op_dir,
+                op_name=spec.op_name,
+                op_category=spec.op_category,
+                cwd=spec.cwd,
+                round_index=spec.round_index,
+                target_speedup=spec.target_speedup,
+                non_idle_count=spec.non_idle_count,
+                reason="C1" if spec.c1 else "C2",
+            ))
+    return None
+
+
+def _fill_direction(
+    strategy: Any,
+    round_index: list[dict[str, Any]],
+    op_category: str | None,
+    current_policy: str,
+    decision: RoundDecision,
+) -> None:
+    """Fill in the direction fields the strategy left empty."""
+    if decision.direction is not None:
+        return
+    if strategy.capabilities.can_select_round:
+        return
+    if strategy.capabilities.can_propose_direction:
+        import direction_selector as ds
+        sel = ds.select_next_direction(
+            round_index,
+            op_category=op_category,
+            current_policy=current_policy,
         )
+        decision.direction = sel.direction
+        decision.hypothesis = sel.hypothesis or decision.hypothesis
+        decision.round_strategy = sel.strategy or decision.round_strategy
+        decision.analysis_policy = sel.analysis_policy or decision.analysis_policy
+        decision.evidence_sources = sel.evidence_sources or decision.evidence_sources
+        if not decision.metadata:
+            decision.metadata = sel.metadata
+    else:
+        decision.direction = "pattern: custom"
+
+
+def _needs_effective_baseline(
+    decision: RoundDecision, proposed_dir: str, concrete_file: Path | None,
+) -> bool:
+    """Return True when the resolved baseline should fall back to the effective dir."""
+    return (
+        decision.baseline.mode == "none"
+        or not proposed_dir
+        or concrete_file is None
+        or not concrete_file.is_file()
     )
 
 
-def run_orchestrator(cfg: OrchestratorConfig) -> dict[str, Any]:
-    """Main orchestration loop."""
-    ctx = _resolve_and_init_workspace(cfg)
-    if isinstance(ctx, dict):
-        return ctx
-    current_timeout = cfg.timeout
+def _resolve_baseline(
+    strategy: Any,
+    round_index: list[dict[str, Any]],
+    op_dir: Path,
+    op_name: str,
+    decision: RoundDecision,
+) -> Path | None:
+    """Select a baseline via strategy scoring, then resolve the concrete file."""
+    if decision.baseline.mode == "none" and decision.direction:
+        best_score = -1.0
+        best_entry: dict[str, Any] | None = None
+        for entry in round_index:
+            if entry.get("status") != "success":
+                continue
+            score = strategy.score_baseline_for_direction(
+                entry,
+                target_direction=decision.direction,
+                target_strategy=decision.round_strategy or "exploration",
+                context={"op_dir": str(op_dir)},
+            )
+            if score > best_score:
+                best_score = score
+                best_entry = entry
+        if best_entry:
+            decision.baseline = BaselineProposal(
+                mode="single", round_dirs=[best_entry["round_dir"]]
+            )
 
-    while True:
-        state = load_json(ctx.state_path)
-        current_round = state.get("current_round")
-        work_dir = Path(state.get("work_dir"))
-        summary = load_json(work_dir / "summary.json")
+    baseline_file = resolve_baseline(op_dir, decision, round_index, op_name)
+    if baseline_file is None:
+        return None
+    baseline_dir = baseline_file.parent
+    proposed_dir = decision.baseline.round_dirs[0] if decision.baseline.round_dirs else ""
+    concrete_file = (
+        op_dir / proposed_dir / f"{op_name}_generated.py"
+        if proposed_dir
+        else None
+    )
+    if _needs_effective_baseline(decision, proposed_dir, concrete_file):
+        effective_dir = baseline_dir.relative_to(op_dir).as_posix()
+        decision.baseline = BaselineProposal(mode="single", round_dirs=[effective_dir])
+    return baseline_dir
 
-        rl = _load_round_context(ctx.op_dir, current_round, ctx.active_algorithm, summary)
-        manifest_path = _build_manifest_path(ctx, summary, current_round, rl)
 
-        dispatch_result, current_timeout = _dispatch_worker(
-            ctx, manifest_path, work_dir, current_round, current_timeout
+@dataclass
+class RecordSpec:
+    """Inputs for recording a completed round."""
+
+    op_dir: Path
+    round_result: dict[str, Any]
+    active_algorithm: str
+    strategy: Any
+    work_dir: Path
+    current_round: int
+
+
+def _record_round_result(spec: RecordSpec) -> None:
+    """Update round_index and record the completed round in the strategy."""
+    update_round_index(spec.op_dir, spec.round_result, spec.active_algorithm)
+    _stage(f"round {spec.current_round}: round_index updated")
+    if hasattr(spec.strategy, "record_round_result"):
+        try:
+            round_index = load_json(spec.op_dir / "round_index.json")
+            current_entry = next(
+                (r for r in round_index if r.get("round_index") == spec.current_round), None
+            )
+            if current_entry:
+                spec.strategy.record_round_result(
+                    current_entry,
+                    spec.work_dir,
+                    context={"op_dir": str(spec.op_dir), "current_round": spec.current_round},
+                )
+        except Exception as exc:
+            logger.warning("[orchestrator] Strategy record_round_result warning: %s", exc)
+
+
+def _finalize_round(
+    sc: SuccessCtx,
+    round_index: list[dict[str, Any]],
+    decision: RoundDecision,
+    best_speedup: float,
+    baseline_dir: Path | None,
+) -> None:
+    """Update state and prepare the next round directory."""
+    cfg = sc.req.cfg
+    ctx = sc.req.ctx
+    op_dir = sc.req.op_dir
+    active_algorithm = sc.req.active_algorithm
+    current_round = ctx.current_round
+    state = load_json(sc.state_path)
+    state.setdefault("performance_history", []).append({
+        "round": current_round,
+        "speedup_vs_torch": best_speedup,
+        "target_reached": best_speedup >= sc.target_speedup,
+    })
+    state["direction_history"] = build_direction_history(round_index)
+    state["algorithm"] = active_algorithm
+    save_json(sc.state_path, state)
+    _stage(f"round {current_round}: baseline resolved -> {baseline_dir}")
+
+    _stage(f"round {current_round}: prepare_next_round start")
+    prepare_next_round(PrepareNextRoundSpec(
+        op_dir=op_dir, current_round=current_round, decision=decision, algorithm=active_algorithm,
+        config=sc.req.config, global_baseline_dir="global_baseline",
+        global_baseline_speedup=ctx.global_baseline_speedup,
+    ))
+    _stage(f"round {current_round}: transition done (next manifest ready)")
+
+
+@dataclass
+class DecisionCtx:
+    """Stop conditions and the strategy's next-round decision."""
+
+    decision: RoundDecision
+    best_speedup: float
+    round_index: list[dict[str, Any]]
+    non_idle_count: int
+    c1: bool
+    c2: bool
+
+
+def _get_decision(
+    sc: SuccessCtx, op_dir: Path, strategy: Any, summary: dict[str, Any],
+) -> DecisionCtx | dict[str, Any]:
+    """Compute stop conditions and ask the strategy for the next decision."""
+    cfg = sc.req.cfg
+    current_round = sc.req.ctx.current_round
+    best_speedup = sc.round_result.get("best_speedup", 0.0)
+    round_index = load_json(op_dir / "round_index.json")
+    non_idle_count = count_non_idle_rounds(round_index)
+    c1 = best_speedup >= sc.target_speedup
+    c2 = non_idle_count >= sc.max_rounds
+    current_policy = summary.get("analysis_policy", "pattern_entry")
+    try:
+        decision = strategy.select_next_round(
+            round_index,
+            op_category=cfg.op_category,
+            current_policy=current_policy,
+            context={"op_dir": str(op_dir), "current_round": current_round},
         )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": f"strategy.select_next_round failed: {exc}",
+            "round": current_round,
+        }
+    return DecisionCtx(
+        decision=decision,
+        best_speedup=best_speedup,
+        round_index=round_index,
+        non_idle_count=non_idle_count,
+        c1=c1,
+        c2=c2,
+    )
+
+
+def _process_success_round(sc: SuccessCtx) -> dict[str, Any] | None:
+    """Handle a successful round: record, check stop, resolve baseline, prepare next.
+
+    Returns a final report dict to stop, or ``None`` to continue the loop.
+    """
+    req = sc.req
+    cfg = req.cfg
+    ctx = req.ctx
+    op_dir = req.op_dir
+    strategy = req.strategy
+    active_algorithm = req.active_algorithm
+    current_round = ctx.current_round
+    summary = ctx.summary
+
+    _record_round_result(RecordSpec(
+        op_dir=op_dir,
+        round_result=sc.round_result,
+        active_algorithm=active_algorithm,
+        strategy=strategy,
+        work_dir=ctx.work_dir,
+        current_round=current_round,
+    ))
+
+    dc = _get_decision(sc, op_dir, strategy, summary)
+    if isinstance(dc, dict):
+        return dc
+    decision = dc.decision
+    best_speedup = dc.best_speedup
+    round_index = dc.round_index
+    non_idle_count = dc.non_idle_count
+    c1 = dc.c1
+    c2 = dc.c2
+
+    _stage(f"round {current_round}: strategy decision done -> {decision.round_strategy}/{decision.direction or ''}")
+    stop_report = _check_stop(sc, dc)
+    if stop_report is not None:
+        return stop_report
+
+    _fill_direction(strategy, round_index, cfg.op_category, summary.get("analysis_policy", "pattern_entry"), decision)
+    baseline_dir = _resolve_baseline(strategy, round_index, op_dir, sc.op_name, decision)
+    _finalize_round(sc, round_index, decision, best_speedup, baseline_dir)
+    return None
+
+
+@dataclass
+class _LoopSpec:
+    """Immutable inputs for the orchestrator main loop."""
+
+    cfg: OrchestratorConfig
+    config: dict[str, Any]
+    strategy: Any
+    active_algorithm: str
+    op_dir: Path
+    state_path: Path
+    current_timeout: int
+    max_worker_timeout: int
+    target_speedup: float
+    max_rounds: int
+
+
+def _run_loop(spec: _LoopSpec) -> dict[str, Any]:
+    """Run the orchestration loop until a stop/fail report is produced."""
+    cfg = spec.cfg
+    while True:
+        ctx = _load_round_context(spec.state_path, spec.op_dir, spec.active_algorithm)
+        current_round = ctx.current_round
+        work_dir = ctx.work_dir
+        round_index_path = spec.op_dir / "round_index.json"
+
+        dispatch_req = DispatchRequest(
+            op_dir=spec.op_dir,
+            cfg=cfg,
+            config=spec.config,
+            strategy=spec.strategy,
+            active_algorithm=spec.active_algorithm,
+            ctx=ctx,
+            round_index_path=round_index_path,
+            current_timeout=spec.current_timeout,
+        )
+        dispatch_result = _dispatch_worker(dispatch_req)
+
         if dispatch_result["status"] == "timeout":
-            continue
-        if dispatch_result["status"] != "success":
+            spec.current_timeout = _handle_timeout(spec, ctx, spec.current_timeout)
+        elif dispatch_result["status"] != "success":
             return {
                 "status": "failed",
                 "reason": f"dispatch_round failed: {dispatch_result.get('stderr', '')}",
                 "round": current_round,
             }
-        result = _process_success_round(
-            _SuccessCtx(
-                strategy=ctx.strategy,
-                op_dir=ctx.op_dir,
-                op_name=ctx.op_name,
-                op_category=ctx.op_category,
-                current_round=current_round,
-                work_dir=work_dir,
-                state_path=ctx.state_path,
-                active_algorithm=ctx.active_algorithm,
-                target_speedup=ctx.target_speedup,
-                max_rounds=ctx.max_rounds,
-                cwd=ctx.cwd,
-                summary=summary,
+        else:
+            result = _process_success_round(SuccessCtx(
+                req=dispatch_req,
                 round_result=dispatch_result["round_result"],
-                config=ctx.config,
-                global_baseline_speedup=rl.global_baseline_speedup,
-            )
-        )
-        if result is not None:
-            return result
+                state_path=spec.state_path,
+                target_speedup=spec.target_speedup,
+                max_rounds=spec.max_rounds,
+                cwd=cfg.cwd,
+                op_name=cfg.op_name,
+            ))
+            if result is not None:
+                return result
+
+
+def run_orchestrator(cfg: OrchestratorConfig) -> dict[str, Any]:
+    """Main orchestration loop."""
+    config = read_config(cfg.cwd)
+    target_speedup = config.get("target_speedup", 5)
+    max_rounds = config.get("max_rounds", 10)
+    max_worker_timeout = config.get("max_worker_timeout", 28800)
+
+    discovered = _discovered_algorithm_names()
+    resolved = _resolve_algorithm(cfg, config, discovered)
+    if isinstance(resolved, dict):
+        return resolved
+    active_algorithm, legacy = resolved
+    op_dir, state_path, strategy, current_timeout = _init_workspace_and_strategy(
+        cfg, config, active_algorithm, legacy
+    )
+
+    spec = _LoopSpec(
+        cfg=cfg,
+        config=config,
+        strategy=strategy,
+        active_algorithm=active_algorithm,
+        op_dir=op_dir,
+        state_path=state_path,
+        current_timeout=current_timeout,
+        max_worker_timeout=max_worker_timeout,
+        target_speedup=target_speedup,
+        max_rounds=max_rounds,
+    )
+    return _run_loop(spec)
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse orchestrator CLI arguments."""
     parser = argparse.ArgumentParser(description="Triton Auto Evolve Orchestrator Loop")
     parser.add_argument("--op-name", required=True, help="Operator name")
     parser.add_argument("--algorithm", default=None,
@@ -1708,8 +2279,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-perf-csv", default=None, help="Path to GPU performance CSV")
     parser.add_argument("--timeout", type=int, default=7200, help="Initial sub CLI timeout in seconds")
     parser.add_argument(
-        "--op-category",
-        default=None,
+        "--op-category", default=None,
         help="Operator category (elementwise, matmul, normalization, ...)",
     )
     parser.add_argument("--arch", default="ascend910b1", help="Target Ascend architecture (e.g. ascend910b3)")
@@ -1717,8 +2287,10 @@ def _parse_args() -> argparse.Namespace:
         "--migrate-legacy",
         default=None,
         metavar="ALGORITHM",
-        help="Migrate a legacy workspace (triton_ascend_output/{op_name}/) to "
-             "the new naming and continue with ALGORITHM",
+        help=(
+            "Migrate a legacy workspace (triton_ascend_output/{op_name}/) to the new "
+            "naming and continue with ALGORITHM"
+        ),
     )
     parser.add_argument(
         "--detect-legacy",
@@ -1729,28 +2301,27 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = _parse_args()
 
     cwd = Path.cwd()
-    result = run_orchestrator(
-        OrchestratorConfig(
-            cwd=cwd,
-            op_name=args.op_name,
-            mode=args.mode,
-            task_desc=Path(args.task_desc).expanduser().resolve(),
-            task_json=Path(args.task_json).expanduser().resolve() if args.task_json else None,
-            gpu_kernel_ref=Path(args.gpu_kernel_ref).expanduser().resolve() if args.gpu_kernel_ref else None,
-            gpu_perf_csv=Path(args.gpu_perf_csv).expanduser().resolve() if args.gpu_perf_csv else None,
-            timeout=args.timeout,
-            op_category=args.op_category,
-            arch=args.arch,
-            algorithm=args.algorithm,
-            run_tag=args.run_tag,
-            migrate_legacy=args.migrate_legacy,
-            detect_legacy=args.detect_legacy,
-        )
+    cfg = OrchestratorConfig(
+        cwd=cwd,
+        op_name=args.op_name,
+        mode=args.mode,
+        task_desc=Path(args.task_desc).expanduser().resolve(),
+        task_json=Path(args.task_json).expanduser().resolve() if args.task_json else None,
+        gpu_kernel_ref=Path(args.gpu_kernel_ref).expanduser().resolve() if args.gpu_kernel_ref else None,
+        gpu_perf_csv=Path(args.gpu_perf_csv).expanduser().resolve() if args.gpu_perf_csv else None,
+        timeout=args.timeout,
+        op_category=args.op_category,
+        arch=args.arch,
+        algorithm=args.algorithm,
+        run_tag=args.run_tag,
+        migrate_legacy=args.migrate_legacy,
+        detect_legacy=args.detect_legacy,
     )
+    result = run_orchestrator(cfg)
     exit_code = result.pop("_exit_code", None)
     if exit_code is not None:
         return exit_code

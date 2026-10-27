@@ -1,0 +1,13 @@
+{
+  "route_id": "route-1",
+  "round": 1,
+  "encoding_initial": ["K1", "K2", "K3"],
+  "deleted_units": [
+    {"ku_id": "K3", "reason": "no improvement after 2 rounds"}
+  ],
+  "active_units": ["K1", "K2"],
+  "new_insights": [
+    "沿 M 维度 block_size=128 在 round 2 达到瓶颈，可能需要更大的 block"
+  ],
+  "kb_changes_summary": "Removed K3, no new units added"
+}

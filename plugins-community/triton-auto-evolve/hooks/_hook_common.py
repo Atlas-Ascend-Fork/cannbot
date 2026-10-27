@@ -10,7 +10,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 
-"""Shared helpers for the triton-auto-evolve hooks."""
+"""Shared helpers for triton-auto-evolve session hooks (SessionStart / SessionEnd)."""
 
 from __future__ import annotations
 
@@ -19,12 +19,16 @@ from pathlib import Path
 
 
 def is_worker_mode() -> bool:
-    """Return True if running as a per-round sub-agent worker."""
+    """Return True if running as a per-round sub-agent worker.
+
+    Workers receive all required context via manifest.json and must not touch
+    the orchestrator's .triton-agent/ runtime tree.
+    """
     return os.environ.get("TRITON_OPTIMIZER_MODE", "").lower() == "worker"
 
 
 def resolve_workspace(payload: dict[str, object]) -> Path | None:
-    """Resolve the workspace directory from the hook payload's ``cwd``."""
+    """Resolve the workspace directory from the hook payload cwd."""
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and cwd:
         return Path(cwd).expanduser().resolve()

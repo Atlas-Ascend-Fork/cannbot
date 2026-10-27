@@ -41,8 +41,6 @@ Output (JSON):
     }
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import shutil
@@ -54,7 +52,10 @@ from pathlib import Path
 from typing import Any
 
 from config_loader import read_config, get_algorithm_params, get_enabled_algorithms
-from direction_selector import DirectionYieldContext, build_direction_history
+from direction_selector import (
+    DirectionYieldContext,
+    build_direction_history,
+)
 from strategies import discover_strategies, load_strategy_for_algorithm
 from strategies.base import SwitchMarker
 from workspace_utils import find_op_name
@@ -107,6 +108,33 @@ def _copy_algorithm_state_files(
         shutil.copy2(src, dst)
         copied.append(rel_path)
     return copied
+
+
+def _generate_bottleneck_card(
+    source_round_dir: Path,
+    next_round_dir: Path,
+    result: dict[str, Any],
+) -> None:
+    """B1-脚本（gene-fusion 专用）：蒸馏刚完成轮次最优 route 的瓶颈卡片到下一轮目录。
+
+    卡片是增强产物：蒸馏/写入的任何失败只记 warning，不阻塞 transition。
+    """
+    try:
+        from bottleneck_card import build_card
+
+        card = build_card(source_round_dir)
+        out_path = next_round_dir / "bottleneck_card.json"
+        out_path.write_text(
+            json.dumps(card, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        result["warnings"].append(
+            "bottleneck_card distilled from "
+            f"{source_round_dir.name} (best_route={card.get('best_route')}, "
+            f"bottlenecks={len(card.get('proven_bottlenecks') or [])})"
+        )
+    except Exception as exc:  # noqa: BLE001
+        result["warnings"].append(f"bottleneck_card generation skipped: {exc}")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -165,27 +193,24 @@ def _entry_for_round_index(round_index: list[dict[str, Any]], round_index_num: i
     return None
 
 
-def _phase3_ok(current_dir: Path) -> bool:
-    """Return True when Phase 3 disk verification passed all cases."""
+def _check_round_artifacts(current_dir: Path, issues: list[str]) -> None:
+    """Check Phase 3/4 verification, code change, and attempts authenticity."""
     phase3_verify_paths = sorted(current_dir.glob("output/iter_*/verify/verify_result.json"))
-    if not phase3_verify_paths:
-        return False
-    try:
-        vdata = load_json(phase3_verify_paths[-1])
-    except ValueError:
-        return False
-    total = vdata.get("total_cases", 0)
-    passed = vdata.get("passed_cases", 0)
-    if not (isinstance(total, (int, float)) and isinstance(passed, (int, float))):
-        return False
-    return int(total) > 0 and int(passed) == int(total)
+    phase3_ok = False
+    if phase3_verify_paths:
+        try:
+            vdata = load_json(phase3_verify_paths[-1])
+            total = vdata.get("total_cases", 0)
+            passed = vdata.get("passed_cases", 0)
+            if isinstance(total, (int, float)) and isinstance(passed, (int, float)):
+                phase3_ok = int(total) > 0 and int(passed) == int(total)
+        except ValueError:
+            pass
+    if not phase3_ok:
+        issues.append("Phase 3 verification not found on disk (output/iter_*/verify/verify_result.json)")
 
-
-def _check_phase4(current_dir: Path, issues: list[str]) -> None:
-    """Validate Phase 4 artifacts: real code change and attempts.md authenticity."""
     opt_iter_dirs = sorted(current_dir.glob("output/opt_iter_*"))
     phase4_ok = len(opt_iter_dirs) > 0
-
     has_real_change = False
     generated_code = current_dir / "output" / "generated_code.py"
     if phase4_ok and generated_code.is_file():
@@ -206,10 +231,7 @@ def _check_phase4(current_dir: Path, issues: list[str]) -> None:
         issues.append("phase4_entered but output/attempts.md not found")
     elif attempts_path.is_file():
         lines = attempts_path.read_text().splitlines()
-        tried_count = sum(
-            1 for line in lines
-            if line.strip().startswith("- [") and ("已尝试" in line or "已命中" in line)
-        )
+        tried_count = sum(1 for line in lines if line.strip().startswith("- [") and ("已尝试" in line or "已命中" in line))
         if tried_count < 1 and phase4_ok:
             issues.append(
                 "output/attempts.md has no '已尝试' or '已命中' records. "
@@ -233,85 +255,68 @@ def _validate_current_round(current_dir: Path) -> tuple[list[str], dict[str, Any
         except ValueError:
             pass
 
-    if not _phase3_ok(current_dir):
-        issues.append(
-            "Phase 3 verification not found on disk (output/iter_*/verify/verify_result.json)"
-        )
-
-    _check_phase4(current_dir, issues)
+    _check_round_artifacts(current_dir, issues)
 
     return issues, current_summary
 
 
 @dataclass
-class DirectionMetadataRequest:
-    """Inputs for computing a completed round's direction metadata."""
+class DirectionMetaInput:
+    """Inputs for computing direction metadata of a completed round."""
 
+    op_dir: Path
+    source_round_dir: str
     current_summary: dict[str, Any]
     baseline_entry: dict[str, Any] | None
     strategy: Any
-    plateau_detected: bool = False
-    timeout: bool = False
-    idle: bool = False
-    context: dict[str, Any] | None = None
-    global_baseline_speedup: float = 0.0
+    switch_marker: SwitchMarker | None
+    global_baseline_speedup: float
 
 
-def _compute_direction_metadata(req: DirectionMetadataRequest) -> dict[str, Any]:
+def _compute_direction_metadata(spec: DirectionMetaInput) -> dict[str, Any]:
     """Compute direction_yield, yield_reason, and absolute_gain."""
-    current_summary = req.current_summary
+    current_summary = spec.current_summary
     best_speedup = current_summary.get("best_speedup", 0.0)
     if not isinstance(best_speedup, (int, float)):
         best_speedup = 0.0
-
-    baseline_speedup = 0.0
-    if req.baseline_entry:
-        bs = req.baseline_entry.get("best_speedup", 0.0)
-        if isinstance(bs, (int, float)):
-            baseline_speedup = bs
-
+    bs = spec.baseline_entry.get("best_speedup", 0.0) if spec.baseline_entry else None
+    baseline_speedup = bs if isinstance(bs, (int, float)) else 0.0
     target_speedup = current_summary.get("target_speedup", 5.0)
     if not isinstance(target_speedup, (int, float)):
         target_speedup = 5.0
-
     perf_data = current_summary.get("perf_data") or {}
     total = perf_data.get("total_cases", 0)
     passed = perf_data.get("passed_cases", 0)
     verify_passed = (
-        isinstance(total, (int, float))
-        and isinstance(passed, (int, float))
-        and int(total) > 0
-        and int(passed) == int(total)
+        isinstance(total, (int, float)) and isinstance(passed, (int, float))
+        and int(total) > 0 and int(passed) == int(total)
     )
-
     improvement_made = bool(current_summary.get("optimized", False))
+    current_round_dir = spec.op_dir / spec.source_round_dir
+    plateau_detected = spec.switch_marker is not None and spec.switch_marker.reason == "plateau_stagnation"
 
-    yield_label, yield_reason, absolute_gain = req.strategy.classify_direction_yield(
+    yield_label, yield_reason, absolute_gain = spec.strategy.classify_direction_yield(
         DirectionYieldContext(
             best_speedup=best_speedup,
             baseline_speedup=baseline_speedup,
             target_speedup=target_speedup,
             verify_passed=verify_passed,
             improvement_made=improvement_made,
-            plateau_detected=req.plateau_detected,
-            timeout=req.timeout,
-            idle=req.idle,
-            context=req.context,
-            global_baseline_speedup=req.global_baseline_speedup,
+            plateau_detected=plateau_detected,
+            timeout=current_summary.get("status") == "timeout",
+            idle=current_summary.get("round_type") == "idle",
+            context={"op_dir": str(spec.op_dir), "round_dir": str(current_round_dir)},
+            global_baseline_speedup=spec.global_baseline_speedup,
         )
-    )
-
-    absolute_gain_global = (
-        best_speedup - req.global_baseline_speedup
-        if req.global_baseline_speedup > 0
-        else 0.0
     )
 
     return {
         "direction_yield": yield_label,
         "yield_reason": yield_reason,
         "absolute_gain_vs_baseline": round(absolute_gain, 6),
-        "absolute_gain_vs_global_baseline": round(absolute_gain_global, 6),
+        "absolute_gain_vs_global_baseline": round(
+            best_speedup - spec.global_baseline_speedup if spec.global_baseline_speedup > 0 else 0.0, 6
+        ),
     }
 
 
@@ -353,540 +358,9 @@ def _entry_for_baseline(round_index: list[dict[str, Any]], round_dir: str) -> di
     return None
 
 
-def _read_baseline_speedup(baseline_info_path: Path) -> float | None:
-    """Read baseline_speedup from baseline_info.json; None if absent/invalid."""
-    if not baseline_info_path.is_file():
-        return None
-    try:
-        baseline_info = load_json(baseline_info_path)
-        gbs = baseline_info.get("baseline_speedup", 0.0)
-    except ValueError:
-        return None
-    if isinstance(gbs, (int, float)) and gbs > 0:
-        return float(gbs)
-    return None
-
-
-def _resolve_global_baseline(
-    op_dir: Path,
-    global_baseline_dir: str | None,
-    global_baseline_speedup: float,
-) -> tuple[str | None, float]:
-    """Resolve global baseline speedup from baseline_info.json when absent."""
-    if global_baseline_dir:
-        gbs = _read_baseline_speedup(op_dir / global_baseline_dir / "baseline_info.json")
-        if gbs is not None:
-            global_baseline_speedup = gbs
-        return global_baseline_dir, global_baseline_speedup
-
-    gbs = _read_baseline_speedup(op_dir / "global_baseline" / "baseline_info.json")
-    if gbs is not None:
-        global_baseline_speedup = gbs
-        global_baseline_dir = "global_baseline"
-    return global_baseline_dir, global_baseline_speedup
-
-
-@dataclass
-class _BaselineSelection:
-    """Inputs for selecting and copying the next round's baseline."""
-
-    op_dir: Path
-    op_name: str | None
-    baseline_dir: str | None
-    baseline_dirs: list[str]
-    next_round_dir: Path
-    strategy: Any
-    algorithm: str
-    warnings: list[str]
-
-
-def _select_and_copy_baseline(d: _BaselineSelection) -> tuple[dict[str, Any] | None, float]:
-    """Select a baseline, copy its code, and return (baseline_entry, speedup)."""
-    op_dir = d.op_dir
-    op_name = d.op_name
-    baseline_dir = d.baseline_dir
-    baseline_dirs = d.baseline_dirs
-    next_round_dir = d.next_round_dir
-    strategy = d.strategy
-    algorithm = d.algorithm
-    warnings = d.warnings
-    baseline_path: Path | None = None
-    baseline_entry: dict[str, Any] | None = None
-    baseline_speedup = 0.0
-
-    if baseline_dir or baseline_dirs:
-        baseline_path, baseline_entry, baseline_speedup = _select_baseline_path(
-            op_dir, op_name or "", baseline_dir, baseline_dirs
-        )
-        if baseline_path is None:
-            warnings.append("specified baseline not found; next round starts without baseline code")
-        else:
-            warnings.append(
-                f"baseline copied from {baseline_entry.get('round_dir') if baseline_entry else 'unknown'} "
-                f"(speedup={baseline_speedup:.4f})"
-            )
-    else:
-        warnings.append("no baseline specified, next round starts without baseline code")
-
-    if baseline_path and baseline_path.is_file() and op_name:
-        shutil.copy2(baseline_path, next_round_dir / f"{op_name}_generated.py")
-        # Copy algorithm-specific state files if the baseline is a previous round.
-        if baseline_entry and baseline_entry.get("round_dir"):
-            source_round_dir_path = op_dir / baseline_entry["round_dir"]
-            copied_state = _copy_algorithm_state_files(
-                source_round_dir_path, next_round_dir, op_name, strategy
-            )
-            if copied_state:
-                warnings.append(f"copied algorithm state files for {algorithm}: {copied_state}")
-    elif op_name:
-        # Ensure a generated code file exists even if starting from scratch.
-        target_path = next_round_dir / f"{op_name}_generated.py"
-        if not target_path.is_file():
-            target_path.write_text("# placeholder\n", encoding="utf-8")
-
-    return baseline_entry, baseline_speedup
-
-
-@dataclass
-class _NextSummary:
-    """Inputs for building the next round's summary.json payload."""
-
-    next_round_index: int
-    algorithm: str
-    baseline_entry: dict[str, Any] | None
-    global_baseline_dir: str | None
-    global_baseline_speedup: float
-    next_round_strategy: str
-    next_analysis_policy: str
-    next_hypothesis: str
-    next_direction: str
-    next_evidence_sources: list[str]
-    current_summary: dict[str, Any]
-    algorithm_metadata: dict[str, Any] | None
-
-
-def _build_next_summary(d: _NextSummary) -> dict[str, Any]:
-    """Build the next round's summary.json payload."""
-    next_round_index = d.next_round_index
-    algorithm = d.algorithm
-    baseline_entry = d.baseline_entry
-    global_baseline_dir = d.global_baseline_dir
-    global_baseline_speedup = d.global_baseline_speedup
-    next_round_strategy = d.next_round_strategy
-    next_analysis_policy = d.next_analysis_policy
-    next_hypothesis = d.next_hypothesis
-    next_direction = d.next_direction
-    next_evidence_sources = d.next_evidence_sources
-    current_summary = d.current_summary
-    algorithm_metadata = d.algorithm_metadata
-    next_summary = {
-        "round_index": next_round_index,
-        "algorithm": algorithm,
-        "baseline_dir": baseline_entry.get("round_dir") if baseline_entry else None,
-        "global_baseline_dir": global_baseline_dir,
-        "global_baseline_speedup": global_baseline_speedup,
-        "round_strategy": next_round_strategy,
-        "analysis_policy": next_analysis_policy,
-        "hypothesis": next_hypothesis,
-        "direction": next_direction,
-        "evidence_sources": next_evidence_sources,
-        "status": "active",
-        "best_speedup": 0.0,
-        "success": False,
-        "gen_iterations": 0,
-        "opt_iterations": 0,
-        "optimized": False,
-        "target_reached": False,
-        "target_speedup": current_summary.get("target_speedup", 5.0),
-        "direction_yield": None,
-        "yield_reason": None,
-        "absolute_gain_vs_baseline": None,
-        "absolute_gain_vs_global_baseline": None,
-    }
-    if algorithm_metadata:
-        for key in ("mcts_parent_id", "mcts_selection_path", "mcts_pending_expansion"):
-            if key in algorithm_metadata:
-                next_summary[key] = algorithm_metadata[key]
-    return next_summary
-
-
-@dataclass
-class _StateUpdate:
-    """Inputs for advancing the .triton-agent/ state file."""
-
-    op_dir: Path
-    current_round: int
-    next_round_index: int
-    next_round_dir_name: str
-    next_round_dir: Path
-    algorithm: str
-    existing_rounds: list[dict[str, Any]]
-    warnings: list[str]
-
-
-def _update_state_file(d: _StateUpdate) -> None:
-    """Advance the .triton-agent/ state file to the next round."""
-    op_dir = d.op_dir
-    current_round = d.current_round
-    next_round_index = d.next_round_index
-    next_round_dir_name = d.next_round_dir_name
-    next_round_dir = d.next_round_dir
-    algorithm = d.algorithm
-    existing_rounds = d.existing_rounds
-    warnings = d.warnings
-    state_dir_loc = _find_state_dir(op_dir)
-    if state_dir_loc is None:
-        warnings.append(".triton-agent/ not found, state file will not be updated")
-    op_name = find_op_name(op_dir) or (op_dir.name if op_dir.name else None)
-    state_path = _state_path_for_op_dir(op_dir, state_dir_loc, op_name)
-    if not (state_path and state_path.is_file()):
-        return
-
-    try:
-        state = load_json(state_path)
-        if str(current_round) in state.get("rounds", {}):
-            state["rounds"][str(current_round)]["status"] = "completed"
-        rounds = state.setdefault("rounds", {})
-        rounds[str(next_round_index)] = {
-            "status": "active",
-            "round_dir": next_round_dir_name,
-        }
-        state["current_round"] = next_round_index
-        state["algorithm"] = algorithm
-        state["algorithm_reference"] = f".claude/references/algorithms/{algorithm}/round.md"
-        state["status"] = "active"
-        state["phase"] = "round_active"
-        state["work_dir"] = str(next_round_dir)
-        state["last_phase"] = 0
-        # Maintain direction_history for fast recovery.
-        state["direction_history"] = build_direction_history(existing_rounds)
-        state_path.write_text(
-            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-    except ValueError as exc:
-        warnings.append(f"state file update failed: {exc}")
-
-
-@dataclass
-class _RoundIndexUpdate:
-    """Inputs for finalizing the current entry and appending the next entry."""
-
-    op_dir: Path
-    existing_rounds: list[dict[str, Any]]
-    current_round: int
-    source_round_dir: str
-    current_summary: dict[str, Any]
-    direction_metadata: dict[str, Any]
-    next_round_index: int
-    next_round_dir_name: str
-    next_round_strategy: str
-    next_analysis_policy: str
-    next_hypothesis: str
-    next_direction: str
-    next_evidence_sources: list[str]
-    algorithm: str
-    baseline_entry: dict[str, Any] | None
-    switch_marker: SwitchMarker | None
-    global_baseline_dir: str | None
-    global_baseline_speedup: float
-
-
-def _build_current_entry(d: _RoundIndexUpdate) -> dict[str, Any]:
-    """Finalize and return the current round entry, creating it if absent."""
-    current_entry = _entry_for_round_index(d.existing_rounds, d.current_round)
-    if current_entry is None:
-        current_entry = {
-            "round_index": d.current_round,
-            "round_dir": d.source_round_dir,
-            "direction": d.current_summary.get("direction", ""),
-            "hypothesis": d.current_summary.get("hypothesis", ""),
-            "evidence_sources": d.current_summary.get("evidence_sources", []),
-            "analysis_policy": d.current_summary.get("analysis_policy", "pattern_entry"),
-            "effective_metric_source": d.current_summary.get("effective_metric_source", "kernel"),
-            "status": "success" if d.current_summary.get("success", False) else "failed",
-            "best_speedup": d.current_summary.get("best_speedup", 0.0),
-            "round_strategy": d.current_summary.get("round_strategy", "exploration"),
-            "consecutive_low_gain_count": d.current_summary.get("consecutive_low_gain_count", 0),
-            "round_type": d.current_summary.get("round_type", "active"),
-            "target_speedup": d.current_summary.get("target_speedup", 5.0),
-            "global_baseline_dir": d.current_summary.get("global_baseline_dir") or d.global_baseline_dir,
-            "global_baseline_speedup": d.current_summary.get("global_baseline_speedup") or d.global_baseline_speedup,
-        }
-        d.existing_rounds.append(current_entry)
-
-    current_entry.update(d.direction_metadata)
-    current_entry["status"] = "success" if d.current_summary.get("success", False) else "failed"
-
-    if "baseline_dir" not in current_entry:
-        current_entry["baseline_dir"] = d.current_summary.get("baseline_dir")
-    if "global_baseline_dir" not in current_entry or not current_entry["global_baseline_dir"]:
-        current_entry["global_baseline_dir"] = d.global_baseline_dir
-    if "global_baseline_speedup" not in current_entry or not current_entry["global_baseline_speedup"]:
-        current_entry["global_baseline_speedup"] = d.global_baseline_speedup
-    current_entry.pop("parent_round_dir", None)
-    current_entry.pop("best_baseline_for_this_direction", None)
-    return current_entry
-
-
-def _build_next_entry(d: _RoundIndexUpdate) -> dict[str, Any]:
-    """Build the next round entry, embedding the switch marker if present."""
-    next_entry: dict[str, Any] = {
-        "round_index": d.next_round_index,
-        "round_dir": d.next_round_dir_name,
-        "algorithm": d.algorithm,
-        "direction": d.next_direction,
-        "hypothesis": d.next_hypothesis,
-        "evidence_sources": d.next_evidence_sources,
-        "analysis_policy": d.next_analysis_policy,
-        "effective_metric_source": "kernel",
-        "status": "active",
-        "best_speedup": 0.0,
-        "round_strategy": d.next_round_strategy,
-        "consecutive_low_gain_count": 0,
-        "round_type": "active",
-        "target_speedup": d.current_summary.get("target_speedup", 5.0),
-        "direction_yield": None,
-        "yield_reason": None,
-        "absolute_gain_vs_baseline": None,
-        "absolute_gain_vs_global_baseline": None,
-        "baseline_dir": d.baseline_entry.get("round_dir") if d.baseline_entry else None,
-        "global_baseline_dir": d.global_baseline_dir,
-        "global_baseline_speedup": d.global_baseline_speedup,
-    }
-    if d.switch_marker is not None:
-        next_entry["switch_reason"] = d.switch_marker.reason
-        next_entry["previous_direction"] = d.switch_marker.previous_direction
-        next_entry["new_direction"] = d.switch_marker.new_direction
-    return next_entry
-
-
-def _update_round_index(d: _RoundIndexUpdate) -> None:
-    """Finalize the current round entry and append the next round entry."""
-    _build_current_entry(d)
-    d.existing_rounds.append(_build_next_entry(d))
-    (d.op_dir / "round_index.json").write_text(
-        json.dumps(d.existing_rounds, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
-
-@dataclass
-class _OptNote:
-    """Inputs for appending the completed round's audit entry to opt-note.md."""
-
-    op_dir: Path
-    current_round: int
-    current_summary: dict[str, Any]
-    current_success_criteria: str
-    current_key_learnings: str
-    direction_metadata: dict[str, Any]
-    switch_marker: SwitchMarker | None
-
-
-def _append_opt_note(d: _OptNote) -> None:
-    """Append the completed round's audit entry to opt-note.md."""
-    op_dir = d.op_dir
-    current_round = d.current_round
-    current_summary = d.current_summary
-    current_success_criteria = d.current_success_criteria
-    current_key_learnings = d.current_key_learnings
-    direction_metadata = d.direction_metadata
-    switch_marker = d.switch_marker
-    opt_entry = (
-        f"\n## Round {current_round}\n\n"
-        f"- round_strategy: {current_summary.get('round_strategy', 'N/A')}\n"
-        f"- hypothesis: {current_summary.get('hypothesis', 'N/A')}\n"
-        f"- direction: {current_summary.get('direction', 'N/A')}\n"
-        f"- success_criteria: {current_success_criteria}\n"
-        f"- evidence_sources: {json.dumps(current_summary.get('evidence_sources', []), ensure_ascii=False)}\n"
-        f"- result: {'success' if current_summary.get('success', False) else 'failed'}\n"
-        f"- best_speedup: {current_summary.get('best_speedup', 0)}\n"
-        f"- direction_yield: {direction_metadata.get('direction_yield')}\n"
-        f"- yield_reason: {direction_metadata.get('yield_reason')}\n"
-        f"- absolute_gain_vs_baseline: {direction_metadata.get('absolute_gain_vs_baseline')}\n"
-        f"- absolute_gain_vs_global_baseline: {direction_metadata.get('absolute_gain_vs_global_baseline')}\n"
-    )
-    if switch_marker is not None:
-        opt_entry += (
-            f"- switch_reason: {switch_marker.reason}\n"
-            f"- previous_direction: {switch_marker.previous_direction}\n"
-            f"- new_direction: {switch_marker.new_direction}\n"
-        )
-    opt_entry += f"- key_learnings: {current_key_learnings}\n"
-
-    with open(op_dir / "opt-note.md", "a", encoding="utf-8") as f:
-        f.write(opt_entry)
-
-
-def _write_transition_lock(
-    op_dir: Path,
-    current_round: int,
-    next_round_index: int,
-    next_round_dir_name: str,
-    warnings: list[str],
-) -> None:
-    """Write the transition lock that releases the Phase 7 gate."""
-    lock = {
-        "action": "continue",
-        "transition_at": datetime.now(timezone.utc).isoformat(),
-        "from_round": current_round,
-        "to_round": next_round_index,
-        "to_round_dir": next_round_dir_name,
-        "state_after": {
-            "current_round": next_round_index,
-            "last_phase": 0,
-            "status": "active",
-            "phase": "round_active",
-        },
-    }
-    try:
-        (op_dir / ".transition_lock.json").write_text(
-            json.dumps(lock, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-    except OSError as exc:
-        warnings.append(f"failed to write transition lock: {exc}")
-
-
-@dataclass
-class _MetadataAndSummary:
-    """Inputs for computing direction metadata and writing the next summary.json."""
-
-    op_dir: Path
-    source_round_dir: str
-    current_summary: dict[str, Any]
-    baseline_entry: dict[str, Any] | None
-    strategy: Any
-    switch_marker: SwitchMarker | None
-    global_baseline_speedup: float
-    next_round_index: int
-    algorithm: str
-    global_baseline_dir: str | None
-    next_round_strategy: str
-    next_analysis_policy: str
-    next_hypothesis: str
-    next_direction: str
-    next_evidence_sources: list[str]
-    algorithm_metadata: dict[str, Any] | None
-    next_round_dir: Path
-
-
-def _compute_metadata_and_write_summary(d: _MetadataAndSummary) -> dict[str, Any]:
-    """Compute the completed round's metadata and write the next summary.json."""
-    current_round_dir = d.op_dir / d.source_round_dir
-    plateau_detected = (
-        d.switch_marker is not None and d.switch_marker.reason == "plateau_stagnation"
-    )
-    direction_metadata = _compute_direction_metadata(
-        DirectionMetadataRequest(
-            current_summary=d.current_summary,
-            baseline_entry=d.baseline_entry,
-            strategy=d.strategy,
-            plateau_detected=plateau_detected,
-            timeout=d.current_summary.get("status") == "timeout",
-            idle=(d.current_summary.get("round_type") == "idle"),
-            context={"op_dir": str(d.op_dir), "round_dir": str(current_round_dir)},
-            global_baseline_speedup=d.global_baseline_speedup,
-        )
-    )
-    next_summary = _build_next_summary(
-        _NextSummary(
-            next_round_index=d.next_round_index,
-            algorithm=d.algorithm,
-            baseline_entry=d.baseline_entry,
-            global_baseline_dir=d.global_baseline_dir,
-            global_baseline_speedup=d.global_baseline_speedup,
-            next_round_strategy=d.next_round_strategy,
-            next_analysis_policy=d.next_analysis_policy,
-            next_hypothesis=d.next_hypothesis,
-            next_direction=d.next_direction,
-            next_evidence_sources=d.next_evidence_sources,
-            current_summary=d.current_summary,
-            algorithm_metadata=d.algorithm_metadata,
-        )
-    )
-    (d.next_round_dir / "summary.json").write_text(
-        json.dumps(next_summary, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    return direction_metadata
-
-
-@dataclass
-class _TransitionComputed:
-    """Computed state shared by the transition write-phase helpers."""
-
-    op_dir: Path
-    current_round: int
-    next_round_index: int
-    next_round_dir_name: str
-    next_round_dir: Path
-    source_round_dir: str
-    existing_rounds: list[dict[str, Any]]
-    current_summary: dict[str, Any]
-    direction_metadata: dict[str, Any]
-    baseline_entry: dict[str, Any] | None
-    global_baseline_dir: str | None
-    global_baseline_speedup: float
-    warnings: list[str]
-
-
-def _write_transition_artifacts(req: TransitionRequest, c: _TransitionComputed) -> None:
-    """Persist state / round_index / opt-note / lock for the transition."""
-    _update_state_file(
-        _StateUpdate(
-            op_dir=c.op_dir,
-            current_round=c.current_round,
-            next_round_index=c.next_round_index,
-            next_round_dir_name=c.next_round_dir_name,
-            next_round_dir=c.next_round_dir,
-            algorithm=req.algorithm,
-            existing_rounds=c.existing_rounds,
-            warnings=c.warnings,
-        )
-    )
-    _update_round_index(
-        _RoundIndexUpdate(
-            op_dir=c.op_dir,
-            existing_rounds=c.existing_rounds,
-            current_round=c.current_round,
-            source_round_dir=c.source_round_dir,
-            current_summary=c.current_summary,
-            direction_metadata=c.direction_metadata,
-            next_round_index=c.next_round_index,
-            next_round_dir_name=c.next_round_dir_name,
-            next_round_strategy=req.next_round_strategy,
-            next_analysis_policy=req.next_analysis_policy,
-            next_hypothesis=req.next_hypothesis,
-            next_direction=req.next_direction,
-            next_evidence_sources=req.next_evidence_sources,
-            algorithm=req.algorithm,
-            baseline_entry=c.baseline_entry,
-            switch_marker=req.switch_marker,
-            global_baseline_dir=c.global_baseline_dir,
-            global_baseline_speedup=c.global_baseline_speedup,
-        )
-    )
-    _append_opt_note(
-        _OptNote(
-            op_dir=c.op_dir,
-            current_round=c.current_round,
-            current_summary=c.current_summary,
-            current_success_criteria=req.current_success_criteria,
-            current_key_learnings=req.current_key_learnings,
-            direction_metadata=c.direction_metadata,
-            switch_marker=req.switch_marker,
-        )
-    )
-    _write_transition_lock(
-        c.op_dir, c.current_round, c.next_round_index, c.next_round_dir_name, c.warnings
-    )
-
-
 @dataclass
 class TransitionRequest:
-    """Inputs for atomically transitioning to the next round."""
+    """Inputs for executing a round transition."""
 
     op_dir: Path | str
     current_round: int
@@ -909,30 +383,493 @@ class TransitionRequest:
     algorithm_metadata: dict[str, Any] | None = None
 
 
-@dataclass
-class _PreludeState:
-    """Computed state from the transition prelude."""
+def _baseline_speedup_from_info(baseline_info_path: Path) -> float | None:
+    """baseline_info.json 中的正数 baseline_speedup（缺失/损坏/非法返回 None）。"""
+    if not baseline_info_path.is_file():
+        return None
+    try:
+        baseline_info = load_json(baseline_info_path)
+    except ValueError:
+        return None
+    gbs = baseline_info.get("baseline_speedup", 0.0)
+    if isinstance(gbs, (int, float)) and gbs > 0:
+        return float(gbs)
+    return None
 
-    existing_rounds: list[dict[str, Any]]
+
+def _resolve_global_baseline(
+    op_dir: Path, global_baseline_dir: str | None, global_baseline_speedup: float,
+) -> tuple[float, str | None]:
+    """Resolve the global baseline speedup from baseline_info.json if not provided."""
+    if global_baseline_dir:
+        gbs = _baseline_speedup_from_info(op_dir / global_baseline_dir / "baseline_info.json")
+        if gbs is not None:
+            return gbs, global_baseline_dir
+        return global_baseline_speedup, global_baseline_dir
+    gbs = _baseline_speedup_from_info(op_dir / "global_baseline" / "baseline_info.json")
+    if gbs is not None:
+        return gbs, "global_baseline"
+    return global_baseline_speedup, global_baseline_dir
+
+
+@dataclass
+class BaselineSelectionSpec:
+    """Inputs for selecting and copying the baseline into the next round."""
+
+    op_dir: Path
+    next_round_dir: Path
+    op_name: str | None
+    baseline_dir: str | None
+    baseline_dirs: list[str] | None
+    strategy: Any
+    algorithm: str
+    result: dict[str, Any]
+
+
+def _select_and_copy_baseline(
+    spec: BaselineSelectionSpec,
+) -> tuple[Path | None, dict[str, Any] | None, float]:
+    """Select the baseline round and copy its generated code into the next round."""
+    baseline_path: Path | None = None
+    baseline_speedup = 0.0
+    baseline_entry: dict[str, Any] | None = None
+
+    if spec.baseline_dir or spec.baseline_dirs:
+        baseline_path, baseline_entry, baseline_speedup = _select_baseline_path(
+            spec.op_dir, spec.op_name or "", spec.baseline_dir, spec.baseline_dirs or []
+        )
+        if baseline_path is None:
+            spec.result["warnings"].append(
+                "specified baseline not found; next round starts without baseline code"
+            )
+        else:
+            spec.result["warnings"].append(
+                f"baseline copied from {baseline_entry.get('round_dir') if baseline_entry else 'unknown'} "
+                f"(speedup={baseline_speedup:.4f})"
+            )
+    else:
+        spec.result["warnings"].append("no baseline specified, next round starts without baseline code")
+
+    _copy_baseline_code(spec, baseline_path, baseline_entry)
+    # 基础设施补位(R8/R9/R10 实测缺陷): transition 未随轮携带 golden 任务文件与
+    # 冻结锚, 迫使 worker 每轮手工 cp 任务文件 + freeze_baseline.py 落锚。
+    # golden 取自 baseline 轮(其 sha 已被锚固化); 锚随轮复制并改写 torch_path。
+    _carry_golden_task(spec, baseline_entry)
+
+    return baseline_path, baseline_entry, baseline_speedup
+
+
+def _copy_baseline_code(
+    spec: BaselineSelectionSpec,
+    baseline_path: Path | None,
+    baseline_entry: dict[str, Any] | None,
+) -> None:
+    """Copy the baseline round's generated code (and algorithm state) into the next round."""
+    if baseline_path and baseline_path.is_file() and spec.op_name:
+        target_path = spec.next_round_dir / f"{spec.op_name}_generated.py"
+        shutil.copy2(baseline_path, target_path)
+        if baseline_entry and baseline_entry.get("round_dir"):
+            source_round_dir_path = spec.op_dir / baseline_entry["round_dir"]
+            copied_state = _copy_algorithm_state_files(
+                source_round_dir_path, spec.next_round_dir, spec.op_name, spec.strategy
+            )
+            if copied_state:
+                spec.result["warnings"].append(
+                    f"copied algorithm state files for {spec.algorithm}: {copied_state}"
+                )
+    elif spec.op_name:
+        target_path = spec.next_round_dir / f"{spec.op_name}_generated.py"
+        if not target_path.is_file():
+            target_path.write_text("# placeholder\n", encoding="utf-8")
+
+
+def _carry_baseline_anchor(spec: BaselineSelectionSpec, golden_src: Path, golden_dst: Path) -> None:
+    """随轮复制冻结锚并改写 torch_path（失败仅告警，不阻断 transition）。"""
+    anchor_src = golden_src.parent / "output" / ".baseline_anchor.json"
+    if not anchor_src.is_file():
+        return
+    try:
+        anchor = json.loads(anchor_src.read_text(encoding="utf-8"))
+        anchor["torch_path"] = str(golden_dst)
+        anchor_dst_dir = spec.next_round_dir / "output"
+        anchor_dst_dir.mkdir(parents=True, exist_ok=True)
+        (anchor_dst_dir / ".baseline_anchor.json").write_text(
+            json.dumps(anchor, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        spec.result["warnings"].append(
+            "baseline anchor copied with torch_path rewritten to next round"
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        spec.result["warnings"].append(
+            f"baseline anchor copy failed (non-fatal): {exc}"
+        )
+
+
+def _carry_golden_task(spec: BaselineSelectionSpec, baseline_entry: dict[str, Any] | None) -> None:
+    """随轮携带 golden 任务文件与冻结锚到下一轮。"""
+    if not spec.op_name:
+        return
+    golden_dst = spec.next_round_dir / f"{spec.op_name}.py"
+    golden_src: Path | None = None
+    if baseline_entry and baseline_entry.get("round_dir"):
+        candidate = spec.op_dir / baseline_entry["round_dir"] / f"{spec.op_name}.py"
+        if candidate.is_file():
+            golden_src = candidate
+    if golden_src is None:
+        spec.result["warnings"].append(
+            f"golden task file {spec.op_name}.py not found in baseline round; "
+            "next round may fail _baseline_integrity gate until manually restored"
+        )
+        return
+    shutil.copy2(golden_src, golden_dst)
+    _carry_baseline_anchor(spec, golden_src, golden_dst)
+
+
+@dataclass
+class NextSummarySpec:
+    """Inputs for writing the next round's summary.json."""
+
+    next_round_dir: Path
+    next_round_index: int
+    algorithm: str
+    baseline_entry: dict[str, Any] | None
+    global_baseline_dir: str | None
+    global_baseline_speedup: float
+    next_round_strategy: str
+    next_analysis_policy: str
+    next_hypothesis: str
+    next_direction: str
+    next_evidence_sources: list[str]
     current_summary: dict[str, Any]
+    algorithm_metadata: dict[str, Any] | None
+
+
+def _write_next_summary(spec: NextSummarySpec) -> None:
+    """Write the next round's summary.json."""
+    next_summary = {
+        "round_index": spec.next_round_index,
+        "algorithm": spec.algorithm,
+        "baseline_dir": spec.baseline_entry.get("round_dir") if spec.baseline_entry else None,
+        "global_baseline_dir": spec.global_baseline_dir,
+        "global_baseline_speedup": spec.global_baseline_speedup,
+        "round_strategy": spec.next_round_strategy,
+        "analysis_policy": spec.next_analysis_policy,
+        "hypothesis": spec.next_hypothesis,
+        "direction": spec.next_direction,
+        "evidence_sources": spec.next_evidence_sources,
+        "status": "active",
+        "best_speedup": 0.0,
+        "success": False,
+        "gen_iterations": 0,
+        "opt_iterations": 0,
+        "optimized": False,
+        "target_reached": False,
+        "target_speedup": spec.current_summary.get("target_speedup", 5.0),
+        "direction_yield": None,
+        "yield_reason": None,
+        "absolute_gain_vs_baseline": None,
+        "absolute_gain_vs_global_baseline": None,
+    }
+
+    if spec.algorithm_metadata:
+        for key in ("mcts_parent_id", "mcts_selection_path", "mcts_pending_expansion"):
+            if key in spec.algorithm_metadata:
+                next_summary[key] = spec.algorithm_metadata[key]
+
+    (spec.next_round_dir / "summary.json").write_text(
+        json.dumps(next_summary, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+@dataclass
+class StateUpdateSpec:
+    """Inputs for updating the state file to point at the next round."""
+
+    op_dir: Path
+    current_round: int
+    next_round_index: int
+    next_round_dir_name: str
+    next_round_dir: Path
+    algorithm: str
+    existing_rounds: list[dict[str, Any]]
+    result: dict[str, Any]
+
+
+def _update_state_file(spec: StateUpdateSpec) -> None:
+    """Update the state file to point at the next round."""
+    state_dir_loc = _find_state_dir(spec.op_dir)
+    if state_dir_loc is None:
+        spec.result["warnings"].append(".triton-agent/ not found, state file will not be updated")
+    op_name = find_op_name(spec.op_dir) or (spec.op_dir.name if spec.op_dir.name else None)
+    state_path = _state_path_for_op_dir(spec.op_dir, state_dir_loc, op_name)
+    if state_path and state_path.is_file():
+        try:
+            state = load_json(state_path)
+            if str(spec.current_round) in state.get("rounds", {}):
+                state["rounds"][str(spec.current_round)]["status"] = "completed"
+            rounds = state.setdefault("rounds", {})
+            rounds[str(spec.next_round_index)] = {
+                "status": "active",
+                "round_dir": spec.next_round_dir_name,
+            }
+            state["current_round"] = spec.next_round_index
+            state["algorithm"] = spec.algorithm
+            state["algorithm_reference"] = f".claude/references/algorithms/{spec.algorithm}/round.md"
+            state["status"] = "active"
+            state["phase"] = "round_active"
+            state["work_dir"] = str(spec.next_round_dir)
+            state["last_phase"] = 0
+            state["direction_history"] = build_direction_history(spec.existing_rounds)
+            state_path.write_text(
+                json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except ValueError as exc:
+            spec.result["warnings"].append(f"state file update failed: {exc}")
+
+
+@dataclass
+class OptNoteSpec:
+    """Inputs for appending the completed round's entry to opt-note.md."""
+
+    op_dir: Path
+    current_round: int
+    current_summary: dict[str, Any]
+    current_success_criteria: str
+    current_key_learnings: str
+    direction_metadata: dict[str, Any]
+    switch_marker: SwitchMarker | None
+
+
+def _append_opt_note(spec: OptNoteSpec) -> None:
+    """Append the completed round's entry to opt-note.md."""
+    cs = spec.current_summary
+    opt_entry = (
+        f"\n## Round {spec.current_round}\n\n"
+        f"- round_strategy: {cs.get('round_strategy', 'N/A')}\n"
+        f"- hypothesis: {cs.get('hypothesis', 'N/A')}\n"
+        f"- direction: {cs.get('direction', 'N/A')}\n"
+        f"- success_criteria: {spec.current_success_criteria}\n"
+        f"- evidence_sources: {json.dumps(cs.get('evidence_sources', []), ensure_ascii=False)}\n"
+        f"- result: {'success' if cs.get('success', False) else 'failed'}\n"
+        f"- best_speedup: {cs.get('best_speedup', 0)}\n"
+        f"- direction_yield: {spec.direction_metadata.get('direction_yield')}\n"
+        f"- yield_reason: {spec.direction_metadata.get('yield_reason')}\n"
+        f"- absolute_gain_vs_baseline: {spec.direction_metadata.get('absolute_gain_vs_baseline')}\n"
+        f"- absolute_gain_vs_global_baseline: {spec.direction_metadata.get('absolute_gain_vs_global_baseline')}\n"
+    )
+    if spec.switch_marker is not None:
+        opt_entry += (
+            f"- switch_reason: {spec.switch_marker.reason}\n"
+            f"- previous_direction: {spec.switch_marker.previous_direction}\n"
+            f"- new_direction: {spec.switch_marker.new_direction}\n"
+        )
+    opt_entry += f"- key_learnings: {spec.current_key_learnings}\n"
+
+    with open(spec.op_dir / "opt-note.md", "a", encoding="utf-8") as f:
+        f.write(opt_entry)
+
+
+@dataclass
+class RoundIndexUpdateSpec:
+    """Inputs for finalizing the current entry and appending the next entry."""
+
+    op_dir: Path
+    existing_rounds: list[dict[str, Any]]
+    current_round: int
+    source_round_dir: str
+    current_summary: dict[str, Any]
+    direction_metadata: dict[str, Any]
+    global_baseline_dir: str | None
+    global_baseline_speedup: float
+    next_round_index: int
+    next_round_dir_name: str
+    algorithm: str
+    next_direction: str
+    next_hypothesis: str
+    next_evidence_sources: list[str]
+    next_analysis_policy: str
+    next_round_strategy: str
+    baseline_entry: dict[str, Any] | None
+    switch_marker: SwitchMarker | None
+
+
+def _finalize_current_entry(spec: RoundIndexUpdateSpec) -> None:
+    """Finalize the current round entry and merge direction metadata."""
+    current_entry = _entry_for_round_index(spec.existing_rounds, spec.current_round)
+    if current_entry is None:
+        current_entry = {
+            "round_index": spec.current_round,
+            "round_dir": spec.source_round_dir,
+            "direction": spec.current_summary.get("direction", ""),
+            "hypothesis": spec.current_summary.get("hypothesis", ""),
+            "evidence_sources": spec.current_summary.get("evidence_sources", []),
+            "analysis_policy": spec.current_summary.get("analysis_policy", "pattern_entry"),
+            "effective_metric_source": spec.current_summary.get("effective_metric_source", "kernel"),
+            "status": "success" if spec.current_summary.get("success", False) else "failed",
+            "best_speedup": spec.current_summary.get("best_speedup", 0.0),
+            "round_strategy": spec.current_summary.get("round_strategy", "exploration"),
+            "consecutive_low_gain_count": spec.current_summary.get("consecutive_low_gain_count", 0),
+            "round_type": spec.current_summary.get("round_type", "active"),
+            "target_speedup": spec.current_summary.get("target_speedup", 5.0),
+            "global_baseline_dir": spec.current_summary.get("global_baseline_dir") or spec.global_baseline_dir,
+            "global_baseline_speedup": (
+                spec.current_summary.get("global_baseline_speedup") or spec.global_baseline_speedup
+            ),
+        }
+        spec.existing_rounds.append(current_entry)
+
+    current_entry.update(spec.direction_metadata)
+    current_entry["status"] = "success" if spec.current_summary.get("success", False) else "failed"
+    if "baseline_dir" not in current_entry:
+        current_entry["baseline_dir"] = spec.current_summary.get("baseline_dir")
+    if "global_baseline_dir" not in current_entry or not current_entry["global_baseline_dir"]:
+        current_entry["global_baseline_dir"] = spec.global_baseline_dir
+    if "global_baseline_speedup" not in current_entry or not current_entry["global_baseline_speedup"]:
+        current_entry["global_baseline_speedup"] = spec.global_baseline_speedup
+    current_entry.pop("parent_round_dir", None)
+    current_entry.pop("best_baseline_for_this_direction", None)
+
+
+def _update_round_index(spec: RoundIndexUpdateSpec) -> None:
+    """Finalize the current round entry and append the next round entry."""
+    _finalize_current_entry(spec)
+
+    next_entry: dict[str, Any] = {
+        "round_index": spec.next_round_index,
+        "round_dir": spec.next_round_dir_name,
+        "algorithm": spec.algorithm,
+        "direction": spec.next_direction,
+        "hypothesis": spec.next_hypothesis,
+        "evidence_sources": spec.next_evidence_sources,
+        "analysis_policy": spec.next_analysis_policy,
+        "effective_metric_source": "kernel",
+        "status": "active",
+        "best_speedup": 0.0,
+        "round_strategy": spec.next_round_strategy,
+        "consecutive_low_gain_count": 0,
+        "round_type": "active",
+        "target_speedup": spec.current_summary.get("target_speedup", 5.0),
+        "direction_yield": None,
+        "yield_reason": None,
+        "absolute_gain_vs_baseline": None,
+        "absolute_gain_vs_global_baseline": None,
+        "baseline_dir": spec.baseline_entry.get("round_dir") if spec.baseline_entry else None,
+        "global_baseline_dir": spec.global_baseline_dir,
+        "global_baseline_speedup": spec.global_baseline_speedup,
+    }
+    if spec.switch_marker is not None:
+        next_entry["switch_reason"] = spec.switch_marker.reason
+        next_entry["previous_direction"] = spec.switch_marker.previous_direction
+        next_entry["new_direction"] = spec.switch_marker.new_direction
+
+    spec.existing_rounds.append(next_entry)
+
+    (spec.op_dir / "round_index.json").write_text(
+        json.dumps(spec.existing_rounds, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_transition_lock(
+    op_dir: Path,
+    current_round: int,
+    next_round_index: int,
+    next_round_dir_name: str,
+    result: dict[str, Any],
+) -> None:
+    """Write the transition lock."""
+    lock = {
+        "action": "continue",
+        "transition_at": datetime.now(timezone.utc).isoformat(),
+        "from_round": current_round,
+        "to_round": next_round_index,
+        "to_round_dir": next_round_dir_name,
+        "state_after": {
+            "current_round": next_round_index,
+            "last_phase": 0,
+            "status": "active",
+            "phase": "round_active",
+        },
+    }
+    lock_path = op_dir / ".transition_lock.json"
+    try:
+        lock_path.write_text(
+            json.dumps(lock, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        result["warnings"].append(f"failed to write transition lock: {exc}")
+
+
+@dataclass
+class PreludeState:
+    """State resolved by the transition prelude."""
+
+    op_dir: Path
+    current_summary: dict[str, Any]
+    existing_rounds: list[dict[str, Any]]
     next_round_index: int
     source_round_dir: str
     next_round_dir_name: str
     next_round_dir: Path
-    strategy: Any
-    op_name: str | None
-    baseline_entry: dict[str, Any] | None
-    baseline_speedup: float
 
 
-def _prepare_transition(
-    req: TransitionRequest, op_dir: Path, result: dict[str, Any]
-) -> _PreludeState | None:
-    """Validate the current round and prepare the next round directory."""
+def _validate_gene_fusion_summary(round_dir: Path) -> list[str]:
+    """gene-fusion 父轮门禁：查 round_result.json 结构完整性（替代 iter_* 检查）。
+
+    路线级质检结论由 validate_round_result.py §7.0 在收集时逐 route 把关；此处
+    只确认父轮确已产出可消费的汇总（gene_fusion 块 + 正的 route_count），不校验
+    路线成败，也不依赖子 agent 间不固定的明细字段名（route_outcomes/verdicts/
+    route_results/route_mix 混用，gf1021 实测）。
+    """
+    rr_path = round_dir / "round_result.json"
+    if not rr_path.is_file():
+        return [f"missing {rr_path.name}"]
+    try:
+        data = json.loads(rr_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"unreadable round_result.json: {exc}"]
+    gene_fusion = data.get("gene_fusion")
+    if not isinstance(gene_fusion, dict):
+        return ["round_result.json missing gene_fusion block"]
+    route_count = gene_fusion.get("route_count")
+    if not isinstance(route_count, int) or isinstance(route_count, bool) or route_count <= 0:
+        return ["gene_fusion.route_count missing or non-positive"]
+    return []
+
+
+def _prepare_transition(req: TransitionRequest, result: dict[str, Any]) -> PreludeState | dict[str, Any]:
+    """Run the prelude: validate current round, compute next round, load round_index."""
+    op_dir = req.op_dir
+    if isinstance(op_dir, str):
+        op_dir = Path(op_dir)
+
+    global_baseline_speedup, global_baseline_dir = _resolve_global_baseline(
+        op_dir, req.global_baseline_dir, req.global_baseline_speedup
+    )
+    result["global_baseline_speedup"] = global_baseline_speedup
+    result["global_baseline_dir"] = global_baseline_dir
+
     issues, current_summary = _validate_current_round(op_dir / f"opt-round-{req.current_round}")
+    if issues and req.algorithm == "gene-fusion":
+        # gene-fusion 父 round 不执行 Phase 3/4：迭代与验证发生在 route 子 CLI
+        # 内部（route-*/），由 validate_round_result.py 的 §7.0 质检把关。父轮
+        # output/ 恒无 iter_* 产物，单 agent 形态的防伪门禁在此不适用——改查
+        # 等价证据 round_result.json 的结构完整性（gene_fusion.route_count>0，
+        # 13/13 轮稳定不变量）。全 route 判废的坏轮也必须放行（继续/停止归
+        # C1/C2 策略层，gf1021 R1/R7/R11 实测）；结构缺失才是真 issue。
+        summary_issues = _validate_gene_fusion_summary(op_dir / f"opt-round-{req.current_round}")
+        if summary_issues:
+            result["issues"] = [f"gene-fusion summary: {i}" for i in summary_issues]
+            return result
+        result["warnings"].extend(f"gene-fusion parent round: {issue}" for issue in issues)
+        issues = []
     if issues:
         result["issues"] = issues
-        return None
+        return result
 
     existing_rounds = _load_round_index(op_dir)
     max_existing = max((r.get("round_index", 0) for r in existing_rounds), default=0)
@@ -940,149 +877,128 @@ def _prepare_transition(
     source_round_dir = f"opt-round-{req.current_round}"
     next_round_dir_name = f"opt-round-{next_round_index}"
     result["next_round_dir"] = next_round_dir_name
-
     next_round_dir = op_dir / next_round_dir_name
     next_round_dir.mkdir(parents=True, exist_ok=True)
 
-    config = read_config(op_dir.parent.parent)
-    strategy = load_strategy_for_algorithm(config, req.algorithm, params=req.strategy_params)
-
-    op_name = find_op_name(op_dir)
-    baseline_entry, baseline_speedup = _select_and_copy_baseline(
-        _BaselineSelection(
-            op_dir=op_dir,
-            op_name=op_name,
-            baseline_dir=req.baseline_dir,
-            baseline_dirs=req.baseline_dirs or [],
-            next_round_dir=next_round_dir,
-            strategy=strategy,
-            algorithm=req.algorithm,
-            warnings=result["warnings"],
-        )
-    )
-    result["baseline_speedup"] = baseline_speedup
-
-    return _PreludeState(
-        existing_rounds=existing_rounds,
+    return PreludeState(
+        op_dir=op_dir,
         current_summary=current_summary,
+        existing_rounds=existing_rounds,
         next_round_index=next_round_index,
         source_round_dir=source_round_dir,
         next_round_dir_name=next_round_dir_name,
         next_round_dir=next_round_dir,
-        strategy=strategy,
-        op_name=op_name,
-        baseline_entry=baseline_entry,
-        baseline_speedup=baseline_speedup,
     )
-
-
-def _write_metadata_and_summary(
-    req: TransitionRequest,
-    op_dir: Path,
-    p: _PreludeState,
-    global_baseline_dir: str | None,
-    global_baseline_speedup: float,
-) -> dict[str, Any]:
-    """Compute direction metadata and write the next summary.json."""
-    return _compute_metadata_and_write_summary(
-        _MetadataAndSummary(
-            op_dir=op_dir,
-            source_round_dir=p.source_round_dir,
-            current_summary=p.current_summary,
-            baseline_entry=p.baseline_entry,
-            strategy=p.strategy,
-            switch_marker=req.switch_marker,
-            global_baseline_speedup=global_baseline_speedup,
-            next_round_index=p.next_round_index,
-            algorithm=req.algorithm,
-            global_baseline_dir=global_baseline_dir,
-            next_round_strategy=req.next_round_strategy,
-            next_analysis_policy=req.next_analysis_policy,
-            next_hypothesis=req.next_hypothesis,
-            next_direction=req.next_direction,
-            next_evidence_sources=req.next_evidence_sources,
-            algorithm_metadata=req.algorithm_metadata,
-            next_round_dir=p.next_round_dir,
-        )
-    )
-
-
-def _finalize_transition(
-    req: TransitionRequest,
-    op_dir: Path,
-    p: _PreludeState,
-    result: dict[str, Any],
-) -> dict[str, Any]:
-    """Write the next-round artifacts and return the completed result."""
-    global_baseline_dir = result["global_baseline_dir"]
-    global_baseline_speedup = result["global_baseline_speedup"]
-    direction_metadata = _write_metadata_and_summary(
-        req, op_dir, p, global_baseline_dir, global_baseline_speedup
-    )
-
-    _write_transition_artifacts(
-        req,
-        _TransitionComputed(
-            op_dir=op_dir,
-            current_round=req.current_round,
-            next_round_index=p.next_round_index,
-            next_round_dir_name=p.next_round_dir_name,
-            next_round_dir=p.next_round_dir,
-            source_round_dir=p.source_round_dir,
-            existing_rounds=p.existing_rounds,
-            current_summary=p.current_summary,
-            direction_metadata=direction_metadata,
-            baseline_entry=p.baseline_entry,
-            global_baseline_dir=global_baseline_dir,
-            global_baseline_speedup=global_baseline_speedup,
-            warnings=result["warnings"],
-        )
-    )
-
-    result["status"] = "success"
-    result["next_round"] = p.next_round_index
-    result["issues"] = []
-    return result
 
 
 def transition_to_next_round(req: TransitionRequest) -> dict[str, Any]:
     """Atomically execute the round transition."""
-    op_dir = Path(req.op_dir) if isinstance(req.op_dir, str) else req.op_dir
+    current_round = req.current_round
+    algorithm = req.algorithm
+    baseline_dir = req.baseline_dir
+    baseline_dirs = req.baseline_dirs
+    strategy_params = req.strategy_params
+    switch_marker = req.switch_marker
     result: dict[str, Any] = {
-        "status": "fail",
-        "next_round": req.current_round + 1,
-        "next_round_dir": f"opt-round-{req.current_round + 1}",
-        "baseline_speedup": 0.0,
-        "global_baseline_speedup": req.global_baseline_speedup,
-        "global_baseline_dir": req.global_baseline_dir,
-        "issues": [],
-        "warnings": [],
+        "status": "fail", "next_round": current_round + 1, "next_round_dir": f"opt-round-{current_round + 1}",
+        "baseline_speedup": 0.0, "global_baseline_speedup": req.global_baseline_speedup,
+        "global_baseline_dir": req.global_baseline_dir, "issues": [], "warnings": [],
     }
 
-    global_baseline_dir, global_baseline_speedup = _resolve_global_baseline(
-        op_dir, req.global_baseline_dir, req.global_baseline_speedup
+    prelude = _prepare_transition(req, result)
+    if isinstance(prelude, dict):
+        return prelude
+    op_dir = prelude.op_dir
+    current_summary = prelude.current_summary
+    source_round_dir = prelude.source_round_dir
+    next_round_dir = prelude.next_round_dir
+    next_round_index = prelude.next_round_index
+
+    # B1 瓶颈卡片 + strategy 加载 + baseline 选择。
+    if algorithm == "gene-fusion":
+        _generate_bottleneck_card(op_dir / source_round_dir, next_round_dir, result)
+    strategy = load_strategy_for_algorithm(read_config(op_dir.parent.parent), algorithm, params=strategy_params)
+    op_name = find_op_name(op_dir)
+    baseline_path, baseline_entry, baseline_speedup = _select_and_copy_baseline(
+        BaselineSelectionSpec(op_dir=op_dir, next_round_dir=next_round_dir, op_name=op_name,
+                              baseline_dir=baseline_dir, baseline_dirs=baseline_dirs,
+                              strategy=strategy, algorithm=algorithm, result=result)
     )
-    result["global_baseline_speedup"] = global_baseline_speedup
-    result["global_baseline_dir"] = global_baseline_dir
+    result["baseline_speedup"] = baseline_speedup
+    direction_metadata = _compute_direction_metadata(DirectionMetaInput(
+        op_dir=op_dir, source_round_dir=source_round_dir, current_summary=current_summary,
+        baseline_entry=baseline_entry, strategy=strategy, switch_marker=switch_marker,
+        global_baseline_speedup=result["global_baseline_speedup"],
+    ))
+    _write_transition_artifacts(req, prelude, baseline_entry, direction_metadata, result)
+    result.update({"status": "success", "next_round": next_round_index, "issues": result["issues"]})
+    return result
 
-    p = _prepare_transition(req, op_dir, result)
-    if p is None:
-        return result
 
-    return _finalize_transition(req, op_dir, p, result)
+def _write_transition_artifacts(
+    req: TransitionRequest,
+    prelude: PreludeState,
+    baseline_entry: dict[str, Any] | None,
+    direction_metadata: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    """Write next-round summary/state/round-index + opt note + transition lock."""
+    op_dir, current_round = prelude.op_dir, req.current_round
+    next_round_index, next_round_dir_name = prelude.next_round_index, prelude.next_round_dir_name
+    next_round_dir, algorithm = prelude.next_round_dir, req.algorithm
+    existing_rounds, current_summary = prelude.existing_rounds, prelude.current_summary
+    source_round_dir, global_baseline_dir = prelude.source_round_dir, result["global_baseline_dir"]
+    global_baseline_speedup, switch_marker = result["global_baseline_speedup"], req.switch_marker
+
+    _write_next_summary(NextSummarySpec(
+        next_round_dir=next_round_dir, next_round_index=next_round_index, algorithm=algorithm,
+        baseline_entry=baseline_entry, global_baseline_dir=global_baseline_dir,
+        global_baseline_speedup=global_baseline_speedup,
+        next_round_strategy=req.next_round_strategy, next_analysis_policy=req.next_analysis_policy,
+        next_hypothesis=req.next_hypothesis,
+        next_direction=req.next_direction, next_evidence_sources=req.next_evidence_sources,
+        current_summary=current_summary, algorithm_metadata=req.algorithm_metadata,
+    ))
+    _update_state_file(StateUpdateSpec(
+        op_dir=op_dir, current_round=current_round, next_round_index=next_round_index,
+        next_round_dir_name=next_round_dir_name, next_round_dir=next_round_dir,
+        algorithm=algorithm, existing_rounds=existing_rounds, result=result,
+    ))
+    _update_round_index(RoundIndexUpdateSpec(
+        op_dir=op_dir, existing_rounds=existing_rounds, current_round=current_round,
+        source_round_dir=source_round_dir, current_summary=current_summary,
+        direction_metadata=direction_metadata,
+        global_baseline_dir=global_baseline_dir, global_baseline_speedup=global_baseline_speedup,
+        next_round_index=next_round_index, next_round_dir_name=next_round_dir_name,
+        algorithm=algorithm,
+        next_direction=req.next_direction, next_hypothesis=req.next_hypothesis,
+        next_evidence_sources=req.next_evidence_sources,
+        next_analysis_policy=req.next_analysis_policy, next_round_strategy=req.next_round_strategy,
+        baseline_entry=baseline_entry, switch_marker=switch_marker,
+    ))
+    _append_opt_note(OptNoteSpec(
+        op_dir=op_dir, current_round=current_round, current_summary=current_summary,
+        current_success_criteria=req.current_success_criteria, current_key_learnings=req.current_key_learnings,
+        direction_metadata=direction_metadata, switch_marker=switch_marker,
+    ))
+    _write_transition_lock(op_dir, current_round, next_round_index, next_round_dir_name, result)
 
 
-def _saved_algorithm(state_dir: Path | None, op_dir: Path) -> str | None:
-    """Read the algorithm stored in the workspace state file."""
+def _algorithm_from_state_file(op_dir: Path, enabled: list[str]) -> str | None:
+    """state 文件中已保存且仍启用的 algorithm（缺失/损坏/不在启用列表返回 None）。"""
+    state_dir = _find_state_dir(op_dir)
     if state_dir is None:
         return None
     state_path = state_dir / f"state-{op_dir.name}.json"
     if not state_path.is_file():
         return None
     try:
-        return load_json(state_path).get("algorithm")
+        saved_algo = load_json(state_path).get("algorithm")
     except ValueError:
         return None
+    if isinstance(saved_algo, str) and saved_algo in enabled:
+        return saved_algo
+    return None
 
 
 def _resolve_algorithm(
@@ -1108,8 +1024,8 @@ def _resolve_algorithm(
     if len(enabled) == 1:
         return enabled[0]
 
-    saved_algo = _saved_algorithm(_find_state_dir(op_dir), op_dir)
-    if isinstance(saved_algo, str) and saved_algo in enabled:
+    saved_algo = _algorithm_from_state_file(op_dir, enabled)
+    if saved_algo is not None:
         return saved_algo
 
     if strategy_name != "auto" and strategy_name in discovered:
@@ -1129,15 +1045,12 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Transition to the next optimization round")
     parser.add_argument("--op-dir", required=True, help="Operator directory path")
     parser.add_argument("--current-round", type=int, required=True, help="Current round number")
-    parser.add_argument(
-        "--next-round-strategy",
-        required=True,
-        choices=[
-            "exploration", "structural_change", "focused_tuning",
-            "stabilization", "plateau_review",
-        ],
-        help="Next round strategy",
-    )
+    parser.add_argument("--next-round-strategy", required=True,
+                        choices=[
+                            "exploration", "structural_change", "focused_tuning",
+                            "stabilization", "plateau_review",
+                        ],
+                        help="Next round strategy")
     parser.add_argument("--next-analysis-policy", required=True,
                         choices=["pattern_entry", "bottleneck_analysis", "ir_supported"],
                         help="Next round analysis policy")
@@ -1174,14 +1087,6 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _safe_json_loads(raw: str) -> Any:
-    """Parse JSON, returning None on malformed/absent input."""
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
 def _emit_fail(current_round: int, message: str) -> int:
     """Print the standard fail JSON and return exit code 1."""
     sys.stdout.write(json.dumps({
@@ -1195,72 +1100,50 @@ def _emit_fail(current_round: int, message: str) -> int:
     return 1
 
 
-def _parse_switch_marker(raw: str | None) -> SwitchMarker | None:
-    """Parse the --switch-marker JSON into a SwitchMarker, or None."""
-    if not raw:
+def _safe_json_loads(raw: str) -> Any:
+    """Parse JSON, returning None on malformed/absent input."""
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
         return None
-    data = _safe_json_loads(raw)
-    if not isinstance(data, dict):
-        return None
-    return SwitchMarker(
-        reason=data.get("reason", ""),
-        previous_direction=data.get("previous_direction"),
-        new_direction=data.get("new_direction"),
-    )
 
 
-def _build_transition_request(
-    args: argparse.Namespace,
-    op_dir: Path,
-    algorithm: str,
-) -> TransitionRequest:
-    """Parse the CLI args into a TransitionRequest."""
-    strategy_params = _safe_json_loads(args.strategy_params)
-    if not isinstance(strategy_params, dict):
-        strategy_params = {}
-    if args.strategy_name == "auto":
-        strategy_name = algorithm
-        if not strategy_params:
-            strategy_params = get_algorithm_params(read_config(op_dir.parent.parent), algorithm)
-    else:
-        strategy_name = args.strategy_name
+@dataclass
+class TransitionDerived:
+    """Derived transition inputs resolved from CLI args."""
 
-    evidence_sources = _safe_json_loads(args.next_evidence_sources)
-    if not isinstance(evidence_sources, list):
-        evidence_sources = [args.next_evidence_sources]
+    op_dir: Path
+    algorithm: str
+    strategy_name: str
+    strategy_params: dict[str, Any]
+    evidence_sources: list[str]
+    baseline_dirs: list[str]
+    switch_marker: SwitchMarker | None
+    algorithm_metadata: dict[str, Any]
 
-    baseline_dirs: list[str] = []
-    if args.baseline_dirs:
-        parsed = _safe_json_loads(args.baseline_dirs)
-        if isinstance(parsed, list):
-            baseline_dirs = [str(x) for x in parsed]
 
-    switch_marker = _parse_switch_marker(args.switch_marker)
-
-    algorithm_metadata = _safe_json_loads(args.algorithm_metadata)
-    if not isinstance(algorithm_metadata, dict):
-        algorithm_metadata = {}
-
+def _build_transition_request(args: argparse.Namespace, d: TransitionDerived) -> TransitionRequest:
+    """Build the TransitionRequest from parsed CLI args."""
     return TransitionRequest(
-        op_dir=op_dir,
+        op_dir=d.op_dir,
         current_round=args.current_round,
         next_round_strategy=args.next_round_strategy,
         next_analysis_policy=args.next_analysis_policy,
         next_hypothesis=args.next_hypothesis,
         next_direction=args.next_direction,
-        next_evidence_sources=evidence_sources,
+        next_evidence_sources=d.evidence_sources,
         current_success_criteria=args.current_success_criteria,
         current_key_learnings=args.current_key_learnings,
         baseline_dir=args.baseline_dir,
-        baseline_dirs=baseline_dirs,
+        baseline_dirs=d.baseline_dirs,
         combination_rule=args.combination_rule,
-        switch_marker=switch_marker,
-        strategy_name=strategy_name,
-        strategy_params=strategy_params,
+        switch_marker=d.switch_marker,
+        strategy_name=d.strategy_name,
+        strategy_params=d.strategy_params,
         global_baseline_dir=args.global_baseline_dir,
         global_baseline_speedup=args.global_baseline_speedup,
-        algorithm=algorithm,
-        algorithm_metadata=algorithm_metadata,
+        algorithm=d.algorithm,
+        algorithm_metadata=d.algorithm_metadata,
     )
 
 
@@ -1276,7 +1159,50 @@ def main() -> int:
     except ValueError as exc:
         return _emit_fail(args.current_round, str(exc))
 
-    result = transition_to_next_round(_build_transition_request(args, op_dir, algorithm))
+    # Strategy parameters: explicit --strategy-params takes precedence; when
+    # --strategy-name=auto and empty, fall back to config.json.
+    strategy_params = _safe_json_loads(args.strategy_params)
+    if not isinstance(strategy_params, dict):
+        strategy_params = {}
+
+    if args.strategy_name == "auto":
+        strategy_name = algorithm
+        if not strategy_params:
+            config = read_config(op_dir.parent.parent)
+            strategy_params = get_algorithm_params(config, algorithm)
+    else:
+        strategy_name = args.strategy_name
+
+    evidence_sources = _safe_json_loads(args.next_evidence_sources)
+    if not isinstance(evidence_sources, list):
+        evidence_sources = [args.next_evidence_sources]
+
+    baseline_dirs: list[str] = []
+    if args.baseline_dirs:
+        parsed = _safe_json_loads(args.baseline_dirs)
+        if isinstance(parsed, list):
+            baseline_dirs = [str(x) for x in parsed]
+
+    switch_marker: SwitchMarker | None = None
+    if args.switch_marker:
+        data = _safe_json_loads(args.switch_marker)
+        if isinstance(data, dict):
+            switch_marker = SwitchMarker(
+                reason=data.get("reason", ""),
+                previous_direction=data.get("previous_direction"),
+                new_direction=data.get("new_direction"),
+            )
+
+    algorithm_metadata = _safe_json_loads(args.algorithm_metadata)
+    if not isinstance(algorithm_metadata, dict):
+        algorithm_metadata = {}
+
+    result = transition_to_next_round(_build_transition_request(args, TransitionDerived(
+        op_dir=op_dir, algorithm=algorithm, strategy_name=strategy_name, strategy_params=strategy_params,
+        evidence_sources=evidence_sources, baseline_dirs=baseline_dirs, switch_marker=switch_marker,
+        algorithm_metadata=algorithm_metadata,
+    )))
+
     sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     return 0 if result["status"] == "success" else 1
 

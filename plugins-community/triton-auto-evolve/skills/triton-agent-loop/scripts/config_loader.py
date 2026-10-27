@@ -55,6 +55,8 @@ DEFAULT_ALGORITHMS: dict[str, Any] = {
             "mutation_rate": 0.15,
             "elite_count": 1,
             "exploration_count": 1,
+            # H2 分层模型：叙述类产物由 headless 小模型会话渲染（prose_render.py）
+            "prose_model": "claude-haiku-4-5-20251001",
         },
     },
 }
@@ -108,40 +110,8 @@ def _normalize_algorithm_entry(entry: Any) -> dict[str, Any]:
     }
 
 
-def _locate_config(cwd: Path) -> Path | None:
-    """Find the config file: cwd first, then the plugin root."""
-    config_path = cwd / "config.json"
-    if config_path.is_file():
-        return config_path
-    plugin_root = _find_plugin_root(Path(__file__).resolve().parent)
-    if plugin_root is not None:
-        return plugin_root / "config.json"
-    return None
-
-
-def _load_config(config_path: Path | None) -> dict[str, Any]:
-    """Load and coerce the config file, defaulting to {} on any problem."""
-    if config_path is not None and config_path.is_file():
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            config = {}
-    else:
-        config = {}
-    if not isinstance(config, dict):
-        config = {}
-    return config
-
-
-def _ensure_algorithms_dict(config: dict[str, Any]) -> dict[str, Any]:
-    """Return the ``algorithms`` block, materializing it if absent or malformed."""
-    if not isinstance(config.get("algorithms"), dict):
-        config["algorithms"] = {}
-    return config["algorithms"]
-
-
 def _migrate_legacy_fields(config: dict[str, Any]) -> None:
-    """Migrate legacy strategy/algorithm fields before they are dropped."""
+    """Migrate legacy fields into the algorithms block before dropping them."""
     legacy_algorithm = config.get("algorithm")
     legacy_strategy = config.get("strategy")
     migrated: list[str] = []
@@ -156,9 +126,9 @@ def _migrate_legacy_fields(config: dict[str, Any]) -> None:
             else {}
         )
         if isinstance(strategy_name, str) and strategy_name:
-            algorithms = _ensure_algorithms_dict(config)
-            if strategy_name not in algorithms:
-                algorithms[strategy_name] = {
+            config.setdefault("algorithms", {})
+            if strategy_name not in config["algorithms"]:
+                config["algorithms"][strategy_name] = {
                     "enabled": True,
                     "params": strategy_params,
                     "_migrated_from_legacy": "strategy",
@@ -169,9 +139,9 @@ def _migrate_legacy_fields(config: dict[str, Any]) -> None:
                 )
 
     if isinstance(legacy_algorithm, str) and legacy_algorithm:
-        algorithms = _ensure_algorithms_dict(config)
-        if legacy_algorithm not in algorithms:
-            algorithms[legacy_algorithm] = {
+        config.setdefault("algorithms", {})
+        if legacy_algorithm not in config["algorithms"]:
+            config["algorithms"][legacy_algorithm] = {
                 "enabled": True,
                 "params": {},
                 "_migrated_from_legacy": "algorithm",
@@ -189,23 +159,8 @@ def _migrate_legacy_fields(config: dict[str, Any]) -> None:
             stacklevel=2,
         )
 
-
-def _normalize_algorithms(config: dict[str, Any]) -> None:
-    """Normalize configured entries and backfill disabled presets."""
-    algorithms = _ensure_algorithms_dict(config)
-
-    # Normalize user-configured algorithm entries. Do NOT automatically enable
-    # every known algorithm; deleting an entry from config should disable it.
-    for name in list(algorithms.keys()):
-        algorithms[name] = _normalize_algorithm_entry(algorithms[name])
-
-    # For known algorithms that are NOT configured, add them as disabled presets
-    # with default params so users can opt-in later without losing the defaults.
-    for name, preset in DEFAULT_ALGORITHMS.items():
-        if name not in algorithms:
-            algorithms[name] = _normalize_algorithm_entry(
-                {"enabled": False, "params": preset.get("params", {})}
-            )
+    for legacy_key in ("algorithm", "strategy", "worker_type", "gene_fusion"):
+        config.pop(legacy_key, None)
 
 
 def read_config(cwd: Path | None = None) -> dict[str, Any]:
@@ -221,18 +176,47 @@ def read_config(cwd: Path | None = None) -> dict[str, Any]:
     if cwd is None:
         cwd = Path.cwd()
 
-    config = _load_config(_locate_config(cwd))
+    config_path: Path | None = cwd / "config.json"
+    if not config_path.is_file():
+        plugin_root = _find_plugin_root(Path(__file__).resolve().parent)
+        if plugin_root is not None:
+            config_path = plugin_root / "config.json"
+        else:
+            config_path = None
+
+    config: dict[str, Any]
+    if config_path is not None and config_path.is_file():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            config = {}
+    else:
+        config = {}
+
+    if not isinstance(config, dict):
+        config = {}
 
     # Migrate legacy fields before dropping them. Silently discarding them
     # makes all algorithms disabled for users with old configs.
     _migrate_legacy_fields(config)
 
-    # Drop legacy fields. The active algorithm is chosen at runtime and stored
-    # in the session state file, not in config.json.
-    for legacy_key in ("algorithm", "strategy", "worker_type", "gene_fusion"):
-        config.pop(legacy_key, None)
+    # Guarantee a usable algorithms block.
+    if not isinstance(config.get("algorithms"), dict):
+        config["algorithms"] = {}
+    algorithms = config["algorithms"]
 
-    _normalize_algorithms(config)
+    # Normalize user-configured algorithm entries. Do NOT automatically enable
+    # every known algorithm; deleting an entry from config should disable it.
+    for name in list(algorithms.keys()):
+        algorithms[name] = _normalize_algorithm_entry(algorithms[name])
+
+    # For known algorithms that are NOT configured, add them as disabled presets
+    # with default params so users can opt-in later without losing the defaults.
+    for name, preset in DEFAULT_ALGORITHMS.items():
+        if name not in algorithms:
+            algorithms[name] = _normalize_algorithm_entry(
+                {"enabled": False, "params": preset.get("params", {})}
+            )
 
     # Merge missing global defaults.
     for key, value in DEFAULT_CONFIG.items():

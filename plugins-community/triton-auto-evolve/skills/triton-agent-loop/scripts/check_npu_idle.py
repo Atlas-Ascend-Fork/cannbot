@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,8 +57,8 @@ def _plugin_config() -> dict[str, Any]:
         config_path = plugin_root / "config.json"
         if config_path.is_file():
             return json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        logger.debug("plugin config.json not loaded: %s", exc)
+    except Exception as exc:
+        logger.warning("failed to load plugin config.json: %s", exc)
     return {}
 
 
@@ -272,11 +273,44 @@ def fetch_device_usage(device: NpuDevice) -> None:
         )
 
 
-def _classify_devices(
-    devices: list[NpuDevice],
+def _select_from_idle(
+    preferred_id: Optional[int],
+    idle_devices: list[dict[str, Any]],
+    busy_devices: list[dict[str, Any]],
     thresholds: Optional[dict[str, float]],
+) -> tuple[Optional[dict[str, Any]], str]:
+    """Select the preferred or first idle device; raises if none available."""
+    selected: Optional[dict[str, Any]] = None
+    selected_from = "auto"
+    if preferred_id is not None:
+        for info in idle_devices:
+            if info["npu_id"] == preferred_id:
+                selected = info
+                selected_from = "preferred"
+                break
+        if selected is None:
+            raise NpuIdleCheckError(
+                f"preferred NPU device {preferred_id} is not idle or not available",
+                {"preferred_id": preferred_id, "idle_devices": idle_devices, "busy_devices": busy_devices},
+            )
+    if selected is None and idle_devices:
+        selected = idle_devices[0]
+    if selected is None:
+        raise NpuIdleCheckError(
+            "no idle NPU device available",
+            {
+                "idle_devices": idle_devices,
+                "busy_devices": busy_devices,
+                "thresholds": thresholds or DEFAULT_THRESHOLDS,
+            },
+        )
+    return selected, selected_from
+
+
+def _classify_devices(
+    devices: list[NpuDevice], thresholds: Optional[dict[str, float]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Split devices into idle/busy info dicts."""
+    """Classify devices into idle and busy lists."""
     idle_devices: list[dict[str, Any]] = []
     busy_devices: list[dict[str, Any]] = []
     for device in devices:
@@ -297,25 +331,6 @@ def _classify_devices(
     return idle_devices, busy_devices
 
 
-def _select_preferred(
-    idle_devices: list[dict[str, Any]],
-    busy_devices: list[dict[str, Any]],
-    preferred_id: int,
-) -> tuple[dict[str, Any], str]:
-    """Return the preferred idle device, or raise if it is unavailable."""
-    for info in idle_devices:
-        if info["npu_id"] == preferred_id:
-            return info, "preferred"
-    raise NpuIdleCheckError(
-        f"preferred NPU device {preferred_id} is not idle or not available",
-        {
-            "preferred_id": preferred_id,
-            "idle_devices": idle_devices,
-            "busy_devices": busy_devices,
-        },
-    )
-
-
 def select_idle_device(
     preferred_id: Optional[int] = None,
     thresholds: Optional[dict[str, float]] = None,
@@ -332,24 +347,7 @@ def select_idle_device(
 
     idle_devices, busy_devices = _classify_devices(devices, thresholds)
 
-    selected: Optional[dict[str, Any]] = None
-    selected_from = "auto"
-
-    if preferred_id is not None:
-        selected, selected_from = _select_preferred(idle_devices, busy_devices, preferred_id)
-
-    if selected is None and idle_devices:
-        selected = idle_devices[0]
-
-    if selected is None:
-        raise NpuIdleCheckError(
-            "no idle NPU device available",
-            {
-                "idle_devices": idle_devices,
-                "busy_devices": busy_devices,
-                "thresholds": thresholds or DEFAULT_THRESHOLDS,
-            },
-        )
+    selected, selected_from = _select_from_idle(preferred_id, idle_devices, busy_devices, thresholds)
 
     return {
         "device_id": selected["npu_id"],
@@ -391,18 +389,12 @@ def preferred_device_id() -> Optional[int]:
     return None
 
 
-def _parse_args() -> argparse.Namespace:
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description="Check for an idle Ascend NPU")
     parser.add_argument("--json", action="store_true", help="Output JSON")
-    parser.add_argument(
-        "--preferred-id", type=int, default=None, help="Preferred NPU device ID"
-    )
-    return parser.parse_args()
-
-
-def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    args = _parse_args()
+    parser.add_argument("--preferred-id", type=int, default=None, help="Preferred NPU device ID")
+    args = parser.parse_args()
 
     if should_skip_idle_check():
         result = {
@@ -430,13 +422,9 @@ def main() -> int:
         )
     except NpuIdleCheckError as exc:
         if args.json:
-            sys.stdout.write(
-                json.dumps(
-                    {"error": str(exc), "details": exc.details},
-                    indent=2,
-                    ensure_ascii=False,
-                )
-             + "\n")
+            sys.stdout.write(json.dumps(
+                {"error": str(exc), "details": exc.details},
+                indent=2, ensure_ascii=False) + "\n")
         else:
             logger.error("ERROR: %s", exc)
             for key, value in exc.details.items():

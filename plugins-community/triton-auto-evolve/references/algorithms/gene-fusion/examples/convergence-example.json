@@ -1,0 +1,9 @@
+{
+  "convergence": {
+    "converged": true,
+    "rounds_completed": 3,
+    "last_2_rounds_change_pct": [1.2, 0.8],
+    "best_round": 3,
+    "best_task_duration_us": 1234.5
+  }
+}

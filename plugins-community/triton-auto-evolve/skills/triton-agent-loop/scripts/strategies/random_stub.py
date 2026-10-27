@@ -20,6 +20,8 @@ import random
 from pathlib import Path
 from typing import Any
 
+import direction_selector as ds
+from direction_selector import DirectionSelection, DirectionYieldContext
 from .base import (
     BaselineProposal,
     RoundDecision,
@@ -38,6 +40,9 @@ class RandomStubStrategy(Strategy):
         can_decide_switch_internally=False,
         can_recommend_stop=False,
     )
+
+    # select_next_direction 迁移期默认方向（目录缺失场景归 autotune）
+    legacy_default_direction = "pattern: autotune"
 
     def __init__(self, seed: int | None = None) -> None:
         self.rng = random.Random(seed)
@@ -81,5 +86,9 @@ class RandomStubStrategy(Strategy):
             return 0.0
         return self.rng.random()
 
-    def _direction_fallback(self) -> str:
-        return "pattern: autotune"
+    def classify_direction_yield(
+        self,
+        ctx: DirectionYieldContext,
+    ) -> tuple[str, str, float]:
+        # Yield classification is not the focus of this stub; delegate to naive.
+        return ds.classify_direction_yield(ctx)

@@ -10,8 +10,7 @@
 # ----------------------------------------------------------------------------------------------------------
 """Pluggable direction/baseline selection strategies."""
 
-
 __all__ = ["Strategy", "discover_strategies", "load_strategy", "load_strategy_for_algorithm"]
 
-from .base import Strategy
-from .loader import discover_strategies, load_strategy, load_strategy_for_algorithm
+from .base import Strategy  # noqa: E402
+from .loader import discover_strategies, load_strategy, load_strategy_for_algorithm  # noqa: E402

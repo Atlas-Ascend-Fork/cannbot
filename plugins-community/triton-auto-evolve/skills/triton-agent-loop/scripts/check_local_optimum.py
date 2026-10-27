@@ -60,23 +60,20 @@ def _read_round_summaries(op_dir: Path) -> list[dict[str, Any]]:
     return rounds
 
 
-def _valid_gain_pair(prev: Any, curr: Any) -> bool:
-    """Return True when both speeds are positive numbers usable for gain."""
-    if not isinstance(prev, (int, float)) or not isinstance(curr, (int, float)):
-        return False
-    return prev > 0 and curr > 0
-
-
-def _compute_gains(
-    rounds: list[dict[str, Any]],
-) -> tuple[list[float | None], list[dict[str, Any]]]:
-    """Compute consecutive-round gains, emitting None for invalid pairs."""
+def _compute_gains(rounds: list[dict[str, Any]]) -> tuple[list[float | None], list[dict[str, Any]]]:
+    """Compute consecutive-round gains; returns (gains, gain_details)."""
     gains: list[float | None] = []
     gain_details: list[dict[str, Any]] = []
     for i in range(1, len(rounds)):
         prev = rounds[i - 1]["best_speedup"]
         curr = rounds[i]["best_speedup"]
-        gain = (curr - prev) / prev if _valid_gain_pair(prev, curr) else None
+        valid = (
+            isinstance(prev, (int, float))
+            and isinstance(curr, (int, float))
+            and prev > 0
+            and curr > 0
+        )
+        gain = (curr - prev) / prev if valid else None
         gains.append(gain)
         gain_details.append({
             "from": rounds[i - 1]["round_dir"],
@@ -86,22 +83,6 @@ def _compute_gains(
             "gain": gain,
         })
     return gains, gain_details
-
-
-def _evaluate_window(
-    gains: list[float | None],
-    window: int,
-    max_gain: float,
-    warnings: list[str],
-) -> bool:
-    """Decide local-optimum status from the trailing window of gains."""
-    valid_gains = [g for g in gains[-window:] if g is not None]
-    if len(valid_gains) < window:
-        warnings.append(
-            f"insufficient valid gains in window: need {window}, got {len(valid_gains)}"
-        )
-        return len(valid_gains) >= 2 and all(g < max_gain for g in valid_gains)
-    return all(g < max_gain for g in valid_gains)
 
 
 def check_local_optimum(
@@ -146,9 +127,21 @@ def check_local_optimum(
         result["direction_coverage"] = check_direction_coverage(op_dir, rounds)
         return result
 
+    # Calculate gains between consecutive rounds (only for rounds with valid speedups)
     gains, gain_details = _compute_gains(rounds)
+
     result["gains"] = gain_details
-    result["in_local_optimum"] = _evaluate_window(gains, window, max_gain, result["warnings"])
+
+    # Check the last `window` gains
+    valid_gains = [g for g in gains[-window:] if g is not None]
+    if len(valid_gains) < window:
+        result["warnings"].append(
+            f"insufficient valid gains in window: need {window}, got {len(valid_gains)}"
+        )
+        if len(valid_gains) >= 2:
+            result["in_local_optimum"] = all(g < max_gain for g in valid_gains)
+    else:
+        result["in_local_optimum"] = all(g < max_gain for g in valid_gains)
 
     # Direction coverage
     result["direction_coverage"] = check_direction_coverage(op_dir, rounds)
@@ -157,6 +150,16 @@ def check_local_optimum(
     result["per_direction_low_gain"] = _compute_per_direction_low_gain(rounds, max_gain)
 
     return result
+
+
+def _is_positive_speedup_pair(prev: Any, curr: Any) -> bool:
+    """Return True if both speedups are numeric and strictly positive."""
+    return (
+        isinstance(prev, (int, float))
+        and isinstance(curr, (int, float))
+        and prev > 0
+        and curr > 0
+    )
 
 
 def _compute_per_direction_low_gain(
@@ -179,7 +182,7 @@ def _compute_per_direction_low_gain(
             continue
         prev_speedup = rounds[i - 1].get("best_speedup", 0)
         curr_speedup = r.get("best_speedup", 0)
-        if _valid_gain_pair(prev_speedup, curr_speedup):
+        if _is_positive_speedup_pair(prev_speedup, curr_speedup):
             gain = (curr_speedup - prev_speedup) / prev_speedup
             if gain < max_gain:
                 current_streak[direction] = current_streak.get(direction, 0) + 1
@@ -239,12 +242,13 @@ def check_direction_coverage(
     }
 
 
-def _group_attempts(rounds: list[dict[str, Any]]) -> tuple[dict, set[str]]:
-    """Group round attempts by direction and analysis_policy."""
+def _classify_directions(rounds: list[dict[str, Any]]) -> tuple[set[str], set[str], set[str], dict]:
+    """Collect attempts per direction and classify each as exhausted or active."""
+    policy_levels = ["pattern_entry", "bottleneck_analysis", "ir_supported"]
+    known_patterns: set[str] = set()
     attempts_by_direction: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    known_patterns: set[str] = set()
     for r in rounds:
         direction = r.get("direction", "")
         if not direction or direction == "no_change":
@@ -252,7 +256,24 @@ def _group_attempts(rounds: list[dict[str, Any]]) -> tuple[dict, set[str]]:
         policy = r.get("analysis_policy", "pattern_entry") or "pattern_entry"
         attempts_by_direction[direction][policy].append(r)
         known_patterns.add(direction)
-    return attempts_by_direction, known_patterns
+
+    exhausted: set[str] = set()
+    active: set[str] = set()
+    for direction in known_patterns:
+        policy_attempts = attempts_by_direction.get(direction, {})
+        if not all(level in policy_attempts for level in policy_levels):
+            active.add(direction)
+            continue
+        all_low = all(
+            r.get("direction_yield") in ("low", "failed")
+            for level in policy_levels
+            for r in policy_attempts[level]
+        )
+        if all_low:
+            exhausted.add(direction)
+        else:
+            active.add(direction)
+    return known_patterns, exhausted, active, attempts_by_direction
 
 
 def check_direction_exhaustion(
@@ -280,24 +301,8 @@ def check_direction_exhaustion(
         rounds = _read_round_summaries(op_dir)
 
     policy_levels = ["pattern_entry", "bottleneck_analysis", "ir_supported"]
-    attempts_by_direction, known_patterns = _group_attempts(rounds)
 
-    exhausted: set[str] = set()
-    active: set[str] = set()
-    for direction in known_patterns:
-        policy_attempts = attempts_by_direction.get(direction, {})
-        if not all(level in policy_attempts for level in policy_levels):
-            active.add(direction)
-            continue
-        all_low = all(
-            r.get("direction_yield") in ("low", "failed")
-            for level in policy_levels
-            for r in policy_attempts[level]
-        )
-        if all_low:
-            exhausted.add(direction)
-        else:
-            active.add(direction)
+    known_patterns, exhausted, active, attempts_by_direction = _classify_directions(rounds)
 
     direction_exhausted = bool(known_patterns) and all(d in exhausted for d in known_patterns)
 

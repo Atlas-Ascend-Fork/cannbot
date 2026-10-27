@@ -36,6 +36,7 @@ from ..base import (
     RoundDecision,
     Strategy,
     StrategyCapabilities,
+    decision_to_direction_selection,
 )
 from .mcts_tree import MCTSTree, NodeStatus, ErrorType
 
@@ -124,34 +125,6 @@ def _compute_error_type(summary: dict[str, Any]) -> tuple[str, str]:
     return ErrorType.NONE, "success"
 
 
-def _is_already_recorded(tree: MCTSTree, round_dir_name: str) -> bool:
-    """Return True if the round has already been recorded and evaluated."""
-    if round_dir_name not in tree.round_dir_map.values():
-        return False
-    existing_node_id = next(
-        (nid for nid, rd in tree.round_dir_map.items() if rd == round_dir_name), None
-    )
-    return bool(
-        existing_node_id
-        and existing_node_id in tree.nodes
-        and tree.nodes[existing_node_id].status != NodeStatus.PENDING
-    )
-
-
-def _build_perf_jsons(summary: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Build the verify and perf JSON payloads for a completed round."""
-    perf_data = summary.get("perf_data") or {}
-    verify_json = {
-        "total_cases": perf_data.get("total_cases", 0),
-        "passed_cases": perf_data.get("passed_cases", 0),
-        "failures": perf_data.get("failures", []),
-    }
-    best_speedup = summary.get("best_speedup", 0.0)
-    if not isinstance(best_speedup, (int, float)):
-        best_speedup = 0.0
-    return verify_json, {"speedup_vs_torch": best_speedup}
-
-
 class MCTSStrategy(Strategy):
     """Monte-Carlo Tree Search based round-selection strategy."""
 
@@ -205,44 +178,44 @@ class MCTSStrategy(Strategy):
         current_policy: str,
         context: dict[str, Any] | None = None,
     ) -> RoundDecision:
-        """Choose the next round for the MCTS strategy.
-
-        MCTS selects an existing node (round or virtual node) to expand from.
-        The actual optimization direction is decided by the sub-agent.
-        """
+        """Choose the next round: MCTS expands an existing node (round or virtual)."""
         op_dir = self._op_dir_from_context(context)
         if op_dir is None:
             raise ValueError("MCTSStrategy.select_next_round requires context['op_dir']")
 
         tree = self._load_tree(op_dir)
 
-        # Reuse an existing pending expansion if it has not been realized yet.
+        # Reuse an existing pending expansion if it has not been realized yet;
+        # otherwise select a node and register a new pending expansion. Both
+        # paths converge on the same decision envelope.
         pending = tree.pending_expansion
         if pending and not pending.get("realized"):
             parent_id = pending["parent_id"]
-            parent_round_dir = self._map_parent_to_round_dir(tree, parent_id)
-            selection_path = tree.get_path_to_node(parent_id)
-            tree.save()
-            return self._build_round_decision(tree, parent_id, parent_round_dir, selection_path)
+        else:
+            selection = tree.select()
+            if selection["action"] == "none":
+                return RoundDecision(
+                    algorithm_recommends_stop=True,
+                    stop_reason="mcts_tree_fully_explored",
+                )
+            parent_id = selection["node_id"]
+            tree.pending_expansion = {
+                "parent_id": parent_id,
+                "realized": False,
+            }
 
-        selection = tree.select()
-        if selection["action"] == "none":
-            return RoundDecision(
-                algorithm_recommends_stop=True,
-                stop_reason="mcts_tree_fully_explored",
-            )
-
-        parent_id = selection["node_id"]
         parent_round_dir = self._map_parent_to_round_dir(tree, parent_id)
         selection_path = tree.get_path_to_node(parent_id)
-
-        tree.pending_expansion = {
-            "parent_id": parent_id,
-            "realized": False,
-        }
         tree.save()
-
-        return self._build_round_decision(tree, parent_id, parent_round_dir, selection_path)
+        return RoundDecision(
+            direction=None,
+            hypothesis=self._build_hypothesis(tree, parent_id),
+            baseline=BaselineProposal(mode="single", round_dirs=[parent_round_dir]),
+            parent_round_dir=parent_round_dir,
+            evidence_sources=["mcts_tree"],
+            metadata={"mcts_parent_id": parent_id, "mcts_selection_path": selection_path,
+                      "mcts_pending_expansion": True},
+        )
 
     def select_next_direction(
         self,
@@ -259,19 +232,11 @@ class MCTSStrategy(Strategy):
             context,
         )
         meta = dict(decision.metadata)
-        meta["preferred_baseline_dir"] = (
-            decision.baseline.round_dirs[0]
-            if decision.baseline.mode == "single" and decision.baseline.round_dirs
-            else ""
-        )
-        return DirectionSelection(
-            strategy=decision.round_strategy or "exploration",
-            analysis_policy=decision.analysis_policy or current_policy,
-            direction=decision.direction or "",
-            hypothesis=decision.hypothesis or "",
-            evidence_sources=decision.evidence_sources,
-            metadata=meta,
-        )
+        if decision.baseline.mode == "single":
+            meta["preferred_baseline_dir"] = decision.baseline.round_dirs[0] if decision.baseline.round_dirs else ""
+        else:
+            meta["preferred_baseline_dir"] = ""
+        return decision_to_direction_selection(decision, current_policy, "", metadata=meta)
 
     def score_baseline_for_direction(
         self,
@@ -295,11 +260,13 @@ class MCTSStrategy(Strategy):
             return 1.0
         return 0.0
 
-    def classify_direction_yield(self, ctx: DirectionYieldContext) -> tuple[str, str, float]:
+    def classify_direction_yield(
+        self,
+        ctx: DirectionYieldContext,
+    ) -> tuple[str, str, float]:
         # Ensure the tree records this round if called with a round directory.
-        context = ctx.context
-        op_dir = self._op_dir_from_context(context)
-        round_dir = context.get("round_dir") if context else None
+        op_dir = self._op_dir_from_context(ctx.context)
+        round_dir = ctx.context.get("round_dir") if ctx.context else None
         if op_dir is not None and round_dir is not None:
             round_dir_path = Path(round_dir).expanduser().resolve()
             summary = _load_summary(round_dir_path)
@@ -311,6 +278,69 @@ class MCTSStrategy(Strategy):
     def _load_tree(self, op_dir: Path) -> MCTSTree:
         op_name = find_op_name(op_dir) or op_dir.name
         return _load_or_create_tree(op_dir, op_name, self.params)
+
+    def _already_recorded(self, tree: MCTSTree, round_dir_name: str) -> bool:
+        """Return True if the round is already recorded and evaluated."""
+        if round_dir_name not in tree.round_dir_map.values():
+            return False
+        existing_node_id = next((nid for nid, rd in tree.round_dir_map.items() if rd == round_dir_name), None)
+        return existing_node_id in tree.nodes and tree.nodes[existing_node_id].status != NodeStatus.PENDING
+
+    def _record_from_summary(
+        self,
+        tree: MCTSTree,
+        round_dir: Path,
+        summary: dict[str, Any],
+    ) -> None:
+        """Create/evaluate a tree node for a completed round (idempotent)."""
+        op_dir = round_dir.parent
+        op_name = find_op_name(op_dir) or op_dir.name
+        round_dir_name = round_dir.name
+
+        # Already recorded?
+        if self._already_recorded(tree, round_dir_name):
+            return
+
+        error_type, reason = _compute_error_type(summary)
+
+        perf_data = summary.get("perf_data") or {}
+        verify_json: dict[str, Any] = {"total_cases": perf_data.get("total_cases", 0),
+                                      "passed_cases": perf_data.get("passed_cases", 0),
+                                      "failures": perf_data.get("failures", [])}
+        best_speedup = summary.get("best_speedup", 0.0)
+        if not isinstance(best_speedup, (int, float)):
+            best_speedup = 0.0
+        perf_json: dict[str, Any] = {"speedup_vs_torch": best_speedup}
+        state_dir = _tree_state_dir(op_dir)
+
+        pending = tree.pending_expansion
+        parent_id = pending["parent_id"] if pending and not pending.get("realized") else tree.root_id
+        if parent_id not in tree.nodes:
+            parent_id = tree.root_id
+
+        description = summary.get("direction") or f"mcts expansion from {parent_id}"
+        child_info = tree.create_child(
+            parent_id, description, code_attempt=str(round_dir / f"{op_name}_generated.py"),
+            node_id=round_dir_name,
+        )
+        child_id = child_info["node_id"]
+        tree.round_dir_map[child_id] = round_dir_name
+        verify_path = _write_state_json(state_dir, child_id, "verify", verify_json)
+        perf_path = _write_state_json(state_dir, child_id, "perf", perf_json)
+        tree.evaluate(child_id, str(verify_path), str(perf_path))
+
+        if error_type != ErrorType.NONE:
+            parent_info = tree.nodes[parent_id].description or parent_id
+            error_msg = summary.get("yield_reason", reason)
+            tree.record_search_memory(
+                error_type=error_type, parent_info=parent_info, error_msg=error_msg,
+                direction=description,
+            )
+
+        if pending and not pending.get("realized"):
+            pending["realized"] = True
+        tree.pending_expansion = None
+        tree.save()
 
     def _op_dir_from_context(self, context: dict[str, Any] | None) -> Path | None:
         if context is None:
@@ -340,87 +370,3 @@ class MCTSStrategy(Strategy):
             f"(mean reward {parent_node.mean_reward:.4f}, visits {parent_node.visit_count}); "
             f"selection path depth {len(path)}."
         )
-
-    def _build_round_decision(
-        self,
-        tree: MCTSTree,
-        parent_id: str,
-        parent_round_dir: str,
-        selection_path: list[dict[str, Any]],
-    ) -> RoundDecision:
-        """Build the MCTS round decision to expand from the given parent."""
-        return RoundDecision(
-            direction=None,
-            hypothesis=self._build_hypothesis(tree, parent_id),
-            baseline=BaselineProposal(mode="single", round_dirs=[parent_round_dir]),
-            parent_round_dir=parent_round_dir,
-            evidence_sources=["mcts_tree"],
-            metadata={
-                "mcts_parent_id": parent_id,
-                "mcts_selection_path": selection_path,
-                "mcts_pending_expansion": True,
-            },
-        )
-
-    def _record_from_summary(
-        self,
-        tree: MCTSTree,
-        round_dir: Path,
-        summary: dict[str, Any],
-    ) -> None:
-        """Create/evaluate a tree node for a completed round.
-
-        Idempotent: if the round has already been recorded and evaluated, skip.
-        """
-        op_dir = round_dir.parent
-        op_name = find_op_name(op_dir) or op_dir.name
-        round_dir_name = round_dir.name
-
-        # Already recorded and evaluated? Skip (idempotent).
-        if _is_already_recorded(tree, round_dir_name):
-            return
-
-        error_type, reason = _compute_error_type(summary)
-        verify_json, perf_json = _build_perf_jsons(summary)
-
-        state_dir = _tree_state_dir(op_dir)
-
-        # Determine parent from pending expansion; default to root.
-        pending = tree.pending_expansion
-        if pending and not pending.get("realized"):
-            parent_id = pending["parent_id"]
-        else:
-            parent_id = tree.root_id
-
-        if parent_id not in tree.nodes:
-            parent_id = tree.root_id
-
-        description = summary.get("direction") or f"mcts expansion from {parent_id}"
-
-        child_info = tree.create_child(
-            parent_id,
-            description,
-            code_attempt=str(round_dir / f"{op_name}_generated.py"),
-            node_id=round_dir_name,
-        )
-        child_id = child_info["node_id"]
-        tree.round_dir_map[child_id] = round_dir_name
-
-        verify_path = _write_state_json(state_dir, child_id, "verify", verify_json)
-        perf_path = _write_state_json(state_dir, child_id, "perf", perf_json)
-        tree.evaluate(child_id, str(verify_path), str(perf_path))
-
-        if error_type != ErrorType.NONE:
-            parent_info = tree.nodes[parent_id].description or parent_id
-            error_msg = summary.get("yield_reason", reason)
-            tree.record_search_memory(
-                error_type=error_type,
-                parent_info=parent_info,
-                error_msg=error_msg,
-                direction=description,
-            )
-
-        if pending and not pending.get("realized"):
-            pending["realized"] = True
-        tree.pending_expansion = None
-        tree.save()

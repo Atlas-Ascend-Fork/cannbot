@@ -36,6 +36,7 @@ Agent 必须执行 §2.2 Step 1→2→3 自主判定，不受本脚本输出的 
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
@@ -43,15 +44,14 @@ from pathlib import Path
 from typing import Any
 
 from check_local_optimum import check_local_optimum
-from config_loader import read_config
 from direction_selector import DirectionYieldContext
 from strategies import load_strategy_for_algorithm
+from config_loader import read_config
 
 
 def _is_worker_mode() -> bool:
     """Return True if running as a per-round sub-agent worker."""
     return os.environ.get("TRITON_OPTIMIZER_MODE", "").lower() == "worker"
-
 
 _REQUIRED_SUMMARY_FIELDS = [
     "success", "round_index", "round_strategy",
@@ -96,8 +96,11 @@ def find_op_name(work_dir: Path | str) -> str | None:
     return None
 
 
-def _find_best_round(round_index: list[dict[str, Any]], current_round_name: str) -> dict[str, Any] | None:
-    """Return the highest-speedup successful entry, excluding the current round."""
+def _best_historical_entry(
+    round_index: list,
+    current_round_name: str,
+) -> dict[str, Any] | None:
+    """Find the best historical round (highest best_speedup, excluding self)."""
     best_entry = None
     for entry in round_index:
         if entry.get("round_dir") == current_round_name:
@@ -105,7 +108,7 @@ def _find_best_round(round_index: list[dict[str, Any]], current_round_name: str)
         if entry.get("status") != "success":
             continue
         speedup = entry.get("best_speedup", 0)
-        if not (isinstance(speedup, (int, float)) and speedup > 0):
+        if not isinstance(speedup, (int, float)) or speedup <= 0:
             continue
         if best_entry is None or speedup > best_entry.get("best_speedup", 0):
             best_entry = entry
@@ -144,11 +147,12 @@ def check_round_is_idle(round_dir: Path | str, op_dir: Path | None) -> bool:
     if not isinstance(round_index, list):
         return False
 
-    best_entry = _find_best_round(round_index, round_dir.name)
+    best_entry = _best_historical_entry(round_index, round_dir.name)
     if best_entry is None:
         return False
 
-    best_code = op_dir / best_entry["round_dir"] / f"{op_name}_generated.py"
+    best_dir = op_dir / best_entry["round_dir"]
+    best_code = best_dir / f"{op_name}_generated.py"
     if not best_code.is_file():
         return False
 
@@ -156,87 +160,27 @@ def check_round_is_idle(round_dir: Path | str, op_dir: Path | None) -> bool:
     return generated.read_bytes() == best_code.read_bytes()
 
 
-def _resolve_strategy(
+def _resolve_algorithm(
     op_dir: Path | None,
-    summary: dict[str, Any],
     context: dict[str, Any] | None,
-) -> Any:
-    """Resolve the strategy for the round's algorithm, defaulting to naive."""
+    summary: dict[str, Any],
+) -> str:
+    """Resolve the algorithm from context, summary, or state file."""
     algorithm = context.get("algorithm") if context else None
     if not isinstance(algorithm, str):
         algorithm = summary.get("algorithm")
     if not isinstance(algorithm, str) and op_dir is not None:
-        plugin_root = op_dir.parent.parent
-        state_path = plugin_root / ".triton-agent" / f"state-{op_dir.name}.json"
+        state_path = op_dir.parent.parent / ".triton-agent" / f"state-{op_dir.name}.json"
         if state_path.is_file():
             try:
                 algorithm = load_json(state_path).get("algorithm")
             except ValueError:
                 pass
-    if not isinstance(algorithm, str):
-        algorithm = "naive"
-
-    strategy = None
-    if op_dir is not None:
-        plugin_root = op_dir.parent.parent
-        config_path = plugin_root / "config.json"
-        if config_path.is_file():
-            try:
-                config = load_json(config_path)
-                strategy = load_strategy_for_algorithm(config, algorithm)
-            except Exception:
-                strategy = None
-    if strategy is None:
-        strategy = load_strategy_for_algorithm(
-            {"algorithms": {"naive": {"enabled": True, "params": {}}}}, "naive"
-        )
-    return strategy
+    return algorithm if isinstance(algorithm, str) else "naive"
 
 
-def _load_baseline_speedup(
-    op_dir: Path | None,
-    baseline_dir_name: str | None,
-) -> tuple[float, str | None]:
-    """Read the recorded baseline speedup, returning (speedup, baseline_dir)."""
-    if not (op_dir and baseline_dir_name):
-        return 0.0, None
-    baseline_summary_path = op_dir / baseline_dir_name / "summary.json"
-    if not baseline_summary_path.is_file():
-        return 0.0, None
-    try:
-        baseline_summary = load_json(baseline_summary_path)
-    except ValueError:
-        return 0.0, None
-    bs = baseline_summary.get("best_speedup", 0.0)
-    return (bs if isinstance(bs, (int, float)) else 0.0), baseline_dir_name
-
-
-def _load_global_baseline_speedup(op_dir: Path | None) -> tuple[float, str | None]:
-    """Read the global baseline speedup, defaulting to 1.0 when unavailable."""
-    if not op_dir:
-        return 0.0, None
-    global_baseline_speedup = 0.0
-    global_baseline_dir: str | None = None
-    info_path = op_dir / "global_baseline" / "baseline_info.json"
-    if info_path.is_file():
-        try:
-            global_baseline_info = load_json(info_path)
-        except ValueError:
-            global_baseline_info = None
-        if global_baseline_info is not None:
-            global_baseline_dir = "global_baseline"
-            gbs = global_baseline_info.get("baseline_speedup", 0.0)
-            if isinstance(gbs, (int, float)):
-                global_baseline_speedup = gbs
-    if global_baseline_speedup <= 0.0:
-        global_baseline_speedup = 1.0
-        global_baseline_dir = "global_baseline"
-    return global_baseline_speedup, global_baseline_dir
-
-
-def _compute_verify_passed(summary: dict[str, Any]) -> bool:
-    """Return True when all perf cases were run and passed."""
-    perf_data = summary.get("perf_data") or {}
+def _compute_verify_passed(perf_data: dict[str, Any]) -> bool:
+    """Return True if all test cases passed."""
     total = perf_data.get("total_cases", 0)
     passed = perf_data.get("passed_cases", 0)
     return (
@@ -247,39 +191,69 @@ def _compute_verify_passed(summary: dict[str, Any]) -> bool:
     )
 
 
-def _absolute_gain_global(best_speedup: float, global_baseline_speedup: float) -> float:
-    """Return the absolute gain versus the global baseline, or 0.0."""
-    if isinstance(best_speedup, (int, float)) and global_baseline_speedup > 0:
-        return best_speedup - global_baseline_speedup
-    return 0.0
+def _load_baseline_speedup(
+    op_dir: Path | None,
+    summary: dict[str, Any],
+    result: dict[str, Any],
+) -> tuple[float, float]:
+    """Read baseline and global baseline speedups into result."""
+    if not op_dir:
+        return 0.0, 0.0
+
+    baseline_speedup = 0.0
+    baseline_dir_name = summary.get("baseline_dir")
+    if baseline_dir_name:
+        baseline_speedup = _baseline_speedup_from_summary(op_dir, baseline_dir_name, result)
+    return baseline_speedup, _global_baseline_speedup(op_dir, result)
 
 
-def _classify_yield(strategy: Any, ctx: DirectionYieldContext) -> tuple[str, str, float]:
-    """Classify the round's direction yield via the active strategy."""
-    return strategy.classify_direction_yield(ctx)
-
-
-def _empty_metadata_result() -> dict[str, Any]:
-    """Return an empty round-metadata result envelope."""
-    return {
-        "direction_yield": None,
-        "yield_reason": None,
-        "absolute_gain_vs_baseline": None,
-        "absolute_gain_vs_global_baseline": None,
-        "baseline_dir": None,
-        "global_baseline_dir": None,
-    }
-
-
-def _load_metadata_summary(round_dir: Path) -> dict[str, Any] | None:
-    """Load the round summary.json, or None if it is missing/invalid."""
-    summary_path = round_dir / "summary.json"
-    if not summary_path.is_file():
-        return None
+def _baseline_speedup_from_summary(
+    op_dir: Path,
+    baseline_dir_name: str,
+    result: dict[str, Any],
+) -> float:
+    """baseline 轮 summary.json 的 best_speedup（缺失/损坏返回 0.0，仅成功加载才记录目录）。"""
+    baseline_summary_path = op_dir / baseline_dir_name / "summary.json"
+    if not baseline_summary_path.is_file():
+        return 0.0
     try:
-        return load_json(summary_path)
+        baseline_summary = load_json(baseline_summary_path)
     except ValueError:
-        return None
+        return 0.0
+    result["baseline_dir"] = baseline_dir_name
+    bs = baseline_summary.get("best_speedup", 0.0)
+    return bs if isinstance(bs, (int, float)) else 0.0
+
+
+def _global_baseline_speedup(op_dir: Path, result: dict[str, Any]) -> float:
+    """global_baseline/baseline_info.json 的 baseline_speedup（缺失/损坏/非法回退 1.0）。"""
+    result["global_baseline_dir"] = "global_baseline"
+    info_path = op_dir / "global_baseline" / "baseline_info.json"
+    if info_path.is_file():
+        try:
+            value = load_json(info_path).get("baseline_speedup", 0.0)
+        except ValueError:
+            return 1.0
+        if isinstance(value, (int, float)) and value > 0.0:
+            return value
+    return 1.0
+
+
+def _resolve_strategy(op_dir: Path | None, algorithm: str) -> Any:
+    """Load the strategy for the algorithm, defaulting to naive."""
+    if op_dir is not None:
+        config_path = op_dir.parent.parent / "config.json"
+        if config_path.is_file():
+            try:
+                config = load_json(config_path)
+                return load_strategy_for_algorithm(config, algorithm)
+            except Exception as exc:
+                logging.getLogger(__name__).debug(
+                    "strategy load failed, fallback to naive: %s", exc
+                )
+    return load_strategy_for_algorithm(
+        {"algorithms": {"naive": {"enabled": True, "params": {}}}}, "naive"
+    )
 
 
 def compute_round_metadata(
@@ -287,124 +261,80 @@ def compute_round_metadata(
     op_dir: Path | None,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compute direction_yield, yield_reason, absolute_gain for a round.
-
-    Reads summary.json and compares with the baseline recorded in
-    baseline_dir to compute gain. Uses the strategy configured for the
-    operator (defaulting to naive).
-    """
-    result = _empty_metadata_result()
-    summary = _load_metadata_summary(round_dir)
-    if summary is None:
+    """Compute direction_yield, yield_reason, absolute_gain for a round."""
+    result: dict[str, Any] = {
+        "direction_yield": None, "yield_reason": None,
+        "absolute_gain_vs_baseline": None, "absolute_gain_vs_global_baseline": None,
+        "baseline_dir": None, "global_baseline_dir": None,
+    }
+    summary_path = round_dir / "summary.json"
+    if not summary_path.is_file():
+        return result
+    try:
+        summary = load_json(summary_path)
+    except ValueError:
         return result
 
-    strategy = _resolve_strategy(op_dir, summary, context)
+    algorithm = _resolve_algorithm(op_dir, context, summary)
+    strategy = _resolve_strategy(op_dir, algorithm)
 
     best_speedup = summary.get("best_speedup", 0.0)
     target_speedup = summary.get("target_speedup", 5.0)
+    baseline_speedup, global_baseline_speedup = _load_baseline_speedup(op_dir, summary, result)
 
-    baseline_speedup, baseline_dir = _load_baseline_speedup(op_dir, summary.get("baseline_dir"))
-    result["baseline_dir"] = baseline_dir
-
-    global_baseline_speedup, global_baseline_dir = _load_global_baseline_speedup(op_dir)
-    result["global_baseline_dir"] = global_baseline_dir
-
-    verify_passed = _compute_verify_passed(summary)
-    improvement_made = bool(summary.get("optimized", False))
-    timeout = summary.get("status") == "timeout"
+    perf_data = summary.get("perf_data") or {}
+    verify_passed = _compute_verify_passed(perf_data)
 
     if context is None:
         context = {}
     context.setdefault("op_dir", str(op_dir) if op_dir else None)
     context.setdefault("round_dir", str(round_dir))
 
-    yield_label, yield_reason, absolute_gain = _classify_yield(
-        strategy,
-        DirectionYieldContext(
-            best_speedup=best_speedup if isinstance(best_speedup, (int, float)) else 0.0,
-            baseline_speedup=baseline_speedup,
-            target_speedup=target_speedup if isinstance(target_speedup, (int, float)) else 5.0,
-            verify_passed=verify_passed,
-            improvement_made=improvement_made,
-            timeout=timeout,
-            idle=False,
-            context=context,
-            global_baseline_speedup=global_baseline_speedup,
-        ),
-    )
+    yield_label, yield_reason, absolute_gain = strategy.classify_direction_yield(DirectionYieldContext(
+        best_speedup=best_speedup if isinstance(best_speedup, (int, float)) else 0.0,
+        baseline_speedup=baseline_speedup,
+        target_speedup=target_speedup if isinstance(target_speedup, (int, float)) else 5.0,
+        verify_passed=verify_passed,
+        improvement_made=bool(summary.get("optimized", False)),
+        timeout=summary.get("status") == "timeout",
+        idle=False,
+        context=context,
+        global_baseline_speedup=global_baseline_speedup,
+    ))
     result["direction_yield"] = yield_label
     result["yield_reason"] = yield_reason
     result["absolute_gain_vs_baseline"] = round(absolute_gain, 6)
-    result["absolute_gain_vs_global_baseline"] = round(
-        _absolute_gain_global(best_speedup, global_baseline_speedup), 6
-    )
+    global_gain = best_speedup - global_baseline_speedup if (
+        isinstance(best_speedup, (int, float)) and global_baseline_speedup > 0
+    ) else 0.0
+    result["absolute_gain_vs_global_baseline"] = round(global_gain, 6)
     return result
 
 
-def _check_generated_code(round_dir: Path, op_name: str, issues: list[str]) -> None:
-    """Check that generated/optimized kernel code exists and is non-trivial."""
-    generated_path = round_dir / f"{op_name}_generated.py"
-    if generated_path.is_file():
+def _check_phase4_artifacts(
+    round_dir: Path, op_name: str, summary: dict[str, Any], issues: list[str],
+) -> None:
+    """Check Phase 4 artifacts when phase4_entered is true."""
+    if not summary.get("phase4_entered", False):
         return
-
-    output_gen = round_dir / "output" / "generated_code.py"
-    output_opt = round_dir / "output" / "optimized_code.py"
-    if output_opt.is_file():
-        if output_opt.stat().st_size <= 100:
-            issues.append(
-                f"{op_name}_generated.py not found and output/optimized_code.py is too small"
-            )
-    elif output_gen.is_file():
-        if output_gen.stat().st_size <= 100:
-            issues.append(
-                f"{op_name}_generated.py not found and output/generated_code.py is too small"
-            )
-    else:
-        issues.append(
-            f"missing output kernel code (neither {op_name}_generated.py nor "
-            "output/optimized_code.py found)"
-        )
-
-
-def _is_attempt_record(line: str) -> bool:
-    """Return True if the attempts.md line records an optimization point."""
-    return line.strip().startswith("- [") and (
-        "未命中" in line or "已尝试" in line or "已命中" in line
-    )
-
-
-def _is_attempted_record(line: str) -> bool:
-    """Return True if the attempts.md line records an actually-attempted point."""
-    return line.strip().startswith("- [") and ("已尝试" in line or "已命中" in line)
-
-
-def _check_opt_iter(round_dir: Path, issues: list[str]) -> None:
-    """Check that Phase 4 produced a real (non-identity) code change."""
     opt_iter_dirs = sorted(round_dir.glob("output/opt_iter_*"))
     if not opt_iter_dirs:
         issues.append("phase4_entered=true but no opt_iter_*/ directory found in output/")
         return
-
     latest_opt = opt_iter_dirs[-1]
     opt_verify = latest_opt / "verify" / "verify_result_optimized.json"
     if not opt_verify.is_file():
-        issues.append(
-            f"phase4_entered=true but {latest_opt.name}/verify/"
-            "verify_result_optimized.json not found"
-        )
+        issues.append(f"phase4_entered=true but {latest_opt.name}/verify/verify_result_optimized.json not found")
 
-    # Verify at least one opt_iter has code differing from generated_code
-    # (prevent identity-copy "optimizations" that bypass Phase 4)
     generated_code = round_dir / "output" / "generated_code.py"
     has_real_change = False
     for od in opt_iter_dirs:
         opt_code = od / "optimized_code.py"
-        if not (opt_code.is_file() and generated_code.is_file()):
-            continue
-        if opt_code.read_bytes() != generated_code.read_bytes():
-            has_real_change = True
-            break
-    if not has_real_change:
+        if opt_code.is_file() and generated_code.is_file():
+            if opt_code.read_bytes() != generated_code.read_bytes():
+                has_real_change = True
+                break
+    if not has_real_change and opt_iter_dirs:
         issues.append(
             "None of the opt_iter_*/optimized_code.py files differ from "
             "output/generated_code.py. All optimization iterations produced "
@@ -412,22 +342,19 @@ def _check_opt_iter(round_dir: Path, issues: list[str]) -> None:
             "At least one opt_iter must apply a real code change."
         )
 
-
-def _check_attempts(round_dir: Path, issues: list[str]) -> None:
-    """Check the authenticity of output/attempts.md records."""
     attempts_path = round_dir / "output" / "attempts.md"
     if not attempts_path.is_file():
         issues.append("phase4_entered=true but output/attempts.md not found")
         return
-
     lines = attempts_path.read_text().splitlines()
-    record_count = sum(1 for line in lines if _is_attempt_record(line))
+    record_count = sum(1 for line in lines
+                      if line.strip().startswith("- [") and ("未命中" in line or "已尝试" in line or "已命中" in line))
     if record_count < 26:
         issues.append(
             f"output/attempts.md has only {record_count} optimization point records (need >= 26)"
         )
-    # authenticity check: at least 1 point must be actually attempted
-    tried_count = sum(1 for line in lines if _is_attempted_record(line))
+    tried_count = sum(1 for line in lines
+                      if line.strip().startswith("- [") and ("已尝试" in line or "已命中" in line))
     if tried_count < 1:
         issues.append(
             "output/attempts.md has no '已尝试' or '已命中' records "
@@ -436,14 +363,6 @@ def _check_attempts(round_dir: Path, issues: list[str]) -> None:
             "believes no optimization point applies. Select the most reasonable "
             "point and execute a real optimization iteration."
         )
-
-
-def _check_phase4_artifacts(round_dir: Path, summary: dict[str, Any], issues: list[str]) -> None:
-    """Check Phase 4 artifacts (only when phase4_entered is true)."""
-    if not summary.get("phase4_entered", False):
-        return
-    _check_opt_iter(round_dir, issues)
-    _check_attempts(round_dir, issues)
 
 
 def validate_round_directory(round_dir: Path) -> list[str]:
@@ -462,7 +381,22 @@ def validate_round_directory(round_dir: Path) -> list[str]:
         issues.append("missing summary.json")
         return issues
 
-    _check_generated_code(round_dir, op_name, issues)
+    # Check generated code
+    generated_path = round_dir / f"{op_name}_generated.py"
+    if not generated_path.is_file():
+        output_gen = round_dir / "output" / "generated_code.py"
+        output_opt = round_dir / "output" / "optimized_code.py"
+        if output_opt.is_file():
+            if output_opt.stat().st_size <= 100:
+                issues.append(f"{op_name}_generated.py not found and output/optimized_code.py is too small")
+        elif output_gen.is_file():
+            if output_gen.stat().st_size <= 100:
+                issues.append(f"{op_name}_generated.py not found and output/generated_code.py is too small")
+        else:
+            issues.append(
+                f"missing output kernel code (neither {op_name}_generated.py "
+                f"nor output/optimized_code.py found)"
+            )
 
     # Check verify result (only Phase 3 iter_* results)
     verify_results = sorted(round_dir.glob("output/iter_*/verify/verify_result.json"))
@@ -471,10 +405,10 @@ def validate_round_directory(round_dir: Path) -> list[str]:
 
     # Check Phase 4 artifacts (only when phase4_entered is true)
     try:
-        summary = load_json(summary_path)
+        summary = load_json(summary_path) if summary_path.is_file() else {}
     except ValueError:
         summary = {}
-    _check_phase4_artifacts(round_dir, summary, issues)
+    _check_phase4_artifacts(round_dir, op_name, summary, issues)
 
     return issues
 
@@ -517,7 +451,6 @@ def validate_summary(summary_path: Path) -> list[str]:
 
 def check_verify_passed(round_dir: Path) -> tuple[bool, str]:
     """Check that verify_result.json has passed_cases == total_cases > 0.
-
     Only checks Phase 3 iter_* results, not Phase 4 opt_iter_*.
     """
     verify_paths = sorted(round_dir.glob("output/iter_*/verify/verify_result.json"))
@@ -547,13 +480,8 @@ def check_verify_passed(round_dir: Path) -> tuple[bool, str]:
     return True, "passed"
 
 
-def _validate_phase4_gate(round_dir: Path, verify_ok: bool, issues: list[str]) -> None:
-    """Unconditional Phase 4 check: verified Phase 3 output must enter Phase 4.
-
-    This cannot be bypassed by setting success=false in summary.json.
-    """
-    if not verify_ok:
-        return
+def _validate_phase4_gate(round_dir: Path, result: dict[str, Any], verify_ok: bool) -> None:
+    """Run the unconditional Phase 4 gate and plateau_review integrity checks."""
     summary_path = round_dir / "summary.json"
     if not summary_path.is_file():
         return
@@ -561,8 +489,9 @@ def _validate_phase4_gate(round_dir: Path, verify_ok: bool, issues: list[str]) -
         summary_data = load_json(summary_path)
     except ValueError:
         return
-    if not summary_data.get("phase4_entered", False):
-        issues.append(
+
+    if verify_ok and not summary_data.get("phase4_entered", False):
+        result["issues"].append(
             "Phase 3 verification passed (all cases) but phase4_entered is false. "
             "Phase 4 optimization was skipped. "
             "Every round with verified Phase 3 output MUST also execute Phase 4 "
@@ -570,72 +499,77 @@ def _validate_phase4_gate(round_dir: Path, verify_ok: bool, issues: list[str]) -
             "least one optimization iteration."
         )
 
-
-def _validate_plateau_review(round_dir: Path, issues: list[str]) -> None:
-    """Check plateau_review round integrity (analysis-only, no Phase 4)."""
-    summary_path = round_dir / "summary.json"
-    if not summary_path.is_file():
+    round_strategy = summary_data.get("round_strategy", "")
+    if round_strategy != "plateau_review":
         return
-    try:
-        summary_data = load_json(summary_path)
-    except ValueError:
-        return
-    if summary_data.get("round_strategy", "") != "plateau_review":
-        return
-
-    # Must have analysis.md
     analysis_path = round_dir / "analysis.md"
     if not analysis_path.is_file():
-        issues.append(
+        result["issues"].append(
             "plateau_review round missing analysis.md — "
             "must produce analysis report before transitioning"
         )
-    # Must NOT have Phase 4 artifacts
     if summary_data.get("phase4_entered", False):
-        issues.append(
+        result["issues"].append(
             "plateau_review round has phase4_entered=true but should be "
             "analysis-only. Phase 4 optimization artifacts are not expected "
             "in a plateau_review round."
         )
     opt_dirs = sorted(round_dir.glob("output/opt_iter_*"))
     if opt_dirs:
-        issues.append(
+        result["issues"].append(
             f"plateau_review round has {len(opt_dirs)} opt_iter_*/ "
-            "directories but should not have Phase 4 artifacts. "
-            "plateau_review is analysis-only, no code changes allowed."
+            f"directories but should not have Phase 4 artifacts. "
+            f"plateau_review is analysis-only, no code changes allowed."
         )
 
 
-def _run_local_optimum_check(op_dir: Path, result: dict[str, Any]) -> None:
-    """Run local optimum detection and fold warnings into the result."""
-    try:
-        local_opt = check_local_optimum(op_dir)
-        result["local_optimum"] = local_opt
-        if local_opt.get("warnings"):
-            result["warnings"].extend(local_opt["warnings"])
-    except Exception as exc:
-        result["warnings"].append(f"local_optimum check error: {exc}")
+def _finalize_validation_result(result: dict[str, Any], current_round: int | None) -> None:
+    """Determine status and suggested_next_dir (informational only)."""
+    if result["issues"]:
+        result["status"] = "fail"
+        result["guideline"] = (
+            f"Round {current_round} has {len(result['issues'])} unresolved issue(s). "
+            "Fix them before continuing. Issues: " + "; ".join(result["issues"])
+        )
+        return
+    result["guideline"] = (
+        f"Round {current_round} passed validation. "
+        "Proceed to §2.2 Step 1→2→3 for stop/continue decision."
+    )
+    if current_round is not None:
+        result["suggested_next_dir"] = f"opt-round-{current_round + 1}"
 
 
-def _run_idle_check(
-    round_dir: Path,
-    op_dir: Path | None,
-    current_round: int | None,
-    result: dict[str, Any],
+def _run_local_optimum_and_idle(
+    round_dir: Path, op_dir: Path | None, current_round: int | None, result: dict[str, Any],
 ) -> None:
-    """Mark the round as idle when its code matches the best baseline."""
-    round_idle = check_round_is_idle(round_dir, op_dir)
-    if round_idle:
-        result["round_type"] = "idle"
-        result["warnings"].append(
-            f"Round {current_round} is idle: generated code is identical "
-            "to the historical best baseline. No semantic changes made."
-        )
+    """Run local optimum and idle detection (orchestrator mode only)."""
+    if not _is_worker_mode() and op_dir and op_dir.is_dir():
+        try:
+            local_opt = check_local_optimum(op_dir)
+            result["local_optimum"] = local_opt
+            if local_opt.get("warnings"):
+                result["warnings"].extend(local_opt["warnings"])
+        except Exception as exc:
+            result["warnings"].append(f"local_optimum check error: {exc}")
+
+    if not _is_worker_mode():
+        round_idle = check_round_is_idle(round_dir, op_dir)
+        if round_idle:
+            result["round_type"] = "idle"
+            result["warnings"].append(
+                f"Round {current_round} is idle: generated code is identical "
+                "to the historical best baseline. No semantic changes made."
+            )
 
 
-def _empty_validate_result() -> dict[str, Any]:
-    """Return an empty round-validation result envelope."""
-    return {
+def validate_round(
+    round_dir: Path,
+    current_round: int | None = None,
+    final_round: int | None = None,
+    op_dir: Path | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
         "status": "pass",
         "issues": [],
         "warnings": [],
@@ -651,39 +585,26 @@ def _empty_validate_result() -> dict[str, Any]:
         "global_baseline_dir": None,
     }
 
-
-def validate_round(
-    round_dir: Path,
-    current_round: int | None = None,
-    final_round: int | None = None,
-    op_dir: Path | None = None,
-) -> dict[str, Any]:
-    result = _empty_validate_result()
-
     # 1. Validate directory structure
-    result["issues"].extend(validate_round_directory(round_dir))
+    dir_issues = validate_round_directory(round_dir)
+    result["issues"].extend(dir_issues)
 
     # 2. Validate summary.json
     summary_path = round_dir / "summary.json"
     if summary_path.is_file():
-        result["issues"].extend(validate_summary(summary_path))
+        summary_issues = validate_summary(summary_path)
+        result["issues"].extend(summary_issues)
 
     # 3. Check verify passed
     verify_ok, verify_msg = check_verify_passed(round_dir)
     if not verify_ok:
         result["issues"].append(f"verify check failed: {verify_msg}")
 
-    # 3b. Unconditional Phase 4 check / 3c. plateau_review integrity
-    _validate_phase4_gate(round_dir, verify_ok, result["issues"])
-    _validate_plateau_review(round_dir, result["issues"])
+    # 3b/3c. Unconditional Phase 4 gate + plateau_review integrity (not gated on success flag).
+    _validate_phase4_gate(round_dir, result, verify_ok)
 
-    # 4. Run local optimum detection (orchestrator mode only)
-    if not _is_worker_mode() and op_dir and op_dir.is_dir():
-        _run_local_optimum_check(op_dir, result)
-
-    # 5. Idle detection (orchestrator mode only)
-    if not _is_worker_mode():
-        _run_idle_check(round_dir, op_dir, current_round, result)
+    # 4/5. Local optimum + idle detection (orchestrator mode only)
+    _run_local_optimum_and_idle(round_dir, op_dir, current_round, result)
 
     # 5.5 Compute direction-level causal metadata.
     if not _is_worker_mode():
@@ -694,25 +615,8 @@ def validate_round(
         )
         result.update(metadata)
 
-    # 6. [DEPRECATED] Stop/continue evaluation: moved to Agent §2.2 Step 3b
-    # submit_round.py no longer decides stop/continue.
-    # C1/C2/C3/D4 are evaluated by the Agent in §2.2 Step 3b.
-
-    # 7. Determine status and suggested_next_dir (informational only)
-    if result["issues"]:
-        result["status"] = "fail"
-        result["guideline"] = (
-            f"Round {current_round} has {len(result['issues'])} unresolved issue(s). "
-            "Fix them before continuing. Issues: " + "; ".join(result["issues"])
-        )
-    else:
-        result["guideline"] = (
-            f"Round {current_round} passed validation. "
-            "Proceed to §2.2 Step 1→2→3 for stop/continue decision."
-        )
-        if current_round is not None:
-            result["suggested_next_dir"] = f"opt-round-{current_round + 1}"
-
+    # 6/7. [DEPRECATED] stop/continue moved to Agent §2.2 Step 3b; finalize status.
+    _finalize_validation_result(result, current_round)
     return result
 
 

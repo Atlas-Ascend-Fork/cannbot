@@ -28,6 +28,7 @@ from typing import Any
 
 import check_local_optimum
 import direction_selector as ds
+from direction_selector import DirectionSelection, DirectionYieldContext
 from ..base import (
     BaselineProposal,
     RoundDecision,
@@ -35,6 +36,17 @@ from ..base import (
     StrategyCapabilities,
     SwitchMarker,
 )
+
+
+def _detect_plateau(op_dir: Path | None) -> bool:
+    """Detect a speedup plateau (C3) from disk speedups."""
+    if op_dir is None:
+        return False
+    try:
+        local_opt = check_local_optimum.check_local_optimum(op_dir, window=3, max_gain=0.02)
+        return local_opt.get("in_local_optimum", False)
+    except Exception:
+        return False
 
 
 class NaiveStrategy(Strategy):
@@ -63,29 +75,44 @@ class NaiveStrategy(Strategy):
         current_policy: str,
         context: dict[str, Any] | None = None,
     ) -> RoundDecision:
-        """Choose the next round for the naive strategy.
-
-        The naive strategy now only owns the "adjustment" decision:
-          - If recent rounds show a speedup plateau (C3), request a direction
-            adjustment by escalating the analysis policy.
-          - If recent ``pattern: custom`` attempts are consistently low-yield or
-            failed, also request an adjustment.
-          - Otherwise continue normal exploration.
-
-        The strategy never recommends stopping; the Orchestrator handles C1/C2.
-        """
+        """Choose the next round: plateau/low-yield triggers adjustment, else normal exploration."""
         op_dir = Path(context["op_dir"]) if context and context.get("op_dir") else None
         current_direction = self._current_direction(round_index)
-        plateau_detected = self._detect_plateau(op_dir)
+
+        # C3 plateau detection + LLM-driven low-yield adjustment.
+        plateau_detected = _detect_plateau(op_dir)
         low_yield_adjustment = self._recent_custom_low_yield(round_index, window=3)
 
         if plateau_detected or low_yield_adjustment:
-            return self._adjustment_decision(
-                round_index, op_category, current_policy, current_direction, plateau_detected
+            switch_reason = "plateau_stagnation" if plateau_detected else "low_yield_adjustment"
+            sel = ds.select_next_direction(
+                round_index,
+                op_category=op_category,
+                current_policy=current_policy,
+                context_changed=True,
+            )
+            return RoundDecision(
+                direction=sel.direction,
+                hypothesis=(f"Recent rounds show "
+                            f"{'a speedup plateau' if plateau_detected else 'consistent low/failed yields'}. "
+                            "Adjust the optimization approach: re-analyze the bottleneck, try a different "
+                            "implementation idea, or escalate the analysis depth."),
+                round_strategy=sel.strategy,
+                analysis_policy=sel.analysis_policy,
+                evidence_sources=sel.evidence_sources,
+                baseline=BaselineProposal(mode="none"),
+                switch_marker=SwitchMarker(reason=switch_reason, previous_direction=current_direction,
+                                           new_direction=sel.direction),
+                metadata=sel.metadata,
             )
 
         # Normal path: let the sub-agent/LLM continue with the current policy.
-        sel = self._direction_selection(round_index, op_category, current_policy, False)
+        sel = ds.select_next_direction(
+            round_index,
+            op_category=op_category,
+            current_policy=current_policy,
+            context_changed=False,
+        )
         return RoundDecision(
             direction=sel.direction,
             hypothesis=sel.hypothesis,
@@ -95,6 +122,12 @@ class NaiveStrategy(Strategy):
             baseline=BaselineProposal(mode="none"),
             metadata=sel.metadata,
         )
+
+    def classify_direction_yield(
+        self,
+        ctx: DirectionYieldContext,
+    ) -> tuple[str, str, float]:
+        return ds.classify_direction_yield(ctx)
 
     def _current_direction(self, round_index: list[dict[str, Any]]) -> str | None:
         if not round_index:
@@ -122,63 +155,3 @@ class NaiveStrategy(Strategy):
             if yield_label not in ("low", "failed"):
                 return False
         return True
-
-    def _detect_plateau(self, op_dir: Path | None) -> bool:
-        """Detect a speedup plateau (C3) from disk speedups."""
-        if op_dir is None:
-            return False
-        try:
-            local_opt = check_local_optimum.check_local_optimum(
-                op_dir, window=3, max_gain=0.02
-            )
-            return local_opt.get("in_local_optimum", False)
-        except Exception:
-            return False
-
-    def _direction_selection(
-        self,
-        round_index: list[dict[str, Any]],
-        op_category: str | None,
-        current_policy: str,
-        context_changed: bool,
-    ) -> ds.DirectionSelection:
-        """Delegate to the LLM-driven direction selector."""
-        return ds.select_next_direction(
-            round_index,
-            op_category=op_category,
-            current_policy=current_policy,
-            context_changed=context_changed,
-        )
-
-    def _adjustment_decision(
-        self,
-        round_index: list[dict[str, Any]],
-        op_category: str | None,
-        current_policy: str,
-        current_direction: str | None,
-        plateau_detected: bool,
-    ) -> RoundDecision:
-        """Build the direction-adjustment decision when a plateau/low-yield is detected."""
-        switch_reason = (
-            "plateau_stagnation" if plateau_detected else "low_yield_adjustment"
-        )
-        sel = self._direction_selection(round_index, op_category, current_policy, True)
-        return RoundDecision(
-            direction=sel.direction,
-            hypothesis=(
-                f"Recent rounds show "
-                f"{'a speedup plateau' if plateau_detected else 'consistent low/failed yields'}. "
-                "Adjust the optimization approach: re-analyze the bottleneck, "
-                "try a different implementation idea, or escalate the analysis depth."
-            ),
-            round_strategy=sel.strategy,
-            analysis_policy=sel.analysis_policy,
-            evidence_sources=sel.evidence_sources,
-            baseline=BaselineProposal(mode="none"),
-            switch_marker=SwitchMarker(
-                reason=switch_reason,
-                previous_direction=current_direction,
-                new_direction=sel.direction,
-            ),
-            metadata=sel.metadata,
-        )

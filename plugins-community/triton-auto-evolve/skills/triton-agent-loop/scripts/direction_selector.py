@@ -39,8 +39,20 @@ YieldReason = str
 
 
 @dataclass
+class DirectionSelection:
+    """Structured result of next-direction selection."""
+
+    strategy: str
+    analysis_policy: str
+    direction: str
+    hypothesis: str
+    evidence_sources: list[str]
+    metadata: dict[str, Any]
+
+
+@dataclass
 class DirectionYieldContext:
-    """Inputs describing a completed round's outcome for yield classification."""
+    """Inputs for classifying a direction attempt's yield."""
 
     best_speedup: float
     baseline_speedup: float
@@ -52,18 +64,6 @@ class DirectionYieldContext:
     idle: bool = False
     context: dict[str, Any] | None = None
     global_baseline_speedup: float = 0.0
-
-
-@dataclass
-class DirectionSelection:
-    """Structured result of next-direction selection."""
-
-    strategy: str
-    analysis_policy: str
-    direction: str
-    hypothesis: str
-    evidence_sources: list[str]
-    metadata: dict[str, Any]
 
 
 def classify_direction_yield(
@@ -89,7 +89,6 @@ def classify_direction_yield(
         return "high", "target_reached", absolute_gain
 
     if ctx.plateau_detected:
-        # Determine how many rounds of plateau based on gain magnitude.
         if absolute_gain <= 0.0:
             return "low", "no_improvement_vs_baseline", absolute_gain
         if absolute_gain < 0.05:
@@ -226,7 +225,7 @@ def compute_direction_compatibility(
 
 
 def _passes_hard_gates(candidate: dict[str, Any]) -> bool:
-    """Return True if the candidate passes the baseline eligibility gates."""
+    """Return True if the candidate passes the baseline hard gates."""
     if candidate.get("status") != "success":
         return False
     if candidate.get("round_type") == "idle":
@@ -236,7 +235,10 @@ def _passes_hard_gates(candidate: dict[str, Any]) -> bool:
     passed = perf_data.get("passed_cases", 0)
     if not (isinstance(total, (int, float)) and isinstance(passed, (int, float))):
         return False
-    return int(total) > 0 and int(passed) == int(total)
+    if int(total) <= 0 or int(passed) != int(total):
+        return False
+    best_speedup = candidate.get("best_speedup", 0.0)
+    return isinstance(best_speedup, (int, float)) and best_speedup > 0
 
 
 def score_baseline_for_direction(
@@ -272,10 +274,6 @@ def score_baseline_for_direction(
 
     best_speedup = candidate.get("best_speedup", 0.0)
     target_speedup = candidate.get("target_speedup", 5.0)
-    if not isinstance(best_speedup, (int, float)) or best_speedup <= 0:
-        return 0.0
-
-    # Speedup quality (clamped to target, but allow slight overshoot to count).
     speedup_quality = min(best_speedup / max(target_speedup, 1.0), 1.2) / 1.2
 
     # Direction compatibility.
@@ -307,14 +305,20 @@ def score_baseline_for_direction(
 # Next direction selection
 # ---------------------------------------------------------------------------
 
-def _select_policy(
-    current_policy: str, round_count: int, context_changed: bool
-) -> tuple[str, str]:
-    """Choose the analysis policy and round strategy from round progression."""
+def select_next_direction(
+    round_index: list[dict[str, Any]],
+    op_category: str | None = None,
+    current_policy: str = "pattern_entry",
+    context_changed: bool = False,
+) -> DirectionSelection:
+    """Select the next optimization direction (LLM-driven)."""
+    del op_category  # No longer used; LLM-driven directions do not need a catalog.
+
     policy_rank = {"pattern_entry": 0, "bottleneck_analysis": 1, "ir_supported": 2}
     current_rank = policy_rank.get(current_policy, 0)
 
     policy = current_policy
+    round_count = len(round_index)
     if round_count >= 6 and current_rank < 2:
         policy = "ir_supported"
     elif round_count >= 3 and current_rank < 1:
@@ -323,31 +327,10 @@ def _select_policy(
     if context_changed and policy_rank.get(policy, 0) < 2:
         policy = "bottleneck_analysis" if policy_rank.get(policy, 0) == 0 else "ir_supported"
 
-    strategy = "structural_change" if policy == "ir_supported" else "exploration"
-    return strategy, policy
-
-
-def select_next_direction(
-    round_index: list[dict[str, Any]],
-    op_category: str | None = None,
-    current_policy: str = "pattern_entry",
-    context_changed: bool = False,
-) -> DirectionSelection:
-    """Select the next optimization direction.
-
-    Directions are now fully LLM-driven. The optional pattern catalog is
-    intentionally ignored so that the sub-agent can propose directions based
-    on operator analysis rather than a fixed checklist.
-
-    The ``op_category`` argument is kept for interface compatibility but is
-    no longer used to select from a fixed pattern catalog.
-
-    Returns:
-        A DirectionSelection describing the next round.
-    """
-    del op_category  # No longer used; LLM-driven directions do not need a catalog.
-
-    strategy, policy = _select_policy(current_policy, len(round_index), context_changed)
+    if policy == "ir_supported":
+        strategy = "structural_change"
+    else:
+        strategy = "exploration"
 
     hypothesis = (
         "No predefined pattern catalog is enforced. Analyze the operator's "
@@ -377,8 +360,8 @@ def select_next_direction(
 
 
 @dataclass
-class SwitchManifestInput:
-    """Structured inputs for recording a direction switch manifest."""
+class SwitchManifestSpec:
+    """Inputs for writing a SWITCH_MANIFEST.json."""
 
     switch_dir: Path
     source_round_dir: str
@@ -388,17 +371,17 @@ class SwitchManifestInput:
     new_direction: str
 
 
-def record_switch_manifest(inputs: SwitchManifestInput) -> None:
+def record_switch_manifest(spec: SwitchManifestSpec) -> None:
     """Write SWITCH_MANIFEST.json inside a switch directory."""
     manifest = {
-        "source_round_dir": inputs.source_round_dir,
-        "switch_index": inputs.switch_index,
-        "reason": inputs.reason,
-        "previous_direction": inputs.previous_direction,
-        "new_direction": inputs.new_direction,
+        "source_round_dir": spec.source_round_dir,
+        "switch_index": spec.switch_index,
+        "reason": spec.reason,
+        "previous_direction": spec.previous_direction,
+        "new_direction": spec.new_direction,
         "switched_at": datetime.now(timezone.utc).isoformat(),
     }
-    (inputs.switch_dir / "SWITCH_MANIFEST.json").write_text(
+    (spec.switch_dir / "SWITCH_MANIFEST.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )

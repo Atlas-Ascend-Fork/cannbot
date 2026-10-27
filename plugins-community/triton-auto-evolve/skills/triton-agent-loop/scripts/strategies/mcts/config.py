@@ -22,8 +22,8 @@ ALPHA = 0.5                   # Progressive widening 指数
 FAILURE_THRESHOLD = 3         # 节点总失败次数达到该值时剪枝
 
 # 奖励常量
-REWARD_OUTPUT_ERROR = -2      # 输出/精度校验失败
-REWARD_COMPILE_ERROR = -3     # 编译失败或无有效结果
+REWARD_OUTPUT_ERROR = -2.0    # 输出/精度校验失败
+REWARD_COMPILE_ERROR = -3.0   # 编译失败或无有效结果
 
 
 def reward_success(speedup: float) -> float:

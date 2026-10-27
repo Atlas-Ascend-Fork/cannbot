@@ -37,12 +37,14 @@ def _load_module_safely(module_name: str) -> Any:
         return None
 
 
-def _is_discoverable_strategy(attr: Any, discovered: dict[str, type[Strategy]]) -> bool:
-    """Return True if *attr* is a named, unregistered Strategy subclass."""
-    if attr is Strategy or not issubclass(attr, Strategy):
-        return False
-    name = getattr(attr, "name", "")
-    return bool(name) and name not in discovered
+def _is_concrete_strategy(attr: Any, discovered: dict[str, type[Strategy]]) -> bool:
+    """Return True if attr is a named, concrete Strategy subclass not yet discovered."""
+    return (
+        issubclass(attr, Strategy)
+        and attr is not Strategy
+        and bool(getattr(attr, "name", ""))
+        and attr.name not in discovered
+    )
 
 
 def _scan_module_for_strategies(module: Any, discovered: dict[str, type[Strategy]]) -> None:
@@ -50,7 +52,7 @@ def _scan_module_for_strategies(module: Any, discovered: dict[str, type[Strategy
     if module is None:
         return
     for _attr_name, attr in inspect.getmembers(module, inspect.isclass):
-        if _is_discoverable_strategy(attr, discovered):
+        if _is_concrete_strategy(attr, discovered):
             discovered[attr.name] = attr
 
 
