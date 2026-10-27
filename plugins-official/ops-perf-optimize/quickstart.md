@@ -50,16 +50,50 @@ bash /path/to/cannbot/plugins-official/ops-perf-optimize/init.sh project opencod
 
 安装会自动完成：
 
-1. **Skills 安装**：本插件自带的 9 个工作流 Skill（`ops-perf-optimize-workflow` 入口、五个阶段、验收标准、性能检视与特征提取）从插件目录软链，17 个共享 AscendC Skill（profiling、精度调试、Blaze 路由等）与 `knowledge-query` 知识检索 Skill 从 `vendor/cannbot-skills` submodule 软链到目标项目的工具 skills 目录；源码安装可用 `--skills <SHA|本地仓路径>` 锁定共享 Skill 版本；
-2. **参考仓准备**：浅克隆 cannbot-knowledge 知识库、asc-devkit（经 `ascendc-docs-search` 清洗）与 cann-samples 到 `<项目>/.cannbot/dependencies/ops-perf-optimize/`，asc-devkit/cann-samples 在项目根暴露同名入口；断网/离线时告警跳过，`CANNBOT_SKIP_DEPENDENCY_REPOS=1` 可整体关闭；
+1. **Skills 安装**：本插件自带的 9 个工作流 Skill（`ops-perf-optimize-workflow` 入口、五个阶段、验收标准、性能检视与特征提取）从插件目录软链，17 个共享 AscendC Skill（profiling、精度调试、Blaze 路由等）从 `vendor/cannbot-skills` submodule 软链到目标项目的工具 skills 目录；源码安装可用 `--skills <SHA|本地仓路径>` 锁定共享 Skill 版本。知识检索 Skill 使用下节知识仓自身的安装器，不再从该 submodule 安装旧版；
+2. **参考仓准备**：浅克隆 cannbot-knowledge 知识仓、asc-devkit（经 `ascendc-docs-search` 清洗）与 cann-samples 到 `<项目>/.cannbot/dependencies/ops-perf-optimize/`，asc-devkit/cann-samples 在项目根暴露同名入口。克隆知识仓不等于已准备检索 Skill、资源与索引，需完成下节 consumer 安装；断网/离线时告警跳过，`CANNBOT_SKIP_DEPENDENCY_REPOS=1` 可整体关闭；
 3. **主 Agent 与主提示词**：`AGENTS.md` 作为 `perf-optimize` 主 Agent 安装到客户端 agents 目录（opencode/claude 为 `.opencode/agents/perf-optimize.md`、`.claude/agents/perf-optimize.md`，codex 为 `.codex/agents/perf-optimize.toml`），并以标记块写入项目 `CLAUDE.md`（claude）或 `AGENTS.md`（其他工具）；五个阶段仍派发给客户端通用 subagent；
 4. **hook 注册**（仅 claude 工具）：SessionStart 路由提示注册进 `.claude/settings.json`。
 
 命令可以幂等重跑，用于刷新插件或复查安装。各客户端通用参数与安装控制详见[插件安装与工作流](../../script/docs/cannbot-workflows.md)。
 
+### 知识库安装与配置
+
+知识库用于方案设计和实施约束补证，安装方式参考 [ops-perf-evolution 快速入门](../../plugins-community/ops-perf-evolution/quickstart.md)，实际参数以[知识仓当前安装器](https://gitcode.com/cann/cannbot-knowledge/blob/master/install.sh)为准。在同一调优工程中安装 consumer：
+
+```bash
+# 使用插件已克隆的知识仓；opencode 可换成 claude 或 codex
+bash /path/to/your/tuning-project/.cannbot/dependencies/ops-perf-optimize/cannbot-knowledge/install.sh \
+  opencode /path/to/your/tuning-project consumer
+```
+
+若自动克隆被跳过，或使用 Marketplace 安装插件，可先检出知识仓：
+
+```bash
+git clone https://gitcode.com/cann/cannbot-knowledge.git /path/to/cannbot-knowledge
+bash /path/to/cannbot-knowledge/install.sh opencode /path/to/your/tuning-project consumer
+```
+
+该安装器安装 `knowledge-query` 与 `ascendc-api-knowledge-query`，保留到完整知识仓的链接，准备运行依赖、文档/固定提交源码与检索索引，并在调优工程 `.cannbot/knowledge.env` 写入知识仓位置。普通检索可通过安装器 `--platform <已确认平台>` 配置缺省平台，任务目标不同时仍须按 Query 规则显式指定。
+
+知识仓根是包含 `governance/` 与 `knowledge/` 的目录。可用 `export CANNBOT_KNOWLEDGE_ROOT=/path/to/cannbot-knowledge` 覆盖，或在工程/祖先的 `.cannbot/knowledge.env` 配置同名变量；Query 也可通过真实 Skill 链接定位其知识仓。仅配置路径不能替代完整 consumer 安装，不要独立复制检索 Skill。
+
+升级已有工程时，先停止使用旧检索入口，按知识仓安装器提示迁移旧 `knowledge-query` 副本或链接；旧 Marketplace 依赖 `ops-perf-optimize-kb-skills` 也应卸载，避免继续加载 cannbot-skills 中的旧脚本。插件不再依赖该 bundle。
+
+知识库不可用时，调优报告记录 `kb_unavailable` 与具体原因，并以无知识增强模式继续；精度与性能验收要求不变。索引缺失、损坏或陈旧交由知识仓安装器/维护者处理，调优阶段不自动重建。有效零命中记录为知识缺口，不视为技术不可行。
+
 ### 验证安装
 
-统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 27 个 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 hooks 资产与 `quickstart.md`；工作流定义和脚本随 `ops-perf-optimize-workflow` Skill 的 `workflows/`、`scripts/` 目录安装。
+统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示插件安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 26 个插件 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 hooks 资产与 `quickstart.md`；工作流定义和脚本随 `ops-perf-optimize-workflow` Skill 的 `workflows/`、`scripts/` 目录安装。完成知识仓 consumer 安装后，另有两个知识消费 Skill 及 `.cannbot/knowledge.env`。
+
+从调优工程运行一次只读覆盖检查（所有客户端均可使用安装器创建的 `.agents/skills/` 规范入口）：
+
+```bash
+cd /path/to/your/tuning-project
+python3 .agents/skills/knowledge-query/scripts/knowledge_query.py discover --json
+```
+
+正常结果包含知识仓 `root` 与实际覆盖计数。调优中的检索流程以[当前 knowledge-query Skill](https://gitcode.com/cann/cannbot-knowledge/tree/master/.agents/skills/knowledge-query)为准：确认任务目标平台 → 按单个决策 `search` → 根据返回的路径、标题和描述选卡 → 阅读全文并按需沿链接补证；复杂性能任务按该 Skill 保存检索审计与真实实验结果。
 
 ## 2. 发起任务
 

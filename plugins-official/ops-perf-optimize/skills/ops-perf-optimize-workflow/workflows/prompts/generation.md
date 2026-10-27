@@ -16,7 +16,7 @@ TUNING_MODE: standard
 TARGET_SOCS: <exact list from RUN_MANIFEST>
 ROUND: absent
 CODE_DIR: <source code absolute path>
-KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>
+KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS:
   <operator interface absolute path>
   <performance-full-cases.csv absolute path>
@@ -45,7 +45,7 @@ TUNING_MODE: generalization
 TARGET_SOCS: <exact list from RUN_MANIFEST>
 ROUND: absent
 CODE_DIR: <source code absolute path>
-KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>
+KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS:
   <operator interface and generation constraints absolute paths>
 OUTPUT_ARTIFACTS:

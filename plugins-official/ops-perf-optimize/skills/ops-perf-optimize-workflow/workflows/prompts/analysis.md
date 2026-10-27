@@ -14,7 +14,7 @@ TUNING_MODE: <standard|generalization>
 TARGET_SOCS: <exact list from RUN_MANIFEST>
 ROUND: <N>
 CODE_DIR: <current baseline absolute path>
-KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>
+KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS:
   <standard: performance-tuning-cases.csv absolute path>
   <generalization: roundN/generalization-tuning-cases.csv, competitor-performance.csv and current ratio-analysis.json absolute paths>

@@ -35,7 +35,7 @@ TUNING_MODE: <standard|generalization>
 TARGET_SOCS: <exact list from RUN_MANIFEST>
 ROUND: <N or absent>
 CODE_DIR: <assigned isolated absolute path>
-KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>
+KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS: <absolute paths, one per line>
 OUTPUT_ARTIFACTS: <absolute paths, one per line>
 ACCEPTANCE: <mechanically verifiable completion conditions>

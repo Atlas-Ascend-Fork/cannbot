@@ -91,7 +91,9 @@ generalization 保留既有规则：
 
 ## 6. 派发、状态与报告
 
-诊断分析与实施验证的方案设计、方案实施引用 cannbot-knowledge 知识卡。主 Agent 在首次派发需要它的阶段前解析一次 `KB_ROOT` 并全程复用，按以下顺序：环境变量 `CANNBOT_KNOWLEDGE_ROOT`（已设置且目录存在）→ 从项目根 glob `.cannbot/dependencies/*/cannbot-knowledge/knowledge`（取第一个含 `ops/ascendc` 子目录的匹配）→ 运行已安装 `knowledge-query` Skill 的 `discover`。解析成功且检索索引缺失时按需构建（`knowledge_query.py --knowledge-root "$KB_ROOT" build`，失败仅告警，不影响卡片直读）。知识库不可用（依赖仓克隆被跳过、离线或解析失败）不是阻塞项：信封省略 `KB_ROOT`，阶段标注 `kb_unavailable`，按无知识增强继续，不降低精度与性能验收要求；主 Agent 在报告中登记该状态。
+诊断分析与实施验证的方案设计、方案实施引用 cannbot-knowledge 知识卡。使用知识仓自身 `install.sh <tool> <project> consumer` 安装的 `knowledge-query`，不使用 cannbot-skills 中的旧版副本。主 Agent 在首次派发需要它的阶段前读取该 Skill 与 `references/cli.md`，解析一次 `KB_ROOT` 并全程复用：优先按 Query 自身规则使用环境变量 `CANNBOT_KNOWLEDGE_ROOT`、当前目录及祖先中的 `.cannbot/knowledge.env`、真实 Skill 所在知识仓；未配置且尚未定位时，可检查项目下 `.cannbot/dependencies/*/cannbot-knowledge`，或同级检出的 cannbot-knowledge，并显式交给 Query。`KB_ROOT` 必须是包含 `governance/` 与 `knowledge/` 的仓根绝对路径，不是 `knowledge/` Bundle 根；显式配置无效时报告配置错误，不静默改用别的仓。
+
+首次进入该知识仓运行 `discover --json`，使用其返回的 `root` 与真实覆盖信息；同一任务、同一知识根且索引指纹未变时复用。Query 只读已准备的索引；索引缺失、损坏或 stale 时记录具体错误，由知识仓安装器或维护者准备，不在调优阶段自动重建或扫描全库兜底。知识库不可用（Skill 未安装、依赖仓克隆被跳过、离线、配置或索引错误）不是阻塞项：信封省略 `KB_ROOT`，阶段标注 `kb_unavailable`，按无知识增强继续，不降低精度与性能验收要求；主 Agent 在报告中登记原因与恢复方式。有效零命中保留为当前决策的知识缺口，不等同于知识库不可用，更不能作为技术不可行的证据。
 
 读取 `$WORKFLOW_ROOT/workflows/task-prompts.md`，按 ROLE 只取对应模板；通用信封的字段定义以该稳定派发入口为准。传入 WORKFLOW_ROOT、WORKFLOW_SCRIPTS、REQUEST、RUN_MANIFEST、WORKFLOW_STATE、TUNING_MODE、TARGET_SOCS、ROUND、CODE_DIR、KB_ROOT（或省略）、输入/输出、ACCEPTANCE 和条件技能；不把整个编排契约复制给 subagent。
 

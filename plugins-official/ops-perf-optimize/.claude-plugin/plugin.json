@@ -9,8 +9,7 @@
   "repository": "https://gitcode.com/cann/cannbot",
   "license": "CANN-2.0",
   "dependencies": [
-    "ops-perf-optimize-skills",
-    "ops-perf-optimize-kb-skills"
+    "ops-perf-optimize-skills"
   ],
   "agents": [
     "./AGENTS.md"

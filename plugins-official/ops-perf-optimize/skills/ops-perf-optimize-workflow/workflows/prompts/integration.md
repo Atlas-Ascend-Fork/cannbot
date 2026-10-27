@@ -14,7 +14,7 @@ TUNING_MODE: <standard|generalization>
 TARGET_SOCS: <exact list from RUN_MANIFEST>
 ROUND: absent
 CODE_DIR: <original project absolute path, restricted to frozen integration scope>
-KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>
+KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS:
   <final_optimized, ARCHIVE_MANIFEST.md and full demo validation reports>
   <functional-full inventory, performance-full inventory and performance-targets.json>

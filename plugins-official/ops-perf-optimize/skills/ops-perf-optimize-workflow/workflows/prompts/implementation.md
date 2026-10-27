@@ -14,7 +14,7 @@ TUNING_MODE: <standard|generalization>
 TARGET_SOCS: <exact list from RUN_MANIFEST>
 ROUND: <N>
 CODE_DIR: <isolated round workspace absolute path>
-KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>
+KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS:
   <roundN/analysis.md absolute path>
   <up to three implementation-contract-<scheme_id>.json absolute paths>

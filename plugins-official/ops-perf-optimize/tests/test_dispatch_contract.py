@@ -74,7 +74,7 @@ def test_knowledge_query_note_defers_to_its_own_skill() -> None:
     """不把 knowledge-query 的 CLI 细节钉死在本插件文案里。"""
     for skill in ("ops-perf-analysis", "ops-perf-implementation"):
         entry = read(ROOT / "skills" / skill / "SKILL.md")
-        assert "先读其 SKILL 的参数表" in entry, skill
-        assert "`--json`" in entry, skill
+        assert "先读其 SKILL 与 `references/cli.md`" in entry, skill
+        assert "确认任务目标平台" in entry, skill
         assert "--limit" not in entry, skill
         assert "--platform" not in entry, skill

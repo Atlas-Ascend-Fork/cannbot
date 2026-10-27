@@ -378,25 +378,6 @@
       ]
     },
     {
-      "name": "ops-perf-optimize-kb-skills",
-      "description": "cannbot-knowledge 知识消费 Skill（1 项）：knowledge-query 知识检索。供 ops-perf-optimize 的方案设计与方案实施引用知识卡。",
-      "source": {
-        "source": "git-subdir",
-        "url": "https://gitcode.com/cann/cannbot-skills.git",
-        "path": "plugins-community/cannbot-knowledge/skills",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
-      },
-      "strict": false,
-      "version": "4.1.0",
-      "author": {
-        "name": "CANNBot"
-      },
-      "category": "skills",
-      "skills": [
-        "./knowledge-query"
-      ]
-    },
-    {
       "name": "ops-perf-optimize",
       "source": "./plugins-official/ops-perf-optimize",
       "description": "AscendC 五阶段性能调优 Team：基线评估、前处理、诊断分析、实施验证、后处理；保留泛化调优、精度门禁和恢复，回集成逐 case 防退化。",
@@ -413,8 +394,7 @@
       ],
       "category": "development",
       "dependencies": [
-        "ops-perf-optimize-skills",
-        "ops-perf-optimize-kb-skills"
+        "ops-perf-optimize-skills"
       ]
     },
     {

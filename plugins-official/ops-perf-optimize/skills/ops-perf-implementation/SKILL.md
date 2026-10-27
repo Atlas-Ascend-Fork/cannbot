@@ -11,7 +11,7 @@ description: 用于性能任务的隔离方案实施、功能与性能门禁、�
 
 ## 执行与交付
 
-1. 读取 [implementation-execution.md](references/implementation-execution.md) 与 [engineering-constraints.md](references/engineering-constraints.md)；消费已冻结方案和 scope，不改原工程或放宽 required features。信封 `KB_ROOT` 存在时，先读取所选方案 `kb_cards` 列出的支撑知识卡并按需经 `knowledge-query` 补充检索实施约束（API 语义、队列同步、精度反模式）；`KB_ROOT` 缺失时标注 `kb_unavailable` 继续，不阻塞实施。调用 `knowledge-query` 前先读其 SKILL 的参数表再组命令；需要脚本消费输出时加 `--json`，并保证 stdout 只有 JSON。
+1. 读取 [implementation-execution.md](references/implementation-execution.md) 与 [engineering-constraints.md](references/engineering-constraints.md)；消费已冻结方案和 scope，不改原工程或放宽 required features。信封 `KB_ROOT` 存在时，先读取所选方案 `kb_cards` 列出的支撑知识卡并按需经 `knowledge-query` 补充检索实施约束（API 语义、队列同步、精度反模式）；`KB_ROOT` 缺失时标注 `kb_unavailable` 继续，不阻塞实施。调用前先读其 SKILL 与 `references/cli.md`，确认任务目标平台后按当前接口组命令；复用分析阶段的适用卡片与审计，只对新证据缺口重入检索，按该 Skill 记录真实工程验证结果。
 2. 按需读取 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 与 `ops-perf-acceptance-criteria` 的精度、采集和抖动路由；数值与功能故障诊断统一使用 `ascendc-precision-debug`，由本代理执行，不嵌套派发。
 3. 读取 [selection-and-final.md](references/selection-and-final.md) 执行序列压测、eligible 候选一次性能采集、含 baseline 的唯一终选和 demo 全集验收；generalization 还读取共享 ratio 参考。
 4. 每方案独立副本和证据；独立构建/静态检查可并行，设备采集排他。新组合代码是新候选，必须重过完整门禁。

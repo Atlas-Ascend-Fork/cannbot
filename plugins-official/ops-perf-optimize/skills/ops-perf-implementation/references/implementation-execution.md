@@ -6,7 +6,7 @@
 
 开始前读取派发输入视图、本阶段 Skill、`$WORKFLOW_ROOT/workflows/references/source-isolation.md`、`BASELINE_DIR`、`extraction-manifest.json`、`source-compatibility.md`、`roundN/analysis.md`、实施契约和对应冻结 `source-isolation-<scheme_id>.json`。契约是实施符合性的机器真源：`implementation_mode=exact`、`substitution_policy=forbidden`；`target_socs` 必须与 manifest 一致，公开契约、非目标 SoC 及未涉及模板必须为不可变；required feature 不得因时间、复杂度或风险被删减。此真源范围不包括 `expected_effect`、历史 `abandon_if` 或整体优化目标；它们不得覆盖候选终选规则。正文与契约冲突时停止并给出具体差异；不可自行扩大 scope。
 
-信封 `KB_ROOT` 存在时，编码前先消费所选方案在 `analysis.md` 中登记的 `kb_cards`：逐张读取 `$KB_ROOT/<doc-id>`，并按需以 `knowledge-query` 的 `preflight --task "<方案要点> 实施约束"` 补充检索 API 语义、队列/同步与精度反模式。API 证据顺序为知识库 → `ascendc-docs-search` → 本机 SDK：知识卡补充证据与已知坑，不替代 docs-search 与 SDK 核验。实际读取的卡片与用途记入 `scheme-conformance.json` 顶层 `kb_cards`（`[{"doc_id": ..., "purpose": ...}]`）；`KB_ROOT` 缺失或检索失败时记 `kb_unavailable`，按无知识增强继续，不阻塞实施。
+信封 `KB_ROOT` 存在时，编码前先消费所选方案在 `analysis.md` 中登记的 `kb_cards`：按记录的绝对 `local_path` 阅读全文，核对 `card_sha256`、目标平台和适用边界；Concept `path` 是引用 ID，不拼成 `$KB_ROOT` 下的文件名。旧记录缺少路径或卡片身份改变时，按当前 `knowledge-query` Skill 与 `references/cli.md` 定向 `search` 重新定位并复核，不猜测目录或扩展名。复用分析阶段适用的已读证据，仅对新 API、队列/同步或精度反模式等缺口拆分 decision，确认任务目标平台后补充检索并按返回路径选卡阅读全文。API 证据顺序为知识库 → `ascendc-docs-search` → 本机 SDK：知识卡补充证据与已知坑，不替代 docs-search 与 SDK 核验。实际读取的卡片、路径、指纹与用途记入 `scheme-conformance.json` 顶层 `kb_cards`（`[{"doc_id": ..., "local_path": ..., "card_sha256": ..., "purpose": ...}]`）；按 Query 证据工作流关联分析阶段的 state/receipt 与真实功能、性能产物，未覆盖决策保留缺口，不伪造 ready 或验证结果。`KB_ROOT` 缺失或检索失败时记 `kb_unavailable` 和具体原因，按无知识增强继续，不阻塞实施；有效零命中只记录知识缺口。
 
 ## 实施
 

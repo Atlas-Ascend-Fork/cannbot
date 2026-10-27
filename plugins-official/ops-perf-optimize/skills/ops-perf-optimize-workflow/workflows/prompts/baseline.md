@@ -14,7 +14,7 @@ TUNING_MODE: <standard|generalization, from REQUEST before freeze>
 TARGET_SOCS: <exact list from REQUEST, then RUN_MANIFEST>
 ROUND: absent
 CODE_DIR: <isolated evaluation workspace absolute path>
-KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>
+KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS:
   <original source and existing inventories absolute paths>
   <confirmed reference configuration and any existing reference measurements>

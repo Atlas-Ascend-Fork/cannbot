@@ -10,9 +10,9 @@
 
 """cannbot-knowledge wiring: install-time dependency and graceful stage references.
 
-Install clones the knowledge base and the knowledge-query Skill; the dispatch
-envelope carries KB_ROOT; analysis cites kb_cards per scheme and implementation
-consumes them, both degrading to kb_unavailable without blocking the workflow.
+The plugin clones the knowledge repository; its consumer installer owns Query
+and index preparation. Dispatch carries the repository root; stages consume
+selected full cards and degrade to kb_unavailable without blocking the workflow.
 """
 
 import json
@@ -47,7 +47,7 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_install_declares_cannbot_knowledge_and_the_query_skill() -> None:
+def test_install_declares_knowledge_repo_without_bundling_legacy_query() -> None:
     dependencies = json.loads(read(ROOT / "plugin-install.json"))["dependencies"]
     knowledge = [dep for dep in dependencies if dep["name"] == "cannbot-knowledge"]
     assert knowledge and knowledge[0]["repository"].endswith("cannbot-knowledge.git")
@@ -55,29 +55,29 @@ def test_install_declares_cannbot_knowledge_and_the_query_skill() -> None:
     # .cannbot/dependencies, unlike the asc-devkit/cann-samples reference repos.
     assert "expose" not in knowledge[0]
     sources = json.loads(read(ROOT / "plugin-sources.json"))["skills"]
-    assert "plugins-community/cannbot-knowledge/skills/knowledge-query" in sources
+    assert not any("cannbot-knowledge" in source for source in sources)
     manifest = json.loads(read(ROOT / ".claude-plugin" / "plugin.json"))
-    assert manifest["dependencies"] == [
-        "ops-perf-optimize-skills",
-        "ops-perf-optimize-kb-skills",
-    ]
+    assert manifest["dependencies"] == ["ops-perf-optimize-skills"]
 
 
-def test_marketplace_bundle_covers_exactly_the_declared_skills() -> None:
+def test_marketplace_does_not_reinstall_the_legacy_query_bundle() -> None:
     marketplace = json.loads(read(REPO / ".claude-plugin" / "marketplace.json"))
     entries = {entry["name"]: entry for entry in marketplace["plugins"]}
     manifest = json.loads(read(ROOT / ".claude-plugin" / "plugin.json"))
-    bundle = entries["ops-perf-optimize-kb-skills"]
-    assert bundle["category"] == "skills"
-    assert bundle["source"]["path"] == "plugins-community/cannbot-knowledge/skills"
-    assert bundle["skills"] == ["./knowledge-query"]
+    assert "ops-perf-optimize-kb-skills" not in entries
     assert entries["ops-perf-optimize"]["dependencies"] == manifest["dependencies"]
+    quickstart = read(ROOT / "quickstart.md")
+    assert "install.sh opencode /path/to/your/tuning-project consumer" in quickstart
+    assert ".cannbot/knowledge.env" in quickstart
+    assert "discover --json" in quickstart
 
 
 def test_dispatch_envelope_carries_kb_root() -> None:
-    prompts = read(ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md")
+    prompts = read(
+        ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md"
+    )
     assert (
-        "KB_ROOT: <cannbot-knowledge knowledge root for analysis/implementation, or absent>"
+        "KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>"
         in prompts
     )
     assert "按编排契约解析一次后全程复用" in prompts
@@ -92,17 +92,24 @@ def test_dispatch_envelope_carries_kb_root() -> None:
         "preparation",
     ):
         assert "KB_ROOT:" in read(
-            ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "prompts" / f"{filename}.md"
-        ), (
-            filename
-        )
+            ROOT
+            / "skills"
+            / "ops-perf-optimize-workflow"
+            / "workflows"
+            / "prompts"
+            / f"{filename}.md"
+        ), filename
 
 
 def test_contract_defines_bootstrap_order_and_non_blocking_degradation() -> None:
     contract = read(CONTRACT)
     assert "环境变量 `CANNBOT_KNOWLEDGE_ROOT`" in contract
-    assert ".cannbot/dependencies/*/cannbot-knowledge/knowledge" in contract
-    assert "`knowledge-query` Skill 的 `discover`" in contract
+    assert ".cannbot/knowledge.env" in contract
+    assert ".cannbot/dependencies/*/cannbot-knowledge`" in contract
+    assert "不是 `knowledge/` Bundle 根" in contract
+    assert "discover --json" in contract
+    assert "不在调优阶段自动重建或扫描全库兜底" in contract
+    assert "有效零命中" in contract
     assert "KB_ROOT（或省略）" in contract
     assert "信封省略 `KB_ROOT`" in contract
     assert "kb_unavailable" in contract
@@ -119,12 +126,13 @@ def test_analysis_designs_schemes_on_cited_kb_cards() -> None:
     assert "kb_unavailable" in analysis
     execution = read(ANALYSIS_EXEC)
     assert "信封 `KB_ROOT`" in execution
-    assert (
-        '`preflight --task "<算子名> <族> <bound 结论与关键指标> 优化方案>"`'
-        in execution
-    )
     assert '`--knowledge-root "$KB_ROOT"`' in execution
-    assert "read_first" in execution
+    assert "`TARGET_SOCS`" in execution
+    assert "`search`" in execution
+    assert "`local_path` 阅读完整正文" in execution
+    assert "Concept `path`" in execution
+    assert "`card_sha256`" in execution
+    assert "receipt" in execution
     # Retrieved cards are hypothesis-level evidence, not a replacement for the
     # analysis standards or the shared Skill routes.
     assert "不替代本文件的分析标准和共享 Skill 路由" in execution
@@ -141,12 +149,27 @@ def test_implementation_consumes_scheme_cards_before_coding() -> None:
     execution = read(IMPL_EXEC)
     assert "信封 `KB_ROOT` 存在时" in execution
     assert "编码前先消费所选方案" in execution
-    assert "$KB_ROOT/<doc-id>" in execution
+    assert "绝对 `local_path` 阅读全文" in execution
+    assert "`card_sha256`" in execution
+    assert "不拼成 `$KB_ROOT` 下的文件名" in execution
+    assert "复用分析阶段适用的已读证据" in execution
     # The KB complements but never replaces API verification.
     assert "知识库 → `ascendc-docs-search` → 本机 SDK" in execution
     assert "不替代 docs-search 与 SDK 核验" in execution
     assert "顶层 `kb_cards`" in execution
     assert "kb_unavailable" in execution
+
+
+def test_runtime_instructions_do_not_use_retired_query_commands_or_fields() -> None:
+    for path in (CONTRACT, ENTRY_SKILL, ANALYSIS, ANALYSIS_EXEC, IMPL, IMPL_EXEC):
+        content = read(path)
+        for retired in (
+            "preflight --task",
+            "read_first",
+            "$KB_ROOT/<doc-id>",
+            'knowledge_query.py --knowledge-root "$KB_ROOT" build',
+        ):
+            assert retired not in content, (path, retired)
 
 
 def test_wrapper_stays_thin_and_carries_no_kb_bootstrap() -> None:

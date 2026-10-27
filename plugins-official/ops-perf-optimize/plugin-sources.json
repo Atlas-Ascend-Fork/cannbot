@@ -18,7 +18,6 @@
     "ops/ascendc-sync-audit",
     "ops/ascendc-mc2-best-practice",
     "ops/ops-precision-standard",
-    "ops/ascendc-registry-invoke-template",
-    "plugins-community/cannbot-knowledge/skills/knowledge-query"
+    "ops/ascendc-registry-invoke-template"
   ]
 }
