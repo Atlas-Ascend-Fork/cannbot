@@ -32,6 +32,13 @@
 #       [--source-kind port-aclnn-tilelang2ascendc]
 #   launch_orchestrator.sh --skill-base <dir> --mode backward --source <forward_spec.py> [--lane N]
 #   launch_orchestrator.sh --skill-base <dir> --resume <op> [--lane N]
+#   launch_orchestrator.sh --skill-base <dir> --mode port-a3-ops --multirank
+#                             --source <ops-nn-dir> --npubench-task <task.py>
+#                             [--reference-source npubench|a3_live]
+#   (--multirank stacks the multirank harness extension on top of the
+#    port-a3-ops mode; --lane is NOT forwarded while it is set: the engine
+#    auto-allocates each case's physical card set from the idle-NPU probe;
+#    see the exec site below)
 #
 # Optional: --harness claude|opencode  (default: auto-detect, see resolve_harness below)
 # Lifecycle: --cold-start archives an existing scoped workspace before starting a new run.
@@ -48,12 +55,13 @@ SKILL_BASE=""; MODE=""; SOURCE=""; LANE="0"; HARNESS=""
 REFERENCE_SOURCE=""
 NPUBENCH_TASK=""; NPUBENCH_ROOT=""
 SOURCE_KIND=""; SOURCE_ARCH=""; CANDIDATE_KIND=""
-COLD_START=0; RESUME=""
+COLD_START=0; RESUME=""; MULTIRANK=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --skill-base) SKILL_BASE="${2:-}"; shift 2 ;;
     --mode)       MODE="${2:-}";       shift 2 ;;
+    --multirank)  MULTIRANK=1;          shift ;;
     --source)     SOURCE="${2:-}";     shift 2 ;;
     --lane)       LANE="${2:-0}";      shift 2 ;;
     --harness)    HARNESS="${2:-}";    shift 2 ;;
@@ -83,6 +91,8 @@ done
 if [ -n "$RESUME" ]; then
   [ "$COLD_START" -eq 0 ] || {
     echo "launch_orchestrator: --resume and --cold-start are mutually exclusive" >&2; exit 2; }
+  [ "$MULTIRANK" -eq 0 ] || {
+    echo "launch_orchestrator: --resume cannot be combined with --multirank" >&2; exit 2; }
   if [ -n "$MODE$SOURCE$REFERENCE_SOURCE$NPUBENCH_TASK$NPUBENCH_ROOT$SOURCE_KIND$SOURCE_ARCH$CANDIDATE_KIND" ]; then
     echo "launch_orchestrator: --resume cannot be combined with --mode/--source/reference/source-kind arguments" >&2
     exit 2
@@ -108,16 +118,34 @@ if [ "$MODE" = "port-a3-tilelang2ascendc" ]; then
 fi
 if [ -z "$RESUME" ]; then
 case "$MODE" in
-  port-a3-ops|backward) ;;
+  port-a3-ops|port-a3-tilelang2ascendc|backward) ;;
   *) echo "launch_orchestrator: --mode must be port-a3-ops, port-a3-tilelang2ascendc, or backward (got '${MODE}')" >&2; exit 2 ;;
 esac
 fi
 
-# Reference-provider arguments are accepted only for port-a3-ops mode.  The
-# provider must be chosen explicitly: npubench (with --npubench-task) for the
-# frozen NPUKernelBench golden, or a3_live for a fresh A3 CANN capture.  A bare
-# invocation without --reference-source fails closed in the engine CLI.
-if [ -n "$REFERENCE_SOURCE$NPUBENCH_TASK$NPUBENCH_ROOT" ]; then
+# Reference-provider argument matrix.  --multirank: the KernelBench task pair
+# is the REQUIRED reference input for BOTH tiers (a3_live executes the
+# staged source operator on the same task-generated inputs) and the migration
+# source --source is mandatory (same constraint as the single-card mode —
+# the engine CLI enforces it too).
+if [ "$MULTIRANK" -eq 1 ]; then
+  [ "$MODE" = "port-a3-ops" ] || {
+    echo "launch_orchestrator: --multirank stacks on --mode port-a3-ops (got '${MODE}')" >&2; exit 2; }
+  [ "$SOURCE_KIND" != "port-aclnn-tilelang2ascendc" ] || {
+    echo "launch_orchestrator: --multirank does not support the port-a3-tilelang2ascendc source (use an ops-nn dir)" >&2; exit 2; }
+  [ -n "$NPUBENCH_TASK" ] || {
+    echo "launch_orchestrator: --multirank requires --npubench-task <task.py>" >&2; exit 2; }
+  [ -n "$SOURCE" ] || {
+    echo "launch_orchestrator: --multirank requires --source <ops-nn-dir> (the migration source)" >&2; exit 2; }
+  case "$REFERENCE_SOURCE" in
+    ""|npubench|a3_live) ;;
+    *) echo "launch_orchestrator: --reference-source must be npubench or a3_live under --multirank" >&2; exit 2 ;;
+  esac
+# port-a3-ops: the provider must be chosen explicitly: npubench (with
+# --npubench-task) for the frozen NPUKernelBench golden, or a3_live for a
+# fresh A3 CANN capture.  A bare invocation without --reference-source
+# fails closed in the engine CLI.
+elif [ -n "$REFERENCE_SOURCE$NPUBENCH_TASK$NPUBENCH_ROOT" ]; then
   [ "$MODE" = "port-a3-ops" ] || {
     echo "launch_orchestrator: reference arguments require --mode port-a3-ops" >&2; exit 2; }
   case "$REFERENCE_SOURCE" in
@@ -332,6 +360,7 @@ if [ -n "$RESUME" ]; then
   RUN_ARGS=(--resume "$RESUME")
 else
   RUN_ARGS=("$FLAG" "$SOURCE")
+  [ "$MULTIRANK" -eq 1 ] && RUN_ARGS+=(--multirank)
 fi
 
 # NPUKernelBench task paths have the same caller-cwd semantics as --source.
@@ -386,7 +415,15 @@ if ! command -v timeout >/dev/null 2>&1; then
   echo "launch_orchestrator: GNU timeout is required for bounded execution" >&2
   exit 2
 fi
-PORT_TIMEOUT_SEC="${CANNBOT_PORT_TIMEOUT_SEC:-5400}"
+# Multirank default is 8h: one worker spawn alone is budgeted at 9000s
+# (resolution.py agent cap), so a 90-min wall clock kills a healthy worker
+# mid-run — the outer deadline must clear the inner spawn budget plus the
+# classify/reference/O5 re-measure stages around it.
+if [ "$MULTIRANK" -eq 1 ]; then
+  PORT_TIMEOUT_SEC="${CANNBOT_PORT_TIMEOUT_SEC:-28800}"
+else
+  PORT_TIMEOUT_SEC="${CANNBOT_PORT_TIMEOUT_SEC:-5400}"
+fi
 case "$PORT_TIMEOUT_SEC" in
   ''|*[!0-9]*)
     echo "launch_orchestrator: CANNBOT_PORT_TIMEOUT_SEC must be a positive integer" >&2
@@ -396,6 +433,16 @@ esac
 if [ "$PORT_TIMEOUT_SEC" -le 0 ]; then
   echo "launch_orchestrator: CANNBOT_PORT_TIMEOUT_SEC must be a positive integer" >&2
   exit 2
+fi
+# Multirank does NOT forward --lane: each case's physical card set is auto-
+# allocated by the engine from the idle-NPU probe (npu_probe) — a manual lane
+# there would at best set the .opgen_state.json bookkeeping key, at worst
+# invite the caller to think the card set is hand-pickable.
+if [ "$MULTIRANK" -eq 1 ]; then
+  exec timeout --foreground --kill-after=30s "${PORT_TIMEOUT_SEC}s" \
+    env PYTHONUNBUFFERED=1 PYTHONPATH=src/scripts \
+    python3 -m orchestrator "${RUN_ARGS[@]}" \
+    "${LIFECYCLE_ARGS[@]}" "${REFERENCE_ARGS[@]}"
 fi
 exec timeout --foreground --kill-after=30s "${PORT_TIMEOUT_SEC}s" \
   env PYTHONUNBUFFERED=1 PYTHONPATH=src/scripts \

@@ -7,11 +7,13 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""Registry for the two supported customer workflow plugins.
+"""Registry for the supported customer workflow plugins.
 
-Importing this package registers only arch migration and backward generation.
+Importing this package registers only the explicit allowlist (arch migration,
+backward generation, plus the multirank extension for compute +
+collective-communication fusion ops).
 Directory scanning is intentionally not used: adding a folder must never expose
-a third customer mode by accident.
+an unlisted customer mode by accident.
 
 Public API:
 - register_plugin(plugin)
@@ -19,6 +21,7 @@ Public API:
 - get_plugin(name) -> Optional[PluginProtocol]
 - detect_plugin(workspace) -> Optional[PluginProtocol]
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -79,6 +82,7 @@ def register_plugin(plugin: PluginProtocol) -> None:
         for other in _PLUGIN_REGISTRY.values():
             if getattr(other, "cli_flag", None) == flag:
                 import sys as _sys
+
                 print(
                     f"[plugins] WARNING: cli_flag collision on {flag!r} — "
                     f"{other.name!r} vs {plugin.name!r}. Two plugins share a CLI "
@@ -135,10 +139,17 @@ def reset_registry_for_testing() -> None:
 
 
 def _discover_plugins() -> None:
-    """Import the explicit allowlist; fail loudly if either required mode breaks."""
+    """Import the explicit allowlist; fail loudly if either required mode breaks.
+
+    `multirank` is an EXTENSION plugin (not a standalone mode): its detect()
+    always returns False, so it never claims a workspace. `PortA3Plugin`
+    resolves it lazily to provide multi-rank capability for workspaces flagged
+    `multirank: true` under the port_a3_to_a5 mode.
+    """
     import importlib
     import sys as _sys
-    for module_name in ("port_a3", "backward"):
+
+    for module_name in ("port_a3", "backward", "multirank"):
         try:
             importlib.import_module(f"{__name__}.{module_name}")
         except Exception as e:

@@ -14,13 +14,17 @@
 Envelope required/optional contract. No claude spawn needed.
 run: python3 test_cc_backend.py   (exit 0 = all pass)
 """
+
 import logging
 import math
 import os
 import sys
 import types
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(_HERE))  # orchestrator/ (parent of backends/), for package import
+sys.path.insert(
+    0, os.path.dirname(_HERE)
+)  # orchestrator/ (parent of backends/), for package import
 from backends.base import Backend, Envelope
 from backends.cc_backend import CCBackend
 
@@ -29,8 +33,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 def check(n, c, d=""):
-    LOGGER.info("  [%s] %s%s", "PASS" if c else "FAIL", n,
-                f" — {d}" if d and not c else "")
+    LOGGER.info(
+        "  [%s] %s%s", "PASS" if c else "FAIL", n, f" — {d}" if d and not c else ""
+    )
     if not c:
         FAILS.append(n)
 
@@ -47,9 +52,19 @@ def test_envelope_required_contract():
 
 def test_normalize_agentresult():
     ar = types.SimpleNamespace(
-        is_error=False, output_text="hi", session_id="ses_1", cost_usd=0.42,
-        terminal_reason="stop", duration_ms=1234,
-        raw_envelope={"api_error_status": None, "num_turns": 3, "permission_denials": [], "stop_reason": "end_turn"})
+        is_error=False,
+        output_text="hi",
+        session_id="ses_1",
+        cost_usd=0.42,
+        terminal_reason="stop",
+        duration_ms=1234,
+        raw_envelope={
+            "api_error_status": None,
+            "num_turns": 3,
+            "permission_denials": [],
+            "stop_reason": "end_turn",
+        },
+    )
     e = CCBackend().normalize(ar)
     check("is_error mapped", e.is_error is False)
     check("output_text mapped", e.output_text == "hi")
@@ -69,12 +84,29 @@ def test_normalize_dict_envelope():
 
 def test_identify_and_parse_cmd():
     b = CCBackend()
-    check("identify claude --print", b.identify_cmd("bwrap ... -- claude --print --agent aog-kernel-worker") is True)
-    check("identify double-space variant", b.identify_cmd("claude  --print --agent x") is True)
-    check("non-claude cmd not identified", b.identify_cmd("python3 orchestrator.py gelu --lane 1") is False)
-    check("parse op slug from claude cmd", b.parse_op_from_cmd(
-        "claude --print --agent aog-kernel-worker ... gelu-kw-3 ...") == "gelu")
-    check("parse op none when no slug", b.parse_op_from_cmd("claude --print --agent x foo bar") is None)
+    check(
+        "identify claude --print",
+        b.identify_cmd("bwrap ... -- claude --print --agent aog-kernel-worker") is True,
+    )
+    check(
+        "identify double-space variant",
+        b.identify_cmd("claude  --print --agent x") is True,
+    )
+    check(
+        "non-claude cmd not identified",
+        b.identify_cmd("python3 orchestrator.py gelu --lane 1") is False,
+    )
+    check(
+        "parse op slug from claude cmd",
+        b.parse_op_from_cmd(
+            "claude --print --agent aog-kernel-worker ... gelu-kw-3 ..."
+        )
+        == "gelu",
+    )
+    check(
+        "parse op none when no slug",
+        b.parse_op_from_cmd("claude --print --agent x foo bar") is None,
+    )
 
 
 def test_is_a_backend():
@@ -88,7 +120,10 @@ def test_build_skill_cmd():
     check("skill cmd ends with prompt", cmd[-1] == "do the thing")
     check("skill cmd --print + json out", "--print" in cmd and "json" in cmd)
     check("skill cmd bypassPermissions", "bypassPermissions" in cmd)
-    check("skill cmd claude bin (default)", cmd[0] == "claude" or cmd[0].endswith("/claude"))
+    check(
+        "skill cmd claude bin (default)",
+        cmd[0] == "claude" or cmd[0].endswith("/claude"),
+    )
     # sandbox_prefix: OPAQUE verbatim prepend, zero interpretation (main-ratified constraint)
     pfx = ["bwrap", "--ro-bind", "/", "/", "--"]
     cmd2 = getattr(b, "_build_skill_cmd")("p", sandbox_prefix=pfx)
@@ -97,22 +132,63 @@ def test_build_skill_cmd():
 
 
 def test_build_skill_cmd_divergent_shape():
-    """phase_o17_classify's shape: acceptEdits + plain-text (output_format=None → no --output-format) +
-    stdin_prompt (prompt NOT in argv). Must reproduce the original ['claude','--print','--permission-mode',
-    'acceptEdits'] byte-for-byte.
+    """Divergent shape (historically phase_o17_classify's): acceptEdits + plain-text
+    (output_format=None → no --output-format) + stdin_prompt (prompt NOT in argv).
+    Must reproduce the original ['claude','--print','--permission-mode',
+    'acceptEdits'] byte-for-byte. (phase_o17 itself now dispatches bypassPermissions +
+    effort=low — see test_build_skill_cmd_effort_flag.)
     """
     b = CCBackend()
-    cmd = getattr(b, "_build_skill_cmd")("/aog-op-classify /ws", permission_mode="acceptEdits",
-                             output_format=None, stdin_prompt=True)
-    check("divergent cmd byte-identical to phase_o17 original",
-          cmd == ["claude", "--print", "--permission-mode", "acceptEdits"] or
-          (cmd[1:] == ["--print", "--permission-mode", "acceptEdits"] and cmd[0].endswith("claude")))
+    cmd = getattr(b, "_build_skill_cmd")(
+        "/aog-op-classify /ws",
+        permission_mode="acceptEdits",
+        output_format=None,
+        stdin_prompt=True,
+    )
+    check(
+        "divergent cmd byte-identical to phase_o17 original",
+        cmd == ["claude", "--print", "--permission-mode", "acceptEdits"]
+        or (
+            cmd[1:] == ["--print", "--permission-mode", "acceptEdits"]
+            and cmd[0].endswith("claude")
+        ),
+    )
     check("stdin_prompt → prompt NOT in argv", "/aog-op-classify /ws" not in cmd)
     check("output_format=None → no --output-format flag", "--output-format" not in cmd)
     # defaults unchanged (backward-compat) — existing skill callers still get json + argv prompt
     d = getattr(b, "_build_skill_cmd")("P")
-    check("default still json + bypassPermissions + argv prompt",
-          "--output-format" in d and "bypassPermissions" in d and d[-1] == "P")
+    check(
+        "default still json + bypassPermissions + argv prompt",
+        "--output-format" in d and "bypassPermissions" in d and d[-1] == "P",
+    )
+
+
+def test_build_skill_cmd_effort_flag():
+    """FIX-4 (2026-08-20 repro): effort maps to `--effort <level>` for cheap
+
+    classify-style skills; None omits the flag so existing callers stay
+    byte-identical.
+    """
+    b = CCBackend()
+    cmd = getattr(b, "_build_skill_cmd")(
+        "/aog-op-classify /ws",
+        permission_mode="bypassPermissions",
+        output_format=None,
+        stdin_prompt=True,
+        effort="low",
+    )
+    check(
+        "effort flag + value present",
+        "--effort" in cmd and cmd[cmd.index("--effort") + 1] == "low",
+    )
+    check(
+        "effort keeps the rest of the shape",
+        "--print" in cmd
+        and "bypassPermissions" in cmd
+        and "/aog-op-classify /ws" not in cmd,
+    )
+    d = getattr(b, "_build_skill_cmd")("P")
+    check("effort=None omits the flag (byte-stable default)", "--effort" not in d)
 
 
 def test_resume_cmd_and_dispatch():
@@ -120,10 +196,17 @@ def test_resume_cmd_and_dispatch():
     Envelope mapping via a stubbed subprocess.run. No live a5ops caller — interface-completeness only.
     """
     import subprocess as _sp
+
     b = CCBackend()
     cmd = getattr(b, "_build_resume_cmd")("ses_abc", "keep going")
-    check("resume cmd has --resume <sid>", "--resume" in cmd and cmd[cmd.index("--resume") + 1] == "ses_abc")
-    check("resume cmd --print + json + prompt-last", "--print" in cmd and "json" in cmd and cmd[-1] == "keep going")
+    check(
+        "resume cmd has --resume <sid>",
+        "--resume" in cmd and cmd[cmd.index("--resume") + 1] == "ses_abc",
+    )
+    check(
+        "resume cmd --print + json + prompt-last",
+        "--print" in cmd and "json" in cmd and cmd[-1] == "keep going",
+    )
 
     def _stub_run(*_args, **_kwargs):
         return types.SimpleNamespace(returncode=0, stdout="resumed-out", stderr="")
@@ -132,10 +215,89 @@ def test_resume_cmd_and_dispatch():
     _sp.run = _stub_run
     try:
         env = b.resume("ses_abc", "keep going")
-        check("resume → Envelope not-error", isinstance(env, Envelope) and env.is_error is False)
+        check(
+            "resume → Envelope not-error",
+            isinstance(env, Envelope) and env.is_error is False,
+        )
         check("resume output_text mapped", env.output_text == "resumed-out")
     finally:
         _sp.run = _orig_run
+
+
+def _recording_agent_transport(calls):
+    """A stub agent_transport recording the streaming/background spawn args."""
+    at = types.ModuleType("agent_transport")
+
+    def _mk_result(txt):
+        return types.SimpleNamespace(
+            is_error=False,
+            output_text=txt,
+            session_id=None,
+            cost_usd=None,
+            terminal_reason=None,
+            duration_ms=None,
+            raw_envelope={},
+        )
+
+    def _stub_stream(
+        target,
+        prompt,
+        *,
+        tee_path=None,
+        extra_args=None,
+        progress_callback=None,
+        silence_timeout_sec=None,
+        sandbox_prefix=None,
+        timeout_sec=None,
+        **kw,
+    ):
+        calls["streaming"] = dict(
+            sandbox_prefix=sandbox_prefix,
+            tee_path=tee_path,
+            progress_callback=progress_callback,
+            silence_timeout_sec=silence_timeout_sec,
+            timeout_sec=timeout_sec,
+        )
+        return _mk_result("ok")
+
+    def _stub_bg(target, prompt, output_file, *, extra_args=None, sandbox_prefix=None):
+        calls["background"] = dict(
+            output_file=output_file, sandbox_prefix=sandbox_prefix
+        )
+        return "POPEN"
+
+    def _stub_fg(*_args, **_kwargs):
+        return _mk_result("fg")
+
+    at.spawn_agent_streaming = _stub_stream
+    at.spawn_agent_background = _stub_bg
+    at.spawn_agent_foreground = _stub_fg
+    return at
+
+
+def _assert_streaming_delegation(verify, calls, pfx):
+    """The streaming-mode delegation contract (verbatim prefix + threading)."""
+    stream_args = calls.get("streaming", {})
+    verify(
+        "streaming sandbox_prefix verbatim",
+        stream_args.get("sandbox_prefix") == pfx,
+    )
+    verify(
+        "streaming threads tee/silence/cb/timeout",
+        stream_args.get("tee_path") == "t"
+        and stream_args.get("silence_timeout_sec") == 1200
+        and stream_args.get("progress_callback") == "cb"
+        and stream_args.get("timeout_sec") == 60,
+    )
+
+
+def _assert_background_delegation(verify, calls, pfx):
+    """The background-mode delegation contract (raw Popen + prefix/output)."""
+    bg_args = calls.get("background", {})
+    verify(
+        "background sandbox_prefix + output_file",
+        bg_args.get("sandbox_prefix") == pfx and bg_args.get("output_file") == "/tmp/o",
+    )
 
 
 def test_dispatch_agent_modes_delegate_faithfully():
@@ -145,45 +307,37 @@ def test_dispatch_agent_modes_delegate_faithfully():
     # cc_backend.dispatch resolves the canonical flat transport via
     # `import agent_transport`, so shadow that one module for the delegation.
     _orig = sys.modules.get("agent_transport")
-    at = types.ModuleType("agent_transport")
     calls = {}
-
-    def _mk_result(txt):
-        return types.SimpleNamespace(is_error=False, output_text=txt, session_id=None, cost_usd=None,
-                                     terminal_reason=None, duration_ms=None, raw_envelope={})
-
-    def _stub_stream(target, prompt, *, tee_path=None, extra_args=None, progress_callback=None,
-                     silence_timeout_sec=None, sandbox_prefix=None, timeout_sec=None, **kw):
-        calls["streaming"] = dict(sandbox_prefix=sandbox_prefix, tee_path=tee_path,
-                                  progress_callback=progress_callback, silence_timeout_sec=silence_timeout_sec,
-                                  timeout_sec=timeout_sec)
-        return _mk_result("ok")
-
-    def _stub_bg(target, prompt, output_file, *, extra_args=None, sandbox_prefix=None):
-        calls["background"] = dict(output_file=output_file, sandbox_prefix=sandbox_prefix)
-        return "POPEN"
-
-    def _stub_fg(*_args, **_kwargs):
-        return _mk_result("fg")
-
-    at.spawn_agent_streaming = _stub_stream
-    at.spawn_agent_background = _stub_bg
-    at.spawn_agent_foreground = _stub_fg
-    sys.modules["agent_transport"] = at
+    sys.modules["agent_transport"] = _recording_agent_transport(calls)
     try:
         b = CCBackend()
         pfx = ["bwrap", "--"]
-        env = b.dispatch("aog-kernel-worker", "p", kind="agent", mode="streaming", sandbox_prefix=pfx,
-                         tee_path="t", silence_timeout=1200, progress_callback="cb", timeout=60)
-        check("streaming → Envelope", isinstance(env, Envelope) and env.output_text == "ok")
-        check("streaming sandbox_prefix verbatim", calls["streaming"]["sandbox_prefix"] == pfx)
-        check("streaming threads tee/silence/cb/timeout", calls["streaming"]["tee_path"] == "t"
-              and calls["streaming"]["silence_timeout_sec"] == 1200
-              and calls["streaming"]["progress_callback"] == "cb" and calls["streaming"]["timeout_sec"] == 60)
-        h = b.dispatch("x", "p", kind="agent", mode="background", output_file="/tmp/o", sandbox_prefix=pfx)
+        env = b.dispatch(
+            "aog-kernel-worker",
+            "p",
+            kind="agent",
+            mode="streaming",
+            sandbox_prefix=pfx,
+            tee_path="t",
+            silence_timeout=1200,
+            progress_callback="cb",
+            timeout=60,
+        )
+        check(
+            "streaming → Envelope",
+            isinstance(env, Envelope) and env.output_text == "ok",
+        )
+        _assert_streaming_delegation(check, calls, pfx)
+        h = b.dispatch(
+            "x",
+            "p",
+            kind="agent",
+            mode="background",
+            output_file="/tmp/o",
+            sandbox_prefix=pfx,
+        )
         check("background → raw Popen (not Envelope)", h == "POPEN")
-        check("background sandbox_prefix + output_file", calls["background"]["sandbox_prefix"] == pfx
-              and calls["background"]["output_file"] == "/tmp/o")
+        _assert_background_delegation(check, calls, pfx)
     finally:
         if _orig is not None:
             sys.modules["agent_transport"] = _orig
@@ -192,12 +346,21 @@ def test_dispatch_agent_modes_delegate_faithfully():
 
 
 if __name__ == "__main__":
-    for t in [test_envelope_required_contract, test_normalize_agentresult, test_normalize_dict_envelope,
-              test_identify_and_parse_cmd, test_is_a_backend, test_build_skill_cmd,
-              test_build_skill_cmd_divergent_shape, test_resume_cmd_and_dispatch,
-              test_dispatch_agent_modes_delegate_faithfully]:
+    for t in [
+        test_envelope_required_contract,
+        test_normalize_agentresult,
+        test_normalize_dict_envelope,
+        test_identify_and_parse_cmd,
+        test_is_a_backend,
+        test_build_skill_cmd,
+        test_build_skill_cmd_divergent_shape,
+        test_build_skill_cmd_effort_flag,
+        test_resume_cmd_and_dispatch,
+        test_dispatch_agent_modes_delegate_faithfully,
+    ]:
         LOGGER.info("%s:", t.__name__)
         t()
-    LOGGER.info("%s\n%s", "=" * 50,
-                "ALL PASS" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}")
+    LOGGER.info(
+        "%s\n%s", "=" * 50, "ALL PASS" if not FAILS else f"{len(FAILS)} FAILED: {FAILS}"
+    )
     sys.exit(1 if FAILS else 0)

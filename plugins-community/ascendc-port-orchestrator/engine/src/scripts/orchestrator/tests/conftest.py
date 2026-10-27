@@ -45,6 +45,7 @@ cannot be undone by a function-scoped fixture because they run BEFORE the
 fixture. The collection-time eviction was fixed by avoiding changes to
 sys.modules.
 """
+
 from __future__ import annotations
 
 import os
@@ -73,11 +74,11 @@ import pytest
 # (ut/it/ct/integration), because pytest loads a directory's conftest for all
 # descendants.
 _CONFTEST = Path(__file__).resolve()
-_TESTS_DIR = _CONFTEST.parent               # .../src/scripts/orchestrator/tests
-_ORCH_DIR = _TESTS_DIR.parent               # .../src/scripts/orchestrator
-_SCRIPTS_DIR = _ORCH_DIR.parent             # .../src/scripts
-_SRC_DIR = _SCRIPTS_DIR.parent              # .../src
-_REPO_ROOT = _SRC_DIR.parent                # repo root
+_TESTS_DIR = _CONFTEST.parent  # .../src/scripts/orchestrator/tests
+_ORCH_DIR = _TESTS_DIR.parent  # .../src/scripts/orchestrator
+_SCRIPTS_DIR = _ORCH_DIR.parent  # .../src/scripts
+_SRC_DIR = _SCRIPTS_DIR.parent  # .../src
+_REPO_ROOT = _SRC_DIR.parent  # repo root
 
 # ORDER MATTERS — there is a NAME COLLISION on the bare name `orchestrator`:
 #   * src/scripts/orchestrator/orchestrator.py  → the MODULE (257KB, holds most fns)
@@ -91,14 +92,22 @@ _REPO_ROOT = _SRC_DIR.parent                # repo root
 # the bare `orchestrator` PACKAGE's submodules; only `src.scripts.orchestrator.*` package-
 # qualified imports exist, and those resolve via _REPO_ROOT, unaffected by this ordering.
 for _stable_path in (
-    str(_TESTS_DIR),                 # `import _reorg_paths` (shared stable data-path anchors) from ut/it/ct
-    str(_REPO_ROOT),                 # `from src.scripts.orchestrator import ...`
-    str(_SCRIPTS_DIR),               # scripts-level flat modules (precision_eval_two_tier, lint scripts, ...)
+    str(
+        _TESTS_DIR
+    ),  # `import _reorg_paths` (shared stable data-path anchors) from ut/it/ct
+    str(_REPO_ROOT),  # `from src.scripts.orchestrator import ...`
+    str(
+        _SCRIPTS_DIR
+    ),  # scripts-level flat modules (precision_eval_two_tier, lint scripts, ...)
     str(_SCRIPTS_DIR / "workflow"),  # `import <workflow module>`
-    str(_ORCH_DIR / "plugins"),      # `import <plugin module>`
-    str(_ORCH_DIR / "briefs"),       # `import briefs._common` etc.
-    str(_ORCH_DIR / "precision"),    # `import precision_cannbot_adapter` (flat sibling import)
-    str(_ORCH_DIR),                  # LAST → sys.path[0]: bare `import orchestrator` = orchestrator.py MODULE
+    str(_ORCH_DIR / "plugins"),  # `import <plugin module>`
+    str(_ORCH_DIR / "briefs"),  # `import briefs._common` etc.
+    str(
+        _ORCH_DIR / "precision"
+    ),  # `import precision_cannbot_adapter` (flat sibling import)
+    str(
+        _ORCH_DIR
+    ),  # LAST → sys.path[0]: bare `import orchestrator` = orchestrator.py MODULE
 ):
     if _stable_path not in sys.path:
         sys.path.insert(0, _stable_path)
@@ -119,6 +128,8 @@ _HERMETIC_ASCENDC_ENV = (
     "A5_HOST=hermetic.test.local\nA5_USER=root\nA5_PASSWORD=\n"
     "A5_CONTAINER=hermetic_test\nA5_DEFAULT_NPU_ID=0\n"
     "A5_SOC_VERSION=Ascend950PR_9579\nA5_CANN_PATH=/opt/hermetic/cann\n"
+    "A5_STAGE_HOST_DIR=/opt/hermetic/stage\n"
+    "A5_STAGE_CONTAINER_DIR=/opt/hermetic/stage\n"
     "SOC_VERSION=Ascend950PR_9579\nCANN_PATH=/opt/hermetic/cann\n"
     "A3_HOST=hermetic.test.local\nA3_USER=root\nA3_PASSWORD=\n"
     "A3_CONTAINER=hermetic_test_a3\nA3_CANN_PATH=/opt/hermetic/cann\n"
@@ -264,7 +275,7 @@ def _isolate_global_state():
 # These tests reference a5_ops-only paths/fixtures the cannbot bundle renamed or omits BY DESIGN:
 #   - ascendc-op-gen SKILL.md → cannbot renamed to ops/ascendc-cross-gen-port (thin NL shell).
 # Transparent SKIP (not deletion, not blanket): a5_ops CI (fixtures present) still runs them; only the bundle skips.
-_ENGINE_SRC_B4 = _CONFTEST.parents[3]        # engine/src
+_ENGINE_SRC_B4 = _CONFTEST.parents[3]  # engine/src
 _A5_SKILL_B4 = _ENGINE_SRC_B4 / "skills" / "ascendc-op-gen" / "SKILL.md"
 _A5OPS_ENV_SKIP_B4 = {
     "test_skill_md_exists": _A5_SKILL_B4,

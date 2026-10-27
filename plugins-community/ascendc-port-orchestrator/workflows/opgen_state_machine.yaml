@@ -136,7 +136,7 @@ global_invariants:
 
   - id: G2
     description: "Truth must be independent of the generated target implementation"
-    check: "migration uses either the content-addressed model.py/test.py capture on its resolved A5 target (default) or an explicit fresh source-arch NPU capture; backward uses CPU/fp64 autograd"
+    check: "migration uses either the content-addressed model.py/test.py capture on its resolved A5 target (default) or an explicit fresh source-arch NPU capture; backward uses CPU/fp64 autograd; a multirank workspace (port_a3_to_a5 + multirank flag) resolves its truth through the multirank extension's two tiers — npubench (task Model reference implementation executed multi-rank on the target A5) or a3_live (source-side real operator executed multi-rank on source NPUs)"
     rationale: "A reference reconstructed from the generated kernel is circular and cannot prove correctness."
 
   - id: G3
@@ -238,7 +238,7 @@ phases:
     description: "Parse CLI args, detect MODE, load .ascendc_env"
     preconditions: [O0_5_state_file_init]
     required_actions:
-      - "Determine MODE: port_a3_to_a5 | backward | optimize"
+      - "Determine MODE: port_a3_to_a5 | backward | optimize (multirank rides port_a3_to_a5 via the durable-state multirank flag)"
       - "Determine PROBLEM_ID or SOURCE_PATH"
       - "Create workspace/{op}/ if not exists"
     required_artifacts: []
@@ -412,6 +412,57 @@ phases:
             check: "backward_cpu_truth.pt is produced by Phase O2.5 with CPU/fp64 autograd before target-kernel generation, and never from target-kernel output"
         prohibited_actions:
           - "Using target-kernel output as gradient truth"
+
+      # Multirank extension: two-tier multi-rank truth capture
+      # (port_a3_to_a5 + durable-state `multirank: true`). Input is the
+      # KernelBench-style task .py + sidecar (statically converted to the
+      # internal spec.py by task_to_spec); truth comes from executing a
+      # reference implementation multi-rank, never from the target kernel:
+      # the npubench tier runs the task's Model reference on the target A5
+      # via the same multi-rank launcher as the candidate; the a3_live tier
+      # executes the staged source operator on source-side NPUs per the
+      # declared world_size groups.
+      multirank:
+        condition: "MODE == port_a3_to_a5 with the durable-state multirank flag"
+        preconditions: [O1_5_det_policy]
+        required_actions:
+          - "Resolve the campaign from the task .py + sidecar (statically converted to workspace/{op}/spec.py by task_to_spec) and validate the contract — per-case world_size (any positive int or list), dtypes/input_profiles/seed all declared (the harness invents nothing)"
+          - "Run plugins/multirank provision_multirank_reference: expand the case × world_size × profile matrix into golden/<case>.pt (identity + full_inputs + canonical_outputs; rank shares are derived at verify time, never stored) + golden/manifest.json (spec_hash-keyed idempotent cache); the golden bytes come from the tier's reference execution (npubench: Model on A5; a3_live: source operator on source NPUs)"
+          - "Publish the canonical five O2.5 artifacts through the common channel (o25_mode_reference.publish_mode_reference); ref_runnable.json is a RUNNABLE receipt bound to the executed reference's staged bytes"
+          - "Run the common canonical artifact gate after provision; a non-READY provider verdict or a failed gate blocks the worker spawn before Phase O3"
+        required_artifacts:
+          - path: "workspace/{op}/golden/manifest.json"
+            must_exist: true
+            json_must_contain_keys: [op, spec_hash, world_sizes, n_cases, cases]
+          - path: "workspace/{op}/model.py"
+            must_exist: true
+          - path: "workspace/{op}/input_gen.py"
+            must_exist: true
+          - path: "workspace/{op}/edge_inputs.pt"
+            must_exist: true
+          - path: "workspace/{op}/manifest.json"
+            must_exist: true
+          - path: "workspace/{op}/edge_dataset.pt"
+            must_exist: true
+          - path: "workspace/{op}/ref_runnable.json"
+            must_exist: true
+            json_must_contain_keys: [verdict, source_sha256]
+        invariants:
+          - id: O2_5_D1
+            description: "golden/manifest.json indexes the spec-declared campaign and every case file exists"
+            check: "golden/manifest.json records the spec content hash and the case×world_size expansion (per-case world_size, ws ascending); every manifest case file exists under golden/ with full_inputs + canonical_outputs"
+          - id: O2_5_D2
+            description: "Multirank truth is the tier's reference execution, independent of the generated target kernel"
+            check: "golden tree + edge_dataset.pt are produced by Phase O2.5 from the reference execution (npubench: task Model on A5 via the same multi-rank launcher; a3_live: source operator on source NPUs) before target-kernel evaluation, never from target-kernel output; the reference never reads candidate artifacts"
+          - id: O2_5_D3
+            description: "ref_runnable.json is a RUNNABLE receipt for the executed reference"
+            check: "ref_runnable.json records verdict == RUNNABLE with source_sha256 bound to the executed reference's staged bytes and the spec_hash cache key"
+        prohibited_actions:
+          - "Using target-kernel output as multirank truth"
+          - "Delegating candidate cross-rank communication to host-side collectives (gloo/HCCL/torch.distributed) in the candidate kernel (MULTIRANK_FORBIDDEN — the reference tier's own multi-rank communication is legitimate)"
+          - "Inventing campaign fields the task does not declare (world_size, dtypes, input_profiles, seed — every field is task-explicit)"
+          - "Staging multirank_verify.py into the workspace (the canonical verifier executes in place from the harness tree)"
+          - "Selecting multirank cards via --lane (the physical card set is auto-allocated per world_size group by the idle-NPU probe)"
 
     next: [O3_progress_init]
 
@@ -1508,6 +1559,12 @@ phase_o4_states:
     exit_transitions:
       - condition:
           all_of:
+            - verification_perf_below_threshold: true
+            - iter_below_cap: optimizer
+        goto: await_optimizer
+        rationale: "Independent perf re-measure at finalize confirmed a ratio below the effective threshold (G6: never ship unverified perf). The orchestrator's phase_o5_perf_capture records this transition when its own measurement confirms the number. The optimizer iter cap owns the loop bound — same guard as the V3.3.7 postfinal exit below; an exhausted budget falls through to finalize→done so the P0y PARTIAL_PERSIST verdict lands instead of ping-ponging back."
+      - condition:
+          all_of:
             - path_exists: "workspace/{op}/.postfinal_perf_open"
             - iter_below_cap: optimizer
         goto: await_optimizer
@@ -1608,6 +1665,7 @@ phase_o4_total_spawn_cap: 20
 # Initial state is mode-dependent (DEBT-045 fix, 2026-04-23):
 #   port_a3_to_a5 — migrate arch22 AscendC to arch35 (A5) / arch20 (310P) → await_worker
 #   backward      — generate gradient kernel      → await_worker
+#   multirank     — port_a3_to_a5 + multirank flag → await_worker (extension)
 #   optimize      — tune an existing in-scope task → await_optimizer
 # Critic reads MODE from workspace/{op}/PROGRESS.md header ("Mode: <name>") and
 # dispatches to the matching initial_state. If header is missing, fall back to
@@ -1655,6 +1713,15 @@ phase_o4_initial_state_by_mode:
   # `await_worker` like every other generation mode — kw spawns with the
   # port_from_a3_ascendc brief variant (W5).
   port_a3_to_a5: await_worker
+  # Multirank extension (compute + collective-communication fusion,
+  # `--multirank --port-a3-ops <dir> --npubench-task <task.py>`): rides the
+  # port_a3_to_a5 mode key (durable-state `multirank: true`), so the map
+  # lookup lands on port_a3_to_a5 above. Phase O2.5 is delegated to
+  # plugins/multirank (task-converted spec, two-tier reference execution →
+  # per-case world_size golden); the O5 runner is
+  # multirank_runner, selected by truth_source=multirank. Lanes are NOT
+  # CLI-selected: multirank_runner probes idle cards per world_size group
+  # itself (npu_probe) — --lane lists are inert for these workspaces.
 
 # ---------------------------------------------------------------------------
 # Critic hook firing matrix:

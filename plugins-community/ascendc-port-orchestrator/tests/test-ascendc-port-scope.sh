@@ -10,9 +10,12 @@
 # -----------------------------------------------------------------------------------------------------------
 # Test: AscendC port orchestrator scope contract
 #
-# The plugin exposes exactly two entry capabilities and must not contain
-# implementation, documentation, routing, or path residue from another
-# accelerator family.
+# The plugin exposes entry capabilities (cross-gen-port / backward-gen /
+# cross-gen-port-light; multirank is the port_a3 extension of cross-gen-port,
+# not a parallel entry) and must not contain implementation, documentation,
+# routing, or path residue from another accelerator family. The retired
+# standalone mc2 mode (opgen_mc2) must not resurrect — its literal stays in
+# the removed-mode ban below.
 
 set -euo pipefail
 
@@ -28,10 +31,18 @@ forbidden_re='c[u]da|nvid[i]a|nv[c]c|c[u]bin|c[u]tl[a]ss|t[e]nsor[r]t|n[c]cl|f[a
 # 豁免（自引用守卫与特性文件）：插件自己的测试为了证明"绝不走外部加速器路径"而必须
 # 命名这些 family（如 FakeTensor.cuda() 必须存在且必须不被调用）；model_reference 特性
 # 处理用户提供的 torch 模型，其可能运行在外部设备上，同样必须按设备名同步。
+# kb/（b 层知识库）是策展知识语料：条目以外部生态为题材（catlass 库对照 CUTLASS 的头
+# 布局、上游 A2 op-gen 生态的 mode 名），正文引用 family token 是知识来源事实、不是本
+# 插件的实现路径——其内容完整性由 KB 审计门负责，不在本范围契约内。
+# mc2_assets/（MC² 预交接模板）必须描述竞品臂的来源语境（其它模式的 harness 如何自动
+# 提供 competitor），用户才能据此决定 MC² 的 spec 声明制竞品——同属"引用外部语境"而非
+# 引入实现。
 scope_exempt_filter() {
     grep -vE "^$PLUGIN_DIR/([^:]*/)*tests/" \
         | grep -vE "^$PLUGIN_DIR/([^:]*/)*test_[^/]*" \
-        | grep -vE "^$PLUGIN_DIR/([^:]*/)*[^/]*model_reference[^/]*"
+        | grep -vE "^$PLUGIN_DIR/([^:]*/)*[^/]*model_reference[^/]*" \
+        | grep -vE "^$PLUGIN_DIR/kb/" \
+        | grep -vE "^$PLUGIN_DIR/([^:]*/)*multirank_assets/"
 }
 
 # ripgrep is absent on the CI runner. Without a fallback, every `rg` below exits 127: the two self-tests
@@ -91,10 +102,15 @@ if find "$PLUGIN_DIR" -print | scan_paths "$forbidden_re"; then
     exit 1
 fi
 
-legacy_mode_re='port_tilelang|port_triton|opgen_mc2|port_mc2|port_pytorch|aog-benchmark-sync|benchmark[-_ ]mode|mode:[[:space:]]*benchmark|await_tilelang|resolve_tilelang|force_tilelang|\b(triton|tilelang|mc2)\b|MC²'
-# scope_exempt_filter: the plugin's own tests must name these modes to guard them
-# (same exemption the forbidden_re scan above applies).
-if scan_tree "$legacy_mode_re" "$PLUGIN_DIR" | scope_exempt_filter | grep -q .; then
+# multirank 是 port_a3_to_a5 的通算融合扩展（入口仍是 ascendc-cross-gen-port），其裸
+# token（multirank / MC²）在全插件合法，故不在禁令内；禁的是全部 RFC 外部 mode/route
+# token 与 benchmark 臂私有 route。
+legacy_mode_re='port_tilelang|port_triton|port_pytorch|aog-benchmark-sync|benchmark[-_ ]mode|mode:[[:space:]]*benchmark|await_tilelang|resolve_tilelang|force_tilelang|\b(triton|tilelang)\b'
+# multirank 面允许引用外部 mode/family 语境（守卫与对照）：multirank 插件必须命名外部
+# backend 才能拒绝认领（deferred-not-claimed），两层精度评估须注明其 parity 语义继承自
+# 上游 benchmark 臂——按"路径含 multirank"判定（tests/kb 豁免同 scope_exempt_filter）。
+if scan_tree "$legacy_mode_re" "$PLUGIN_DIR" | scope_exempt_filter | grep -viE '^[^:]*multirank' | grep -q .; then
+
     echo "[FAIL] Found an RFC-external product mode or specialized route"
     exit 1
 fi

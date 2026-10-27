@@ -22,6 +22,7 @@ one-way (no cycle).
 Behavior is BYTE-IDENTICAL to the pre-split functions (prompt-template refactor;
 golden-locked by test_kw_brief_port_a3_golden.py + the pa3 phase goldens).
 """
+
 from __future__ import annotations
 import logging
 
@@ -92,12 +93,14 @@ def _port_a3_cube_class_mix_block(workspace: Optional[Path]) -> str:
         return ""
     try:
         import json as _json
-        tags = (_json.loads(cls.read_text()).get("op_class_tags") or [])
+
+        tags = _json.loads(cls.read_text()).get("op_class_tags") or []
     except Exception:
         return ""
     if "CUBE_MIX" not in tags:
         return ""
     from briefs import external_kb as _ext
+
     _ref_cube_fusion = _ext.kb_ref_display(
         "knowledge/ops/ascendc/examples/cube_vector_fusion.md"
     )
@@ -163,7 +166,7 @@ def _port_a3_complete_deliverable_block() -> str:
         "   is arch-invariant). Most simple ops carry cleanly.\n"
         "2. **`<op>_def.cpp` = CARRY + PATCH** — carry the A3 op IR (input/output/attr\n"
         "   names + order + dtype rows already present); PATCH the SOC config string to\n"
-        "   add the A5 `AddConfig(\"ascend910_95\", ...)` block. Add dtype rows ONLY if the\n"
+        '   add the A5 `AddConfig("ascend910_95", ...)` block. Add dtype rows ONLY if the\n'
         "   A3 def lacks them AND the target space declares them.\n"
         "3. **`<op>_tiling.cpp` + `_tiling.h` = REPLACE-HOOK (or CARRY for arch-agnostic\n"
         "   tiling)** — if the A3 tiling is arch-agnostic (most simple elementwise / norm\n"
@@ -171,7 +174,7 @@ def _port_a3_complete_deliverable_block() -> str:
         "   (`IsRegbaseSocVersion()` branch per OL-143 if needed). If the op has a\n"
         "   fundamentally different A5 regbase tiling architecture (FA-class), REPLACE-HOOK\n"
         "   onto the KB shared layer — that is the FA SPECIALIZATION below.\n"
-        "RED LINE: host C++ only — NO `#include \"arch35/\"` device headers in op_host/, NO\n"
+        'RED LINE: host C++ only — NO `#include "arch35/"` device headers in op_host/, NO\n'
         "aclnn/aclop calls. Derive from the A3 op_host input + this recipe, NEVER from\n"
         "arch35 (the ARCH35_WRAP_CHEAT gate scans op_host/*.cpp too).\n"
         "\n"
@@ -228,6 +231,7 @@ def _migration_level_block(op: str, workspace: Path) -> str:
     """
     import json as _json
     import sys as _sys
+
     plugin_dir = Path(__file__).resolve().parent.parent / "plugins" / "port_a3"
     _sys.path.insert(0, str(plugin_dir))
     try:
@@ -252,9 +256,8 @@ def _migration_level_block(op: str, workspace: Path) -> str:
     d = decide_migration_level(op_meta)
 
     from briefs import external_kb as _ext
-    guides_md = "\n".join(
-        f"  - `{_ext.kb_ref_display(guide)}`" for guide in d.guides
-    )
+
+    guides_md = "\n".join(f"  - `{_ext.kb_ref_display(guide)}`" for guide in d.guides)
     query_paths = []
     for query in d.knowledge_queries:
         query_paths.extend(
@@ -262,13 +265,15 @@ def _migration_level_block(op: str, workspace: Path) -> str:
         )
     query_md = (
         "\n".join(f"  - `{path}`" for path in dict.fromkeys(query_paths))
-        if query_paths else "  (none)"
+        if query_paths
+        else "  (none)"
     )
     escalation = (
         "\n\n**⚠ ESCALATION SIGNAL**: this op matched an L4 heuristic. "
         "L4 is OUT OF SCOPE for the standard port_a3 worker path — escalate "
         "to architectural-tiling researcher path (TBD)."
-        if d.needs_escalation else ""
+        if d.needs_escalation
+        else ""
     )
     return _MIGRATION_LEVEL_TEMPLATE.format(
         level=d.level.value,
@@ -280,7 +285,16 @@ def _migration_level_block(op: str, workspace: Path) -> str:
 
 
 def _pa3_context(
-    *, op, workspace, iter_cap_remaining, port_source, aclnn_entry, gen_data_source, peer_deps_line, env
+    *,
+    # shared context fields consumed by every pa3 phase builder
+    op,
+    workspace,
+    iter_cap_remaining,
+    port_source,
+    aclnn_entry,
+    gen_data_source,
+    peer_deps_line,
+    env,
 ) -> str:
     return f"""# PHASES (port_from_a3_ascendc — arch22→arch35 port mode, ROADMAP §1.5)
 
@@ -317,7 +331,16 @@ to A5 (arch35/V351) involves:
 
 
 def _pa3_phase_a_1(
-    *, op, workspace, iter_cap_remaining, port_source, aclnn_entry, gen_data_source, peer_deps_line, env
+    *,
+    # A.1 reads: op identity + staged source + entry/gen wiring
+    workspace,
+    op,
+    iter_cap_remaining,
+    port_source,
+    aclnn_entry,
+    gen_data_source,
+    peer_deps_line,
+    env,
 ) -> str:
     return f"""## Phase A — Source analysis
 
@@ -451,7 +474,16 @@ A.1.5. **MANDATORY L-tier classification** (NEW 2026-05-13, OL-143).
 
 
 def _pa3_phase_a_2(
-    *, op, workspace, iter_cap_remaining, port_source, aclnn_entry, gen_data_source, peer_deps_line, env
+    *,
+    # A.2 reads: iteration budget + source detection inputs
+    op,
+    iter_cap_remaining,
+    workspace,
+    port_source,
+    aclnn_entry,
+    gen_data_source,
+    peer_deps_line,
+    env,
 ) -> str:
     return f"""  L4 (escalate to researcher, OUT of kw scope) if ANY:
     - tiling needs IsRegbaseSocVersion() decision in host code
@@ -587,8 +619,9 @@ A.2.6. **DUAL-INPUT MODEL.PY CONSTRUCTION RULE** (mandatory, port_a3 only —
     `(int32 * scale).to(bf16)` because "it should be the same" — it is
     NOT bit-equal under fp16/bf16 LSB.
   - The math formula is the **semantic spec the A5 kernel must satisfy**.
-    The A5 kernel itself is designed via math + hardware adaptation
-    (NOT a byte-by-byte copy of A3 source). But the **reference we
+    The A5 kernel re-emits the A3 source's algorithm and structure with
+    arch35 hardware adaptation (NOT a byte-by-byte copy — see the Phase
+    A.1−1 authoring contract). But the **reference we
     compare against** (`model.py`) MUST match what A3 source actually
     does, because A3 source IS the per-case ground truth Phase D loads
     from `edge_dataset.pt["a3_outputs"]`.
@@ -597,7 +630,16 @@ A.2.6. **DUAL-INPUT MODEL.PY CONSTRUCTION RULE** (mandatory, port_a3 only —
 
 
 def _pa3_phase_a_3(
-    *, op, workspace, iter_cap_remaining, port_source, aclnn_entry, gen_data_source, peer_deps_line, env
+    *,
+    # A.3 reads: boundary/contract inputs (source + aclnn + data)
+    iter_cap_remaining,
+    op,
+    workspace,
+    port_source,
+    aclnn_entry,
+    gen_data_source,
+    peer_deps_line,
+    env,
 ) -> str:
     return f"""  Why this rule exists: 2026-05-21 fused_quant_mat_mul case 6 (bf16 +
   GELU-erf) — worker built `model.py` from the math formula only,
@@ -735,7 +777,16 @@ A.3. **CROSS-OP ROUTER CHECK** — if peer_op_dependencies is non-empty:
 
 
 def _pa3_phase_b(
-    *, op, workspace, iter_cap_remaining, port_source, aclnn_entry, gen_data_source, peer_deps_line, env
+    *,
+    # B reads: full authoring context incl. peer deps
+    workspace,
+    iter_cap_remaining,
+    op,
+    port_source,
+    aclnn_entry,
+    gen_data_source,
+    peer_deps_line,
+    env,
 ) -> str:
     return f"""## Phase B — Write A5 (arch35) artifacts
 
@@ -874,7 +925,16 @@ B.5. **Cross-op peer router patch** (if A.3 listed peer edits) — write
 
 
 def _pa3_phase_c(
-    *, op, workspace, iter_cap_remaining, port_source, aclnn_entry, gen_data_source, peer_deps_line, env
+    *,
+    # C reads: env-first (build host) + op layout fields
+    env,
+    op,
+    workspace,
+    iter_cap_remaining,
+    port_source,
+    aclnn_entry,
+    gen_data_source,
+    peer_deps_line,
 ) -> str:
     return f"""## Phase C — Build + smoke
 

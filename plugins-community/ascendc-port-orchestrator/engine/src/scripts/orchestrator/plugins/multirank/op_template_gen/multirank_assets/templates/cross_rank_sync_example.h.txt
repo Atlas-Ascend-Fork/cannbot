@@ -1,0 +1,323 @@
+/*
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the License).
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
+
+// ============================================================================
+// CrossRankSync example — P-P111 (cross-rank soft barrier) — COPY-PASTE SOURCE
+// Path 2 ONLY: HCCL comm domain + reuse of its internal cross-card
+// shared-memory resources.
+// ----------------------------------------------------------------------------
+// This file is a COPY-PASTE SOURCE, NOT a normal header. The CrossRankSync*
+// functions below are MEMBER FUNCTIONS: they contain placeholders for the
+// kernel's own members, so they CANNOT be #included and compiled directly
+// (the placeholder leaves an incomplete statement that won't compile).
+//
+// USAGE (worker):
+//   1. Do NOT `#include` this file.
+//   2. Copy the #define block below + the chosen CrossRankSync* function body
+//      BYTE-FOR-WORD into the kernel class private section as a member function.
+//   3. Adjust the EXAMPLE body of GET_SYNC_GM_IN_RANK in the copied #define
+//      block (keep the signature) and replace ONLY the /*SYNC_BUF_*/
+//      placeholder. Do NOT rename / reflow / change the algorithm
+//      (atomicAdd / DataCopyPad / poll / release ordering is load-bearing).
+//
+// Why member functions: the old free-function form took the UB
+// scratch (`syncBuf_.Get<uint32_t>()`) and the flag GM as PARAMETERS. Under
+// the kernel's -O3 release build, passing that LocalTensor at the call site
+// faulted on A2/910B4; the same Get<T>() called INSIDE a member function
+// (accessing syncBuf_ directly) is correct. So UB + flag GM are now acquired
+// INSIDE the body — only scalars are passed.
+//
+// PLACEHOLDERS / INJECTED MACRO:
+//   /*SYNC_BUF_*/        an expression yielding the flag-scratch
+//                       AscendC::LocalTensor<uint32_t> — e.g. a TBuf member's
+//                       syncBuf_.Get<uint32_t>(), but ANY source works (NOT
+//                       TBuf-bound). The scratch only ever holds ONE uint32
+//                       flag (4 B) for DataCopyPad / GetValue / SetValue; if
+//                       you back it with a TBuf, InitBuffer it to >= 32 B —
+//                       the UB minimum allocation+access granularity (512 B
+//                       is wasteful cargo-cult; 32 B is the real requirement).
+//   GET_SYNC_GM_IN_RANK(rankId)
+//                       REQUIRED injected function-like macro — the #define
+//                       block ships an EXAMPLE body; adjust the body to your
+//                       planned region, keep the signature: rankId in -> that
+//                       rank's sync-flag region GM base out. Call sites are
+//                       pre-wired in the function bodies (do NOT touch them):
+//                         - RandomMem (balanced): every rank keeps its OWN slot —
+//                           arrive broadcasts atomicAdd to ALL ranks' slots
+//                           (GET_SYNC_GM_IN_RANK(i), i = 0..rankSize-1); poll
+//                           watches the OWN slot (GET_SYNC_GM_IN_RANK(rankId))
+//                           for a delta >= rankSize over its initial value
+//                         - Deterministic/WithClear write phase:
+//                           GET_SYNC_GM_IN_RANK(aicoreId) — core i notifies rank i,
+//                           generally a PEER rank's region
+//                         - Deterministic/WithClear poll phase:
+//                           GET_SYNC_GM_IN_RANK(rankId) — your OWN rank's region
+//                       Actual slot = base + flagId * SOFT_SYNC_ALIGN_BYTE.
+//
+//   Flag-region placement (backs GET_SYNC_GM_IN_RANK): planned FREELY by the op —
+//   ANY shared slab works (windowsExp, windowsIn, or windowsOut, wherever fits
+//   the memory plan). On A5 / A2 multi-node there is no windowsExp: carve the
+//   region out of a window slab (e.g. the first 1 MB, disjoint from the RDMA
+//   data traffic in that slab). NEVER assume the flag memory is zeroed — treat
+//   it as random unless the host explicitly clears it before dispatch (no
+//   external framework guarantee; in production multiple ops may share it).
+//
+// All event IDs are fetched ONCE at the top (MTE2_S read / S_MTE3 UB->GM
+// handoff / MTE3_S post-write drain) and reused — explicit AscendC::TEventID.
+//
+// No `using namespace AscendC`. Source: owner-authorized reference (design §3.1).
+// ============================================================================
+
+#include "kernel_operator.h"
+
+// --- copy these #defines into the kernel (above the class, or file-top) ---
+#define COMPILER_OPTIMIZATION_BARRIER() __asm__ __volatile__("")
+#define SOFT_SYNC_ALIGN_BYTE 512              // flag slot stride in GM
+#define SOFT_SYNC_TIMEOUT_CYCLES 1500000000   // ~30s @ 50MHz
+#define POLL_BACKOFF_CYCLES 10                // ~200ns @ 50MHz, backs off the poll to ease bus contention
+
+// GET_SYNC_GM_IN_RANK — the injected flag-region lookup. EXAMPLE body: adjust
+// it to YOUR planned region, keep the signature (rankId in -> that rank's
+// sync-flag GM base out). Any shared slab works — exp, In, or Out:
+//   exp (A2 single-node / A3):                     (hcclRes_.GetWindowsExp(rankId))
+//   carved from a window slab (A5 / A2 multi-node — no exp, e.g. first 1 MB):
+//                                                  (hcclRes_.GetWindowsIn(rankId))
+// The flag memory is NOT zeroed for you — treat it as random (see the header note).
+#define GET_SYNC_GM_IN_RANK(rankId) (hcclRes_.GetWindowsExp(rankId))
+
+
+// ---------------------------------------------------------------------------
+// CrossRankSyncInRandomMemValue — DEFAULT entry point, BALANCED: every rank
+// keeps its OWN flag slot (no shared hot slot). Arrive: atomicAdd(1) into ALL
+// ranks' slots (GET_SYNC_GM_IN_RANK(i), i = 0..rankSize-1). Poll: the OWN slot
+// (GET_SYNC_GM_IN_RANK(rankId)) until it advances by rankSize over its
+// initial value (read first — the initial value is arbitrary). Release:
+// atomicAdd(1) into all slots again. Poll is timeout-guarded.
+// ---------------------------------------------------------------------------
+__aicore__ inline
+void CrossRankSyncInRandomMemValue(uint32_t rankSize, uint32_t rankId, uint32_t flagId)
+{
+    if (get_block_idx() == 0 && get_subblockid() == 0) {   // [ADJUSTABLE] participating-core predicate
+        AscendC::LocalTensor<uint32_t> flagUB = /*SYNC_BUF_*/;
+        AscendC::GlobalTensor<uint32_t> flagGm;
+
+        AscendC::DataCopyParams dataCopyParams;
+        dataCopyParams.blockLen = static_cast<uint16_t>(sizeof(uint32_t));
+        AscendC::DataCopyPadParams padParams;
+
+        AscendC::TEventID readEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::MTE2_S>();
+        AscendC::TEventID writeEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::S_MTE3>();
+        AscendC::TEventID drainEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::MTE3_S>();
+
+        // Step1: read old value (DataCopyPad GM->LM 4 args + MTE2_S)
+        flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+            GET_SYNC_GM_IN_RANK(rankId) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+        AscendC::DataCopyPad<uint32_t>(flagUB, flagGm, dataCopyParams, padParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(readEid);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(readEid);
+        uint32_t oldFlagData = flagUB.GetValue(0);
+        COMPILER_OPTIMIZATION_BARRIER();
+
+        // Step2: atomic add 1 (SetValue + S_MTE3 + DataCopyPad LM->GM 3 args + MTE3_S drain)
+        AscendC::SetAtomicAdd<int32_t>();
+        flagUB.SetValue(0, 1U);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        for (uint32_t i = 0; i < rankSize; i++) {
+            flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+                GET_SYNC_GM_IN_RANK(i) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+            AscendC::DataCopyPad<uint32_t>(flagGm, flagUB, dataCopyParams);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::SetAtomicNone();
+        COMPILER_OPTIMIZATION_BARRIER();
+
+        // Step3: poll until all ranks arrive (timeout-guarded)
+        uint64_t syncStartCycle = (uint64_t)AscendC::GetSystemCycle();
+        uint32_t newFlagData;
+        flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+            GET_SYNC_GM_IN_RANK(rankId) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+        while (true) {
+            AscendC::DataCopyPad<uint32_t>(flagUB, flagGm, dataCopyParams, padParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(readEid);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(readEid);
+            newFlagData = flagUB.GetValue(0);
+            if (newFlagData - oldFlagData >= rankSize) {
+                break;
+            } else if ((uint64_t)AscendC::GetSystemCycle() - syncStartCycle > SOFT_SYNC_TIMEOUT_CYCLES) {
+                AscendC::printf(
+                    "CrossRankSyncInRandomMemValue TIMEOUT!\n%s:%u\nrankSize:%u flagData:%u expectedVal:%u\n",
+                    __FILE__, __LINE__, rankSize, newFlagData - oldFlagData, rankSize);
+                AscendC::Trap();
+            } else {
+                uint64_t pbStart = (uint64_t)AscendC::GetSystemCycle();
+                while ((uint64_t)AscendC::GetSystemCycle() - pbStart < POLL_BACKOFF_CYCLES) {
+                    COMPILER_OPTIMIZATION_BARRIER();
+                }
+            }
+            COMPILER_OPTIMIZATION_BARRIER();
+        }
+        COMPILER_OPTIMIZATION_BARRIER();
+
+        // Step4: atomic add 1 to release barrier
+        AscendC::SetAtomicAdd<int32_t>();
+        flagUB.SetValue(0, 1U);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        for (uint32_t i = 0; i < rankSize; i++) {
+            flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+                GET_SYNC_GM_IN_RANK(i) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+            AscendC::DataCopyPad<uint32_t>(flagGm, flagUB, dataCopyParams);
+        }
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::SetAtomicNone();
+        COMPILER_OPTIMIZATION_BARRIER();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CrossRankSyncInDeterministicMemValue — perf-tuning variant. Flag GM comes
+// from the injected macro GET_SYNC_GM_IN_RANK(rankId) (rankId in -> that rank's
+// sync-flag region GM base out; region placement planned freely by the op —
+// exp, In, or Out slab, see the header's note). Write phase: core i targets
+// rank i's region — GET_SYNC_GM_IN_RANK(aicoreId), generally a PEER rank. Poll
+// phase (the core with aicoreId==rankId) targets its OWN region —
+// GET_SYNC_GM_IN_RANK(rankId).
+// ---------------------------------------------------------------------------
+__aicore__ inline
+void CrossRankSyncInDeterministicMemValue(uint32_t rankSize, uint32_t rankId,
+    uint32_t flagId, uint32_t flagValue, uint32_t expectedVal)
+{
+    uint32_t aicoreId = get_block_idx();
+    uint32_t subAivId = get_subblockid();
+
+    AscendC::DataCopyParams dataCopyParams;
+    dataCopyParams.blockLen = static_cast<uint16_t>(sizeof(uint32_t));
+    AscendC::DataCopyPadParams padParams;
+    AscendC::TEventID readEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::MTE2_S>();
+    AscendC::TEventID writeEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::S_MTE3>();
+    AscendC::TEventID drainEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::MTE3_S>();
+
+    if (subAivId == 0 && aicoreId < rankSize) {            // [ADJUSTABLE] write-phase predicate
+        AscendC::LocalTensor<uint32_t> flagUB = /*SYNC_BUF_*/;
+        AscendC::GlobalTensor<uint32_t> flagGm;
+        flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+            GET_SYNC_GM_IN_RANK(aicoreId) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+        AscendC::SetAtomicAdd<int32_t>();
+        flagUB.SetValue(0, flagValue);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::DataCopyPad<uint32_t>(flagGm, flagUB, dataCopyParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::SetAtomicNone();
+    }
+
+    if (subAivId == 0 && aicoreId == rankId) {             // [ADJUSTABLE] poll-phase predicate
+        AscendC::LocalTensor<uint32_t> flagUB = /*SYNC_BUF_*/;
+        AscendC::GlobalTensor<uint32_t> flagGm;
+        flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+            GET_SYNC_GM_IN_RANK(rankId) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+        uint64_t syncStartCycle = (uint64_t)AscendC::GetSystemCycle();
+        uint32_t flagData;
+        while (true) {
+            AscendC::DataCopyPad<uint32_t>(flagUB, flagGm, dataCopyParams, padParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(readEid);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(readEid);
+            flagData = flagUB.GetValue(0);
+            if (flagData == expectedVal) {
+                break;
+            } else if ((uint64_t)AscendC::GetSystemCycle() - syncStartCycle > SOFT_SYNC_TIMEOUT_CYCLES) {
+                AscendC::printf("CrossRankSyncInDeterministicMemValue TIMEOUT!\n%s:%u\nrankSize:%u flagData:%u expectedVal:%u\n",
+                    __FILE__, __LINE__, rankSize, flagData, flagValue * rankSize);
+                AscendC::Trap();
+            } else {
+                uint64_t pbStart = (uint64_t)AscendC::GetSystemCycle();
+                while ((uint64_t)AscendC::GetSystemCycle() - pbStart < POLL_BACKOFF_CYCLES) {
+                    COMPILER_OPTIMIZATION_BARRIER();
+                }
+            }
+            COMPILER_OPTIMIZATION_BARRIER();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CrossRankSyncInDeterministicMemValueWithClear — Deterministic + owning rank
+// clears the flag to 0 after the barrier (slot reusable; GM must start at 0).
+// ---------------------------------------------------------------------------
+__aicore__ inline
+void CrossRankSyncInDeterministicMemValueWithClear(uint32_t rankSize, uint32_t rankId,
+    uint32_t flagId, uint32_t flagValue)
+{
+    uint32_t aicoreId = get_block_idx();
+    uint32_t subAivId = get_subblockid();
+
+    AscendC::DataCopyParams dataCopyParams;
+    dataCopyParams.blockLen = static_cast<uint16_t>(sizeof(uint32_t));
+    AscendC::DataCopyPadParams padParams;
+    AscendC::TEventID readEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::MTE2_S>();
+    AscendC::TEventID writeEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::S_MTE3>();
+    AscendC::TEventID drainEid = GetTPipePtr()->FetchEventID<AscendC::HardEvent::MTE3_S>();
+
+    if (subAivId == 0 && aicoreId < rankSize) {            // [ADJUSTABLE] write-phase predicate
+        AscendC::LocalTensor<uint32_t> flagUB = /*SYNC_BUF_*/;
+        AscendC::GlobalTensor<uint32_t> flagGm;
+        flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+            GET_SYNC_GM_IN_RANK(aicoreId) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+        AscendC::SetAtomicAdd<int32_t>();
+        flagUB.SetValue(0, flagValue);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::DataCopyPad<uint32_t>(flagGm, flagUB, dataCopyParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::SetAtomicNone();
+    }
+
+    if (subAivId == 0 && aicoreId == rankId) {             // [ADJUSTABLE] poll-phase predicate
+        AscendC::LocalTensor<uint32_t> flagUB = /*SYNC_BUF_*/;
+        AscendC::GlobalTensor<uint32_t> flagGm;
+        flagGm.SetGlobalBuffer(reinterpret_cast<__gm__ uint32_t *>(
+            GET_SYNC_GM_IN_RANK(rankId) + static_cast<uint64_t>(flagId) * SOFT_SYNC_ALIGN_BYTE));
+        uint64_t syncStartCycle = (uint64_t)AscendC::GetSystemCycle();
+        uint32_t flagData;
+        while (true) {
+            AscendC::DataCopyPad<uint32_t>(flagUB, flagGm, dataCopyParams, padParams);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_S>(readEid);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_S>(readEid);
+            flagData = flagUB.GetValue(0);
+            if (flagData == flagValue * rankSize) {
+                break;
+            } else if ((uint64_t)AscendC::GetSystemCycle() - syncStartCycle > SOFT_SYNC_TIMEOUT_CYCLES) {
+                AscendC::printf("CrossRankSyncInDeterministicMemValueWithClear TIMEOUT!\n%s:%u\nrankSize:%u flagData:%u expectedVal:%u\n",
+                    __FILE__, __LINE__, rankSize, flagData, flagValue * rankSize);
+                AscendC::Trap();
+            } else {
+                uint64_t pbStart = (uint64_t)AscendC::GetSystemCycle();
+                while ((uint64_t)AscendC::GetSystemCycle() - pbStart < POLL_BACKOFF_CYCLES) {
+                    COMPILER_OPTIMIZATION_BARRIER();
+                }
+            }
+            COMPILER_OPTIMIZATION_BARRIER();
+        }
+        COMPILER_OPTIMIZATION_BARRIER();
+
+        // clear flag to 0 for reuse (plain overwrite — atomic-add of 0 is a no-op)
+        flagUB.SetValue(0, 0U);
+        AscendC::SetFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::WaitFlag<AscendC::HardEvent::S_MTE3>(writeEid);
+        AscendC::DataCopyPad<uint32_t>(flagGm, flagUB, dataCopyParams);
+        AscendC::SetFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+        AscendC::WaitFlag<AscendC::HardEvent::MTE3_S>(drainEid);
+    }
+}

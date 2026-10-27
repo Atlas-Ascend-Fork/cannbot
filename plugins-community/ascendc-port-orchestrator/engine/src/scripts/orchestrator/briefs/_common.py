@@ -24,6 +24,7 @@ Usage:
         kb_manifest_block, exit_handoff_block,
     )
 """
+
 from __future__ import annotations
 
 import json
@@ -35,13 +36,18 @@ from pathlib import Path
 from typing import Optional
 
 from briefs.brief_kb import (  # re-export: KB cluster moved to brief_kb (behavior-neutral, 2026-07-05)
-    _detect_forced_architecture, kb_manifest_block, _FORCED_ARCH_TAGS,
+    _detect_forced_architecture,  # noqa: F401
+    kb_manifest_block,  # noqa: F401
+    _FORCED_ARCH_TAGS,  # noqa: F401
     # cannbot c>b>a blocks (re-exported so `from briefs._common import ...` stays stable
     # for the c-tier read-wiring test + any cannbot caller after the 2026-07-05 decomposition).
-    _cba_tier_a_routes_block, _c_tier_lessons_block,
+    _cba_tier_a_routes_block,  # noqa: F401
+    _c_tier_lessons_block,  # noqa: F401
     # OKF-only (2026-08): OKF 检索是唯一 b-tier 路径; legacy 注入/开关/逃生门已移除。
-    _okf_reference_block, _kb_discipline_scaffold,
+    _okf_reference_block,  # noqa: F401
+    _kb_discipline_scaffold,  # noqa: F401
 )
+
 # Single source of truth for the target → env-key prefix map (see
 # briefs/target_env_map.py). Imported name stays re-exported so
 # `from briefs._common import TARGET_ENV_PREFIXES` remains valid.
@@ -56,66 +62,387 @@ DEFAULT_ASCENDC_ENV = _PROJECT_ROOT / "workspace" / ".ascendc_env"
 # ---------------------------------------------------------------------------
 # Env loading
 # ---------------------------------------------------------------------------
+# Execution modes, one per generation block: connection (local/remote) x
+# isolation (bare host / container). `<PREFIX>_EXEC` is the authoritative
+# declaration; the normalized (host, container) view below keeps every legacy
+# `container == "local"` consumer working unchanged:
+#     local            host stays empty, container is local
+#     local-container  host stays empty, container is the given name
+#     remote           host is the given name, container stays empty
+#     remote-container host is the given name, container is the given name
+EXEC_MODES = ("local", "local-container", "remote", "remote-container")
+DEFAULT_EXEC_MODE = "remote-container"
+
+# Suffixes a generation block may carry (A<n>_<SUFFIX>). Blocks are
+# discovered by scanning these suffixes: A2 works today, A6/A7 work the day
+# they are written into the env — no code change.
+_GENERATION_BLOCK_FIELDS = {
+    "HOST": "host",
+    "USER": "user",
+    "PASSWORD": "password",
+    "EXEC": "exec_mode",
+    "CONTAINER": "container",
+    "CANN_PATH": "cann_path",
+    "SOC_VERSION": "soc_version",
+    "HOST_HOME": "host_home",
+    "HOST_BACKUP": "host_backup",
+    "WORKSPACE": "workspace",
+    "DEPLOY_STAGE_HOST": "deploy_stage_host",
+    "DEPLOY_STAGE_CONTAINER": "deploy_stage_container",
+    "STAGE_HOST_DIR": "stage_host_dir",
+    "STAGE_CONTAINER_DIR": "stage_container_dir",
+    "CONTAINER_HOME": "container_home",
+}
+_GENERATION_BLOCK_RE = re.compile(r"^A(\d+)_([A-Z][A-Z0-9_]*)$")
+
+# Deprecated process-env host-direct switches, mapped to EXEC=remote at load
+# time (the runtime switch keeps winning over the file, its old precedence).
+_HOST_MODE_SWITCHES = (("a3", "A3_HOST_MODE"), ("a5", "A5_HOST_MODE"))
+
+
 @dataclass
+class TargetConfig:
+    """One generation block (A2_/A3_/A5_/... keys) of .ascendc_env.
+
+    host/container are the NORMALIZED transport view derived from exec_mode
+    (see EXEC_MODES). host_home is the HOST-side slice mount point (legacy
+    A3_HOST_HOME); the container-side home is a separate convention owned by
+    a3_ref_common (`A3_CONTAINER_HOME`) — never conflate the two.
+    """
+
+    arch: str
+    host: str = ""
+    user: str = "root"
+    password: str = ""
+    exec_mode: str = DEFAULT_EXEC_MODE
+    container: str = ""
+    cann_path: str = ""
+    soc_version: str = ""
+    host_home: str = ""
+    host_backup: str = ""
+    workspace: str = ""
+    deploy_stage_host: str = ""
+    deploy_stage_container: str = ""
+    # Staging area mapping (host dir <-> container dir) for remote-container
+    # sync: scp lands on the HOST side, execution sees the CONTAINER side.
+    # Explicit STAGE_* pair wins; see multirank_endpoint.stage_map for the
+    # legacy fallback (host_home + container_home).
+    stage_host_dir: str = ""
+    stage_container_dir: str = ""
+    container_home: str = ""
+
+
+def _empty_config(arch: str) -> TargetConfig:
+    return TargetConfig(arch=arch)
+
+
+def _ds(name: str) -> str:
+    """Normalized target name: lowercase with any harness -suffix stripped
+    (a3-ds → a3; the suffix selects a harness instance, not a chip family)."""
+    n = (name or "").strip().lower()
+    return n[:-3] if n.endswith("-ds") else n
+
+
+def _apply_host_mode_switches(targets: dict) -> None:
+    """Deprecated A<n>_HOST_MODE env switches → remote (migration warning)."""
+    for arch, switch in _HOST_MODE_SWITCHES:
+        if str(os.environ.get(switch, "")).strip() == "1":
+            cfg = targets.setdefault(arch, _empty_config(arch))
+            cfg.exec_mode = "remote"
+            print(
+                f"[briefs] WARNING: {switch}=1 is deprecated; set "
+                f"{arch.upper()}_EXEC=remote in .ascendc_env instead",
+                file=sys.stderr,
+            )
+
+
+def _normalize_block_transports(targets: dict) -> None:
+    """Validate EXEC values and normalize each block's transport view.
+
+    Fail-closed on the two ambiguous legacy forms: an unknown EXEC value and
+    CONTAINER=local (the retired magic string — the error names the fix)."""
+    for arch, cfg in targets.items():
+        prefix = arch.upper()
+        if cfg.exec_mode not in EXEC_MODES:
+            raise ValueError(
+                f"{prefix}_EXEC must be one of {'/'.join(EXEC_MODES)}; "
+                f"got {cfg.exec_mode!r}"
+            )
+        if cfg.container.lower() == "local":
+            # Legacy local shorthand (master-era templates/scripts write
+            # A5_CONTAINER=local as the canonical local form): map it onto
+            # EXEC=local with a migration nudge; EXEC stays authoritative.
+            print(
+                f"[briefs] WARNING: {prefix}_CONTAINER=local is the legacy "
+                f"local form — declare {prefix}_EXEC=local and clear the "
+                f"container name instead",
+                file=sys.stderr,
+            )
+            cfg.exec_mode = "local"
+        # Normalize the transport view from the (now authoritative) exec mode.
+        if cfg.exec_mode == "local":
+            cfg.host, cfg.container = "", "local"
+        elif cfg.exec_mode == "local-container":
+            cfg.host = ""
+        elif cfg.exec_mode == "remote":
+            cfg.container = ""
+        # remote-container keeps both as written.
+
+
+def _parse_generation_blocks(kv: dict) -> dict[str, TargetConfig]:
+    """Discover A<n>_* generation blocks generically + normalize transports."""
+    targets: dict[str, TargetConfig] = {}
+    for key, val in kv.items():
+        m = _GENERATION_BLOCK_RE.match(key)
+        if m:
+            arch, field = f"a{m.group(1)}", m.group(2)
+        else:
+            # non-A<digit> generation prefixes (e.g. ASCEND310P_ for 310p) are
+            # resolved through the explicit target→prefix map, never derived
+            # by uppercasing (310P_* is an illegal shell identifier).
+            hit = next(
+                (
+                    name
+                    for name, pref in TARGET_ENV_PREFIXES.items()
+                    if pref != name.upper() and key.startswith(pref + "_")
+                ),
+                None,
+            )
+            if hit is None:
+                continue
+            _cut = len(TARGET_ENV_PREFIXES[hit]) + 1
+            arch, field = hit, key[_cut:]
+        attr = _GENERATION_BLOCK_FIELDS.get(field)
+        if attr is None:
+            continue
+        cfg = targets.setdefault(arch, _empty_config(arch))
+        setattr(cfg, attr, val.strip())
+
+    _apply_host_mode_switches(targets)
+    _normalize_block_transports(targets)
+    return targets
+
+
 class AscendCEnv:
-    target: str                # "a5" | "a3" | "a2" | "310p"
-    host: str
-    user: str
-    password: str
-    container: str
-    cann_path: str
-    soc_version: str
-    benchmark_root: str
-    local_benchmark: str
-    local_project: str
-    archive_project: str       # mode-owned output project (migration/backward)
-    build_archive_enabled: bool
-    # Customer mode is seeded by the scoped CLI and then loaded from durable
-    # state. Empty means "not resolved yet", never an implicit third mode.
-    opgen_mode: str = ""
-    # When opgen_mode=="port_a3_to_a5", path to the ops-nn op directory
-    # (e.g. ~/workspace/cann/ops-nn/loss/ctc_loss_v3). Empty otherwise.
-    port_a3_source: str = ""
-    # Reference selection for newly created port-a3 workspaces.  Empty means
-    # "no implicit default": new invocations must pass an explicit
-    # --reference-source (npubench, or a3_live for a live A3 capture).
-    port_a3_reference_source: str = ""
-    # Per-target A3 reference-run config (used by phase_o25_a3_ref when
-    # active target is a5 and reference baseline is A3-CANN).
-    a3_host: str = ""
-    a3_user: str = ""
-    a3_container: str = ""
-    a3_cann_path: str = ""
-    a3_soc_version: str = ""
-    a3_workspace: str = ""
-    # task#24-item2 (2026-06-01): dedicated A5 build-target config for port_a3
-    # mode (A3-source → A5-build, split-host). Read ONLY from A5_* keys — never
-    # the generic `host`/`cann_path` resolution — so an agent whose primary
-    # TARGET=a3 can still point port_a3 at a separate A5 build host without
-    # flipping TARGET. Empty when A5_* not configured → no behavior change for
-    # callers that do not configure an A5 host.
-    a5_host: str = ""
-    a5_container: str = ""
-    a5_cann_path: str = ""
-    a5_soc_version: str = ""
-    # P129 (2026-05-17): host-side slice paths for A3 multi-agent isolation.
-    # See feedback_a3_per_agent_sliced_container_convention. Container path
-    # `/home/REDACTED_USER` is bound to host path `${a3_host_home}` (e.g.
-    # `/home/REDACTED_USER_opus`). orchestrator validates this mapping at port_a3
-    # dispatch time via `docker inspect` against the live container.
-    a3_host_home: str = ""
-    a3_host_backup: str = ""
-    a3_deploy_stage_host: str = ""
-    a3_deploy_stage_container: str = ""
-    # The customer workflow has one kernel programming model: AscendC.
-    backend: str = "ascendc"
-    # P0xxx xulei commit 12a1b71e (2026-05-13): per-subagent settings file.
-    # Reads SUBAGENT_SETTINGS_<AGENT_TYPE_UPPER>=<path> from .ascendc_env.
-    # Used by agent_dispatch._build_extra_args to pass --settings to the CC harness CLI
-    # per agent type. Empty dict means default settings.json applies.
-    # xulei's original commit added the caller but forgot the storage + method;
-    # added here 2026-05-15 to unblock cold-starts (a5 audit catch).
-    subagent_settings: dict[str, str] = None
+    """Parsed workspace/.ascendc_env.
+
+    Generation blocks (A<n>_*) are discovered generically — the generation
+    set is open (A2 today, A6/A7 later), never a hardcoded enum. `target`
+    (TARGET key, default a5) selects the candidate-side block; `source_arch`
+    (SOURCE key, default a3) selects the reference-side block — env/source.
+
+    The legacy attribute surface (host/user/container/cann_path/soc_version
+    + a3_*/a5_*) is preserved as properties over the block views: existing
+    consumers and `AscendCEnv(target=..., host=..., ...)` constructions keep
+    working unchanged. Migration path (B): callers move to the block
+    accessors batch by batch; the properties go last.
+    """
+
+    def __init__(
+        self,
+        target: str = "a5",
+        host: str = "",
+        user: str = "",
+        password: str = "",
+        container: str = "",
+        cann_path: str = "",
+        soc_version: str = "",
+        benchmark_root: str = "",
+        local_benchmark: str = "",
+        local_project: str = "",
+        archive_project: str = "",
+        build_archive_enabled: bool = False,
+        opgen_mode: str = "",
+        port_a3_source: str = "",
+        # Reference selection for newly created port-a3 workspaces. Empty means
+        # "no implicit default": new invocations must pass an explicit
+        # --reference-source (npubench, or a3_live for a live A3 capture).
+        port_a3_reference_source: str = "",
+        a3_host: str = "",
+        a3_user: str = "root",
+        a3_container: str = "",
+        a3_cann_path: str = "",
+        a3_soc_version: str = "",
+        a3_workspace: str = "",
+        a5_host: str = "",
+        a5_container: str = "",
+        a5_cann_path: str = "",
+        a5_soc_version: str = "",
+        a3_host_home: str = "",
+        a3_host_backup: str = "",
+        a3_deploy_stage_host: str = "",
+        a3_deploy_stage_container: str = "",
+        backend: str = "ascendc",
+        subagent_settings: Optional[dict] = None,
+        *,
+        targets: Optional[dict] = None,
+        source_arch: str = "a3",
+    ):
+        self.target = target or "a5"
+        # TARGET may carry a -suffix (a3-ds); the BLOCK it selects is the
+        # bare generation (a3) since blocks are keyed A<n>_*.
+        _tbase = re.fullmatch(r"(a\d+)(?:-[a-z0-9_]+)?", self.target)
+        self._target_base = _tbase.group(1) if _tbase else self.target
+        self.source_arch = source_arch
+        self.backend = backend
+        self.benchmark_root = benchmark_root
+        self.local_benchmark = local_benchmark
+        self.local_project = local_project
+        self.archive_project = archive_project
+        self.build_archive_enabled = build_archive_enabled
+        # Customer mode is seeded by the scoped CLI and then loaded from
+        # durable state. Empty means "not resolved yet", never an implicit
+        # third mode.
+        self.opgen_mode = opgen_mode
+        self.port_a3_source = port_a3_source
+        self.port_a3_reference_source = port_a3_reference_source
+        self.subagent_settings = subagent_settings
+        if targets is not None:
+            self.targets: dict[str, TargetConfig] = dict(targets)
+            self.targets.setdefault(self._target_base, _empty_config(self._target_base))
+            return
+        self.targets = self._fold_legacy_blocks(
+            self._target_base,
+            flat={
+                "host": host,
+                "user": user,
+                "password": password,
+                "container": container,
+                "cann_path": cann_path,
+                "soc_version": soc_version,
+            },
+            a3_kw=dict(
+                host=a3_host,
+                user=a3_user or "root",
+                container=a3_container,
+                cann_path=a3_cann_path,
+                soc_version=a3_soc_version,
+                workspace=a3_workspace,
+                host_home=a3_host_home,
+                host_backup=a3_host_backup,
+                deploy_stage_host=a3_deploy_stage_host,
+                deploy_stage_container=a3_deploy_stage_container,
+            ),
+            a5_kw=dict(
+                host=a5_host,
+                container=a5_container,
+                cann_path=a5_cann_path,
+                soc_version=a5_soc_version,
+            ),
+        )
+
+    @property
+    def a3_cann_path(self) -> str:
+        return self.target_config("a3").cann_path
+
+    @property
+    def a3_container(self) -> str:
+        return self.target_config("a3").container
+
+    @property
+    def a3_deploy_stage_container(self) -> str:
+        return self.target_config("a3").deploy_stage_container
+
+    @property
+    def a3_deploy_stage_host(self) -> str:
+        return self.target_config("a3").deploy_stage_host
+
+    # -- legacy per-generation views ------------------------------------------
+    @property
+    def a3_host(self) -> str:
+        return self.target_config("a3").host
+
+    @property
+    def a3_host_backup(self) -> str:
+        return self.target_config("a3").host_backup
+
+    @property
+    def a3_host_home(self) -> str:
+        return self.target_config("a3").host_home
+
+    @property
+    def a3_soc_version(self) -> str:
+        return self.target_config("a3").soc_version
+
+    @property
+    def a3_user(self) -> str:
+        return self.target_config("a3").user
+
+    @property
+    def a3_workspace(self) -> str:
+        return self.target_config("a3").workspace
+
+    @property
+    def a5_cann_path(self) -> str:
+        return self.target_config("a5").cann_path
+
+    @property
+    def a5_container(self) -> str:
+        return self.target_config("a5").container
+
+    @property
+    def a5_host(self) -> str:
+        return self.target_config("a5").host
+
+    @property
+    def a5_soc_version(self) -> str:
+        return self.target_config("a5").soc_version
+
+    @property
+    def cann_path(self) -> str:
+        return self._active().cann_path or self.target_config("a5").cann_path
+
+    @property
+    def container(self) -> str:
+        return self._active().container or self.target_config("a5").container
+
+    @property
+    def host(self) -> str:
+        return self._active().host or self.target_config("a5").host
+
+    @property
+    def password(self) -> str:
+        return self._active().password or self.target_config("a5").password
+
+    @property
+    def soc_version(self) -> str:
+        return self._active().soc_version or self.target_config("a5").soc_version
+
+    @property
+    def user(self) -> str:
+        return self._active().user or self.target_config("a5").user
+
+    @staticmethod
+    def _fold_legacy_blocks(
+        target_base, flat, a3_kw, a5_kw
+    ) -> "dict[str, TargetConfig]":
+        """Legacy construction path: fold the flat legacy kwargs into block
+        views.
+
+        Per-generation kwargs seed their block first; the active-view fields
+        then land on the TARGET block (only into empty slots — the specific
+        per-generation key wins, mirroring the load_env target-first
+        precedence)."""
+        a3 = TargetConfig(arch="a3", **a3_kw)
+        a5 = TargetConfig(arch="a5", **a5_kw)
+        targets: "dict[str, TargetConfig]" = {"a3": a3, "a5": a5}
+        block = targets.setdefault(target_base, _empty_config(target_base))
+        for attr, val in (
+            ("host", flat["host"]),
+            ("user", flat["user"]),
+            ("password", flat["password"]),
+            ("container", flat["container"]),
+            ("cann_path", flat["cann_path"]),
+            ("soc_version", flat["soc_version"]),
+        ):
+            if val and not getattr(block, attr):
+                setattr(block, attr, val)
+        if not block.user:
+            block.user = "root"
+        return targets
+
+    def exec_mode(self, arch: Optional[str] = None) -> str:
+        return self.target_config(arch or self._target_base).exec_mode
 
     def get_subagent_settings(self, agent_type: str) -> Optional[str]:
         """Return settings-file path for given agent_type (or None).
@@ -128,6 +455,46 @@ class AscendCEnv:
             return None
         key = agent_type.upper().replace("-", "_")
         return self.subagent_settings.get(key)
+
+    def replace(self, **changes) -> "AscendCEnv":
+        """dataclasses.replace-style copy for the plain-class env.
+
+        Only non-generation fields may be overridden here (the callers this
+        exists for tweak opgen_mode/archive_project mid-test); the block
+        views are shared by reference, which is fine for read-side use.
+        """
+        base = dict(
+            target=self.target,
+            benchmark_root=self.benchmark_root,
+            local_benchmark=self.local_benchmark,
+            local_project=self.local_project,
+            archive_project=self.archive_project,
+            build_archive_enabled=self.build_archive_enabled,
+            opgen_mode=self.opgen_mode,
+            port_a3_source=self.port_a3_source,
+            backend=self.backend,
+            subagent_settings=self.subagent_settings,
+            targets=self.targets,
+            source_arch=self.source_arch,
+        )
+        base.update(changes)
+        return AscendCEnv(**base)
+
+    def source_view(self) -> TargetConfig:
+        """Reference-side block (SOURCE selector; SOURCE=arch must be a
+
+        configured A<n>_* block for the flows that use it).
+        """
+        return self.target_config(self.source_arch)
+
+    # -- block accessors (new code reads these) -----------------------------
+    def target_config(self, arch: str) -> TargetConfig:
+        """Return the generation block for arch (empty config when absent)."""
+        return self.targets.get(arch) or _empty_config(arch)
+
+    # -- legacy active-target view (TARGET block, a5 fallback) --------------
+    def _active(self) -> TargetConfig:
+        return self.target_config(self._target_base)
 
 
 # Targets allowed to fall back to generic keys (SOC_VERSION/CANN_PATH) and to
@@ -162,9 +529,129 @@ def target_env_prefix(target: str) -> str:
         ) from error
 
 
-def target_env_key(target: str, suffix: str) -> str:
-    """Return the canonical `<PREFIX>_<SUFFIX>` env key for `target`."""
-    return f"{target_env_prefix(target)}_{suffix}"
+def _parse_env_kv(env_file: Path) -> "dict[str, str]":
+    """Parse shell-style KEY=VALUE lines into a dict."""
+    kv: dict[str, str] = {}
+    for raw_line in env_file.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Fail loud on the legacy illegal-key spelling for 310p. Must run
+        # BEFORE the KEY regex below: "310P_*" starts with a digit, so it can
+        # never match `^([A-Z_]...)` — without this check the line is
+        # SILENTLY SKIPPED, the value disappears, and the resolver proceeds
+        # with an empty ASCEND310P_* block (the shell-side source fails on
+        # such lines, the Python side must fail equally loud).
+        if re.match(r"^310P_[A-Za-z0-9_]*=", line):
+            raise ValueError(
+                f"LEGACY_310P_ENV_KEYS at {env_file}: '310P_*' keys are not "
+                "legal; use ASCEND310P_*"
+            )
+        m = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        # Strip optional matching quotes
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        kv[key] = val
+    return kv
+
+
+def _resolve_env_identity(kv: "dict[str, str]") -> tuple:
+    """(target, source_arch, archive_project, base_generation) from the env
+    kv — validates TARGET/SOURCE/OPGEN_MODE spellings."""
+    target = (kv.get("TARGET") or "a5").strip().lower()
+    source_arch = (kv.get("SOURCE") or "a3").strip().lower()
+    # TARGET may carry a suffix (a3-ds); the generation BLOCK it selects is
+    # the bare generation (a3) — blocks are keyed A<n>_*, so the base wins.
+    _tmatch = re.fullmatch(r"(a\d+)(?:-[a-z0-9_]+)?", target)
+    if not _tmatch:
+        if _ds(target) in TARGET_ENV_PREFIXES:
+            _tmatch = re.fullmatch(r"(\w+)", _ds(target))
+        else:
+            raise ValueError(
+                f"TARGET must be a generation (a2/a3/a5/...) or an explicit "
+                f"mapped target ({sorted(TARGET_ENV_PREFIXES)}), optionally "
+                f"with a -suffix; got {target!r}"
+            )
+    if not re.fullmatch(r"a\d+", source_arch):
+        raise ValueError(
+            f"SOURCE must be a generation (a2/a3/a5/...); got {source_arch!r}"
+        )
+    env_mode = kv.get("OPGEN_MODE", "")
+    if env_mode not in ("", "port_a3_to_a5", "backward"):
+        raise ValueError(
+            f"OPGEN_MODE may only be port_a3_to_a5 or backward; got {env_mode!r}"
+        )
+    # Archive namespace is DESTINATION-aware: a 310p port archives under its
+    # own project (a3_to_310p_port) so the a5 namespace stays the a5-destination contract — mixing destinations in one
+    # output tree makes "which chip was this ported for" unanswerable from the
+    # archive layout. Must agree with a3_ref_common.PORT_DESTINATIONS and the
+    # port_a3 plugin's archive_project_claim.
+    _dest = (target or "").strip().lower()
+    if _dest.endswith("-ds"):
+        _dest = _dest[:-3]
+    archive_project = {
+        "port_a3_to_a5": "a3_to_310p_port" if _dest == "310p" else "a3_to_a5_port",
+        "backward": "backward_ops",
+    }.get(kv.get("OPGEN_MODE", ""), "generated_ops")
+    return target, source_arch, archive_project, _tmatch.group(1)
+
+
+def _apply_generic_key_fallback(
+    kv: "dict[str, str]", targets: dict, base_generation: str
+) -> None:
+    """Generic-key compatibility fallback (deprecated write style).
+
+    The generation block always wins; a generic HOST/USER/PASSWORD/CONTAINER/
+    CANN_PATH/SOC_VERSION only fills EMPTY active-block fields, with a
+    loud migration warning; a conflicting generic key is named and ignored
+    (DEBT-227 semantics preserved). Generic keys never reach non-active
+    blocks — write A<n>_* keys for those.
+    Generic keys are a legacy-compat affordance for a5/a3/a2 only — a 310p
+    block (ASCEND310P_*) must NOT inherit generic values: an empty 310p
+    field means "misconfigured", not "use whatever generic says" (naming
+    the WRONG chip — 950PR silicon with a 200x toolchain assumption)."""
+    _generic_compat = base_generation in _GENERIC_COMPAT_TARGETS
+    _generic_fallback = (
+        ("host", "HOST"),
+        ("user", "USER"),
+        ("password", "PASSWORD"),
+        ("container", "CONTAINER"),
+        ("cann_path", "CANN_PATH"),
+        ("soc_version", "SOC_VERSION"),
+    )
+    _base_prefix = base_generation.upper()
+    _active_block = targets.get(base_generation) or _empty_config(base_generation)
+    targets[base_generation] = _active_block
+    for attr, generic_key in _generic_fallback if _generic_compat else ():
+        generic_val = (kv.get(generic_key) or "").strip()
+        if not generic_val:
+            continue
+        block_val = getattr(_active_block, attr)
+        if block_val:
+            if generic_val != block_val:
+                print(
+                    f"[briefs] WARNING: both {_base_prefix}_{generic_key}="
+                    f"{block_val!r} and generic {generic_key}={generic_val!r} "
+                    f"are set and DIFFER — the block key wins; remove the "
+                    f"generic {generic_key} from workspace/.ascendc_env",
+                    file=sys.stderr,
+                )
+            continue
+        if attr == "container" and generic_val.lower() == "local":
+            # a generic CONTAINER=local expresses the legacy local intent —
+            # the block-local mapping (EXEC=local + warning) already covers
+            # it; a generic fill would only alias the container name
+            continue
+        print(
+            f"[briefs] WARNING: generic {generic_key} is deprecated — write "
+            f"{_base_prefix}_{generic_key} instead; using it as a fallback "
+            f"for this load",
+            file=sys.stderr,
+        )
+        setattr(_active_block, attr, generic_val)
 
 
 def load_env(env_file: Optional[Path] = None) -> AscendCEnv:
@@ -190,54 +677,34 @@ def load_env(env_file: Optional[Path] = None) -> AscendCEnv:
         env_file = Path(override) if override else DEFAULT_ASCENDC_ENV
     if not env_file.exists():
         raise FileNotFoundError(f".ascendc_env not found at {env_file}")
-    raw = env_file.read_text()
-    kv: dict[str, str] = {}
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # Fail loud on the legacy illegal-key spelling for 310p. Must run
-        # BEFORE the KEY regex below: "310P_*" starts with a digit, so it can
-        # never match `^([A-Z_]...)` — without this check the line is
-        # SILENTLY SKIPPED, the value disappears, and the resolver proceeds
-        # with an empty ASCEND310P_* block (the shell-side source fails on
-        # such lines, the Python side must fail equally loud).
-        if re.match(r"^310P_[A-Za-z0-9_]*=", line):
-            raise ValueError(
-                f"LEGACY_310P_ENV_KEYS at {env_file}: '310P_*' keys are not "
-                "legal; use ASCEND310P_*"
-            )
-        m = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", line)
-        if not m:
-            continue
-        key, val = m.group(1), m.group(2).strip()
-        # Strip optional matching quotes
-        if (val.startswith("'") and val.endswith("'")) or (
-            val.startswith('"') and val.endswith('"')
-        ):
-            val = val[1:-1]
-        kv[key] = val
-
-    target = kv.get("TARGET", "a5")
+    kv = _parse_env_kv(env_file)
+    target, source_arch, archive_project, base_generation = _resolve_env_identity(kv)
     backend = resolve_backend_from_env(kv.get("BACKEND", "ascendc"), None)
-    # Archive namespace is DESTINATION-aware: a 310p port archives under its
-    # own project (a3_to_310p_port) so the a5 namespace stays the a5-destination contract — mixing destinations in one
-    # output tree makes "which chip was this ported for" unanswerable from the
-    # archive layout. Must agree with a3_ref_common.PORT_DESTINATIONS and the
-    # port_a3 plugin's archive_project_claim.
-    _dest = (target or "").strip().lower()
-    if _dest.endswith("-ds"):
-        _dest = _dest[:-3]
-    archive_project = {
-        "port_a3_to_a5": "a3_to_310p_port" if _dest == "310p" else "a3_to_a5_port",
-        "backward": "backward_ops",
-    }.get(kv.get("OPGEN_MODE", ""), "generated_ops")
 
-    # Resolve per-target keys (TARGET=a3 → A3_HOST, TARGET=310p → ASCEND310P_HOST).
-    # Explicit prefix map — never derived by uppercasing (see TARGET_ENV_PREFIXES).
-    _tp_base = target_env_prefix(target)  # a3 → A3, a3-ds → A3, 310p → ASCEND310P
+    targets = _parse_generation_blocks(kv)
+    _apply_generic_key_fallback(kv, targets, base_generation)
 
-    return _build_env_from_kv(kv, target, backend, archive_project, _tp_base)
+    _sub_prefix_len = len("SUBAGENT_SETTINGS_")
+    return AscendCEnv(
+        target=target,
+        benchmark_root=kv.get("BENCHMARK_ROOT", ""),
+        local_benchmark=kv.get("LOCAL_BENCHMARK", ""),
+        local_project=kv.get("LOCAL_PROJECT", ""),
+        archive_project=archive_project,
+        build_archive_enabled=kv.get("BUILD_ARCHIVE_ENABLED", "0") == "1",
+        opgen_mode=kv.get("OPGEN_MODE", ""),
+        port_a3_source=kv.get("PORT_A3_SOURCE", ""),
+        port_a3_reference_source=kv.get("PORT_A3_REFERENCE_SOURCE", ""),
+        backend=backend,
+        subagent_settings={
+            k[_sub_prefix_len:]: v
+            for k, v in kv.items()
+            if k.startswith("SUBAGENT_SETTINGS_")
+        }
+        or None,
+        targets=targets,
+        source_arch=source_arch,
+    )
 
 
 def resolve_backend_from_env(backend: str, env) -> str:
@@ -247,134 +714,44 @@ def resolve_backend_from_env(backend: str, env) -> str:
     return "ascendc"
 
 
+def _multirank_state_plugin(state_path: Path):
+    """The multirank extension plugin when durable state flags multirank."""
+    import json as _json
+
+    try:
+        if _json.loads(state_path.read_text()).get("multirank") is True:
+            from plugins.multirank import get_plugin_instance
+
+            return get_plugin_instance()
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def resolve_plugin_for_brief(
     env: "AscendCEnv",
     workspace: Optional[Path] = None,
     backend_override: Optional[str] = None,
 ):
-    """Resolve a scoped plugin from persisted workspace state only."""
+    """Resolve a scoped plugin from persisted workspace state only.
+
+    Multirank workspaces (port_a3_to_a5 + `multirank: true` in durable
+    state) resolve to the multirank EXTENSION plugin so its pp/ko/layout
+    brief-override hooks fire — the extension owns the complete probe and
+    optimizer protocols for multi-rank kernels.
+    """
     if backend_override not in (None, "ascendc"):
         raise ValueError("only the AscendC backend is supported")
     from plugins import detect_plugin  # avoid import-time cycle
+
     if workspace is not None and workspace.exists():
+        state_path = workspace / ".opgen_state.json"
+        if state_path.is_file():
+            plugin = _multirank_state_plugin(state_path)
+            if plugin is not None:
+                return plugin
         return detect_plugin(workspace)
     return None
-
-
-def _resolve_target_first(kv: dict, target_key: str, generic_key: str,
-                          fallback_key: str, target: str) -> str:
-    """Resolve a target-specific config key with generic + fallback, TARGET-SPECIFIC WINS.
-
-    Precedence (fixes the DEBT-227 config bug): the target-specific key
-    (e.g. ``A3_SOC_VERSION``) takes precedence over the generic key
-    (e.g. ``SOC_VERSION``). The generic key is only a fallback for when the
-    target-specific one is absent.
-
-    Historically ``soc_version`` resolved the GENERIC ``SOC_VERSION`` FIRST, so a
-    stale/leftover generic ``SOC_VERSION`` (or ``CANN_PATH``) in ``.ascendc_env``
-    would SILENTLY override the correct ``A3_SOC_VERSION`` — the customer-repro
-    agent hit exactly this: TARGET=a3 but the build used the A5 SoC because a
-    generic ``SOC_VERSION`` shadowed ``A3_SOC_VERSION`` with no diagnostic.
-
-    When BOTH the target-specific and the generic key are present AND they
-    DIFFER, emit a loud stderr WARNING (fail-loud on conflict) so the override
-    is never silent — then return the target-specific value.
-
-    ``fallback_key`` (e.g. ``A5_SOC_VERSION``) is the last resort, preserving the
-    pre-existing default-to-A5 behavior for envs that only populate the A5 block.
-    """
-    target_val = kv.get(target_key)
-    generic_val = kv.get(generic_key)
-    if target_val and generic_val is not None and generic_val != target_val:
-        print(
-            f"[briefs] WARNING: both {target_key}={target_val!r} and generic "
-            f"{generic_key}={generic_val!r} are set and DIFFER (TARGET={target}). "
-            f"Using the target-specific {target_key} — the generic {generic_key} "
-            f"is IGNORED (it used to silently override; DEBT-227). Remove the "
-            f"generic {generic_key} from workspace/.ascendc_env to silence this.",
-            file=sys.stderr,
-        )
-    return target_val or generic_val or kv.get(fallback_key, "")
-
-
-def _legacy_a5_fallback(kv: dict, target: str):
-    """Return (enabled, getter) for the legacy A5_* fallback block.
-
-    Only the legacy compat targets (a5/a3/a2) may fall back to A5_*/generic
-    keys — their envs historically populate just the A5 block. 310p must NOT
-    inherit A5_*: an empty 310p field means "misconfigured", not "use the A5
-    host" (an accidental A5 inherit names the WRONG chip — 950PR silicon with
-    a 200x toolchain assumption).
-    """
-    target_norm = (target or "").strip().lower()
-    if target_norm.endswith("-ds"):
-        target_norm = target_norm[:-3]
-    if target_norm in _GENERIC_COMPAT_TARGETS:
-        return True, (lambda key, default="": kv.get(f"A5_{key}", default))
-    return False, (lambda key, default="": default)
-
-
-def _build_env_from_kv(kv: dict, target: str, backend: str, archive_project: str, _tp_base: str):
-    """Internal helper: construct AscendCEnv from parsed key-value dict."""
-    env_mode = kv.get("OPGEN_MODE", "")
-    if env_mode not in ("", "port_a3_to_a5", "backward"):
-        raise ValueError(
-            "OPGEN_MODE may only be port_a3_to_a5 or backward; "
-            f"got {env_mode!r}"
-        )
-    # A5_* fallback only for the legacy compat targets (a5/a3/a2); 310p must
-    # NOT inherit A5_* (rationale: _legacy_a5_fallback).
-    _legacy_fallback, _a5 = _legacy_a5_fallback(kv, target)
-    return AscendCEnv(
-        target=target,
-        host=kv.get(f"{_tp_base}_HOST") or _a5("HOST"),
-        user=kv.get(f"{_tp_base}_USER") or _a5("USER", "root"),
-        password=kv.get(f"{_tp_base}_PASSWORD") or _a5("PASSWORD"),
-        container=kv.get(f"{_tp_base}_CONTAINER") or _a5("CONTAINER"),
-        # DEBT-227: TARGET-SPECIFIC wins over generic (was already correct for
-        # cann_path; soc_version had the generic-first bug — now unified).
-        cann_path=_resolve_target_first(
-            kv, f"{_tp_base}_CANN_PATH",
-            "CANN_PATH" if _legacy_fallback else _NO_KEY,
-            "A5_CANN_PATH" if _legacy_fallback else _NO_KEY, target),
-        soc_version=_resolve_target_first(
-            kv, f"{_tp_base}_SOC_VERSION",
-            "SOC_VERSION" if _legacy_fallback else _NO_KEY,
-            "A5_SOC_VERSION" if _legacy_fallback else _NO_KEY, target),
-        benchmark_root=kv.get("BENCHMARK_ROOT", ""),
-        local_benchmark=kv.get("LOCAL_BENCHMARK", ""),
-        local_project=kv.get("LOCAL_PROJECT", ""),
-        archive_project=archive_project,
-        build_archive_enabled=kv.get("BUILD_ARCHIVE_ENABLED", "0") == "1",
-        # The scoped CLI and durable workspace state own the customer mode.
-        # Environment loading must not invent a default generation route.
-        opgen_mode=env_mode,
-        port_a3_source=kv.get("PORT_A3_SOURCE", ""),
-        port_a3_reference_source=kv.get("PORT_A3_REFERENCE_SOURCE", ""),
-        a3_host=kv.get("A3_HOST", ""),
-        a3_user=kv.get("A3_USER", "root"),
-        a3_container=kv.get("A3_CONTAINER", ""),
-        a3_cann_path=kv.get("A3_CANN_PATH", ""),
-        a3_soc_version=kv.get("A3_SOC_VERSION", ""),
-        a3_workspace=kv.get("A3_WORKSPACE", ""),
-        a3_host_home=kv.get("A3_HOST_HOME", ""),
-        a3_host_backup=kv.get("A3_HOST_BACKUP", ""),
-        a3_deploy_stage_host=kv.get("A3_DEPLOY_STAGE_HOST", ""),
-        a3_deploy_stage_container=kv.get("A3_DEPLOY_STAGE_CONTAINER", ""),
-        # task#24-item2: explicit A5 build-target keys (port_a3 split-host).
-        a5_host=kv.get("A5_HOST", ""),
-        a5_container=kv.get("A5_CONTAINER", ""),
-        a5_cann_path=kv.get("A5_CANN_PATH", ""),
-        a5_soc_version=kv.get("A5_SOC_VERSION", ""),
-        backend=backend,
-        # P0xxx xulei (commit 12a1b71e 2026-05-13, completed 2026-05-15 by a5):
-        # parse SUBAGENT_SETTINGS_<AGENT_TYPE_UPPER>=<path> keys into dict.
-        # Empty dict if no SUBAGENT_SETTINGS_* keys present.
-        subagent_settings={
-            k[len("SUBAGENT_SETTINGS_"):]: v
-            for k, v in kv.items() if k.startswith("SUBAGENT_SETTINGS_")
-        } or None,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +772,7 @@ def env_block(
     if deploy_stage_dir is None:
         # Stable per-spawn dir
         import time
+
         deploy_stage_dir = f"op_{_op_slug(op)}_lane{lane}_{int(time.time())}"
     if build_batch_id is None:
         build_batch_id = f"op_{_op_slug(op)}"
@@ -446,7 +824,8 @@ def rollback_context_block(workspace: Path) -> str:
         return ""
     try:
         lines = [
-            json.loads(ln) for ln in history.read_text(encoding="utf-8").splitlines()
+            json.loads(ln)
+            for ln in history.read_text(encoding="utf-8").splitlines()
             if ln.strip()
         ]
     except (json.JSONDecodeError, OSError):
@@ -527,9 +906,11 @@ def hard_floors_block(workspace: Path) -> str:
     When .no_edge_cases marker exists, Pass B is marked N/A.
     """
     no_ec = _no_edge_cases(workspace)
-    pass_b_line = ("- Pass B: N/A (edge cases disabled)"
-                   if no_ec
-                   else "- Pass B (edge_dataset): bit-exact vs CPU truth")
+    pass_b_line = (
+        "- Pass B: N/A (edge cases disabled)"
+        if no_ec
+        else "- Pass B (edge_dataset): bit-exact vs CPU truth"
+    )
 
     vj_path = workspace / "verification.json"
     if not vj_path.exists():
@@ -552,12 +933,14 @@ GOAL:
     pb = prec.get("pass_b", {}) or {}
     det = vj.get("determinism", {}) or {}
 
-    ratio = (perf.get("ratio")
-             or perf.get("ratio_mean")
-             or perf.get("overall_speedup")
-             or perf.get("sum_ratio")
-             or perf.get("ratio_median")
-             or perf.get("median_ratio"))
+    ratio = (
+        perf.get("ratio")
+        or perf.get("ratio_mean")
+        or perf.get("overall_speedup")
+        or perf.get("sum_ratio")
+        or perf.get("ratio_median")
+        or perf.get("median_ratio")
+    )
 
     pa_pass = pa.get("tier1_pass", pa.get("n_pass", "?"))
     pa_total = pa.get("total", pa.get("n_total", "?"))
@@ -625,7 +1008,12 @@ def env_quirks_block(target: str) -> str:
             if rule:
                 lines.append(f"  - [{cat}] {rule}")
                 # Surface the most actionable workaround field if present
-                wa = q.get("workaround") or q.get("export_cmd") or q.get("wrapper_usage") or ""
+                wa = (
+                    q.get("workaround")
+                    or q.get("export_cmd")
+                    or q.get("wrapper_usage")
+                    or ""
+                )
                 if wa:
                     lines.append(f"    → {wa}")
         if lines:

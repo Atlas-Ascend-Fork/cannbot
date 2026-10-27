@@ -864,7 +864,8 @@ try:
 except Exception as exc:
     print(f"  could not read skill listing: {exc}"); sys.exit(1)
 names = {s.get("name") for s in data if isinstance(s, dict)}
-missing = [w for w in ("ascendc-cross-gen-port", "ascendc-backward-gen") if w not in names]
+missing = [w for w in ("ascendc-cross-gen-port", "ascendc-backward-gen")
+                       if w not in names]
 if missing:
     print(f"  CLI resolved {len(names)} skills but not: {missing}"); sys.exit(1)
 PYSKILL
@@ -1007,16 +1008,17 @@ elif [ "$TOOL" = "codearts" ]; then
   echo -e "       ${GREEN}/ascendc-cross-gen-port <ops-nn source + golden task>${NC}   (→ orch --port-a3-ops, needs --reference-source/--npubench-task)"
   echo -e "       ${GREEN}/ascendc-cross-gen-migration <ops-nn source>${NC}   (无 golden 轻量迁移，不经引擎)"
   echo -e "       ${GREEN}/ascendc-backward-gen <forward spec>${NC}      (→ orch --backward)"
+  echo -e "       ${DIM}(multirank fusion ops: /ascendc-cross-gen-port with the --multirank extension)${NC}"
   echo -e "  ${DIM}note: codearts dispatch reuses the OpenCode run protocol (CodeArts CLI is an OpenCode fork); pipeline dispatch requires the codearts CLI + node/bun on PATH.${NC}"
   echo -e "  ${DIM}note: CodeArts models come from the Huawei Cloud side — complete CLI auth first (CODEARTS_CLI_AK / CODEARTS_CLI_SK, apply at https://codearts.huaweicloud.com/portal/settings/cli-auth ), or the skill run fails with 模型列表获取失败.${NC}"
-  echo -e "  ${DIM}note: to use third-party models (GLM / DeepSeek / ...), configure them per the official custom-model guide: https://support.huaweicloud.com/usermanual-cli/codeartsagent_cli_00022.html${NC}"
-else
+  echo -e "  ${DIM}note: to use third-party models (GLM / DeepSeek / ...), configure them per the official custom-model guide: https://support.huaweicloud.com/usermanual-cli/codeartsagent_cli_00022.html${NC}"else
   echo -e "  ${BOLD}Quick start (Claude Code):${NC}"
   echo -e "  ${CYAN}1.${NC} use local generation/validation with ${GREEN}A5_CONTAINER=local${NC} (remote A5 host+container is explicit opt-in) — docs/USAGE.md"
   echo -e "  ${CYAN}2.${NC} launch ${GREEN}claude${NC}, then a customer entry skill:"
   echo -e "       ${GREEN}/ascendc-cross-gen-port <ops-nn source + golden task>${NC}   (→ orch --port-a3-ops, needs --reference-source/--npubench-task)"
   echo -e "       ${GREEN}/ascendc-cross-gen-migration <ops-nn source>${NC}   (无 golden 轻量迁移，不经引擎)"
   echo -e "       ${GREEN}/ascendc-backward-gen <forward spec>${NC}      (→ orch --backward)"
+  echo -e "       ${DIM}(multirank fusion ops: /ascendc-cross-gen-port with the --multirank extension)${NC}"
 fi
 echo -e "  ${DIM}Pipeline logic lives entirely in engine/; the entry skills are thin NL front-ends.${NC}"
 echo ""

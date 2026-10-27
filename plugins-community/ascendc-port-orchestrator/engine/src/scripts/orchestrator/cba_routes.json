@@ -3,6 +3,16 @@
     "topic": "AscendC 精度验收标准",
     "skill": "ops-precision-standard",
     "reference_hint": "各 dtype 输出的 atol/rtol 精度比对与验收标准",
-    "applies_to": ["all"]
+    "applies_to": [
+      "all"
+    ]
+  },
+  {
+    "topic": "AscendC API 用法与最佳实践",
+    "skill": "ascendc-api-best-practices",
+    "reference_hint": "AscendC API 语义/约束检索与 kernel 编写最佳实践",
+    "applies_to": [
+      "multirank"
+    ]
   }
 ]

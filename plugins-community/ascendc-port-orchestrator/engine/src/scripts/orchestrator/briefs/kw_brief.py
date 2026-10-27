@@ -35,20 +35,29 @@ The four FA backward symbols + the port_a3 orchestrator are re-imported below so
 (BackwardPlugin, the golden test). Behavior is byte-identical (prompt-template
 refactor; golden-locked).
 """
+
 from __future__ import annotations
 import json
 import logging
 
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from briefs._common import (
     env_quirks_block,
-    AscendCEnv, load_env,
-    env_block, hard_floors_block, kb_manifest_block,
-    schema_contract_block, fixed_layout_block, safety_block, g7_slug,
-    self_introspection_block, rollback_context_block,
-    _detect_forced_architecture, _FORCED_ARCH_TAGS,
+    AscendCEnv,
+    load_env,
+    env_block,
+    hard_floors_block,
+    kb_manifest_block,
+    schema_contract_block,
+    fixed_layout_block,
+    safety_block,
+    g7_slug,
+    self_introspection_block,
+    rollback_context_block,
+    _detect_forced_architecture,  # noqa: F401
+    _FORCED_ARCH_TAGS,  # noqa: F401
 )
 
 # DEBT-201 sibling-module re-imports. These keep the public `briefs.kw_brief`
@@ -76,6 +85,7 @@ from briefs.kw_brief_port_a3 import (  # noqa: F401
     _npubench_phase_instructions_block,
     _port_a3_phase_instructions_block,
 )
+
 # `_port_a3_cube_class_mix_block` is imported directly by
 # test_port_a3_cube_mix_brief.py — keep it on the public `briefs.kw_brief` surface.
 from briefs.kw_brief_pa3_phases import _port_a3_cube_class_mix_block  # noqa: F401
@@ -91,6 +101,7 @@ def _workspace_uses_npubench_reference(workspace: Path) -> bool:
     if not (Path(workspace) / ".opgen_state.json").exists():
         return False
     from reference_source import uses_npubench_reference
+
     try:
         return uses_npubench_reference(workspace)
     except Exception:
@@ -133,8 +144,8 @@ The prior controlled O5 build rejected the authored candidate. Repair the
 candidate source/build contract in this workspace, then hand off only when the
 candidate is ready for the harness-owned NPUBench evaluation.
 
-**Gate**: `{last.get('gate')}`
-**Signature**: `{last.get('signature', '?')}`
+**Gate**: `{last.get("gate")}`
+**Signature**: `{last.get("signature", "?")}`
 **Exact persisted reason**:
 
 {reason}
@@ -460,12 +471,16 @@ def build_worker_brief(
     # P131: when backend arg defaults, inherit from env.backend (set from
     # .ascendc_env BACKEND= or by orchestrator main() before brief build)
     from briefs._common import resolve_backend_from_env
+
     backend = resolve_backend_from_env(backend, env)
 
     # Phase 2 plugin-as-param (Q3 main agent): auto-resolve if caller didn't.
     if plugin is None:
         from briefs._common import resolve_plugin_for_brief
-        plugin = resolve_plugin_for_brief(env, workspace=workspace, backend_override=backend)
+
+        plugin = resolve_plugin_for_brief(
+            env, workspace=workspace, backend_override=backend
+        )
 
     slug = g7_slug(op, "aog-kernel-worker", spawn_index)
 
@@ -474,7 +489,12 @@ def build_worker_brief(
     # environment/provenance, hard-floor, schema, and generic phase sections:
     # those sections tell workers to use a different truth source or author
     # evidence that only the harness may publish on this provider.
-    if _workspace_uses_npubench_reference(workspace):
+    # Multirank workspaces are exempt even when npubench-bound: their npubench
+    # binding selects the truth tier, not the single-card npubench worker
+    # contract; the multirank phase/layout blocks own the brief shape below.
+    if _workspace_uses_npubench_reference(workspace) and not _workspace_is_multirank(
+        workspace
+    ):
         return _build_npubench_worker_brief(
             op,
             workspace,
@@ -493,14 +513,22 @@ def build_worker_brief(
 
     sections = [
         *_worker_brief_context_sections(op, workspace, env=env, lane=lane, slug=slug),
-        _phase_instructions_block(op, workspace, iter_cap_remaining, directive_text,
-                                  handoff_from_prior_agent, env=env, backend=backend, plugin=plugin),
+        _phase_instructions_block(
+            op,
+            workspace,
+            iter_cap_remaining,
+            directive_text,
+            handoff_from_prior_agent,
+            env=env,
+            backend=backend,
+            plugin=plugin,
+        ),
         "",
         # C2 backward-perf block — spread iff non-empty so forward-op briefs
         # stay byte-identical (matches phase_e / gate_spec convention).
         *([bw_c2_block_str, ""] if bw_c2_block_str else []),
         schema_contract_block(),
-        fixed_layout_block(),
+        _worker_layout_block(workspace),
         "",
         self_introspection_block(),
         "",
@@ -627,6 +655,7 @@ def _general_simd_regbase_block(
         op_name = workspace.name
         try:
             import json as _json
+
             cls_p = workspace / "op_classification.json"
             if cls_p.is_file():
                 cls = _json.loads(cls_p.read_text())
@@ -637,6 +666,7 @@ def _general_simd_regbase_block(
     try:
         from plugins.base import is_attention_named as _is_fa_named
         from plugins.base import is_fa_class as _is_fa_tag
+
         if _is_fa_named(op_name) or _is_fa_tag(op_class):
             return ""
     except Exception as error:
@@ -645,6 +675,7 @@ def _general_simd_regbase_block(
         )
 
     from briefs import external_kb as _ext
+
     _ref_simd_dev = _ext.kb_ref_display(
         "knowledge/ops/ascendc/guides/simd_development_reference.md"
     )
@@ -705,66 +736,51 @@ def _general_simd_regbase_block(
     )
 
 
-def _phase_instructions_block(
-    op: str,
-    workspace: Path,
-    iter_cap_remaining: int,
-    directive_text: Optional[str],
-    handoff_from_prior: Optional[str],
-    env: Optional["AscendCEnv"] = None,
-    backend: str = "ascendc",
-    *,
-    plugin: Optional[object] = None,
-) -> str:
-    """Build instructions for the two explicit AscendC customer modes."""
-    declared_mode = getattr(env, "opgen_mode", "") if env is not None else ""
-    if backend != "ascendc" or declared_mode not in {"port_a3_to_a5", "backward"}:
-        raise RuntimeError(
-            "unsupported worker route: expected AscendC port_a3_to_a5 or "
-            f"backward, got backend={backend!r}, mode={declared_mode!r}"
-        )
+def _workspace_is_multirank(workspace) -> bool:
+    """True when the durable state flags this port_a3 workspace `multirank`.
 
-    # FA-class +
-    # no directive = inject the template-assembly recipe. FA-class ops route to
-    # the standard kw worker, which assembles the arch35 op from arch22 + KB
-    # templates. FA is an op-class concern shared by both supported modes.
-    if not directive_text:
-        # DEBT-208: pass the build target so the FA MIX cross-core-sync block
-        # carries only the KB cards whose own `applies_to: soc=` covers it (PB-34
-        # is V220-only and INVERTS the KB's advice on A5). `env` may be None in
-        # unit contexts — fall back to the `a5` default the composer declares.
-        _fa_emit = _fa_class_template_assembly_block(
-            op, workspace, target=getattr(env, "target", None) or "a5"
-        )
-        if _fa_emit is not None:
-            return _fa_emit
+    Fail-open to False (single-card brief) for missing/unreadable state —
+    the CLI entry (`--multirank`) writes the flag before any brief build,
+    so an absent flag means a genuine single-card run.
+    """
+    import json as _json
+    from pathlib import Path as _P
 
-    # NOTE: directive_text wins over opgen_mode. When a probe / optimizer
-    # respawns the worker with a specific directive ("fix BF16 cast in line
-    # 234"), the directive is the tactical command — applies regardless of
-    # cold-start vs. port mode. Port-mode prose is only for the first spawn
-    # (no prior directive). Order checked by W5 test
-    # test_directive_text_overrides_port_mode.
-    if directive_text:
-        # 2026-08-27 (cc-vs-opencode parity fix, F1): a prior-agent directive
-        # must NEVER replace the FA-class template-assembly recipe.  The
-        # directive is a TACTICAL overlay (“this round: fix X”); the recipe is
-        # the STRUCTURAL know-how (where the regbase MIX templates live, how to
-        # assemble them).  flash_attention_score oc line proved the failure
-        # mode: every respawn carried a directive, so every brief took the
-        # early-return above and the worker never saw the FA template block
-        # -> generated a Ladder-3 AIV-only candidate while the sibling
-        # directive-less line (same model, kimi-for-coding) assembled a full
-        # regbase MIX from the wholeport templates.  Emit the directive first,
-        # then the FA block (when applicable), then the phases.
-        _fa_dir_emit = _fa_class_template_assembly_block(
-            op, workspace, target=getattr(env, "target", None) or "a5"
-        )
-        _directive_head = f"""# DIRECTIVE FROM PRIOR AGENT
+    if workspace is None:
+        return False
+    state = _P(workspace) / ".opgen_state.json"
+    if not state.is_file():
+        return False
+    try:
+        return _json.loads(state.read_text()).get("multirank") is True
+    except Exception:
+        return False
+
+
+def _worker_layout_block(workspace) -> str:
+    """The output-layout block for this workspace.
+
+    Multirank workspaces get the plugin's NEST layout block (prj-<op>/ nest,
+    op_host three-piece, py_ext dispatcher); every other workspace gets the
+    generic single-card layout block.
+    """
+    if _workspace_is_multirank(workspace):
+        from plugins.multirank import get_plugin_instance as _mr_plugin
+
+        block = _mr_plugin().kw_brief_fixed_layout_block()
+        if block is not None:
+            return block
+    return fixed_layout_block()
+
+
+def _directive_head_block(directive_text: str, fa_dir_emit: Optional[str]) -> str:
+    """The directive-first worker brief head (tactical overlay, then the
+    FA recipe when applicable, then the generic phases)."""
+    return f"""# DIRECTIVE FROM PRIOR AGENT
 
 {directive_text}
 
-{_fa_dir_emit or ""}
+{fa_dir_emit or ""}
 
 # PHASES
 
@@ -777,7 +793,141 @@ C. Apply the directive above; build via deploy_to_npu_lane.sh; verify
 D. If directive succeeds → exit `→ orchestrator: done — <one-line summary>`
    If directive infeasible → exit with REJECTED reason + actionable handoff
    If precision regresses → REVERT to prior baseline + log reason"""
-        return _directive_head
+
+
+class _WorkerBriefContext(NamedTuple):
+    """The phase-relevant fields every worker brief route reads."""
+
+    op: str
+    workspace: Path
+    iter_cap_remaining: int
+    directive_text: Optional[str]
+    handoff_from_prior: Optional[str]
+    env: Optional["AscendCEnv"]
+
+
+def _fa_class_block(brief_ctx: _WorkerBriefContext) -> Optional[str]:
+    """The FA-class template-assembly recipe for this op (None when N/A).
+
+    DEBT-208: passes the build target so the FA MIX cross-core-sync block
+    carries only the KB cards whose own `applies_to: soc=` covers it (PB-34
+    is V220-only and INVERTS the KB's advice on A5). `env` may be None in
+    unit contexts — falls back to the `a5` default the composer declares."""
+    return _fa_class_template_assembly_block(
+        brief_ctx.op,
+        brief_ctx.workspace,
+        target=getattr(brief_ctx.env, "target", None) or "a5",
+    )
+
+
+def _directive_phase_block(brief_ctx: _WorkerBriefContext) -> str:
+    """Directive-first head block: the tactical directive, then the FA recipe.
+
+    2026-08-27 (cc-vs-opencode parity fix, F1): a prior-agent directive must
+    NEVER replace the FA-class template-assembly recipe. The directive is a
+    TACTICAL overlay ("this round: fix X"); the recipe is the STRUCTURAL
+    know-how (where the regbase MIX templates live, how to assemble them).
+    flash_attention_score oc line proved the failure mode: every respawn
+    carried a directive, so the worker never saw the FA template block ->
+    generated a Ladder-3 AIV-only candidate while the sibling directive-less
+    line (same model, kimi-for-coding) assembled a full regbase MIX from the
+    wholeport templates.
+    Multirank workspaces never reach here: they route to
+    _multirank_directive_phase_block (directive overlay + the multirank
+    phase block), the same F1 principle on the multirank branch."""
+    return _directive_head_block(brief_ctx.directive_text, _fa_class_block(brief_ctx))
+
+
+def _multirank_directive_phase_block(brief_ctx: _WorkerBriefContext) -> str:
+    """Directive overlay for a multirank respawn, with the structural recipe.
+
+    The directive stays a tactical overlay for THIS round only; the
+    multirank phase block (scaffold entry, NEST layout, multirank_runner
+    verify) always rides along — a directive must never leave a multirank
+    worker without its structural contract.
+    """
+    head = f"""# DIRECTIVE FROM PRIOR AGENT
+
+{brief_ctx.directive_text}
+
+Treat this as tactical iteration feedback for THIS round only. Apply it
+INSIDE the phase flow below (scaffold entry, NEST layout, multirank_runner
+verify) — never as a replacement for it."""
+    from plugins.multirank import get_plugin_instance as _mr_plugin
+
+    override = _plugin_phase_override(_mr_plugin(), brief_ctx)
+    return f"{head}\n\n{override}" if override is not None else head
+
+
+def _plugin_phase_override(plugin, brief_ctx: _WorkerBriefContext) -> Optional[str]:
+    """The plugin's kw phase-block override, or None when it declines."""
+    return plugin.kw_brief_phase_block(
+        op=brief_ctx.op,
+        workspace=brief_ctx.workspace,
+        iter_cap_remaining=brief_ctx.iter_cap_remaining,
+        directive_text=brief_ctx.directive_text,
+        handoff_from_prior_agent=brief_ctx.handoff_from_prior,
+        env=brief_ctx.env,
+    )
+
+
+def _phase_instructions_block(
+    op: str,
+    workspace: Path,
+    iter_cap_remaining: int,
+    directive_text: Optional[str],
+    handoff_from_prior: Optional[str],
+    env: Optional["AscendCEnv"] = None,
+    backend: str = "ascendc",
+    *,
+    plugin: Optional[object] = None,
+) -> str:
+    """Build instructions for the explicit AscendC customer modes."""
+    declared_mode = getattr(env, "opgen_mode", "") if env is not None else ""
+    if backend != "ascendc" or declared_mode not in {"port_a3_to_a5", "backward"}:
+        raise RuntimeError(
+            "unsupported worker route: expected AscendC port_a3_to_a5 "
+            f"or backward, got backend={backend!r}, mode={declared_mode!r}"
+        )
+    brief_ctx = _WorkerBriefContext(
+        op, workspace, iter_cap_remaining, directive_text, handoff_from_prior, env
+    )
+    # Multirank extension: a port_a3_to_a5 workspace flagged `multirank: true`
+    # routes its worker brief through the multirank extension plugin.
+    _multirank_ws = _workspace_is_multirank(workspace)
+
+    # FA-class + no directive = inject the template-assembly recipe. FA-class
+    # ops route to the standard kw worker, which assembles the arch35 op from
+    # arch22 + KB templates. FA is an op-class concern shared by
+    # port_a3/backward. Multirank workspaces are EXCLUDED: multirank kernels
+    # have no arch22 source to assemble from — their structure is design-locked
+    # in architecture.md, so even an attention-named multirank fusion op must
+    # fall through to the extension plugin hook, never the FA template recipe.
+    if not directive_text and not _multirank_ws:
+        _fa_emit = _fa_class_block(brief_ctx)
+        if _fa_emit is not None:
+            return _fa_emit
+
+    # NOTE: directive_text wins over opgen_mode. When a probe / optimizer
+    # respawns the worker with a specific directive ("fix BF16 cast in line
+    # 234"), the directive is the tactical command — applies regardless of
+    # cold-start vs. port mode. Port-mode prose is only for the first spawn
+    # (no prior directive). Order checked by W5 test
+    # test_directive_text_overrides_port_mode.
+    if directive_text:
+        if _multirank_ws:
+            return _multirank_directive_phase_block(brief_ctx)
+        return _directive_phase_block(brief_ctx)
+
+    # Multirank workspaces (port_a3_to_a5 + `multirank: true`): the extension
+    # plugin owns the complete phase block (msopgen nest layout, multi-rank
+    # verify via multirank_runner, multirank KB manifest).
+    if _multirank_ws:
+        from plugins.multirank import get_plugin_instance as _mr_plugin
+
+        override = _plugin_phase_override(_mr_plugin(), brief_ctx)
+        if override is not None:
+            return override
 
     # W5 (2026-05-12, ROADMAP §1.5): arch22→arch35 port mode brief. Reads
     # workspace/a3_reference_runnable.json (emitted by phase_o25_a3_ref W4)
@@ -793,13 +943,7 @@ D. If directive succeeds → exit `→ orchestrator: done — <one-line summary>
 
     # Backward owns its complete phase block through the explicit plugin.
     if plugin is not None:
-        override = plugin.kw_brief_phase_block(
-            op=op, workspace=workspace,
-            iter_cap_remaining=iter_cap_remaining,
-            directive_text=directive_text,
-            handoff_from_prior_agent=handoff_from_prior,
-            env=env,
-        )
+        override = _plugin_phase_override(plugin, brief_ctx)
         if override is not None:
             return override
 

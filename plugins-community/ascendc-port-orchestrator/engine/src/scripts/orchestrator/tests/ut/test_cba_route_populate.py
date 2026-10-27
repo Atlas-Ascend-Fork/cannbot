@@ -14,6 +14,7 @@ Covers: applies_to selection ("all" / op-class intersect / no-match), config-gat
 (env unset / file absent / non-list => no-op), fail-open, and the round-trip
 (populate -> brief_kb surfaces the route -> a_tier_manifest LOAD record).
 """
+
 from __future__ import annotations
 
 import json
@@ -21,37 +22,54 @@ import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve()
-sys.path.insert(0, str(_HERE.parent.parent))       # orchestrator/ on path
+sys.path.insert(0, str(_HERE.parent.parent))  # orchestrator/ on path
 import cba_route_populate as cp  # noqa: E402
 from briefs.brief_kb import _cba_tier_a_routes_block  # noqa: E402
 
 
 _CFG = [
-    {"topic": "code-review", "skill": "ops-code-reviewer", "reference_hint": "检视条例",
-     "applies_to": ["all"]},
-    {"topic": "simt-vs-simd", "skill": "ascendc-simt-best-practices", "applies_to": ["simt"]},
+    {
+        "topic": "code-review",
+        "skill": "ops-code-reviewer",
+        "reference_hint": "检视条例",
+        "applies_to": ["all"],
+    },
+    {
+        "topic": "simt-vs-simd",
+        "skill": "ascendc-simt-best-practices",
+        "applies_to": ["simt"],
+    },
 ]
 
 
 # ── pure selector ────────────────────────────────────────────────────────────
 def test_select_all_applies_to_every_op():
     r = cp.select_routes(_CFG, ["elementwise"])
-    assert [x["skill"] for x in r] == ["ops-code-reviewer"]   # "all" matches; simt does not
+    assert [x["skill"] for x in r] == [
+        "ops-code-reviewer"
+    ]  # "all" matches; simt does not
 
 
 def test_select_op_class_intersect():
     r = cp.select_routes(_CFG, ["simt", "reduction"])
-    assert {x["skill"] for x in r} == {"ops-code-reviewer", "ascendc-simt-best-practices"}
+    assert {x["skill"] for x in r} == {
+        "ops-code-reviewer",
+        "ascendc-simt-best-practices",
+    }
 
 
 def test_select_no_match_when_tags_disjoint_and_no_all():
-    r = cp.select_routes([{"topic": "t", "skill": "s", "applies_to": ["simt"]}], ["elementwise"])
+    r = cp.select_routes(
+        [{"topic": "t", "skill": "s", "applies_to": ["simt"]}], ["elementwise"]
+    )
     assert r == []
 
 
 def test_select_skips_malformed_entries():
-    r = cp.select_routes(["not-a-dict", {"topic": "t", "skill": "s", "applies_to": "all"}], ["x"])
-    assert r == []   # applies_to must be a list; string "all" is malformed -> skipped
+    r = cp.select_routes(
+        ["not-a-dict", {"topic": "t", "skill": "s", "applies_to": "all"}], ["x"]
+    )
+    assert r == []  # applies_to must be a list; string "all" is malformed -> skipped
 
 
 # ── config-gating (populate) ─────────────────────────────────────────────────
@@ -68,11 +86,15 @@ def test_populate_writes_route_file_on_match(tmp_path):
 
 def test_populate_noop_when_env_unset_and_no_conventional(tmp_path, monkeypatch):
     monkeypatch.delenv("AOG_CBA_ROUTE_CONFIG", raising=False)
-    monkeypatch.setattr(cp, "_CONVENTIONAL", tmp_path / "nope.json")   # isolate from any shipped file
+    monkeypatch.setattr(
+        cp, "_CONVENTIONAL", tmp_path / "nope.json"
+    )  # isolate from any shipped file
     ws = tmp_path / "ws"
     ws.mkdir()
     assert cp.populate_cba_routes("op", ws, ["x"]) == []
-    assert not (ws / ".cba_required_routes.json").exists()   # config-gated OFF => no file
+    assert not (
+        ws / ".cba_required_routes.json"
+    ).exists()  # config-gated OFF => no file
 
 
 def test_conventional_path_fallback(tmp_path, monkeypatch):
@@ -90,22 +112,26 @@ def test_conventional_path_fallback(tmp_path, monkeypatch):
 
 def test_env_override_wins_over_conventional(tmp_path, monkeypatch):
     conv = tmp_path / "conv.json"
-    conv.write_text(json.dumps([{"topic": "c", "skill": "conv-skill", "applies_to": ["all"]}]))
+    conv.write_text(
+        json.dumps([{"topic": "c", "skill": "conv-skill", "applies_to": ["all"]}])
+    )
     envf = tmp_path / "env.json"
-    envf.write_text(json.dumps([{"topic": "e", "skill": "env-skill", "applies_to": ["all"]}]))
+    envf.write_text(
+        json.dumps([{"topic": "e", "skill": "env-skill", "applies_to": ["all"]}])
+    )
     monkeypatch.setattr(cp, "_CONVENTIONAL", conv)
     monkeypatch.setenv("AOG_CBA_ROUTE_CONFIG", str(envf))
     ws = tmp_path / "ws"
     ws.mkdir()
     sel = cp.populate_cba_routes("op", ws, ["x"])
-    assert [x["skill"] for x in sel] == ["env-skill"]        # env override beats conventional
+    assert [x["skill"] for x in sel] == ["env-skill"]  # env override beats conventional
 
 
 def test_conventional_path_is_module_relative_not_cwd():
     # robustness: the conventional path resolves off the module file, not cwd
-    assert getattr(cp, '_CONVENTIONAL').is_absolute()
-    assert getattr(cp, '_CONVENTIONAL').name == "cba_routes.json"
-    assert getattr(cp, '_CONVENTIONAL').parent == Path(cp.__file__).resolve().parent
+    assert getattr(cp, "_CONVENTIONAL").is_absolute()
+    assert getattr(cp, "_CONVENTIONAL").name == "cba_routes.json"
+    assert getattr(cp, "_CONVENTIONAL").parent == Path(cp.__file__).resolve().parent
 
 
 def test_populate_noop_when_no_match(tmp_path):
@@ -122,7 +148,9 @@ def test_populate_fail_open_on_bad_config(tmp_path):
     cfg.write_text("{not json")
     ws = tmp_path / "ws"
     ws.mkdir()
-    assert cp.populate_cba_routes("op", ws, ["x"], config_path=str(cfg)) == []   # no raise
+    assert (
+        cp.populate_cba_routes("op", ws, ["x"], config_path=str(cfg)) == []
+    )  # no raise
 
 
 # ── round-trip: C1 populate -> brief surfaces -> C2 LOAD record ──────────────
@@ -132,7 +160,61 @@ def test_c1_populate_feeds_c2_load_record(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     cp.populate_cba_routes("13_Cat", ws, ["elementwise"], config_path=str(cfg))
-    block = _cba_tier_a_routes_block("13_Cat", ws)      # brief surfaces the populated route
+    block = _cba_tier_a_routes_block("13_Cat", ws)  # brief surfaces the populated route
     assert "ops-code-reviewer" in block
-    rec = json.loads((ws / "a_tier_manifest.json").read_text())   # C2 LOAD record written
+    rec = json.loads(
+        (ws / "a_tier_manifest.json").read_text()
+    )  # C2 LOAD record written
     assert [s["skill"] for s in rec["surfaced"]] == ["ops-code-reviewer"]
+
+
+# ── Multirank classification-unavailable fallback ──────────────────────────
+_CFG_MULTIRANK = _CFG + [
+    {
+        "topic": "api",
+        "skill": "ascendc-api-best-practices",
+        "applies_to": ["multirank"],
+    },
+]
+
+
+def test_mc2_fallback_unions_mode_routes_when_tags_empty(tmp_path):
+    """O1.7 fallback (tags=[]) in a multirank workspace: the "all" baseline
+
+    alone would leave mode-relevant a-tier knowledge unrouted — the fallback
+    unions the multirank-tagged default routes on top.
+    """
+    cfg = tmp_path / "routes.json"
+    cfg.write_text(json.dumps(_CFG_MULTIRANK))
+    ws = tmp_path / "moe_fused"
+    ws.mkdir()
+    (ws / "spec.py").write_text("SPEC = {}\n")
+    sel = cp.populate_cba_routes("moe_fused", ws, [], config_path=str(cfg))
+    skills = {x["skill"] for x in sel}
+    assert skills == {"ops-code-reviewer", "ascendc-api-best-practices"}
+    rf = json.loads((ws / ".cba_required_routes.json").read_text())
+    assert {x["skill"] for x in rf} == skills
+
+
+def test_no_fallback_without_spec(tmp_path):
+    """Tags empty but NOT a multirank workspace → baseline only, no union."""
+    cfg = tmp_path / "routes.json"
+    cfg.write_text(json.dumps(_CFG_MULTIRANK))
+    ws = tmp_path / "gelu"
+    ws.mkdir()
+    sel = cp.populate_cba_routes("gelu", ws, [], config_path=str(cfg))
+    assert [x["skill"] for x in sel] == ["ops-code-reviewer"]
+
+
+def test_no_fallback_when_tags_present(tmp_path):
+    """Classification succeeded (tags non-empty) → normal tag matching only;
+
+    the multirank-tagged route is NOT picked even in a multirank workspace.
+    """
+    cfg = tmp_path / "routes.json"
+    cfg.write_text(json.dumps(_CFG_MULTIRANK))
+    ws = tmp_path / "moe_fused"
+    ws.mkdir()
+    (ws / "spec.py").write_text("SPEC = {}\n")
+    sel = cp.populate_cba_routes("moe_fused", ws, ["elementwise"], config_path=str(cfg))
+    assert [x["skill"] for x in sel] == ["ops-code-reviewer"]

@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 """Strict migration-sandbox dispatch gating."""
+
 from __future__ import annotations
 
 import json
@@ -47,16 +48,30 @@ def _drive_dispatch(
         captured["agent_type"] = agent_type
         captured["sandbox_prefix"] = kwargs.get("sandbox_prefix")
         return AgentResult(
-            agent_type=agent_type, success=True, is_error=False, output_text="stub",
-            duration_ms=0, cost_usd=0.0, session_id="stub", terminal_reason="completed",
-            raw_envelope={"type": "result", "subtype": "success", "result": "stub",
-                          "session_id": "stub"}, tool_uses=[],
+            agent_type=agent_type,
+            success=True,
+            is_error=False,
+            output_text="stub",
+            duration_ms=0,
+            cost_usd=0.0,
+            session_id="stub",
+            terminal_reason="completed",
+            raw_envelope={
+                "type": "result",
+                "subtype": "success",
+                "result": "stub",
+                "session_id": "stub",
+            },
+            tool_uses=[],
         )
 
     monkeypatch.setattr(agent_transport, "spawn_agent_streaming", fake_spawn)
     monkeypatch.setattr(agent_dispatch, "persist_envelope", lambda *a, **k: None)
-    monkeypatch.setitem(agent_dispatch.BRIEF_BUILDERS, "aog-kernel-worker",
-                        lambda op, workspace, **kw: "stub brief")
+    monkeypatch.setitem(
+        agent_dispatch.BRIEF_BUILDERS,
+        "aog-kernel-worker",
+        lambda op, workspace, **kw: "stub brief",
+    )
     monkeypatch.setattr(state_executor, "next_agent", lambda state: "aog-kernel-worker")
     monkeypatch.setattr(state_executor, "iter_cap", lambda *a, **k: 10)
     monkeypatch.setattr(state_executor, "iter_count", lambda *a, **k: 0)
@@ -124,16 +139,23 @@ def _drive_dispatch(
                 extra_ro=kwargs.get("extra_ro", ()),
                 toolchain_dirs=[],
                 plugin_dir=kwargs.get("plugin_dir"),
-                plugin_mount=kwargs.get("plugin_mount", graybox_sandbox.DEFAULT_PLUGIN_MOUNT),
+                plugin_mount=kwargs.get(
+                    "plugin_mount", graybox_sandbox.DEFAULT_PLUGIN_MOUNT
+                ),
             )
 
         monkeypatch.setattr(graybox_sandbox, "graybox_allow_set", _allow_set)
     (workspace / ".opgen_state.json").write_text(json.dumps(state))
 
     agent_dispatch.spawn_for_state(
-        "flash_attention_score", workspace, "await_worker",
-        lane=1, spawn_index=1, timeout_sec=300,
-        background=background, output_file=output_file,
+        "flash_attention_score",
+        workspace,
+        "await_worker",
+        lane=1,
+        spawn_index=1,
+        timeout_sec=300,
+        background=background,
+        output_file=output_file,
     )
     return captured, workspace
 
@@ -143,10 +165,7 @@ def test_migration_without_mandatory_sandbox_state_fails(monkeypatch, tmp_path):
         _drive_dispatch(
             monkeypatch,
             tmp_path,
-            state_json=(
-                '{"opgen_mode": "port_a3_to_a5", '
-                '"graybox_sandbox": false}'
-            ),
+            state_json=('{"opgen_mode": "port_a3_to_a5", "graybox_sandbox": false}'),
         )
 
 
@@ -159,7 +178,8 @@ def test_migration_builds_and_passes_platform_sandbox_prefix(monkeypatch, tmp_pa
     """
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
     captured, workspace = _drive_dispatch(
-        monkeypatch, tmp_path,
+        monkeypatch,
+        tmp_path,
         state_json='{"opgen_mode": "port_a3_to_a5", "graybox_sandbox": true}',
     )
     prefix = captured["sandbox_prefix"]
@@ -178,6 +198,7 @@ def test_migration_builds_and_passes_platform_sandbox_prefix(monkeypatch, tmp_pa
     # cannbot bundle at /home/<u>/workspace/cannbot-skills-exp/...). Match the cann SOURCE
     # only — `cann` followed by `/`, whitespace, or end-of-string — not `cannbot`.
     import re
+
     joined = " ".join(prefix)
     assert not re.search(r"/workspace/cann(?:[/ ]|$)", joined), joined
     # manifest emitted + asserts airtight
@@ -190,11 +211,14 @@ def test_migration_builds_and_passes_platform_sandbox_prefix(monkeypatch, tmp_pa
 @pytest.mark.skipif(
     not graybox_sandbox.isolation_available(), reason="strict isolation unavailable"
 )
-def test_direct_worker_shares_network_only_for_explicit_model_endpoint(monkeypatch, tmp_path):
+def test_direct_worker_shares_network_only_for_explicit_model_endpoint(
+    monkeypatch, tmp_path
+):
     """Kimi/Anthropic-compatible workers need endpoint access, without weakening FS bounds."""
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.example.invalid/coding/")
     captured, workspace = _drive_dispatch(
-        monkeypatch, tmp_path,
+        monkeypatch,
+        tmp_path,
         state_json='{"opgen_mode": "port_a3_to_a5", "graybox_sandbox": true}',
     )
     prefix = captured["sandbox_prefix"]
@@ -213,7 +237,8 @@ def test_migration_without_platform_backend_fails_loud(monkeypatch, tmp_path):
     monkeypatch.setattr(graybox_sandbox, "_SANDBOX_EXEC", None)
     with pytest.raises(RuntimeError, match="strict platform isolation"):
         _drive_dispatch(
-            monkeypatch, tmp_path,
+            monkeypatch,
+            tmp_path,
             state_json='{"opgen_mode": "port_a3_to_a5", "graybox_sandbox": true}',
         )
 
@@ -272,7 +297,9 @@ def test_legacy_background_dispatch_still_returns_backend_handle(monkeypatch, tm
     monkeypatch.setattr(agent_dispatch, "_backend", _Backend())
     monkeypatch.setattr(agent_dispatch, "load_env", _Env)
     monkeypatch.setattr(plugins_mod, "detect_plugin", lambda _ws: None)
-    monkeypatch.setattr(state_executor, "next_agent", lambda _state: "aog-precision-probe")
+    monkeypatch.setattr(
+        state_executor, "next_agent", lambda _state: "aog-precision-probe"
+    )
     monkeypatch.setattr(state_executor, "iter_cap", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(state_executor, "iter_count", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(agent_dispatch, "_state_to_counter", lambda _state: "probe")
@@ -320,8 +347,10 @@ def test_npubench_environment_scrubber_drops_all_live_provider_inputs(monkeypatc
         "CANNBOT_PORT_A3_BUILD_SOURCE",
         "ASCENDC_ENV_PATH",
     ):
-        assert any(prefix[index:index + 2] == ["-u", name]
-                   for index in range(3, len(prefix) - 1))
+        assert any(
+            prefix[index] == "-u" and prefix[index + 1] == name
+            for index in range(3, len(prefix) - 1)
+        )
 
 
 @pytest.mark.skipif(
@@ -351,11 +380,16 @@ def test_npubench_dispatch_overlays_task_and_state_read_only(monkeypatch, tmp_pa
         assert "-u" in prefix
         assert name in prefix
     if graybox_sandbox.isolation_backend() == "bwrap":
+
         def _bind_index(flag, path):
-            return next(
-                index for index in range(len(prefix) - 2)
-                if prefix[index:index + 3] == [flag, str(path), str(path)]
-            )
+            for index in range(len(prefix) - 2):
+                if (
+                    prefix[index] == flag
+                    and prefix[index + 1] == str(path)
+                    and prefix[index + 2] == str(path)
+                ):
+                    return index
+            raise AssertionError(f"{flag} {path} not found in {prefix}")
 
         workspace_bind = _bind_index("--bind", workspace)
         bundle_bind = _bind_index("--ro-bind", bundle)
@@ -389,7 +423,7 @@ def test_npubench_nested_overlays_are_enforced_in_a_real_child(monkeypatch, tmp_
     bundle = workspace / "reference_inputs" / "npubench" / reference["bundle_sha256"]
     task = bundle / "3_Add.py"
     # POSIX shell code intentionally prints no inherited environment values.
-    probe = f'''set -eu
+    probe = f"""set -eu
 for name in A3_HOST A3_PASSWORD CANNBOT_PORT_A3_BUILD_SOURCE; do
   if /usr/bin/env | /usr/bin/grep -q "^${{name}}="; then exit 31; fi
 done
@@ -400,7 +434,7 @@ if (chmod u+w {task!s}) >/dev/null 2>&1; then exit 33; fi
 if (mv {task!s} {task!s}.moved) >/dev/null 2>&1; then exit 34; fi
 if (printf 'x' >> {state_path!s}) >/dev/null 2>&1; then exit 35; fi
 if /usr/bin/grep -q forged {state_path!s}; then exit 36; fi
-'''
+"""
     completed = subprocess.run(
         [*captured["sandbox_prefix"], "/bin/sh", "-c", probe],
         cwd=workspace,
@@ -416,6 +450,56 @@ if /usr/bin/grep -q forged {state_path!s}; then exit 36; fi
     assert task.is_file()
     assert not task.with_suffix(".py.moved").exists()
     assert "forged" not in state_path.read_text()
+
+
+def test_multirank_skips_migration_binding_gate(monkeypatch, tmp_path):
+    """Multirank workspaces (port_a3_to_a5 + multirank:true) have no arch22
+    source stage and no npubench/a3_live reference binding — the migration
+    graybox gate must not apply (pre-fix the spawn was refused with
+    'no explicit reference binding' even though O2.5 had produced the
+    self-contained spec golden).
+    """
+    import agent_dispatch
+
+    class _Env:
+        opgen_mode = "port_a3_to_a5"
+
+    ws = tmp_path / "matmul_allreduce"
+    ws.mkdir()
+    (ws / ".opgen_state.json").write_text(
+        json.dumps(
+            {
+                "op": "matmul_allreduce",
+                "opgen_mode": "port_a3_to_a5",
+                "multirank": True,
+                "multirank_truth_source": "npubench",
+            }
+        )
+    )
+    cfg = getattr(agent_dispatch, "_resolve_dispatch_config")(ws, _Env())
+    assert cfg["enabled"] is False
+    assert cfg["arch22_dir"] is None
+
+
+def test_non_multirank_port_a3_still_requires_binding(monkeypatch, tmp_path):
+    """The same state WITHOUT the multirank flag keeps the fail-closed migration binding gate."""
+    import agent_dispatch
+
+    class _Env:
+        opgen_mode = "port_a3_to_a5"
+
+    ws = tmp_path / "some_a3_op"
+    ws.mkdir()
+    (ws / ".opgen_state.json").write_text(
+        json.dumps(
+            {
+                "op": "some_a3_op",
+                "opgen_mode": "port_a3_to_a5",
+            }
+        )
+    )
+    with pytest.raises(RuntimeError, match="reference binding"):
+        getattr(agent_dispatch, "_resolve_dispatch_config")(ws, _Env())
 
 
 if __name__ == "__main__":

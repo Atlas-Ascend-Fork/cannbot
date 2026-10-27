@@ -19,6 +19,7 @@ await_user_decision (observed twice on mul_grad, 2026-06-13).
 The producer now uses `deleg_marker_needs_refresh`, which mirrors the gate's
 freshness check (finalize_pipeline.py ~2825): ABSENT or STALE → refresh.
 """
+
 from __future__ import annotations
 import os
 import sys
@@ -69,6 +70,32 @@ def test_within_slack_not_stale(tmp_path):
     _touch(tmp_path / ".delegation_scan_passed", 1000.0)
     _touch(tmp_path / "kernel" / "k_kernel.h", 1000.5)
     assert orchestrator.deleg_marker_needs_refresh(tmp_path) is False
+
+
+def test_nest_kernel_edit_stales_marker(tmp_path):
+    """Multirank NEST layout (kernel under prj-<op>/op_kernel/, NO workspace/op_kernel):
+
+    a nest kernel edit after the marker MUST count as stale — the freshness
+    source set resolves each declared dir through _candidate_subdirs, exactly
+    like the gate. A producer that missed the nest dirs saw newest=0 →
+    "marker fresh" → no re-scan, while the gate saw the real nest mtime and
+    kept rejecting the marker as stale → infinite rollback.
+    """
+    _touch(tmp_path / "model_new_ascendc.py", 1000.0)
+    _touch(tmp_path / "prj-foo" / "op_kernel" / "foo.h", 1000.0)
+    _touch(tmp_path / "prj-foo" / "op_kernel" / "foo.cpp", 1000.0)
+    _touch(tmp_path / ".delegation_scan_passed", 2000.0)
+    assert orchestrator.deleg_marker_needs_refresh(tmp_path) is False
+    # rebuilt the nest kernel after the scan → stale
+    _touch(tmp_path / "prj-foo" / "op_kernel" / "foo.h", 3000.0)
+    assert orchestrator.deleg_marker_needs_refresh(tmp_path) is True
+
+
+def test_flat_op_kernel_edit_also_stales_marker(tmp_path):
+    """Flat single-layer op_kernel/ layout (no prj- nest) counts too."""
+    _touch(tmp_path / ".delegation_scan_passed", 1000.0)
+    _touch(tmp_path / "op_kernel" / "k.cpp", 3000.0)
+    assert orchestrator.deleg_marker_needs_refresh(tmp_path) is True
 
 
 if __name__ == "__main__":

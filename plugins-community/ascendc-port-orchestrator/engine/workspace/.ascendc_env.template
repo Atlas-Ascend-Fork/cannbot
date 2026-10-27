@@ -1,17 +1,35 @@
 # ascendc-port-orchestrator runtime env (copy to .ascendc_env, fill values).
 # .ascendc_env itself is gitignored — NEVER commit credentials.
+#
+# Configuration model: generation blocks + two selectors.
+#   - Generation blocks: one same-shape block per NPU generation. The set is
+#     OPEN — A2 works today, A6/A7 work the day their block is written; no
+#     code change. Fields: A<n>_HOST / _USER / _PASSWORD / _EXEC / _CONTAINER
+#     / _CANN_PATH / _SOC_VERSION.
+#   - TARGET selects the candidate-side block (the architecture the op is
+#     generated/verified for).
+#   - SOURCE selects the reference-side block (the architecture the reference
+#     truth is captured from, e.g. a3_live); default a3.
+#
+# A<n>_EXEC — how the harness reaches that generation (connection x isolation):
+#   local            — engine runs on the NPU machine itself, bare host
+#                      (HOST/CONTAINER not needed; ignore both if written)
+#   local-container  — engine on the NPU machine, executes inside a local
+#                      docker container (CONTAINER required, HOST ignored)
+#   remote           — ssh to HOST, bare host (no container)
+#   remote-container — ssh to HOST + docker exec into CONTAINER (default)
+# CONTAINER carries a plain container name — the magic value "local" is
+# retired (declare _EXEC=local instead; load fails closed on the old form).
+
 TARGET=a5
-# Default target mode is local: run the launcher in the local A5 execution
-# environment. This path does not use SSH/SCP.
-# To use a remote target, explicitly replace A5_CONTAINER=local with the real
-# container name, fill A5_HOST, and follow the remote-target section in docs/USAGE.md.
+SOURCE=a3
+
+# ── candidate-side generation block (A5) ──
 A5_HOST=
 A5_USER=root
 A5_PASSWORD=
-A5_CONTAINER=local
-# Optional evidence identity when A5_CONTAINER=local runs inside an outer
-# Docker container (for example cjm_cann2).  Leave empty for bare-host local runs.
-A5_LOCAL_RUNTIME_CONTAINER=
+A5_EXEC=remote-container
+A5_CONTAINER=
 A5_CANN_PATH=/usr/local/Ascend/cann-9.0.0
 # Required: fill the SoC reported by the target device.  Leave empty until
 # verified; an unset/unknown value deliberately stops direct A5 validation.
@@ -28,14 +46,31 @@ A5_DEFAULT_NPU_ID=0
 PORT_A3_REFERENCE_SOURCE=
 
 # Required only when PORT_A3_REFERENCE_SOURCE=a3_live.
+
+# ── reference-side generation block (A3) ──
 A3_HOST=
 A3_USER=root
 A3_PASSWORD=
+A3_EXEC=remote-container
 A3_CONTAINER=
 A3_CANN_PATH=/usr/local/Ascend/cann-9.0.0
 A3_SOC_VERSION=
 A3_DEFAULT_NPU_ID=0
-A3_CONTAINER_HOME=/home/npu_user
+# A3_HOST_HOME: HOST-side slice mount point for multi-agent isolation (the
+# host path docker binds into the container). A3_CONTAINER_HOME (read by
+# a3_ref_common) is the CONTAINER-side home — two different keys, never
+# conflate them.
+# A3_HOST_HOME=/home/npu_user_opus
+# A3_CONTAINER_HOME=/home/npu_user
+
+# ── optional A2 reference block (SOURCE=a2 selects it) ──
+# A2_HOST=
+# A2_USER=root
+# A2_PASSWORD=
+# A2_EXEC=remote-container
+# A2_CONTAINER=
+# A2_CANN_PATH=/usr/local/Ascend/cann
+# A2_SOC_VERSION=
 
 # Directory containing the target's python3. Leave empty to use python3 from PATH,
 # or set a target-specific A3_NPU_PYTHON_BIN / A5_NPU_PYTHON_BIN.
@@ -72,3 +107,10 @@ CANNBOT_KNOWLEDGE_ROOT=
 # (on-target: acl soc enum 202 = Ascend310P3).
 # ASCEND310P_SOC_VERSION=Ascend310P3
 # ASCEND310P_NPU_PYTHON_BIN=/usr/local/python3.11.10/bin
+# OPTIONAL — custom idle-NPU info command for multi-rank card probing
+# (npu_probe). Must print the same JSON shape as `npu-smi info`. Resolution is
+# target-first: {TARGET}_NPU_INFO_CMD > NPU_INFO_CMD > A5_NPU_INFO_CMD; leave all
+# unset to fall back to the local `npu-smi info` probe.
+# NPU_INFO_CMD=/opt/site/bin/npu_info.sh
+# A5_NPU_INFO_CMD=/opt/site/bin/npu_info_a5.sh
+# A3_NPU_INFO_CMD=/opt/site/bin/npu_info_a3.sh

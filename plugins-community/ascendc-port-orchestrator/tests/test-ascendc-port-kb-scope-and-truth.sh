@@ -33,13 +33,21 @@ assert_contains() {
 assert_tracked_plugin_has_no_match() {
     local pattern="$1"
     local label="$2"
+    local extra_exempt="${3:-}"
     local matches
     # 豁免（自引用守卫与特性文件）：插件自己的测试为证明"绝不走外部加速器路径"而
     # 命名这些 family；model_reference 特性按设备名同步用户提供的 torch 模型。
-    if matches=$(git -C "$REPO_ROOT" grep -n -i -E "$pattern" -- "$PLUGIN_REL" 2>/dev/null \
+    matches=$(git -C "$REPO_ROOT" grep -n -i -E "$pattern" -- "$PLUGIN_REL" 2>/dev/null \
             | grep -vE "^$PLUGIN_REL/([^:]*/)*tests/" \
             | grep -vE "^$PLUGIN_REL/([^:]*/)*test_[^/]*" \
-            | grep -vE "^$PLUGIN_REL/([^:]*/)*[^/]*model_reference[^/]*"); then
+            | grep -vE "^$PLUGIN_REL/([^:]*/)*[^/]*model_reference[^/]*" || true)
+    # optional caller-scoped exemption (e.g. the multirank plugin legitimately
+    # names the upstream benchmark arm when stating parity-semantics
+    # inheritance — same allowance as test-ascendc-port-scope.sh).
+    if [ -n "$extra_exempt" ]; then
+        matches=$(printf '%s\n' "$matches" | grep -vE "$extra_exempt" || true)
+    fi
+    if [ -n "$matches" ]; then
         echo "$matches" >&2
         fail "$label"
     fi
@@ -53,12 +61,18 @@ assert_tracked_plugin_has_no_match() {
 # the compound route name `tilelang2ascendc` names an AscendC source *format* the plugin consumes
 # (an already-lowered `model_new_ascendc.py` + `kernel/` custom-op project), not a foreign backend
 # the plugin can run. A bare `tilelang` token stays forbidden.
+# `mc2` is NOT in the family ban: it is a CANN hardware-API term (mc2Context /
+# Mc2InitTiling in HcclOpParam), not a foreign backend; the retired standalone
+# mc2 mode must not resurrect — its `opgen_mc2` literal stays in the
+# removed-mode ban below plus the ct dispatch guard.
 assert_tracked_plugin_has_no_match \
-    'cuda|nvidia|ptx|triton|\btilelang\b|mc2' \
+    'cuda|nvidia|ptx|triton|\btilelang\b' \
     "unrelated backend knowledge is present"
 assert_tracked_plugin_has_no_match \
     'port_tilelang|port_triton|opgen_mc2|port_mc2|port_pytorch|benchmark[-_ ]?mode|mode=benchmark' \
-    "removed independent product mode is present"
+    "removed independent product mode is present" \
+    '^[^:]*multirank'
+
 
 # Target archives, prior-art and pre-staged branches are admissible research/generation inputs.
 for file in \

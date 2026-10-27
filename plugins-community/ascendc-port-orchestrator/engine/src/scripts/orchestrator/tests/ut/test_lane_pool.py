@@ -8,9 +8,10 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 """Tests for lane_pool.py (Track C #2)."""
+
 from __future__ import annotations
 
-import json
+import json  # noqa: F401
 import os
 import sys
 from pathlib import Path
@@ -19,7 +20,11 @@ import pytest
 
 _HERE = Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parent.parent))
-import lane_pool as lp  # noqa: E402
+import lane_pool as lp
+from _npu_smi_fixtures import (  # noqa: E402
+    NPU_SMI_910B4_SINGLE_CELL,
+    NPU_SMI_910C_MULTICHIP,
+)  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +69,12 @@ NPU_SMI_LANE1_BUSY = """\
 | No running processes found in NPU 2                                                             |
 """
 
+# 910B4 host: id+Name share one cell (no '|' between), one chip per NPU,
+# card ids beyond the A5 (0,1,2) universe. Card 5 is busy (util 96 + process).
+# 910C host: id+Name share one cell and each NPU spans TWO chip rows (one
+# Name header + one Bus-Id data row per chip). NPU 1 has chip0 at 88% and
+# chip1 idle — the NPU must report the busiest chip.
+
 
 # ---------------------------------------------------------------------------
 # parse_npu_smi
@@ -100,6 +111,58 @@ def test_parse_npu_smi_empty_string():
     assert lp.parse_npu_smi("") == {}
 
 
+def test_parse_npu_smi_910b4_single_cell_layout():
+    """910B4: id+Name share one cell (no '|' between), one chip per NPU.
+
+    valid_ids=None accepts every parsed id, so cards beyond the A5 (0,1,2)
+    universe (3, 5) are visible; busy-by-util and busy-by-process both seen.
+    """
+    statuses = lp.parse_npu_smi(NPU_SMI_910B4_SINGLE_CELL, valid_ids=None)
+    assert set(statuses.keys()) == {0, 3, 5}
+    assert statuses[0].util_pct == 0
+    assert statuses[3].util_pct == 4
+    assert statuses[5].util_pct == 96
+    assert statuses[0].has_running_process is False
+    assert statuses[3].has_running_process is False
+    assert statuses[5].has_running_process is True
+
+
+def test_parse_npu_smi_default_filters_to_valid_lanes():
+    """Default valid_ids=VALID_LANES keeps existing callers' behavior:
+
+    cards beyond the A5 3-lane universe (3, 5) are ignored.
+    """
+    statuses = lp.parse_npu_smi(NPU_SMI_910B4_SINGLE_CELL)
+    assert set(statuses.keys()) == {0}
+    assert statuses[0].util_pct == 0
+
+
+def test_parse_npu_smi_valid_ids_custom_set():
+    """valid_ids is caller-controlled — probe restricted to card 3."""
+    statuses = lp.parse_npu_smi(NPU_SMI_910B4_SINGLE_CELL, valid_ids=(3,))
+    assert set(statuses.keys()) == {3}
+    assert statuses[3].util_pct == 4
+
+
+def test_parse_npu_smi_910c_multichip_max_aggregate():
+    """910C shape: two chip rows per NPU. NPU 1 has chip0 at 88% and chip1
+
+    idle — the NPU must report the BUSIEST chip (88), never the last row.
+    """
+    statuses = lp.parse_npu_smi(NPU_SMI_910C_MULTICHIP)
+    assert set(statuses.keys()) == {0, 1}
+    assert statuses[0].util_pct == 0
+    assert statuses[1].util_pct == 88  # max across chips, not last-row wins
+    assert all(s.has_running_process is False for s in statuses.values())
+
+
+def test_parse_npu_smi_910c_multichip_valid_ids_none():
+    """valid_ids=None on the 910C layout accepts every parsed id."""
+    statuses = lp.parse_npu_smi(NPU_SMI_910C_MULTICHIP, valid_ids=None)
+    assert set(statuses.keys()) == {0, 1}
+    assert statuses[1].util_pct == 88
+
+
 # ---------------------------------------------------------------------------
 # probe_idle_npus
 # ---------------------------------------------------------------------------
@@ -113,11 +176,18 @@ def test_probe_idle_npus_skips_busy():
     assert idle == [0, 2]
 
 
+def test_probe_idle_npus_910c_max_aggregate():
+    """NPU 1 is busy via its busiest chip (88%), so only NPU 0 is idle."""
+    idle = lp.probe_idle_npus(NPU_SMI_910C_MULTICHIP)
+    assert idle == [0]
+
+
 def test_probe_idle_npus_high_util():
     """Even without process, high util means busy."""
     high_util = NPU_SMI_ALL_IDLE.replace(
         "| 0           0    / 0          5407",
-        "| 90          0    / 0          5407", 1,
+        "| 90          0    / 0          5407",
+        1,
     )
     idle = lp.probe_idle_npus(high_util)
     assert 0 not in idle
@@ -128,7 +198,8 @@ def test_probe_idle_threshold_relaxed():
     """Threshold=20 lets in 10% util."""
     mid = NPU_SMI_ALL_IDLE.replace(
         "| 0           0    / 0          5407",
-        "| 10          0    / 0          5407", 1,
+        "| 10          0    / 0          5407",
+        1,
     )
     assert 0 not in lp.probe_idle_npus(mid, util_threshold=5)
     assert 0 in lp.probe_idle_npus(mid, util_threshold=20)
@@ -224,7 +295,7 @@ def test_list_lanes_reports_busy(root):
 # ---------------------------------------------------------------------------
 def test_state_file_rejects_invalid_lane():
     with pytest.raises(ValueError, match="lane 3 not in"):
-        getattr(lp, '_state_file')(3)
+        getattr(lp, "_state_file")(3)
 
 
 def test_write_state_rejects_invalid_state(root):

@@ -48,6 +48,7 @@ Exit codes:
   1  violations found (FAIL — caller should propagate as REJECT)
   2  usage error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,70 +67,82 @@ from pathlib import Path
 SCANNER_COVERAGE_CATEGORY = "scanner_coverage_gap"
 
 PYTHON_WRAPPER_PATTERNS: list[tuple[str, str]] = [
-    (r'\btorch_npu\.[a-zA-Z_][a-zA-Z_0-9]*\s*\(', "torch_npu.<api>(...) call (CANN delegation via torch_npu)"),
-    (r'\baclnn[A-Z][a-zA-Z_0-9]*\s*\(', "aclnn* call (CANN built-in)"),
-    (r'\baclop[A-Z][a-zA-Z_0-9]*\s*\(', "aclop* call"),
-    (r'\bacl_op_[a-zA-Z_0-9]+\s*\(', "acl_op_* call"),
-    (r'\bF\.(softmax|relu|silu|gelu|layer_norm|rms_norm|attention|cross_entropy|nll_loss|log_softmax)\s*\(',
-        "F.<compute>() call (delegating to torch.nn.functional)"),
     (
-        r'\btorch\.(softmax|matmul|bmm|sort|topk|cumsum|histc|nonzero|gather|'
-        r'scatter|scatter_add|scatter_reduce|argsort|nll_loss|cross_entropy|'
-        r'layer_norm|rms_norm|add|sub|mul|div)\s*\(',
-        "torch.<compute>() call (delegating to torch top-level)"),
-    (r'\.(softmax|matmul|bmm|sort|topk|cumsum|histc|nonzero|scatter_add|scatter_reduce|add|sub|mul|div)\s*\(',
-        "tensor.<compute>() method (delegating computation)"),
-    (r'subprocess\.(run|call|check_output|Popen)\s*\([^)]*aclnn',
-        "subprocess invoking aclnn binary"),
+        r"\btorch_npu\.[a-zA-Z_][a-zA-Z_0-9]*\s*\(",
+        "torch_npu.<api>(...) call (CANN delegation via torch_npu)",
+    ),
+    (r"\baclnn[A-Z][a-zA-Z_0-9]*\s*\(", "aclnn* call (CANN built-in)"),
+    (r"\baclop[A-Z][a-zA-Z_0-9]*\s*\(", "aclop* call"),
+    (r"\bacl_op_[a-zA-Z_0-9]+\s*\(", "acl_op_* call"),
+    (
+        r"\bF\.(softmax|relu|silu|gelu|layer_norm|rms_norm|attention|cross_entropy|nll_loss|log_softmax)\s*\(",
+        "F.<compute>() call (delegating to torch.nn.functional)",
+    ),
+    (
+        r"\btorch\.(softmax|matmul|bmm|sort|topk|cumsum|histc|nonzero|gather|"
+        r"scatter|scatter_add|scatter_reduce|argsort|nll_loss|cross_entropy|"
+        r"layer_norm|rms_norm|add|sub|mul|div)\s*\(",
+        "torch.<compute>() call (delegating to torch top-level)",
+    ),
+    (
+        r"\.(softmax|matmul|bmm|sort|topk|cumsum|histc|nonzero|scatter_add|scatter_reduce|add|sub|mul|div)\s*\(",
+        "tensor.<compute>() method (delegating computation)",
+    ),
+    (
+        r"subprocess\.(run|call|check_output|Popen)\s*\([^)]*aclnn",
+        "subprocess invoking aclnn binary",
+    ),
 ]
 
 CPP_PATTERNS: list[tuple[str, str]] = [
     # Tensor compute methods
-    (r'\.sum\s*\(', "tensor.sum() compute in C++"),
-    (r'\.mean\s*\(', "tensor.mean()"),
-    (r'\.var\s*\(', "tensor.var()"),
-    (r'\.norm\s*\(', "tensor.norm()"),
-    (r'\.argmax\s*\(', "tensor.argmax()"),
-    (r'\.topk\s*\(', "tensor.topk()"),
-    (r'\.cumsum\s*\(', "tensor.cumsum()"),
-    (r'\.exp\s*\(', "tensor.exp()"),
-    (r'\.log\s*\(', "tensor.log()"),
-    (r'\.sqrt\s*\(', "tensor.sqrt()"),
-    (r'\.relu\s*\(', "tensor.relu()"),
-    (r'\.sigmoid\s*\(', "tensor.sigmoid()"),
-    (r'\.tanh\s*\(', "tensor.tanh()"),
-    (r'\.softmax\s*\(', "tensor.softmax()"),
-    (r'\.matmul\s*\(', "tensor.matmul()"),
-    (r'\.bmm\s*\(', "tensor.bmm()"),
+    (r"\.sum\s*\(", "tensor.sum() compute in C++"),
+    (r"\.mean\s*\(", "tensor.mean()"),
+    (r"\.var\s*\(", "tensor.var()"),
+    (r"\.norm\s*\(", "tensor.norm()"),
+    (r"\.argmax\s*\(", "tensor.argmax()"),
+    (r"\.topk\s*\(", "tensor.topk()"),
+    (r"\.cumsum\s*\(", "tensor.cumsum()"),
+    (r"\.exp\s*\(", "tensor.exp()"),
+    (r"\.log\s*\(", "tensor.log()"),
+    (r"\.sqrt\s*\(", "tensor.sqrt()"),
+    (r"\.relu\s*\(", "tensor.relu()"),
+    (r"\.sigmoid\s*\(", "tensor.sigmoid()"),
+    (r"\.tanh\s*\(", "tensor.tanh()"),
+    (r"\.softmax\s*\(", "tensor.softmax()"),
+    (r"\.matmul\s*\(", "tensor.matmul()"),
+    (r"\.bmm\s*\(", "tensor.bmm()"),
     # Host fallback: moving a result back to CPU in a generated C++ surface
     # is a direct escape from the AscendC-kernel requirement.  Keep this
     # narrow: ordinary `.to(device)` remains a legitimate placement operation.
-    (r'\.cpu\s*\(\s*\)', "tensor.cpu() host fallback in C++"),
-    (r'\.to\s*\(\s*(?:at|torch)::kCPU\b',
-        "tensor.to(...::kCPU) host fallback in C++"),
+    (r"\.cpu\s*\(\s*\)", "tensor.cpu() host fallback in C++"),
+    (r"\.to\s*\(\s*(?:at|torch)::kCPU\b", "tensor.to(...::kCPU) host fallback in C++"),
     # Keep the historical explicit symbols too: the generic namespace-call
     # guard below covers normal calls, while these still catch a function
     # pointer/reference form such as `auto f = torch::sort; f(input)`.
-    (r'\btorch::pow\b', "torch::pow"),
-    (r'\btorch::matmul\b', "torch::matmul"),
-    (r'\btorch::sum\b', "torch::sum"),
-    (r'\btorch::mean\b', "torch::mean"),
-    (r'\btorch::softmax\b', "torch::softmax"),
-    (r'\btorch::cat\b', "torch::cat"),
-    (r'\btorch::stack\b', "torch::stack"),
-    (r'\btorch::bmm\b', "torch::bmm"),
-    (r'\btorch::mm\b', "torch::mm"),
-    (r'\btorch::topk\b', "torch::topk"),
-    (r'\btorch::sort\b', "torch::sort"),
-    (r'\btorch::cumsum\b', "torch::cumsum"),
-    (r'\bat::matmul\b', "at::matmul"),
-    (r'\bat::sum\b', "at::sum"),
-    (r'\bat::mean\b', "at::mean"),
+    (r"\btorch::pow\b", "torch::pow"),
+    (r"\btorch::matmul\b", "torch::matmul"),
+    (r"\btorch::sum\b", "torch::sum"),
+    (r"\btorch::mean\b", "torch::mean"),
+    (r"\btorch::softmax\b", "torch::softmax"),
+    (r"\btorch::cat\b", "torch::cat"),
+    (r"\btorch::stack\b", "torch::stack"),
+    (r"\btorch::bmm\b", "torch::bmm"),
+    (r"\btorch::mm\b", "torch::mm"),
+    (r"\btorch::topk\b", "torch::topk"),
+    (r"\btorch::sort\b", "torch::sort"),
+    (r"\btorch::cumsum\b", "torch::cumsum"),
+    (r"\bat::matmul\b", "at::matmul"),
+    (r"\bat::sum\b", "at::sum"),
+    (r"\bat::mean\b", "at::mean"),
     # CANN built-ins
-    (r'\baclnn[A-Z]\w*\s*\(', "aclnn* call (CANN built-in)"),
-    (r'\baclop[A-Z]\w*\s*\(', "aclop* call"),
-    (r'\bacl_op_\w+\s*\(', "acl_op_* call"),
-    (r'\baclrtLaunchKernel\s*\(', "aclrtLaunchKernel (launching pre-built CANN kernel)"),
+    (r"\baclnn[A-Z]\w*\s*\(", "aclnn* call (CANN built-in)"),
+    (r"\baclop[A-Z]\w*\s*\(", "aclop* call"),
+    (r"\bacl_op_\w+\s*\(", "acl_op_* call"),
+    (
+        r"\baclrtLaunchKernel\s*\(",
+        "aclrtLaunchKernel (launching pre-built CANN kernel)",
+    ),
 ]
 
 # A C++ wrapper legitimately needs allocations and tensor metadata while it
@@ -137,14 +150,29 @@ CPP_PATTERNS: list[tuple[str, str]] = [
 # top-level `at::` / `torch::` function namespaces is treated as a likely
 # framework-compute delegation.  This is deliberately a small, explicit list:
 # adding a compute operator here would make the static gate silent again.
-CPP_ALLOWED_NAMESPACE_CALLS = frozenset({
-    "empty", "empty_like", "empty_strided",
-    "zeros", "zeros_like", "ones", "ones_like", "full", "full_like",
-    "from_blob",
-    "Tensor", "TensorOptions",
-    "device", "dtype", "scalar_type", "layout", "requires_grad",
-    "memory_format", "pinned_memory",
-})
+CPP_ALLOWED_NAMESPACE_CALLS = frozenset(
+    {
+        "empty",
+        "empty_like",
+        "empty_strided",
+        "zeros",
+        "zeros_like",
+        "ones",
+        "ones_like",
+        "full",
+        "full_like",
+        "from_blob",
+        "Tensor",
+        "TensorOptions",
+        "device",
+        "dtype",
+        "scalar_type",
+        "layout",
+        "requires_grad",
+        "memory_format",
+        "pinned_memory",
+    }
+)
 
 CPP_NAMESPACE_CALL_RE = re.compile(
     r"\b(?P<namespace>at|torch)::(?P<name>[A-Za-z_]\w*)\s*\("
@@ -155,23 +183,26 @@ ATEN_OPS_INCLUDE_RE = re.compile(
 
 # Lines / files we exempt entirely
 EXEMPT_LINE_PREFIX = (
-    re.compile(r'^\s*#'),
-    re.compile(r'^\s*//'),
+    re.compile(r"^\s*#"),
+    re.compile(r"^\s*//"),
     re.compile(r'^\s*"""'),
-    re.compile(r'^\s*\*\s'),  # block comment continuation
-    re.compile(r'^\s*\*/'),
-    re.compile(r'^\s*import\s'),
-    re.compile(r'^\s*from\s'),
+    re.compile(r"^\s*\*\s"),  # block comment continuation
+    re.compile(r"^\s*\*/"),
+    re.compile(r"^\s*import\s"),
+    re.compile(r"^\s*from\s"),
 )
 
 # Symbols whose names contain a forbidden token but aren't real cheats
 ALLOWLIST_TOKENS = (
-    "aclrtMemcpyAsync",      # memory copy primitive — legit DMA
+    "aclrtMemcpyAsync",  # memory copy primitive — legit DMA
     "aclrtMalloc",
     "aclrtFree",
     "aclrtSynchronizeStream",
     "aclrtCreateStream",
-    "aclrtlaunch_",          # user kernel launch (lowercase l = our kernel, distinct from aclrtLaunchKernel)
+    "aclrtlaunch_",  # user kernel launch (lowercase l = our kernel, distinct from aclrtLaunchKernel)
+    # Layout-only torch_npu cast (ND ↔ FRACTAL_NZ, zero compute; the golden
+    # reference __init__ does the identical cast).
+    "npu_format_cast",
 )
 
 # ---------------------------------------------------------------------------
@@ -185,9 +216,22 @@ def _strip_string_literals(line: str) -> str:
     line = re.sub(r"'''[^']*'''", "''", line)
     line = re.sub(r'"[^"\\]*(\\.[^"\\]*)*"', '""', line)
     line = re.sub(r"'[^'\\]*(\\.[^'\\]*)*'", "''", line)
-    line = re.sub(r'#.*$', '', line)        # py inline comment
-    line = re.sub(r'//.*$', '', line)       # cpp inline comment
+    line = re.sub(r"#.*$", "", line)  # py inline comment
+    line = re.sub(r"//.*$", "", line)  # cpp inline comment
     return line
+
+
+def _hit(path: Path, lineno: int, desc: str, raw: str, category=None) -> dict:
+    """One scanner hit record (file/line/desc + capped line text)."""
+    record = {
+        "file": str(path),
+        "line": lineno,
+        "desc": desc,
+        "text": raw.strip()[:160],
+    }
+    if category is not None:
+        record["category"] = category
+    return record
 
 
 def _is_exempt(line: str) -> bool:
@@ -198,6 +242,10 @@ def _has_allowlist_token(line: str) -> bool:
     return any(tok in line for tok in ALLOWLIST_TOKENS)
 
 
+# A plain `if __name__ == "__main__":` guard (module top level, optional comment).
+MAIN_GUARD_RE = re.compile(r'^\s*if\s+__name__\s*==\s*[\'"]__main__[\'"]\s*:\s*(#.*)?$')
+
+
 def scan_python_wrapper(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -206,7 +254,6 @@ def scan_python_wrapper(path: Path) -> list[dict]:
     in_docstring = False
     in_main_block = False
     main_block_indent: int | None = None
-    _MAIN_GUARD_RE = re.compile(r'^\s*if\s+__name__\s*==\s*[\'"]__main__[\'"]\s*:\s*(#.*)?$')
     for lineno, raw in enumerate(text.splitlines(), 1):
         triple = raw.count('"""') + raw.count("'''")
         if triple == 1:
@@ -221,7 +268,7 @@ def scan_python_wrapper(path: Path) -> list[dict]:
         # kernel surface. Common pattern: CPU oracle (`out_cpu_truth = torch.gather(
         # x_cpu, ...)`) for human-visible bit-equality print. Surfaced by
         # This waiver is scoped to the non-import execution path.
-        if _MAIN_GUARD_RE.match(raw):
+        if MAIN_GUARD_RE.match(raw):
             in_main_block = True
             main_block_indent = len(raw) - len(raw.lstrip())
             continue
@@ -250,12 +297,82 @@ def scan_python_wrapper(path: Path) -> list[dict]:
             continue
         for pat, desc in PYTHON_WRAPPER_PATTERNS:
             if re.search(pat, cleaned):
-                hits.append({"file": str(path), "line": lineno, "desc": desc, "text": raw.strip()[:160]})
+                hits.append(_hit(path, lineno, desc, raw))
                 break
     return hits
 
 
-def scan_cpp(path: Path, is_pybind: bool) -> list[dict]:
+def _aten_include_hit(path: Path, lineno: int, raw: str) -> "dict | None":
+    """Preprocessor lines are normally exempt, but an operator-specific ATen
+    header is itself strong evidence that this wrapper is delegating its
+    core compute. The anchored expression only accepts a real `#include`;
+    comments and string literals cannot match it."""
+    aten_include = ATEN_OPS_INCLUDE_RE.match(raw)
+    if not aten_include:
+        return None
+    name = aten_include.group("name")
+    if name in CPP_ALLOWED_NAMESPACE_CALLS:
+        return None
+    return _hit(
+        path, lineno, f"ATen/ops/{name}.h include (framework compute delegation)", raw
+    )
+
+
+def _aclnn_names_own_surface(token: str, own_aclnn) -> bool:
+    """An aclnn* token is NOT a CANN-builtin delegation when it names the op's
+    OWN opbuild-autogen surface — the `aclnnInner<Op>*` symbols declared under
+    .build/autogen/*.h, or the public `aclnn<Op>*` export family derived from
+    those headers' stems (the op_host/wrapper glue every custom op ships). A
+    call to a DIFFERENT op's aclnn (or to CANN's public built-in when no
+    autogen exists) still flags."""
+    if own_aclnn is None:
+        return False
+    exact, public_prefixes = own_aclnn
+    return token in exact or any(token.startswith(p) for p in public_prefixes)
+
+
+def _namespace_call_hit(
+    path: Path, lineno: int, cleaned: str, raw: str
+) -> "dict | None":
+    """Catch an unlisted top-level ATen/PyTorch operation rather than trying
+    to maintain an inevitably incomplete operator blacklist. The explicit
+    allowlist admits only allocation/metadata calls required by a normal
+    custom-kernel host bridge."""
+    namespace_call = CPP_NAMESPACE_CALL_RE.search(cleaned)
+    if (
+        not namespace_call
+        or namespace_call.group("name") in CPP_ALLOWED_NAMESPACE_CALLS
+    ):
+        return None
+    namespace = namespace_call.group("namespace")
+    name = namespace_call.group("name")
+    return _hit(
+        path, lineno, f"{namespace}::{name}() call (framework compute delegation)", raw
+    )
+
+
+def _aclnn_line_suppressed(desc: str, cleaned: str, own_aclnn) -> bool:
+    """True when the matched aclnn* call names the op's OWN autogen surface."""
+    if not desc.startswith("aclnn* call"):
+        return False
+    m = re.search(r"\baclnn[A-Z]\w*", cleaned)
+    token = m.group(0) if m else ""
+    return _aclnn_names_own_surface(token, own_aclnn)
+
+
+def _pattern_hit(
+    path: Path, lineno: int, cleaned: str, raw: str, own_aclnn
+) -> "dict | None":
+    """The first CPP_PATTERNS match on the line (own-surface aclnn suppressed)."""
+    for pat, desc in CPP_PATTERNS:
+        if re.search(pat, cleaned):
+            if _aclnn_line_suppressed(desc, cleaned, own_aclnn):
+                return None  # suppressed — no hit for this line
+            return _hit(path, lineno, desc, raw)
+    return None
+
+
+def scan_cpp(path: Path, is_pybind: bool, own_aclnn=None) -> list[dict]:
     if not path.exists():
         return []
     text = path.read_text(errors="ignore")
@@ -269,56 +386,56 @@ def scan_cpp(path: Path, is_pybind: bool) -> list[dict]:
             if "*/" in raw:
                 in_block_comment = False
             continue
-
-        # Preprocessor lines are normally exempt below, but an operator
-        # specific ATen header is itself strong evidence that this wrapper is
-        # delegating its core compute.  The anchored expression only accepts a
-        # real `#include`; comments and string literals cannot match it.
-        aten_include = ATEN_OPS_INCLUDE_RE.match(raw)
-        if aten_include:
-            name = aten_include.group("name")
-            if name not in CPP_ALLOWED_NAMESPACE_CALLS:
-                hits.append({
-                    "file": str(path),
-                    "line": lineno,
-                    "desc": f"ATen/ops/{name}.h include (framework compute delegation)",
-                    "text": raw.strip()[:160],
-                })
+        aten = _aten_include_hit(path, lineno, raw)
+        if aten is not None:
+            hits.append(aten)
             continue
-        if _is_exempt(raw):
-            continue
-        if _has_allowlist_token(raw):
+        if _is_exempt(raw) or _has_allowlist_token(raw):
             continue
         cleaned = _strip_string_literals(raw)
         if not cleaned.strip():
             continue
-
-        # Catch an unlisted top-level ATen/PyTorch operation rather than
-        # trying to maintain an inevitably incomplete operator blacklist.
-        # The explicit allowlist above admits only allocation/metadata calls
-        # required by a normal custom-kernel host bridge.
-        namespace_call = CPP_NAMESPACE_CALL_RE.search(cleaned)
-        if namespace_call and namespace_call.group("name") not in CPP_ALLOWED_NAMESPACE_CALLS:
-            namespace = namespace_call.group("namespace")
-            name = namespace_call.group("name")
-            hits.append({
-                "file": str(path),
-                "line": lineno,
-                "desc": f"{namespace}::{name}() call (framework compute delegation)",
-                "text": raw.strip()[:160],
-            })
+        ns = _namespace_call_hit(path, lineno, cleaned, raw)
+        if ns is not None:
+            hits.append(ns)
             continue
-        for pat, desc in CPP_PATTERNS:
-            if re.search(pat, cleaned):
-                hits.append({"file": str(path), "line": lineno, "desc": desc, "text": raw.strip()[:160]})
-                break
+        pat_hit = _pattern_hit(path, lineno, cleaned, raw, own_aclnn)
+        if pat_hit is not None:
+            hits.append(pat_hit)
     return hits
 
 
+def _own_aclnn_surface(ws: Path):
+    """(exact_symbols, public_prefixes) of the op's OWN opbuild-autogen aclnn
+    surface: every `aclnn<Word>*` identifier declared in the workspace's
+    .build/autogen/aclnn_*.h (legacy single-layer + multirank prj-<op> nest), plus
+    the public `aclnn<Camel(op)>` export family derived from those header
+    stems. Empty frozensets when no autogen tree exists — the aclnn* pattern
+    then flags everything as before."""
+    exact: set = set()
+    prefixes: set = set()
+    for header in (
+        *ws.glob(".build/autogen/aclnn_*.h"),
+        *ws.glob("prj-*/.build/autogen/aclnn_*.h"),
+    ):
+        try:
+            exact.update(
+                re.findall(r"\baclnn[A-Z]\w*", header.read_text(errors="ignore"))
+            )
+        except OSError:
+            continue
+        _aclnn_len = len("aclnn_")
+        stem = header.stem[_aclnn_len:]
+        prefixes.add(
+            "aclnn" + "".join(p[:1].upper() + p[1:] for p in stem.split("_") if p)
+        )
+    return frozenset(exact), frozenset(prefixes)
+
+
 PORT_A3_VERIFY_FILES = (
-    "run_a5_verify.py",        # A5-side verification entry
-    "pass_a_runner.py",        # Pass A canonical verifier
-    "run_pass_b.py",           # Pass B canonical verifier
+    "run_a5_verify.py",  # A5-side verification entry
+    "pass_a_runner.py",  # Pass A canonical verifier
+    "run_pass_b.py",  # Pass B canonical verifier
 )
 
 # Patterns BANNED in port_a3-mode verify files (per DEBT-NEW 2026-05-14,
@@ -331,18 +448,26 @@ PORT_A3_VERIFY_FILES = (
 # run_a5_verify.py / pass_a_runner.py.
 PORT_A3_VERIFY_FORBIDDEN: list[tuple[str, str]] = [
     (
-        r'\btorch\.nn\.functional\.[a-z_]+\s*\(',
+        r"\btorch\.nn\.functional\.[a-z_]+\s*\(",
         "torch.nn.functional.<op>() in A5 verify path — falls back to AICPU "
         "when our .so is unloaded; runs stock PyTorch instead of our kernel",
     ),
-    (r'\bF\.[a-z_]+\s*\(',
-        "F.<op>() in A5 verify path — same fallback risk; use aclnn-direct shim instead"),
-    (r'\btorch\._foreach_[a-z]+\s*\(',
-        "torch._foreach_<op>() in A5 verify path — routes through PyTorch foreach dispatcher, NOT our kernel"),
-    (r'\btorch_npu\.npu_[a-zA-Z_]+\s*\(',
-        "torch_npu.npu_<op>() in A5 verify path — may unbind on A5 (per OL-68); use aclnn-direct ctypes shim"),
-    (r'\btorch\.gather\s*\(.*device\s*=\s*[\'"]npu',
-        "torch.gather() on NPU in A5 verify path — uses stock PyTorch gather, NOT our aclnnGatherElementsV2"),
+    (
+        r"\bF\.[a-z_]+\s*\(",
+        "F.<op>() in A5 verify path — same fallback risk; use aclnn-direct shim instead",
+    ),
+    (
+        r"\btorch\._foreach_[a-z]+\s*\(",
+        "torch._foreach_<op>() in A5 verify path — routes through PyTorch foreach dispatcher, NOT our kernel",
+    ),
+    (
+        r"\btorch_npu\.npu_[a-zA-Z_]+\s*\(",
+        "torch_npu.npu_<op>() in A5 verify path — may unbind on A5 (per OL-68); use aclnn-direct ctypes shim",
+    ),
+    (
+        r'\btorch\.gather\s*\(.*device\s*=\s*[\'"]npu',
+        "torch.gather() on NPU in A5 verify path — uses stock PyTorch gather, NOT our aclnnGatherElementsV2",
+    ),
 ]
 
 # CPU-as-reference anti-pattern: pass_a_runner / run_a5_verify computes
@@ -352,8 +477,8 @@ PORT_A3_VERIFY_FORBIDDEN: list[tuple[str, str]] = [
 # the violation message is clear.
 CPU_AS_REFERENCE_ANTIPATTERN: list[tuple[str, str]] = [
     (
-        r'tensor\.(abs|exp|log|sqrt|rsqrt|sigmoid|tanh|gelu|silu|softmax|sum|'
-        r'mean|var|max|min|argmax|argmin|topk|sort|cumsum|gather|scatter)\s*\(',
+        r"tensor\.(abs|exp|log|sqrt|rsqrt|sigmoid|tanh|gelu|silu|softmax|sum|"
+        r"mean|var|max|min|argmax|argmin|topk|sort|cumsum|gather|scatter)\s*\(",
         "CPU tensor.<op>() as 'reference' in verify path — never exercises "
         "A5 NPU let alone our kernel; verification is meaningless",
     ),
@@ -390,11 +515,7 @@ def scan_verify_file_with_patterns(
             continue
         for pat, desc in patterns:
             if re.search(pat, cleaned):
-                hits.append({
-                    "file": str(path), "line": lineno, "desc": desc,
-                    "text": raw.strip()[:160],
-                    "category": category,
-                })
+                hits.append(_hit(path, lineno, desc, raw, category=category))
                 break
     return hits
 
@@ -425,6 +546,7 @@ def _get_active_plugin(ws: Path):
     try:
         # plugins/ lives under src/scripts/orchestrator/
         import sys as _sys
+
         _orch = Path(__file__).parent / "orchestrator"
         if str(_orch) not in _sys.path:
             _sys.path.insert(0, str(_orch))
@@ -444,6 +566,7 @@ def _is_port_a3_workspace(ws: Path) -> bool:
     shim definition; do NOT add new mode-name-based callers."""
     plugin = _get_active_plugin(ws)
     from plugins.port_a3 import PortA3Plugin
+
     return isinstance(plugin, PortA3Plugin)
 
 
@@ -462,6 +585,48 @@ def _coverage_violation(ws: Path, desc: str) -> dict:
         "text": SCANNER_COVERAGE_CATEGORY,
         "category": SCANNER_COVERAGE_CATEGORY,
     }
+
+
+def _scan_cpp_file(f: Path, ws: Path, own_aclnn) -> tuple:
+    """One C++ candidate file → (scanned_count, violations).
+
+    op_api/ suppression: the op's OWN generated aclnn C-API layer
+    (`aclnnXxxGetWorkspaceSize` / `aclnnXxx` DEFINITIONS) is API plumbing,
+    not host-compute delegation — skip any file under an `op_api/` directory
+    so those definitions don't mass-flag as "aclnn* call". Genuine
+    host-compute (cumsum/exp/matmul on at::Tensor) in op_host/op_kernel is
+    NOT under op_api and is still caught."""
+    if "op_api" in f.relative_to(ws).parts:
+        return 0, []
+    if f.suffix in {".cpp", ".cc", ".cxx"}:
+        return 1, scan_cpp(f, is_pybind=("pybind11" in f.name), own_aclnn=own_aclnn)
+    if f.suffix in {".h", ".hpp"}:
+        return 1, scan_cpp(f, is_pybind=False, own_aclnn=own_aclnn)
+    return 0, []
+
+
+def _scan_tree_files(ws: Path, d: Path, own_aclnn, violations: list) -> int:
+    """Scan one candidate dir's files; returns the files scanned."""
+    n_files = 0
+    for f in d.rglob("*"):
+        if not f.is_file():
+            continue
+        n, hits = _scan_cpp_file(f, ws, own_aclnn)
+        n_files += n
+        violations.extend(hits)
+    return n_files
+
+
+def _scan_cpp_dirs(ws: Path, scan_dir_names, own_aclnn) -> tuple:
+    """Scan every declared C++ dir (legacy single-layer ws/<dname> + the
+    multirank nest ws/prj-<op>/<dname>); returns (files_scanned, violations)."""
+    cpp_scanned = 0
+    violations: list[dict] = []
+    for dname in scan_dir_names:
+        for d in (*(ws / dname,), *ws.glob(f"prj-*/{dname}")):
+            if d.is_dir():
+                cpp_scanned += _scan_tree_files(ws, d, own_aclnn, violations)
+    return cpp_scanned, violations
 
 
 def scan_op_workspace(ws: Path) -> dict:
@@ -489,25 +654,29 @@ def scan_op_workspace(ws: Path) -> dict:
     if _plugin is not None:
         declared = tuple(_plugin.kernel_logic_files())
         if not declared:
-            violations.append(_coverage_violation(
-                ws,
-                f"mode '{_plugin.name}' declares no kernel_logic_files(); "
-                f"the delegation scan cannot be pointed at its compute "
-                f"(DEBT-211 — declare them on the plugin)",
-            ))
+            violations.append(
+                _coverage_violation(
+                    ws,
+                    f"mode '{_plugin.name}' declares no kernel_logic_files(); "
+                    f"the delegation scan cannot be pointed at its compute "
+                    f"(DEBT-211 — declare them on the plugin)",
+                )
+            )
         for name in declared:
             f = ws / name
             if f.is_file():
                 scanned_logic.append(f)
                 violations.extend(scan_python_wrapper(f))
         if declared and not scanned_logic:
-            violations.append(_coverage_violation(
-                ws,
-                f"mode '{_plugin.name}' declares kernel_logic_files("
-                f"{', '.join(declared)}) but none exist here; nothing was "
-                f"scanned for delegation (DEBT-211 — a vacuous scan is an "
-                f"error, not a pass)",
-            ))
+            violations.append(
+                _coverage_violation(
+                    ws,
+                    f"mode '{_plugin.name}' declares kernel_logic_files("
+                    f"{', '.join(declared)}) but none exist here; nothing was "
+                    f"scanned for delegation (DEBT-211 — a vacuous scan is an "
+                    f"error, not a pass)",
+                )
+            )
     else:
         # No plugin matched (legacy / pre-plugin archives, or a workspace
         # whose mode is genuinely unidentifiable). We cannot ask anyone
@@ -539,30 +708,10 @@ def scan_op_workspace(ws: Path) -> dict:
         )
     # Dedup, preserve order; always include the historical `kernel/`.
     scan_dir_names = list(dict.fromkeys([*declared_cpp, "kernel"]))
-
-    cpp_scanned = 0
-    for dname in scan_dir_names:
-        d = ws / dname
-        if not d.is_dir():
-            continue
-        for f in d.rglob("*"):
-            if not f.is_file():
-                continue
-            # op_api/ suppression: the op's OWN generated aclnn C-API layer
-            # (`aclnnXxxGetWorkspaceSize` / `aclnnXxx` DEFINITIONS) is API
-            # plumbing, not host-compute delegation. Skip any file that sits
-            # under an `op_api/` directory so those definitions don't mass-flag
-            # as "aclnn* call". Genuine host-compute (cumsum/exp/matmul on
-            # at::Tensor) in op_host/op_kernel is NOT under op_api and is still
-            # caught.
-            if "op_api" in f.relative_to(ws).parts:
-                continue
-            if f.suffix in {".cpp", ".cc", ".cxx"}:
-                cpp_scanned += 1
-                violations.extend(scan_cpp(f, is_pybind=("pybind11" in f.name)))
-            elif f.suffix in {".h", ".hpp"}:
-                cpp_scanned += 1
-                violations.extend(scan_cpp(f, is_pybind=False))
+    cpp_scanned, cpp_violations = _scan_cpp_dirs(
+        ws, scan_dir_names, _own_aclnn_surface(ws)
+    )
+    violations.extend(cpp_violations)
 
     # ── C++ coverage-gap (fail-loud, DEBT-211 directory-level) ─────────────
     # For any mode that authors AscendC C++, an undeclared surface OR a
@@ -571,30 +720,39 @@ def scan_op_workspace(ws: Path) -> dict:
     # compute dir it never looked at.
     if _plugin is not None:
         if not declared_cpp:
-            violations.append(_coverage_violation(
-                ws,
-                f"mode '{_plugin.name}' authors AscendC C++ but declares no "
-                f"kernel_cpp_dirs(); the delegation scan cannot be pointed at "
-                f"its host/kernel C++ (DEBT-211 directory-level — declare the "
-                f"dirs on the plugin, do not leave it undeclared)",
-            ))
-        elif not any((ws / d).is_dir() for d in declared_cpp):
-            violations.append(_coverage_violation(
-                ws,
-                f"mode '{_plugin.name}' declares kernel_cpp_dirs("
-                f"{', '.join(declared_cpp)}) but none exist here; the mode's "
-                f"C++ compute was never scanned (DEBT-211 directory-level — a "
-                f"vacuous scan is an error, not a pass)",
-            ))
+            violations.append(
+                _coverage_violation(
+                    ws,
+                    f"mode '{_plugin.name}' authors AscendC C++ but declares no "
+                    f"kernel_cpp_dirs(); the delegation scan cannot be pointed at "
+                    f"its host/kernel C++ (DEBT-211 directory-level — declare the "
+                    f"dirs on the plugin, do not leave it undeclared)",
+                )
+            )
+        elif not any(
+            (ws / d).is_dir() or any(p.is_dir() for p in ws.glob(f"prj-*/{d}"))
+            for d in declared_cpp
+        ):
+            violations.append(
+                _coverage_violation(
+                    ws,
+                    f"mode '{_plugin.name}' declares kernel_cpp_dirs("
+                    f"{', '.join(declared_cpp)}) but none exist here; the mode's "
+                    f"C++ compute was never scanned (DEBT-211 directory-level — a "
+                    f"vacuous scan is an error, not a pass)",
+                )
+            )
 
     # Nothing at all was read — the exact shape of the silent zero.
     if _plugin is None and not scanned_logic and not cpp_scanned:
-        violations.append(_coverage_violation(
-            ws,
-            "no plugin matched and no canonical entry-point or kernel/ "
-            "source was found; this workspace's compute was never scanned "
-            "(DEBT-211 — a vacuous scan is an error, not a pass)",
-        ))
+        violations.append(
+            _coverage_violation(
+                ws,
+                "no plugin matched and no canonical entry-point or kernel/ "
+                "source was found; this workspace's compute was never scanned "
+                "(DEBT-211 — a vacuous scan is an error, not a pass)",
+            )
+        )
 
     # Plugin-dispatched mode-specific verify-path scan
     if _plugin is not None:
@@ -602,10 +760,13 @@ def scan_op_workspace(ws: Path) -> dict:
         plugin_patterns = _plugin.forbidden_patterns()
         if plugin_verify_files and plugin_patterns:
             for verify_name in plugin_verify_files:
-                violations.extend(scan_verify_file_with_patterns(
-                    ws / verify_name, plugin_patterns,
-                    category=_plugin.scanner_category(),
-                ))
+                violations.extend(
+                    scan_verify_file_with_patterns(
+                        ws / verify_name,
+                        plugin_patterns,
+                        category=_plugin.scanner_category(),
+                    )
+                )
 
     return {
         "workspace": str(ws),
@@ -618,18 +779,85 @@ def scan_op_workspace(ws: Path) -> dict:
     }
 
 
-def main() -> int:
+def _scan_args():
+    """Parse the CLI contract."""
     parser = argparse.ArgumentParser(description=__doc__)
     g = parser.add_mutually_exclusive_group(required=True)
     g.add_argument("--workspace", type=Path, help="single workspace dir to audit")
-    g.add_argument("--archive-mode", action="store_true", help="audit every archived op under output/")
+    g.add_argument(
+        "--archive-mode",
+        action="store_true",
+        help="audit every archived op under output/",
+    )
     # DEBT-191: repo-relative default (not a hardcoded a5_ops abspath; also fixes the
     # stale pre-slim path). scan_delegation_cheating.py = src/scripts → parents[2] = repo root.
-    parser.add_argument("--archive-root", type=Path, default=Path(__file__).resolve().parents[2] / "output")
-    parser.add_argument("--json", action="store_true", help="emit JSON report instead of human-readable")
-    parser.add_argument("--write-report", type=Path, help="also write report to this path (markdown)")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--archive-root",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "output",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="emit JSON report instead of human-readable"
+    )
+    parser.add_argument(
+        "--write-report", type=Path, help="also write report to this path (markdown)"
+    )
+    return parser.parse_args()
 
+
+def _print_reports(
+    reports: list, bad_ops: list, total_violations: int, as_json: bool
+) -> None:
+    """Emit the scan summary (JSON or human-readable)."""
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "reports": reports,
+                    "summary": {
+                        "ops_scanned": len(reports),
+                        "ops_with_violations": len(bad_ops),
+                        "total_violations": total_violations,
+                    },
+                },
+                indent=2,
+            )
+        )
+        return
+    print(f"Scanned {len(reports)} op workspaces")
+    print(f"Ops with violations: {len(bad_ops)}")
+    print(f"Total violations: {total_violations}\n")
+    for r in bad_ops:
+        print(f"❌ {r['workspace']}")
+        for v in r["violations"]:
+            print(f"     {v['file'].split('/')[-1]}:{v['line']}  [{v['desc']}]")
+            print(f"        {v['text']}")
+        print()
+
+
+def _write_md_report(
+    path: Path, reports: list, bad_ops: list, total_violations: int
+) -> None:
+    """Also write the markdown report."""
+    md = ["# Delegation cheating scan report\n"]
+    md.append(f"- Ops scanned: {len(reports)}")
+    md.append(f"- Ops with violations: {len(bad_ops)}")
+    md.append(f"- Total violations: {total_violations}\n")
+    if bad_ops:
+        md.append("## Violations\n")
+        for r in bad_ops:
+            md.append(f"### {r['workspace']}\n")
+            for v in r["violations"]:
+                md.append(f"- `{v['file']}:{v['line']}` — **{v['desc']}**")
+                md.append(f"  - `{v['text']}`")
+            md.append("")
+    else:
+        md.append("**ALL CLEAN** — no delegation cheats detected.\n")
+    path.write_text("\n".join(md))
+
+
+def main() -> int:
+    args = _scan_args()
     reports: list[dict] = []
     if args.workspace:
         reports.append(scan_op_workspace(args.workspace))
@@ -641,40 +869,9 @@ def main() -> int:
 
     total_violations = sum(r["violation_count"] for r in reports)
     bad_ops = [r for r in reports if not r["ok"]]
-
-    if args.json:
-        print(json.dumps({"reports": reports, "summary": {
-            "ops_scanned": len(reports),
-            "ops_with_violations": len(bad_ops),
-            "total_violations": total_violations,
-        }}, indent=2))
-    else:
-        print(f"Scanned {len(reports)} op workspaces")
-        print(f"Ops with violations: {len(bad_ops)}")
-        print(f"Total violations: {total_violations}\n")
-        for r in bad_ops:
-            print(f"❌ {r['workspace']}")
-            for v in r["violations"]:
-                print(f"     {v['file'].split('/')[-1]}:{v['line']}  [{v['desc']}]")
-                print(f"        {v['text']}")
-            print()
-
+    _print_reports(reports, bad_ops, total_violations, args.json)
     if args.write_report:
-        md = ["# Delegation cheating scan report\n"]
-        md.append(f"- Ops scanned: {len(reports)}")
-        md.append(f"- Ops with violations: {len(bad_ops)}")
-        md.append(f"- Total violations: {total_violations}\n")
-        if bad_ops:
-            md.append("## Violations\n")
-            for r in bad_ops:
-                md.append(f"### {r['workspace']}\n")
-                for v in r["violations"]:
-                    md.append(f"- `{v['file']}:{v['line']}` — **{v['desc']}**")
-                    md.append(f"  - `{v['text']}`")
-                md.append("")
-        else:
-            md.append("**ALL CLEAN** — no delegation cheats detected.\n")
-        args.write_report.write_text("\n".join(md))
+        _write_md_report(args.write_report, reports, bad_ops, total_violations)
 
     return 1 if total_violations else 0
 

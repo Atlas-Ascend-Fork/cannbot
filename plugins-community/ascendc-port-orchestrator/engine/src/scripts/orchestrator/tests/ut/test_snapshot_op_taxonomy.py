@@ -29,13 +29,14 @@ These tests pin:
 - Bad JSON → defaults preserved (no crash)
 - End-to-end plugin_method dispatch with realistic FA workspace
 """
+
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
 
-import pytest
+import pytest  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 sys.path.insert(0, str(ROOT / "src" / "scripts" / "workflow"))
@@ -48,11 +49,15 @@ import schema_norm  # noqa: E402
 def _ws_with_classification(tmp_path: Path, tags: list[str]) -> Path:
     ws = tmp_path / "ws_test"
     ws.mkdir()
-    (ws / "op_classification.json").write_text(json.dumps({
-        "op": "test_op",
-        "schema_version": 3,
-        "op_class_tags": tags,
-    }))
+    (ws / "op_classification.json").write_text(
+        json.dumps(
+            {
+                "op": "test_op",
+                "schema_version": 3,
+                "op_class_tags": tags,
+            }
+        )
+    )
     return ws
 
 
@@ -69,9 +74,9 @@ def test_snapshot_defaults_when_no_op_classification(tmp_path):
 
 def test_snapshot_fa_tags_yield_l4_complexity(tmp_path):
     """Canonical FA structural signature: tags contain FUSED + SOFTMAX → complexity=L4."""
-    ws = _ws_with_classification(tmp_path, [
-        "fused", "softmax", "transcendental", "reduction", "reference-ub"
-    ])
+    ws = _ws_with_classification(
+        tmp_path, ["fused", "softmax", "transcendental", "reduction", "reference-ub"]
+    )
     snap = sm.snapshot(ws)
     op_class = snap["op_taxonomy"]["class"]
     assert "FUSED" in op_class
@@ -114,7 +119,7 @@ def test_snapshot_malformed_op_classification_doesnt_crash(tmp_path):
 
 def test_detect_op_class_public_alias():
     """schema_norm.detect_op_class is a public alias for _detect_op_class."""
-    assert schema_norm.detect_op_class is getattr(schema_norm, '_detect_op_class')
+    assert schema_norm.detect_op_class is getattr(schema_norm, "_detect_op_class")
 
 
 def test_eval_condition_plugin_method_routes_fa_through_plugin_gate(tmp_path):
@@ -136,9 +141,9 @@ def test_eval_condition_plugin_method_routes_fa_through_plugin_gate(tmp_path):
                 and worker_signal == "structural_rewrite_needed"
             )
 
-    ws = _ws_with_classification(tmp_path, [
-        "fused", "softmax", "transcendental", "reduction"
-    ])
+    ws = _ws_with_classification(
+        tmp_path, ["fused", "softmax", "transcendental", "reduction"]
+    )
 
     snap = sm.snapshot(ws)
     ctx = {
@@ -182,27 +187,31 @@ def test_eval_condition_plugin_method_skips_non_fa_op(tmp_path):
     assert sm.eval_condition({"plugin_method": "route_check"}, ctx) is False
 
 
-def test_classify_falls_back_to_stale_valid_json_when_skill_times_out(tmp_path):
-    """When `op_classification.error` is cached for current sha AND a stale
-    `op_classification.json` exists with valid tags, classify() should fall
-    back to the stale-but-valid JSON rather than returning empty tags.
+def test_classify_falls_back_to_stale_valid_json_when_skill_times_out(
+    tmp_path, monkeypatch
+):
+    """When the skill fails (any reason) AND a stale `op_classification.json`
+    exists with valid tags, classify() should fall back to the stale-but-valid
+    JSON rather than returning empty tags.
 
     Op_class is the operator's INTRINSIC taxonomy — stable across kernel
     iterations of the SAME op. source_sha tracks regen-relevant changes,
-    NOT taxonomy validity. The cached-error path was incorrectly returning
-    `tags=[]` even when valid stale classification existed.
+    NOT taxonomy validity. Returning `tags=[]` on a failing invocation
+    disables all op_class-aware paths, which is how the 2026-05-23
+    3_FusionAttention white-box catch played out (valid FA tags from a
+    prior kernel iter were discarded).
 
-    Caught 2026-05-23 white-box debug of workspace/3_FusionAttention FA
-    orch run: op_classification.json had valid FA tags from a prior kernel
-    iter, but cached error sha pinned current → returned tags=[] →
-    `is_fa_class()`=False → all 7 PR #127 FA-class finalize gates silently
-    disabled.
+    A legacy error marker from older builds stays in the workspace to
+    prove it no longer influences the outcome (finding #12: failures are
+    never recorded as a source property — every run retries the skill).
     """
     import json as _json
     import sys as _sys
+
     _here = Path(__file__).resolve()
     _sys.path.insert(0, str(_here.parent.parent.parent))
-    from phase_o17_classify import classify, _compute_source_sha256
+    import phase_o17_classify as o17m
+    from phase_o17_classify import _compute_source_sha256
 
     ws = tmp_path / "3_FusionAttention"
     ws.mkdir()
@@ -215,30 +224,42 @@ def test_classify_falls_back_to_stale_valid_json_when_skill_times_out(tmp_path):
     cur_sha = _compute_source_sha256(ws)
 
     # Stale-but-valid op_classification.json from PRIOR kernel sha
-    (ws / "op_classification.json").write_text(_json.dumps({
-        "op": "3_FusionAttention",
-        "schema_version": 3,
-        "source_sha256": "deadbeef" * 8,  # OLD sha, DIFFERENT from cur_sha
-        "op_class_tags": ["fused", "softmax", "transcendental", "reduction"],
-        "kb_recommendations": [],
-        "rationale": "FA-class taxonomy from prior kernel iter",
-    }))
+    (ws / "op_classification.json").write_text(
+        _json.dumps(
+            {
+                "op": "3_FusionAttention",
+                "schema_version": 3,
+                "source_sha256": "deadbeef" * 8,  # OLD sha, DIFFERENT from cur_sha
+                "op_class_tags": ["fused", "softmax", "transcendental", "reduction"],
+                "kb_recommendations": [],
+                "rationale": "FA-class taxonomy from prior kernel iter",
+            }
+        )
+    )
 
-    # Cached error pinning current sha (simulates "skill timed out, don't retry")
-    (ws / "op_classification.error").write_text("skill subprocess failed: timeout after 120s")
+    # Legacy error marker from an older build — must be ignored; the skill
+    # is re-invoked regardless (finding #12).
+    (ws / "op_classification.error").write_text("skill subprocess failed: exit 2")
     (ws / "op_classification.error.sha256").write_text(cur_sha)
 
-    result = classify(ws)
+    monkeypatch.setattr(
+        o17m,
+        "_invoke_claude_skill",
+        lambda ws_, timeout=900: (False, "", "skill subprocess failed: exit 2", False),
+    )
+    result = o17m.classify(ws)
     # Pre-fix: would return tags=[] (BUG — disables op_class-aware paths)
     # Post-fix: returns stale-valid tags with note in error field
-    assert result.op_class_tags == ["fused", "softmax", "transcendental", "reduction"], (
-        f"Expected stale FA-class tags fallback; got {result.op_class_tags!r}"
-    )
+    assert result.op_class_tags == [
+        "fused",
+        "softmax",
+        "transcendental",
+        "reduction",
+    ], f"Expected stale FA-class tags fallback; got {result.op_class_tags!r}"
     # Error field documents the fallback transparently (post-refactor
     # uses shared `_try_existing_classification` helper message format)
     err_lower = (result.error or "").lower()
     assert "reused intrinsic taxonomy" in err_lower or "stale" in err_lower
-    assert "timeout" in err_lower or "timed out" in err_lower
 
 
 def test_classify_falls_back_on_cached_sentinel_path_too(tmp_path):
@@ -255,10 +276,13 @@ def test_classify_falls_back_on_cached_sentinel_path_too(tmp_path):
     """
     import json as _json
     import sys as _sys
+
     _here = Path(__file__).resolve()
     _sys.path.insert(0, str(_here.parent.parent.parent))
     from phase_o17_classify import (
-        classify, _compute_source_sha256, _SKILL_UNAVAILABLE_SENTINEL,
+        classify,
+        _compute_source_sha256,
+        _SKILL_UNAVAILABLE_SENTINEL,
     )
 
     ws = tmp_path / "ws_sentinel"
@@ -271,13 +295,17 @@ def test_classify_falls_back_on_cached_sentinel_path_too(tmp_path):
     cur_sha = _compute_source_sha256(ws)
 
     # Stale-but-valid op_classification.json (different sha)
-    (ws / "op_classification.json").write_text(_json.dumps({
-        "op": "ws_sentinel",
-        "schema_version": 3,
-        "source_sha256": "cafebabe" * 8,
-        "op_class_tags": ["elementwise", "reference-ub"],
-        "kb_recommendations": [],
-    }))
+    (ws / "op_classification.json").write_text(
+        _json.dumps(
+            {
+                "op": "ws_sentinel",
+                "schema_version": 3,
+                "source_sha256": "cafebabe" * 8,
+                "op_class_tags": ["elementwise", "reference-ub"],
+                "kb_recommendations": [],
+            }
+        )
+    )
     # Skill-unavailable sentinel pinning current sha
     (ws / _SKILL_UNAVAILABLE_SENTINEL).write_text(cur_sha)
 
@@ -297,6 +325,7 @@ def test_classify_returns_empty_when_neither_cached_json_nor_error(tmp_path):
     must NOT change it.
     """
     import sys as _sys
+
     _here = Path(__file__).resolve()
     _sys.path.insert(0, str(_here.parent.parent.parent))
     from phase_o17_classify import classify

@@ -45,14 +45,18 @@ Out of scope (future):
   - Auto-Discord (CLAUDE.md says explicit user direction)
   - REPORT.md regeneration (separate /aog-report-gen skill, can run manually)
 """
+
 from __future__ import annotations
 
+from datetime import datetime as _datetime, timezone as _timezone  # noqa: F401
+
+import ast as _ast  # noqa: F401
 import enum
-import hashlib
-import json
+import hashlib  # noqa: F401
+import json  # noqa: F401
 import shutil
-import sys
-from dataclasses import dataclass, field
+import sys  # noqa: F401
+from dataclasses import dataclass, field  # noqa: F401
 from pathlib import Path
 from typing import Optional
 
@@ -65,22 +69,31 @@ class GateID(str, enum.Enum):
     `gate`, never reason-text matching. New gate = new enum entry; otherwise
     reuse one of the existing categories.
     """
+
     VERIFICATION_FILE_MISSING = "verification_file_missing"
     VERIFICATION_MALFORMED = "verification_malformed"
-    MODEL_PY_SHAPE = "model_py_shape"          # P0abg
-    PASS_A_COVERAGE = "pass_a_coverage"         # P0abd
-    KB_WRITEUP = "kb_writeup"              # P0aax
-    POST_WORKER_AUDIT = "post_worker_audit"       # P0aba
-    PASS_COUNT = "pass_count"              # P0ee
-    PERSIST_EVIDENCE = "persist_evidence"        # P0ff
+    MODEL_PY_SHAPE = "model_py_shape"  # P0abg
+    PASS_A_COVERAGE = "pass_a_coverage"  # P0abd
+    KB_WRITEUP = "kb_writeup"  # P0aax
+    POST_WORKER_AUDIT = "post_worker_audit"  # P0aba
+    PASS_COUNT = "pass_count"  # P0ee
+    PERSIST_EVIDENCE = "persist_evidence"  # P0ff
     SIGMOID_FORM_REMEDIATION = "sigmoid_form_remediation"  # P0abi (P-P88)
-    OP_HOST_COMPLETENESS = "op_host_completeness"    # PB-33 (2026-05-14)
+    OP_HOST_COMPLETENESS = "op_host_completeness"  # PB-33 (2026-05-14)
     ACLNN_VERIFY_PATH_FRAUD = "aclnn_verify_path_fraud"  # DEBT-NEW (2026-05-14)
-    BINARY_PROVENANCE = "binary_provenance"       # DEBT-091 (2026-05-15)
-    PLATFORM_BLAME_UNBACKED = "platform_blame_unbacked"  # P94 (2026-05-15) — DS PATTERN-1
-    INFRA_BASELINE_PAPER_OVER = "infra_baseline_paper_over"  # P96 (2026-05-15) — C-INFRA-BASELINE-PAPER-OVER
-    INFRA_RETRY_WITHOUT_CAP = "infra_retry_without_cap"  # P96 (2026-05-15) — C-INFRA-RETRY-WITHOUT-CAP
-    PORT_A3_PASS_B_SCHEMA = "port_a3_pass_b_schema"  # P96 (2026-05-15) — C-PORT-A3-PASS-B-SCHEMA
+    BINARY_PROVENANCE = "binary_provenance"  # DEBT-091 (2026-05-15)
+    PLATFORM_BLAME_UNBACKED = (
+        "platform_blame_unbacked"  # P94 (2026-05-15) — DS PATTERN-1
+    )
+    INFRA_BASELINE_PAPER_OVER = (
+        "infra_baseline_paper_over"  # P96 (2026-05-15) — C-INFRA-BASELINE-PAPER-OVER
+    )
+    INFRA_RETRY_WITHOUT_CAP = (
+        "infra_retry_without_cap"  # P96 (2026-05-15) — C-INFRA-RETRY-WITHOUT-CAP
+    )
+    PORT_A3_PASS_B_SCHEMA = (
+        "port_a3_pass_b_schema"  # P96 (2026-05-15) — C-PORT-A3-PASS-B-SCHEMA
+    )
     # P96 (2026-05-15) — caught when gates updated after orchestrator startup
     STALE_ORCHESTRATOR = "stale_orchestrator"
     # P96 follow-up (2026-05-15) — OL-160 USAGE-gap (filename aligned but ModelNew bypassed)
@@ -151,6 +164,7 @@ def _check_stale_orchestrator() -> Optional[str]:
     # Permit small drift (<1s) for FS quirks; only flag genuine post-startup edits
     if current_mtime > _ORCH_MODULE_STARTUP_MTIME + 1.0:
         from datetime import datetime as _datetime, timezone as _timezone
+
         return (
             f"STALE_ORCHESTRATOR (P96): finalize_pipeline.py on disk mtime "
             f"({_datetime.fromtimestamp(current_mtime, _timezone.utc).isoformat()}) "
@@ -176,12 +190,22 @@ def _check_stale_orchestrator() -> Optional[str]:
 # ---------------------------------------------------------------------------
 import re
 
-EXCLUDE_DIR_NAMES = frozenset({
-    ".cann_learn_sealed",  # sealed research inputs never enter customer archives
-    "__pycache__",
-    ".cache",
-    ".pytest_cache",
-})
+EXCLUDE_DIR_NAMES = frozenset(
+    {
+        ".cann_learn_sealed",  # sealed research inputs never enter customer archives
+        "__pycache__",
+        ".cache",
+        ".pytest_cache",
+        "extra-info",  # CANN runtime dump dir (data-dump/exception_info.*) — device
+        # exception captures are debug detritus, not archive content
+        # Multirank provisioned golden tree (per-case truth .pt files): fully
+        # regenerable from spec.py + seed via run.py provision; the spec +
+        # spec_hash-bound manifest in the archive make regeneration verifiable.
+        # Archiving it ships hundreds of MB of derived data per op against a
+        # KB-scale sibling convention.
+        "golden",
+    }
+)
 
 # Patterns matched against any path component (file or dir):
 EXCLUDE_PATTERNS_RE = (
@@ -195,6 +219,12 @@ EXCLUDE_PATTERNS_RE = (
     re.compile(r".*\.pre-p0[a-z]-recovery.*"),  # P0t recovery archives
     re.compile(r".*\.pyc$"),
     re.compile(r".*~$"),
+    # py_ext C-extension build artifact (multirank NEST; rebuild-regenerable, not archive content)
+    re.compile(r"^_C\..*\.so$"),
+    # O2.5 truth artifacts (edge dataset + inputs): regenerable via
+    # input_gen.py. Exact names — NOT a blanket *.pt (small legitimate .pt
+    # members, e.g. ported capture outputs, stay archivable).
+    re.compile(r"^edge_(inputs|dataset)\.pt$"),
 )
 
 
@@ -269,8 +299,6 @@ def is_finalized(workspace: Path) -> bool:
 # so kw-N+1 has CONCRETE knowledge of what was rejected, not just same
 # stale-context respawn.
 # ---------------------------------------------------------------------------
-from datetime import datetime as _datetime, timezone as _timezone
-
 
 # ---------------------------------------------------------------------------
 # DEBT-192 (2026-07-03): finalize rollback-loop CONVERGENCE guard.
@@ -313,10 +341,12 @@ LOOP_BREAK_K = 3
 # than perf, so it counts as perf-family ONLY when its recorded reason is about
 # performance / independent_re_measure — a read-only inspection of the reason
 # text already stored in .rollback_history.jsonl, never a gate-criteria change.
-_PERF_METHODOLOGY_GATES = frozenset({
-    GateID.PERF_METHODOLOGY_ASYMMETRY.value,
-    GateID.METHODOLOGY_DECLARATION.value,
-})
+_PERF_METHODOLOGY_GATES = frozenset(
+    {
+        GateID.PERF_METHODOLOGY_ASYMMETRY.value,
+        GateID.METHODOLOGY_DECLARATION.value,
+    }
+)
 
 
 def _entry_is_perf_family(entry: dict) -> bool:
@@ -362,8 +392,6 @@ def _entry_is_perf_family(entry: dict) -> bool:
 # only defines `get_inputs`. kw must rewrite. Companion: kw_brief Phase D
 # mandates the rule explicitly.
 # ---------------------------------------------------------------------------
-import ast as _ast
-
 
 # ---------------------------------------------------------------------------
 # P96 (2026-05-15) — infra-baseline + retry-vs-paper-over gates
@@ -443,39 +471,63 @@ import ast as _ast
 # them by bare name unchanged AND `finalize_pipeline.<name>` stays valid for
 # callers/tests. None are monkeypatched.
 from finalize_shared import (  # noqa: E402,F401  re-export: keep call sites + import paths stable
-    _verification_hash, _is_negative_assertion, _is_negative_assertion_window,
-    _is_kernel_caused_context_window, _benchmark_case_count, _kb_writeup_body_len,
-    _is_harness_internal, _is_v220_ec41_output_pad_exempt, _has_profiler_csv_method,
+    _verification_hash,
+    _is_negative_assertion,
+    _is_negative_assertion_window,
+    _is_kernel_caused_context_window,
+    _benchmark_case_count,
+    _kb_writeup_body_len,
+    _is_harness_internal,
+    _is_v220_ec41_output_pad_exempt,
+    _has_profiler_csv_method,
     _HARNESS_INTERNAL_FILES,
-    _NEGATIVE_ASSERTION_MARKERS, _KERNEL_CAUSED_CONTEXT_MARKERS,
-    _INFRA_PAPER_OVER_PHRASES, _NPU_BASELINE_ERROR_CODES,
-    _PROFILER_CSV_TOKENS, _DEVICE_DURATION_TOKENS,
+    _NEGATIVE_ASSERTION_MARKERS,
+    _KERNEL_CAUSED_CONTEXT_MARKERS,
+    _INFRA_PAPER_OVER_PHRASES,
+    _NPU_BASELINE_ERROR_CODES,
+    _PROFILER_CSV_TOKENS,
+    _DEVICE_DURATION_TOKENS,
 )
 
 # --- archive README rendering extracted to finalize_readme.py (DEBT-201, 2026-07-06) ---
 from finalize_readme import (  # noqa: E402,F401  re-export: keep call sites + import paths stable
-    _render_verification_conclusion, _assemble_readme, _write_archive_readme,
+    _render_verification_conclusion,
+    _assemble_readme,
+    _write_archive_readme,
 )
 
 # --- GE op_host assembly extracted to finalize_ge_ophost.py (DEBT-201, 2026-07-06) ---
 from finalize_ge_ophost import (  # noqa: E402,F401  re-export: keep call sites + import paths stable
     assemble_ge_ophost,
-    _FA_GE_OPHOST_TEMPLATE_DIR, _FA_GE_TEMPLATE_OP_TOKEN, _FA_GE_CPP_SUFFIXES,
-    _FA_GE_HDR_SUFFIXES, _FA_GE_SHARED_HEADERS,
+    _FA_GE_OPHOST_TEMPLATE_DIR,
+    _FA_GE_TEMPLATE_OP_TOKEN,
+    _FA_GE_CPP_SUFFIXES,
+    _FA_GE_HDR_SUFFIXES,
+    _FA_GE_SHARED_HEADERS,
 )
 
 # --- KB-candidate verified-on tracking + archive-op-name resolver extracted to
 #     finalize_candidates.py (DEBT-201, 2026-07-06) ---
 from finalize_candidates import (  # noqa: E402,F401  re-export: keep call sites + import paths stable
-    _resolve_archive_op_name, _scan_workspace_for_candidate_refs, _patch_evidence_prose,
-    _append_verified_on, update_verified_on_for_consumed_candidates,
-    _CAND_TOKEN_RE, _PROSE_PATCH_PATTERNS, _kb_root,
+    _resolve_archive_op_name,
+    _scan_workspace_for_candidate_refs,
+    _patch_evidence_prose,
+    _append_verified_on,
+    update_verified_on_for_consumed_candidates,
+    _CAND_TOKEN_RE,
+    _PROSE_PATCH_PATTERNS,
+    _kb_root,
 )
 
 # --- rollback/loop-break extracted to finalize_rollback.py (behavior-neutral, 2026-07-05) ---
 from finalize_rollback import (  # re-export: keep existing import paths stable
-    _rollback_signature, _rollback_history_path, record_rollback, detect_loop_break,
-    _read_rollback_history, detect_nonconvergent_loop, classify_loop_break_action,
+    _rollback_signature,  # noqa: F401
+    _rollback_history_path,  # noqa: F401
+    record_rollback,  # noqa: F401
+    detect_loop_break,  # noqa: F401
+    _read_rollback_history,  # noqa: F401
+    detect_nonconvergent_loop,  # noqa: F401
+    classify_loop_break_action,  # noqa: F401
 )
 
 # --- plugin-dispatch + finalize-eligibility + promote cluster extracted to
@@ -491,21 +543,42 @@ from finalize_rollback import (  # re-export: keep existing import paths stable
 #     re-exported here first. finalize_dispatch is acyclic w.r.t. finalize_checks
 #     because it imports the `_check_*` gate functions LAZILY (inside its bodies).
 from finalize_dispatch import (  # re-export: keep call sites + import paths stable
-    _get_active_plugin, _run_plugin_extra_finalize_checks, _check_op_host_completeness,
-    _pass_branch_gate_specs, _PLUGIN_EXTRAS_SENTINEL, check_finalize_eligibility,
-    batch_precheck, _precheck_blocked, format_batch_precheck_report,
-    _finalize_with_plugin_layout, finalize_op, FinalizeReport,
+    _get_active_plugin,  # noqa: F401
+    _run_plugin_extra_finalize_checks,  # noqa: F401
+    _check_op_host_completeness,  # noqa: F401
+    _pass_branch_gate_specs,  # noqa: F401
+    _PLUGIN_EXTRAS_SENTINEL,  # noqa: F401
+    check_finalize_eligibility,  # noqa: F401
+    batch_precheck,  # noqa: F401
+    _precheck_blocked,  # noqa: F401
+    format_batch_precheck_report,  # noqa: F401
+    _finalize_with_plugin_layout,  # noqa: F401
+    finalize_op,  # noqa: F401
+    FinalizeReport,  # noqa: F401
 )
 
 # --- gate checks extracted to finalize_checks.py (behavior-neutral, 2026-07-05) ---
 from finalize_checks import (  # re-export: keep call sites + import paths stable
-    _check_pass_a_coverage, _check_model_py_shape, _check_binary_provenance,
-    _check_universal_entrypoints, _check_platform_blame_backed, _check_infra_paper_over,
-    _check_infra_retry_budget, _check_port_a3_pass_b_schema, _check_pass_b_coverage,
-    _check_a5_verify_path_provenance, _check_arch35_wrap_cheat,
-    _check_ge_ophost_raw_cann_copy, _check_architecture_class, _check_project_json_metadata,
-    _check_pp88_compliance, _check_kb_writeup,
-    _check_verifier_uses_modelnew, _check_post_worker_audit, _check_pass_count_concrete,
-    _check_pybind_host_logic, _check_perf_methodology,
-    _check_methodology_declaration,
+    _check_pass_a_coverage,  # noqa: F401
+    _check_model_py_shape,  # noqa: F401
+    _check_binary_provenance,  # noqa: F401
+    _check_universal_entrypoints,  # noqa: F401
+    _check_platform_blame_backed,  # noqa: F401
+    _check_infra_paper_over,  # noqa: F401
+    _check_infra_retry_budget,  # noqa: F401
+    _check_port_a3_pass_b_schema,  # noqa: F401
+    _check_pass_b_coverage,  # noqa: F401
+    _check_a5_verify_path_provenance,  # noqa: F401
+    _check_arch35_wrap_cheat,  # noqa: F401
+    _check_ge_ophost_raw_cann_copy,  # noqa: F401
+    _check_architecture_class,  # noqa: F401
+    _check_project_json_metadata,  # noqa: F401
+    _check_pp88_compliance,  # noqa: F401
+    _check_kb_writeup,  # noqa: F401
+    _check_verifier_uses_modelnew,  # noqa: F401
+    _check_post_worker_audit,  # noqa: F401
+    _check_pass_count_concrete,  # noqa: F401
+    _check_pybind_host_logic,  # noqa: F401
+    _check_perf_methodology,  # noqa: F401
+    _check_methodology_declaration,  # noqa: F401
 )

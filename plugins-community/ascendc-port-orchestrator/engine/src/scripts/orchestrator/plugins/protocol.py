@@ -20,6 +20,7 @@ because they apply identically to every mode. See §3 of the design doc.
 PluginProtocol`) keeps working byte-for-byte, including runtime-isinstance
 (the class stays `@runtime_checkable`).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -189,9 +190,7 @@ class PluginProtocol(Protocol):
         ...
 
     # ── Finalize gates ──────────────────────────────────────────────────
-    def check_binary_provenance(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
+    def check_binary_provenance(self, workspace: Path, vj: dict) -> Optional[str]:
         """Return error message if binary-provenance proof model is
         required for this mode but missing/invalid. Return None if the
         check passes OR this mode doesn't require this proof model.
@@ -202,9 +201,7 @@ class PluginProtocol(Protocol):
         """
         ...
 
-    def check_verify_path_provenance(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
+    def check_verify_path_provenance(self, workspace: Path, vj: dict) -> Optional[str]:
         """Mode-specific verify-path provenance check.
 
         Examples:
@@ -214,9 +211,7 @@ class PluginProtocol(Protocol):
         ...
 
     # ── Archive layout ──────────────────────────────────────────────────
-    def archive_layout_mapping(
-        self, workspace: Path
-    ) -> dict[str, str]:
+    def archive_layout_mapping(self, workspace: Path) -> dict[str, str]:
         """Map workspace-relative path → archive-relative path.
 
         Empty dict (default) means flat copy: every workspace file goes
@@ -236,9 +231,7 @@ class PluginProtocol(Protocol):
         """
         ...
 
-    def resolve_archive_target(
-        self, workspace_rel_path: str, op: str
-    ) -> str:
+    def resolve_archive_target(self, workspace_rel_path: str, op: str) -> str:
         """Translate a single workspace-relative path to its archive-
         relative target. Default (BasePlugin) is identity (flat copy).
 
@@ -354,9 +347,7 @@ class PluginProtocol(Protocol):
         ...
 
     # ── Anti-decorative-bypass check (P96 follow-up, 2026-05-15) ────────
-    def check_verifier_uses_modelnew(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
+    def check_verifier_uses_modelnew(self, workspace: Path, vj: dict) -> Optional[str]:
         """Mode-specific anti-decorative-bypass check.
 
         Goal: ensure that the verifier scripts named by `verifier_canonical_filenames()`
@@ -416,7 +407,10 @@ class PluginProtocol(Protocol):
         ...
 
     def kw_brief_phase_block(
-        self, *, op: str = "", workspace=None,
+        self,
+        *,
+        op: str = "",
+        workspace=None,
         iter_cap_remaining: int = 0,
         directive_text: Optional[str] = None,
         handoff_from_prior_agent: Optional[str] = None,
@@ -426,8 +420,12 @@ class PluginProtocol(Protocol):
         ...
 
     def should_auto_cann_learn_on_gap(
-        self, op_class: str, op_complexity: str, worker_signal: str,
-        *, workspace=None,
+        self,
+        op_class: str,
+        op_complexity: str,
+        worker_signal: str,
+        *,
+        workspace=None,
     ) -> bool:
         """Whether a research gap may enter the bounded prior-art learner.
 
@@ -438,4 +436,25 @@ class PluginProtocol(Protocol):
 
     def ko_escalation_threshold(self, op_class: str = "unknown") -> float:
         """Perf ratio below which the AscendC workflow routes kw to ko."""
+        ...
+
+    # ── Phase O5 perf re-verify (plugin-owned capture override) ────────
+    def finalize_perf_capture(self, workspace: Path, op: str) -> Optional[dict]:
+        """Plugin-owned finalize perf measurement (the capture-call override).
+
+        Default None (BasePlugin) → the core `measure_op_perf` symmetric
+        single-process path runs unchanged. A paradigm whose perf capture
+        the symmetric harness cannot express (e.g. multi-rank joint metrics
+        for communication-compute-fused ops) overrides this hook and takes
+        over the finalize perf measurement entirely.
+
+        Contract (as invoked by the core capture call site):
+        - Called as `plugin.finalize_perf_capture(workspace, op)`.
+        - Return None = "not overridden" — the engine default path applies.
+        - Return dict = used verbatim as the verification.json
+          `performance` fragment: custom measurement engine + status
+          mapping (PASS / PASS_WITHIN_TOLERANCE / N/A / ...), honest
+          non-measurement reasons, or a resource-shortage pause sentinel
+          (status == "PAUSE_RESOURCE" + reason).
+        """
         ...

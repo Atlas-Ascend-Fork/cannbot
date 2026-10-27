@@ -65,6 +65,12 @@ def resolve_npubench_workspace(workspace: Path | None) -> tuple[bool, Optional[s
         return False, None
     if not isinstance(state, dict):
         return False, None
+    # A multirank workspace routes its O5 evidence through the multirank
+    # channel (.o5_verified.json + unverified_world_sizes); the npubench
+    # finalize contract — including its npubench_evidence eligibility gate —
+    # never applies to it, even when the truth tier is npubench-bound.
+    if state.get("multirank") is True:
+        return False, None
     reference = state.get("reference")
     if not isinstance(reference, Mapping) or reference.get("source") != NPUBENCH_SOURCE:
         return False, None

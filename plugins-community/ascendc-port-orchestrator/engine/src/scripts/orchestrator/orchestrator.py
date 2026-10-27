@@ -9,9 +9,10 @@
 # ----------------------------------------------------------------------------------------------------------
 """Scoped AscendC workflow engine.
 
-New customer work is admitted only through ``--port-a3-ops`` (arch22 to arch35)
-or ``--backward``. Positional invocation is reserved for lifecycle operations
-on workspaces whose persisted mode was created by one of those two entries.
+New customer work is admitted only through ``--port-a3-ops`` (arch22 to arch35),
+``--backward``, or ``--multirank`` (multirank harness extension).
+Positional invocation is reserved for lifecycle operations on workspaces
+whose persisted mode was created by one of those entries.
 
 Architecture:
 - Reads opgen_state_machine.yaml as source of truth (via state_executor)
@@ -21,17 +22,18 @@ Architecture:
 - LLM never drives the top-level loop. Inside spawned agents, LLM does
   kernel-write / probe-analysis / KB-merge / self-critic.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
 import fcntl
-import importlib
+import importlib  # noqa: F401
 import json
 import logging
 import os
-import re
-import shutil
-import subprocess
+import re  # noqa: F401
+import shutil  # noqa: F401
+import subprocess  # noqa: F401
 import sys
 import time
 from pathlib import Path
@@ -45,9 +47,7 @@ try:
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
 except Exception as error:
-    logging.getLogger(__name__).debug(
-        "Recoverable operation failed.", exc_info=error
-    )
+    logging.getLogger(__name__).debug("Recoverable operation failed.", exc_info=error)
 
 # Module-relative imports
 _HERE = Path(__file__).resolve()
@@ -58,83 +58,91 @@ import engine_version
 # Module-level child of `a5_orchestrator` — handlers configured in main()
 # via setup_run_logger. Before main() runs, log calls discard silently
 # (stdlib default) — matches existing behavior where print() was sole output.
-from logging_config import get_logger
-log = get_logger(__name__)
-
-import agent_dispatch
-import agent_transport
-import critic_invoke
+import agent_dispatch  # noqa: F401
+from pipeline_exhaustion import _is_legitimate_pipeline_exhaustion  # noqa: F401
+from orchestrator_coldstart import _cold_start_reset_workspace  # noqa: F401
+import agent_transport  # noqa: F401
+import critic_invoke  # noqa: F401
 import events
-import finalize_pipeline
+import finalize_pipeline  # noqa: F401
 import phase_o0
 import phase_o05
 import phase_o15
 import phase_o3
-import perf_checkpoint
-import phase_o5
-import phase_o5_perf_capture
-import phase_o5_runner
-import resume as resume_mod
-import schema_norm
+import perf_checkpoint  # noqa: F401
+import phase_o5  # noqa: F401
+import phase_o5_perf_capture  # noqa: F401
+import phase_o5_runner  # noqa: F401
+import resume as resume_mod  # noqa: F401
+import schema_norm  # noqa: F401
+from logging_config import get_logger
+
+log = get_logger(__name__)
+
+
 # Decomposed sibling modules (god-file split 2026-06-30) — names re-imported into this namespace so
 # existing call-sites + `orchestrator.<name>` external access are preserved. Mechanical, no behavior change.
 from silence_retry import (
-    _silence_retry_path,
-    _load_silence_retry_count,
-    _bump_silence_retry_count,
+    _silence_retry_path,  # noqa: F401
+    _load_silence_retry_count,  # noqa: F401
+    _bump_silence_retry_count,  # noqa: F401
 )
+
 # Decomposed sibling module (god-file split 2026-06-30, group 2/7) — names re-imported so existing
 # call-sites + `orchestrator.<name>` external access are preserved. Mechanical, no behavior change.
 from resolution import (
-    _agent_timeout_for_target,
-    _resolve_env,
-    _detect_max_lane,
+    _agent_timeout_for_target,  # noqa: F401
+    _resolve_env,  # noqa: F401
+    _detect_max_lane,  # noqa: F401
     _DEFAULT_AGENT_TIMEOUT_SEC_A5,
-    _DEFAULT_AGENT_TIMEOUT_SEC_DS,
+    _DEFAULT_AGENT_TIMEOUT_SEC_DS,  # noqa: F401
 )
+
 # Decomposed sibling module (god-file split 2026-06-30, group 3/7) — names re-imported so existing
 # call-sites + `orchestrator.<name>` external access are preserved. Mechanical, no behavior change.
 from workspace_lifecycle import (
-    _mark_agent_died,
-    _archive_stale_outputs_before_spawn,
-    _optimize_reentry_workspace,
-    _record_partial_persist_finalize,
-    _STALE_OUTPUTS_BY_STATE,
+    _mark_agent_died,  # noqa: F401
+    _archive_stale_outputs_before_spawn,  # noqa: F401
+    _optimize_reentry_workspace,  # noqa: F401
+    _record_partial_persist_finalize,  # noqa: F401
+    _STALE_OUTPUTS_BY_STATE,  # noqa: F401
 )
+
 # Decomposed sibling module (god-file split 2026-06-30, group 4/7) — names re-imported so existing
 # call-sites + `orchestrator.<name>` external access are preserved. Mechanical, no behavior change.
 from handoff_audit import (
-    extract_canonical_handoff,
-    deleg_marker_needs_refresh,
-    audit_doc_needs_refresh,
-    _ensure_audit_artifacts,
+    extract_canonical_handoff,  # noqa: F401
+    deleg_marker_needs_refresh,  # noqa: F401
+    audit_doc_needs_refresh,  # noqa: F401
+    _ensure_audit_artifacts,  # noqa: F401
     _consume_applied_user_decision,
     _extract_kb_draft_from_user_decision,
-    _CANONICAL_HANDOFF_PREFIXES,
-    _ARROW_TO_AT_FORM,
-    _VALID_ARROW_KEYWORDS,
-    SELF_CRITIC_POST_WORKER_TIMEOUT_SEC,
+    _CANONICAL_HANDOFF_PREFIXES,  # noqa: F401
+    _ARROW_TO_AT_FORM,  # noqa: F401
+    _VALID_ARROW_KEYWORDS,  # noqa: F401
+    SELF_CRITIC_POST_WORKER_TIMEOUT_SEC,  # noqa: F401
 )
+
 # Decomposed sibling module (god-file split 2026-06-30, group 5/7) — names re-imported so existing
 # call-sites + `orchestrator.<name>` external access are preserved. Mechanical, no behavior change.
 from validation import (
-    _validate_a3_host_home_mount,
-    _refuse_if_detached,
-    _spec_has_backward_contract,
+    _validate_a3_host_home_mount,  # noqa: F401
+    _refuse_if_detached,  # noqa: F401
+    _spec_has_backward_contract,  # noqa: F401
 )
+
 # Decomposed sibling modules (god-FUNCTION split, DEBT-201, 2026-07-06) — helper
 # clusters pulled OUT of the 1792-line run_single_op / main god-functions into
 # focused siblings. Names re-imported so run_single_op / main call-sites +
 # `orchestrator.<name>` external+test access are preserved. Byte-identical
 # relocation, no behavior change. Neither function is monkeypatched; both are
 # self-contained (call only stdlib + schema_norm module ref).
-from pipeline_exhaustion import _is_legitimate_pipeline_exhaustion
-from orchestrator_coldstart import _cold_start_reset_workspace
 from fsm_context import OrchestratorContext
 import fsm_phase_finalize
 import fsm_phase_o25_dispatch
 import fsm_phase_spawn
 import state_executor
+
 # Decomposed sibling module (god-FILE split, DEBT-201, 2026-07-06) — the
 # run_single_op prologue + CLI-audit + terminal-timing + workspace-resolution
 # helper clusters were pulled OUT of this file to bring it below the <1000-line
@@ -167,6 +175,22 @@ def _read_scoped_opgen_mode(workspace: Path) -> Optional[str]:
     except Exception:
         return None
     return mode if mode in _SCOPED_OPGEN_MODES else None
+
+
+def _workspace_is_multirank(workspace: Path) -> bool:
+    """True when the durable state flags this port_a3 workspace `multirank`.
+
+    Multirank workspaces ride the port_a3_to_a5 mode key; their reference is
+    self-contained (provisioned by the multirank extension), so every
+    migration reference/source preflight must be skipped for them.
+    """
+    state_path = Path(workspace) / ".opgen_state.json"
+    if not state_path.is_file():
+        return False
+    try:
+        return json.loads(state_path.read_text()).get("multirank") is True
+    except Exception:
+        return False
 
 
 # Hard wall-clock per-agent timeout. Workers can take 30-60min for cold-start
@@ -255,6 +279,49 @@ def enforce_port_a3_target(opgen_mode: str, target: str):
     return target, None
 
 
+_COVERAGE_ACCEPT_MARKER = ".coverage_accept.json"
+
+
+def _maybe_stamp_coverage_accept(workspace: Path, decision_path: Path) -> None:
+    """When the consumed user_decision.md carries the ACCEPT-UNVERIFIED token
+    in its reason, stamp `.coverage_accept.json` recording which world_sizes
+    are currently UNVERIFIED (from verification.json's multirank.unverified block) +
+    when the acceptance happened. A re-entered finalize that re-probes the
+    SAME already-accepted gap does not pause again; a NEW unverified ws (not
+    in the marker) still pauses. The marker is consumed by
+    fsm_finalize_coverage.coverage_accept_satisfied (multirank UNVERIFIED escape
+    hatch — the multirank perf capture and the O5 coverage pause honor it)."""
+    try:
+        text = decision_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return
+    if "ACCEPT-UNVERIFIED" not in text:
+        return
+    import json as _json
+
+    currently: dict = {}
+    try:
+        v = _json.loads((workspace / "verification.json").read_text())
+        currently = dict((v.get("multirank") or {}).get("unverified") or {})
+    except Exception:
+        currently = {}
+    marker = workspace / _COVERAGE_ACCEPT_MARKER
+    marker.write_text(
+        _json.dumps(
+            {
+                "accepted_world_sizes": sorted(currently, key=int),
+                "detail": {k: (v.get("detail") or "") for k, v in currently.items()},
+                "stamped_from": "user_decision.md (ACCEPT-UNVERIFIED)",
+            },
+            indent=2,
+        )
+    )
+    log.info(
+        f"coverage-accept: stamped {_COVERAGE_ACCEPT_MARKER} "
+        f"(accepted unverified world_sizes={sorted(currently, key=int)})"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Single-op runner
 # ---------------------------------------------------------------------------
@@ -262,7 +329,9 @@ def enforce_port_a3_target(opgen_mode: str, target: str):
 _ORCHESTRATOR_LOCK_FILENAME = ".opgen_orchestrator.lock"
 
 
-def _high_spawn_cost_trigger(lifetime_spawn_count: int, same_signature_engine_count: int) -> Optional[str]:
+def _high_spawn_cost_trigger(
+    lifetime_spawn_count: int, same_signature_engine_count: int
+) -> Optional[str]:
     """P2-5 (2026-08-28): lifetime-cost warning trigger, pure for testability.
 
     Fires when lifetime spawns reach 15 (lowered from 30) OR when the P0-1
@@ -275,6 +344,7 @@ def _high_spawn_cost_trigger(lifetime_spawn_count: int, same_signature_engine_co
     if same_signature_engine_count >= 2:
         return "same_signature_engine>=2"
     return None
+
 
 # The kernel releases an flock when the holding process dies, but only while
 # the fd stays open.  Keep every acquired fd here for the process lifetime so
@@ -337,11 +407,7 @@ def _acquire_workspace_singleton_lock(workspace: Path) -> int:
         except BlockingIOError:
             os.close(fd)
             owner_pid = _lock_owner_pid(lock_path)
-            if (
-                attempt == 0
-                and owner_pid is not None
-                and not _pid_alive(owner_pid)
-            ):
+            if attempt == 0 and owner_pid is not None and not _pid_alive(owner_pid):
                 print(
                     f"WARNING: orchestrator lock {lock_path} is held but its "
                     f"recorded owner pid={owner_pid} is dead (stale after kill "
@@ -359,7 +425,6 @@ def _acquire_workspace_singleton_lock(workspace: Path) -> int:
         _WORKSPACE_LOCK_FDS.append(fd)
         return 0
     return 78  # unreachable — the loop either acquires or returns
-
 
 
 def run_single_op(
@@ -404,11 +469,11 @@ def run_single_op(
     if scoped_mode is None:
         print(
             f"ERROR: workspace {workspace} has no supported persisted mode; "
-            "start work with --port-a3-ops or --backward"
+            "start work with --port-a3-ops, --backward, or --multirank"
         )
         return 2
     reference_provider = None
-    if scoped_mode == "port_a3_to_a5":
+    if scoped_mode == "port_a3_to_a5" and not _workspace_is_multirank(workspace):
         try:
             from reference_source import NPUBENCH, resolve_reference_source
 
@@ -422,7 +487,7 @@ def run_single_op(
     elif extra_lanes:
         print("ERROR: multi-rank generation is outside this orchestrator's scope")
         return 2
-    if scoped_mode == "port_a3_to_a5":
+    if scoped_mode == "port_a3_to_a5" and not _workspace_is_multirank(workspace):
         # The frozen NPUKernelBench task, not the arch22 source snapshot, is
         # its functional provider.  O2.5 has a dedicated bundle preflight, so
         # do not call the live-source-oriented stage verifier on this route.
@@ -436,7 +501,9 @@ def run_single_op(
                 return 2
         else:
             try:
-                persisted_state = json.loads((workspace / ".opgen_state.json").read_text())
+                persisted_state = json.loads(
+                    (workspace / ".opgen_state.json").read_text()
+                )
             except Exception as exc:
                 print(
                     "ERROR: durable state is unreadable before source validation: "
@@ -446,13 +513,16 @@ def run_single_op(
             if (
                 isinstance(persisted_state, dict)
                 and isinstance(persisted_state.get("port_source"), dict)
-                and persisted_state["port_source"].get("kind") == "port-aclnn-tilelang2ascendc"
+                and persisted_state["port_source"].get("kind")
+                == "port-aclnn-tilelang2ascendc"
             ):
                 try:
-                    from tilelang2ascendc_source import verify_tilelang2ascendc_source_stage
+                    from tilelang2ascendc_source import (
+                        verify_tilelang2ascendc_source_stage,
+                    )
 
-                    valid_stage, stage_reason, _stage_manifest = verify_tilelang2ascendc_source_stage(
-                        workspace, persisted_state
+                    valid_stage, stage_reason, _stage_manifest = (
+                        verify_tilelang2ascendc_source_stage(workspace, persisted_state)
                     )
                 except Exception as exc:
                     print(
@@ -485,6 +555,7 @@ def run_single_op(
     try:
         from logging_config import setup_run_logger
         import logging as _lg
+
         _existing_level = _lg.getLogger("a5_orchestrator").level or _lg.INFO
         if workspace.exists():
             setup_run_logger(workspace=workspace, level=_existing_level)
@@ -506,18 +577,26 @@ def run_single_op(
     # no marker: DEFAULT applies (no-op).
     if perf_threshold is not None or defer_perf_opt:
         from perf_gate import write_profile_marker
+
         active_profile = write_profile_marker(
-            workspace, perf_threshold, roofline_mode=roofline_mode,
+            workspace,
+            perf_threshold,
+            roofline_mode=roofline_mode,
             defer_perf_opt=defer_perf_opt,
         )
-        log.info(f"--perf-threshold={perf_threshold} defer_perf_opt={defer_perf_opt}: active "
-              f"perf-gate profile = {active_profile.name} "
-              f"(finalize_threshold={active_profile.finalize_threshold}, "
-              f"ko_escalation={'on' if active_profile.allow_ko_escalation else 'off'})")
+        log.info(
+            f"--perf-threshold={perf_threshold} defer_perf_opt={defer_perf_opt}: active "
+            f"perf-gate profile = {active_profile.name} "
+            f"(finalize_threshold={active_profile.finalize_threshold}, "
+            f"ko_escalation={'on' if active_profile.allow_ko_escalation else 'off'})"
+        )
 
-    events.emit(workspace, "orchestrator.start", lane=lane,
-                data={"cap_bumps": cap_bumps or {},
-                      "perf_threshold": perf_threshold})
+    events.emit(
+        workspace,
+        "orchestrator.start",
+        lane=lane,
+        data={"cap_bumps": cap_bumps or {}, "perf_threshold": perf_threshold},
+    )
 
     # P0pp (2026-05-06): Phase O0 hook integrity gate. Verify required
     # KB + hook + deploy infrastructure is present BEFORE spawning agents.
@@ -527,9 +606,12 @@ def run_single_op(
     o0 = phase_o0.check_hook_integrity(workspace)
     if o0.verdict == "BLOCKED":
         print(phase_o0.format_block_message(o0))
-        events.emit(workspace, "orchestrator.phase_o0_block", lane=lane,
-                    data={"verdict": o0.verdict,
-                          "missing_files": o0.missing_files})
+        events.emit(
+            workspace,
+            "orchestrator.phase_o0_block",
+            lane=lane,
+            data={"verdict": o0.verdict, "missing_files": o0.missing_files},
+        )
         return 8  # distinct exit code for "phase O0 critical infra missing"
     elif o0.verdict == "DEGRADED":
         print(phase_o0.format_block_message(o0))
@@ -541,6 +623,7 @@ def run_single_op(
     # or opt into another kernel-authoring backend.
     try:
         from briefs._common import load_env as _load_env
+
         _target = _load_env().target
     except Exception:
         _target = "a5"
@@ -550,7 +633,11 @@ def run_single_op(
         log.warning(_pa3_target_warn)
     _resolved_backend = "ascendc"
     o05 = phase_o05.init_durable_state(
-        workspace, op, lane=lane, target=_target, opgen_mode=_opgen_mode,
+        workspace,
+        op,
+        lane=lane,
+        target=_target,
+        opgen_mode=_opgen_mode,
         backend=_resolved_backend,
     )
     log.info(f"phase O0.5: {o05.summary}")
@@ -573,6 +660,11 @@ def run_single_op(
     # do you want?") instead of writing the file → "classification failed"
     # noise on every backward run (caught by the first live `orch --backward`
     # e2e 2026-05-31). The pre-seed is authoritative; skip the subprocess.
+    # Multirank workspaces RUN O1.7 (only backward takes the skip above): the
+    # pre-handoff design doc + spec exist by entry time, so the classifier can
+    # read them and emit framework tags. The multirank workspace pre-seed
+    # carries no source_sha256 → cache miss → the classification runs; on skill
+    # failure the stale-fallback keeps the pre-seed (tags non-empty).
     _o17_state_path = workspace / ".opgen_state.json"
     _o17_mode = None
     try:
@@ -604,43 +696,51 @@ def run_single_op(
     try:
         if o17 == "RUN":
             import phase_o17_classify
+
             o17 = phase_o17_classify.classify(workspace)
         if o17 is None:
             pass  # backward mode skip — already logged above; pre-seed authoritative
         elif o17.error:
-            # Distinguish sentinel-cached skip ("skill unavailable") from real failures
-            # so the log makes it obvious whether O1.7 cost a harness skill call or not.
-            if "skill unavailable" in (o17.error or ""):
-                if "cached error" in (o17.error or ""):
-                    log.info("phase O1.7: SKIPPED (cached error from prior timeout — 0.0s)")
-                elif "cached sentinel" in (o17.error or ""):
-                    log.info("phase O1.7: SKIPPED (cached: /aog-op-classify not installed in this checkout)")
-                else:
-                    log.info(f"phase O1.7: classification failed — {o17.error}")
+            # Distinguish sentinel-cached skip ("skill unavailable") from real
+            # failures so the log makes it obvious whether O1.7 cost a harness
+            # skill call or not. Failures are never cached (finding #12): every
+            # run retries the skill, so there is no cached-error skip branch.
+            if "cached sentinel" in (o17.error or ""):
+                log.info(
+                    "phase O1.7: SKIPPED (cached: /aog-op-classify not installed in this checkout)"
+                )
             else:
                 log.info(f"phase O1.7: classification failed — {o17.error}")
         else:
-            log.info(f"phase O1.7: tags={o17.op_class_tags} kb_recs={len(o17.kb_recommendations)}")
+            log.info(
+                f"phase O1.7: tags={o17.op_class_tags} kb_recs={len(o17.kb_recommendations)}"
+            )
             # §5.2 C1: config-gated auto-populate of tier-a routes now that op-class is
             # known. Writes workspace/.cba_required_routes.json iff a project route-config
             # ($AOG_CBA_ROUTE_CONFIG) is set AND this op's class matches an entry's
             # applies_to; else no-op (a5_ops mainline generation unaffected). Fail-open.
             try:
                 from cba_route_populate import populate_cba_routes
+
                 _routes = populate_cba_routes(o17.op, workspace, o17.op_class_tags)
                 if _routes:
-                    log.info(f"phase O1.7: CBA tier-a routes populated: "
-                             f"{[r['skill'] for r in _routes]}")
+                    log.info(
+                        f"phase O1.7: CBA tier-a routes populated: "
+                        f"{[r['skill'] for r in _routes]}"
+                    )
             except Exception as _cba_e:
                 log.info(f"phase O1.7: CBA route populate skipped ({_cba_e!r})")
     except Exception as e:
-        log.info(f"phase O1.7: skill subprocess failed ({e!r}); brief will use default-only KB")
+        log.info(
+            f"phase O1.7: skill subprocess failed ({e!r}); brief will use default-only KB"
+        )
 
     # P0nn (2026-05-06): Phase O1.5 DET_POLICY classification. Reads
     # analysis.md (if worker has set it) or op_classification tags. Stored in
     # .opgen_state.json so downstream phases (briefs, O5, da_brief) act on it.
     try:
         from briefs.op_taxonomy import lookup as _op_taxonomy_lookup
+
         _t = _op_taxonomy_lookup(op, workspace=workspace)
         op_tags = list(_t.tags) if _t and getattr(_t, "tags", None) else []
     except Exception:
@@ -658,7 +758,11 @@ def run_single_op(
     # source / ref unrecoverable, 98 = BACKWARD_E2E=0 opt-out) or None to
     # proceed to Phase O3.
     _o25_rc = fsm_phase_o25_dispatch.provision_reference(
-        op, workspace, lane=lane, extra_lanes=extra_lanes, plan_only=plan_only,
+        op,
+        workspace,
+        lane=lane,
+        extra_lanes=extra_lanes,
+        plan_only=plan_only,
     )
     if _o25_rc is not None:
         return _o25_rc
@@ -697,10 +801,14 @@ def run_single_op(
     # is surfaced immediately instead of waiting for the cumulative count.
     _same_sig_engine_count = 0
     try:
-        _same_sig_engine_count = state_executor.same_signature_count(workspace, "engine")
+        _same_sig_engine_count = state_executor.same_signature_count(
+            workspace, "engine"
+        )
     except Exception:
         _same_sig_engine_count = 0
-    _cost_trigger = _high_spawn_cost_trigger(_lifetime_spawn_count, _same_sig_engine_count)
+    _cost_trigger = _high_spawn_cost_trigger(
+        _lifetime_spawn_count, _same_sig_engine_count
+    )
     if _cost_trigger is not None:
         log.info(
             f"⚠ HIGH LIFETIME SPAWN COST ({_cost_trigger}): this op has "
@@ -711,10 +819,16 @@ def run_single_op(
             f"attack-id INFRA-BLAME-LOOP). Hidden cost is visible — consider "
             f"investigating root cause before another cold-start."
         )
-        events.emit(workspace, "orchestrator.high_lifetime_spawn_cost",
-                    lane=lane, data={"count": _lifetime_spawn_count,
-                                     "same_signature_engine_count": _same_sig_engine_count,
-                                     "trigger": _cost_trigger})
+        events.emit(
+            workspace,
+            "orchestrator.high_lifetime_spawn_cost",
+            lane=lane,
+            data={
+                "count": _lifetime_spawn_count,
+                "same_signature_engine_count": _same_sig_engine_count,
+                "trigger": _cost_trigger,
+            },
+        )
 
     # DEBT-201 (dependency inversion): build the per-run OrchestratorContext.
     # STEP 1 introduces the abstraction only — the loop below still reads/writes
@@ -771,14 +885,22 @@ def run_single_op(
                 _drift_reason,
                 engine_version.EXIT_DRIFT,
             )
-            events.emit(workspace, "orchestrator.engine_drift", lane=lane,
-                        data={"reason": _drift_reason})
+            events.emit(
+                workspace,
+                "orchestrator.engine_drift",
+                lane=lane,
+                data={"reason": _drift_reason},
+            )
             try:
-                (workspace / ".engine_drift.json").write_text(json.dumps(
-                    {"reason": _drift_reason,
-                     "ts": _dt.datetime.now(_dt.timezone.utc).isoformat()},
-                    indent=2,
-                ))
+                (workspace / ".engine_drift.json").write_text(
+                    json.dumps(
+                        {
+                            "reason": _drift_reason,
+                            "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                        },
+                        indent=2,
+                    )
+                )
             except OSError:
                 pass
             return engine_version.EXIT_DRIFT
@@ -796,8 +918,12 @@ def run_single_op(
         if snap.is_terminal:
             log.info(f"terminal state reached: {snap.current_state}")
             exit_code = 0 if snap.current_state == "done" else 1
-            events.emit(workspace, "orchestrator.terminal", lane=lane,
-                        data={"state": snap.current_state, "exit_code": exit_code})
+            events.emit(
+                workspace,
+                "orchestrator.terminal",
+                lane=lane,
+                data={"state": snap.current_state, "exit_code": exit_code},
+            )
             # --timing: auto-generate per-step timing report from event stream
             if timing:
                 _generate_timing_report(workspace, op)
@@ -850,17 +976,37 @@ def run_single_op(
                     )
                 try:
                     decision = state_executor.next_state(
-                        workspace, "", dry_run=False,
+                        workspace,
+                        "",
+                        dry_run=False,
                         runtime_kwargs=runtime_kwargs,
                     )
                 except state_executor.StateMachineError as e:
                     log.info(f"state machine error consuming user_decision.md: {e}")
                     return 5
-                log.info(f"route: {decision.from_state} → {decision.next_state} ({decision.rationale})")
-                events.emit(workspace, "orchestrator.transition", lane=lane,
-                            data={"from_state": decision.from_state,
-                                  "to_state": decision.next_state,
-                                  "rationale": decision.rationale[:300]})
+                log.info(
+                    f"route: {decision.from_state} → {decision.next_state} ({decision.rationale})"
+                )
+                # UNVERIFIED escape hatch: a
+                # decision whose reason carries the ACCEPT-UNVERIFIED token
+                # accepts the currently-unverified world_sizes as a degraded
+                # campaign — stamp the marker so a re-entered finalize that
+                # re-probes the same (already-accepted) gap does not pause
+                # again. A NEW unverified ws (not in the marker) still pauses.
+                try:
+                    _maybe_stamp_coverage_accept(workspace, user_decision_path)
+                except Exception as e:
+                    log.info(f"coverage-accept stamp failed (non-fatal): {e!r}")
+                events.emit(
+                    workspace,
+                    "orchestrator.transition",
+                    lane=lane,
+                    data={
+                        "from_state": decision.from_state,
+                        "to_state": decision.next_state,
+                        "rationale": decision.rationale[:300],
+                    },
+                )
                 # P0kk (2026-05-29): consume the decision file once applied, so a
                 # STALE decision cannot re-advance every iteration (infinite-loop
                 # guard — see _consume_applied_user_decision docstring; observed 99×
@@ -880,8 +1026,12 @@ def run_single_op(
                 f"    reason: <free text>\n"
                 f"  Then re-invoke `python3 orchestrator.py {op} --lane {lane}` to resume."
             )
-            events.emit(workspace, "orchestrator.pause", lane=lane,
-                        data={"state": snap.current_state})
+            events.emit(
+                workspace,
+                "orchestrator.pause",
+                lane=lane,
+                data={"state": snap.current_state},
+            )
             # --timing: generate report even on pause — the events up to this
             # point are complete and the user may not re-invoke from here.
             if timing:
@@ -924,8 +1074,12 @@ def run_single_op(
                 handoff="",
             ),
         )
-        events.emit(workspace, "orchestrator.spawn_cap_hit", lane=lane,
-                    data={"cap": TOTAL_SPAWN_CAP_PER_OP})
+        events.emit(
+            workspace,
+            "orchestrator.spawn_cap_hit",
+            lane=lane,
+            data={"cap": TOTAL_SPAWN_CAP_PER_OP},
+        )
     except Exception as e:
         log.warning(f"failed to record cap-hit transition ({e})")
     return 6
@@ -946,12 +1100,14 @@ def run_single_op(
 # monkeypatch-bite contract on `orchestrator.<name>`.
 # ---------------------------------------------------------------------------
 from orchestrator_cmds import (  # noqa: E402
-    _VALID_BUMP_COUNTERS,
-    _parse_bump_caps,
-    _cmd_resume,
-    _cmd_backward,
-    _cmd_port_a3,
-    _cmd_status,
+    _VALID_BUMP_COUNTERS,  # noqa: F401
+    _parse_bump_caps,  # noqa: F401
+    _cmd_resume,  # noqa: F401
+    _cmd_backward,  # noqa: F401
+    _cmd_multirank,  # noqa: F401
+    _cmd_classify_sha,  # noqa: F401
+    _cmd_port_a3,  # noqa: F401
+    _cmd_status,  # noqa: F401
 )
 from orchestrator_cli import main  # noqa: E402
 

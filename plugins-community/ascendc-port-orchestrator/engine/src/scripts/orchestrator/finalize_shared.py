@@ -30,6 +30,7 @@ Clusters:
   * v220 EC41 output-pad exemption — _is_v220_ec41_output_pad_exempt
   * profiler CSV method detection  — _has_profiler_csv_method
 """
+
 from __future__ import annotations
 import logging
 
@@ -53,28 +54,53 @@ def _verification_hash(workspace: Path) -> Optional[str]:
 
 
 _NEGATIVE_ASSERTION_MARKERS = (
-    "did not", "didn't", "did_not",
-    "did not attempt", "didn't attempt",
-    "do not", "don't",
-    "declined to", "decline to",
-    "no manual", "no replace", "no bypass", "no merge",
-    "not to ", "never ",
+    "did not",
+    "didn't",
+    "did_not",
+    "did not attempt",
+    "didn't attempt",
+    "do not",
+    "don't",
+    "declined to",
+    "decline to",
+    "no manual",
+    "no replace",
+    "no bypass",
+    "no merge",
+    "not to ",
+    "never ",
     "without ",
-    "did not perform", "didn't perform",
-    "without performing", "without resorting to",
-    "instead of", "rather than",
-    "would not", "wouldn't",
-    "deny", "denied",
-    "0 hits", "zero hits", "none present",
-    "did not bypass", "did not replace", "did not merge",
-    "did not skip", "did not patch", "did not hand-edit",
+    "did not perform",
+    "didn't perform",
+    "without performing",
+    "without resorting to",
+    "instead of",
+    "rather than",
+    "would not",
+    "wouldn't",
+    "deny",
+    "denied",
+    "0 hits",
+    "zero hits",
+    "none present",
+    "did not bypass",
+    "did not replace",
+    "did not merge",
+    "did not skip",
+    "did not patch",
+    "did not hand-edit",
     # DEBT-194 (2026-07-03): contrast/citation framing — the worker CITES an
     # anti-pattern (to DISTINGUISH a legitimate action from it, or to document
     # what was NOT done), not performs it. P96 false-positived on a real gate-#2
     # run's honest line: "distinguishing legitimate recovery … from the actual
     # P9 anti-patterns (replace .so / bypass --pkg / merge binary / …)".
-    "distinguish", "the actual p9", "actual anti-pattern", "actual p9 anti",
-    "not a p9 anti-pattern", "not a p9", "legitimate recovery",
+    "distinguish",
+    "the actual p9",
+    "actual anti-pattern",
+    "actual p9 anti",
+    "not a p9 anti-pattern",
+    "not a p9",
+    "legitimate recovery",
 )
 
 
@@ -86,7 +112,9 @@ def _is_negative_assertion(context_text: str) -> bool:
     return False
 
 
-def _is_negative_assertion_window(text_lower: str, match_start: int, match_end: int) -> bool:
+def _is_negative_assertion_window(
+    text_lower: str, match_start: int, match_end: int
+) -> bool:
     """DEBT-98 (2026-05-24, GMSQ_v2 P96 false-positive loop): True if the
     keyword match at [match_start, match_end) is in a negative-assertion
     context — worker documenting P9 anti-pressure discipline (they DID NOT
@@ -111,7 +139,7 @@ def _is_negative_assertion_window(text_lower: str, match_start: int, match_end: 
     # Backtick-quoted phrase pattern: keyword inside `...` typically means
     # citation (worker listing keywords-to-audit), not action
     if match_start > 0 and match_end < len(text_lower):
-        if text_lower[match_start - 1] == '`' and text_lower[match_end] == '`':
+        if text_lower[match_start - 1] == "`" and text_lower[match_end] == "`":
             return True
 
     # DEBT-194 (2026-07-03): citation-in-an-enumeration. When the phrase sits
@@ -134,17 +162,37 @@ def _is_negative_assertion_window(text_lower: str, match_start: int, match_end: 
 
 
 _KERNEL_CAUSED_CONTEXT_MARKERS = (
-    "kernel code bug", "kernel bug", "kernel-caused", "kernel caused",
-    "kernel-execution exception", "kernel execution exception",
-    "kernel code", "in-kernel fix", "in kernel fix", "kernel fix",
-    "not infra", "not an infra", "non-infra", "npu is healthy",
-    "env is healthy", "env baseline is healthy", "baseline is healthy",
-    "env probe", "ub bug", "ub-budget", "ub budget", "popstackbuffer",
-    "vector-core exception", "aivec", "sharedtmpbuffer",
+    "kernel code bug",
+    "kernel bug",
+    "kernel-caused",
+    "kernel caused",
+    "kernel-execution exception",
+    "kernel execution exception",
+    "kernel code",
+    "in-kernel fix",
+    "in kernel fix",
+    "kernel fix",
+    "not infra",
+    "not an infra",
+    "non-infra",
+    "npu is healthy",
+    "env is healthy",
+    "env baseline is healthy",
+    "baseline is healthy",
+    "env probe",
+    "ub bug",
+    "ub-budget",
+    "ub budget",
+    "popstackbuffer",
+    "vector-core exception",
+    "aivec",
+    "sharedtmpbuffer",
 )
 
 
-def _is_kernel_caused_context_window(text_lower: str, match_start: int, match_end: int) -> bool:
+def _is_kernel_caused_context_window(
+    text_lower: str, match_start: int, match_end: int
+) -> bool:
     """P96 self-defeat fix (2026-06-16): True if an NPU baseline error-code
     citation at [match_start, match_end) sits in a KERNEL-CAUSED context — the
     docs within +/-300 chars give evidence it was the worker's own kernel bug
@@ -166,17 +214,29 @@ def _is_kernel_caused_context_window(text_lower: str, match_start: int, match_en
 
 _INFRA_PAPER_OVER_PHRASES = (
     # Critical .so replacement (worker mucked with install tree libs)
-    "replace libophost", "replaced libophost", "replacing libophost",
-    "replace libopapi", "replaced libopapi", "replacing libopapi",
-    "libophost.*rollback", "rollback libophost",
-    "libopapi.*rollback", "rollback libopapi",
+    "replace libophost",
+    "replaced libophost",
+    "replacing libophost",
+    "replace libopapi",
+    "replaced libopapi",
+    "replacing libopapi",
+    "libophost.*rollback",
+    "rollback libophost",
+    "libopapi.*rollback",
+    "rollback libopapi",
     # Manual install bypassing ops-nn-port --pkg
-    "manual install", "manually install",
-    "bypass --pkg", "bypassing --pkg", "bypass the --pkg",
-    "bypass build pipeline", "bypassing build pipeline",
+    "manual install",
+    "manually install",
+    "bypass --pkg",
+    "bypassing --pkg",
+    "bypass the --pkg",
+    "bypass build pipeline",
+    "bypassing build pipeline",
     # binary_info_config.json hand-edit
-    "merge binary_info_config", "patch binary_info_config",
-    "hand-edit binary_info_config", "hand edit binary_info_config",
+    "merge binary_info_config",
+    "patch binary_info_config",
+    "hand-edit binary_info_config",
+    "hand edit binary_info_config",
     # NPU error code in PROGRESS without INFRA_BASELINE_VIOLATED handoff
     # (checked separately — these phrases are bare-mention triggers)
 )
@@ -220,10 +280,7 @@ def _benchmark_case_count(workspace: Path) -> Optional[int]:
         lines = [ln for ln in text.splitlines() if ln.strip()]
         # Sanity: each line should parse as JSON with an "inputs" field.
         try:
-            valid = sum(
-                1 for ln in lines
-                if json.loads(ln).get("inputs") is not None
-            )
+            valid = sum(1 for ln in lines if json.loads(ln).get("inputs") is not None)
         except Exception:
             # Malformed; fall back to non-blank line count if it looks
             # like the benchmark format (first char is `{`).
@@ -256,27 +313,29 @@ def _kb_writeup_body_len(workspace: Path) -> int:
 
 # User directive 2026-05-16 02:00Z: 算子 archive 根目录只放给客户用的文件,
 # harness 内部状态/审计/KB-反馈文件统一放到 .harness/ 子目录。
-_HARNESS_INTERNAL_FILES: frozenset[str] = frozenset({
-    # State machine + orchestrator audit
-    "state_transitions.jsonl",
-    "state_transitions.pre-fo-recovery.jsonl",
-    "orchestrator_events.jsonl",
-    # Self-critic / audit outputs
-    "audit_self_critic_post_worker.md",
-    "self_critic_report.md",
-    # KB-feedback / harness-only docs
-    "knowledge_update.md",
-    "cpu_truth_template.md",
-    "prior_art_learn.md",
-    # Workflow decisions (not customer-facing)
-    "user_decision.md",
-    # Project meta (harness uses for routing)
-    "op_classification.json",
-    "a3_reference_runnable.json",
-    # State files (already filtered by leading-`.` rule, but safety)
-    ".opgen_state.json",
-    ".kb_merged",
-})
+_HARNESS_INTERNAL_FILES: frozenset[str] = frozenset(
+    {
+        # State machine + orchestrator audit
+        "state_transitions.jsonl",
+        "state_transitions.pre-fo-recovery.jsonl",
+        "orchestrator_events.jsonl",
+        # Self-critic / audit outputs
+        "audit_self_critic_post_worker.md",
+        "self_critic_report.md",
+        # KB-feedback / harness-only docs
+        "knowledge_update.md",
+        "cpu_truth_template.md",
+        "prior_art_learn.md",
+        # Workflow decisions (not customer-facing)
+        "user_decision.md",
+        # Project meta (harness uses for routing)
+        "op_classification.json",
+        "a3_reference_runnable.json",
+        # State files (already filtered by leading-`.` rule, but safety)
+        ".opgen_state.json",
+        ".kb_merged",
+    }
+)
 
 
 def _is_harness_internal(rel: str) -> bool:
@@ -291,8 +350,13 @@ def _is_harness_internal(rel: str) -> bool:
     name = rel.split("/")[-1]
     if name in _HARNESS_INTERNAL_FILES:
         return True
-    # audit_self_critic_post_worker.STALE_*.md variants
-    if name.startswith("audit_self_critic_post_worker.") and name.endswith(".md"):
+    # audit_self_critic_post_worker.* variants — the live md + the
+    # machine-request json + every STALE_<ts> rename-aside of either (the
+    # audit regen renames BOTH the doc and the request aside; a .json-only
+    # gap left them surfacing as unreceipted archive members)
+    if name.startswith("audit_self_critic_post_worker.") and name.endswith(
+        (".md", ".json")
+    ):
         return True
     # .finalized-<hash> markers (with or without extension)
     if name.startswith(".finalized-"):
@@ -333,6 +397,7 @@ def _is_v220_ec41_output_pad_exempt(workspace: Path, vj: dict) -> bool:
     with the structural aligned-DataCopy + no-DataCopyPad signal.
     """
     import re as _re
+
     # (1) V220 / arch22
     arch = str(vj.get("arch") or "").lower()
     target = str(vj.get("target") or "").lower()

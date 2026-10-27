@@ -33,6 +33,7 @@ post_verify_for_finalize — this test only stubs its RESULT sequence.
 Run: cd src/scripts/orchestrator && PYTHONPATH=. python3 -m pytest \
      tests/ut/test_debt_o5_infra_0_misclassify_retry.py -v
 """
+
 from __future__ import annotations
 
 import sys
@@ -46,6 +47,7 @@ sys.path.insert(0, str(_HERE.parent.parent.parent))  # orchestrator/
 import orchestrator  # noqa: E402,F401  (force module identity for fsm_context read-through)
 import events  # noqa: E402
 import fsm_phase_finalize as F  # noqa: E402
+import fsm_finalize_o5_flow as F_flow  # noqa: E402
 import phase_o5  # noqa: E402
 import state_executor  # noqa: E402
 import finalize_pipeline  # noqa: E402
@@ -58,34 +60,40 @@ _resolve_o5_report = getattr(F, "_resolve_o5_report")
 # ─────────────────────────── PART 1: classify_runner_error ───────────────────────────
 
 
-@pytest.mark.parametrize("msg", [
-    # bash exec-not-found form: `<bin>/python3: No such file or directory` (exit 127).
-    # Deliberately WITHOUT the pre-existing "verifier exit" token so this exercises
-    # the DEBT-O5-INFRA-0-MISCLASSIFY rule, not the NODE-5 catalog.
-    "pass_a re-measure: /usr/local/py311/bin/python3: No such file or directory (exit 127)",
-    "bash: line 1: /opt/a5/py3/bin/python3: No such file or directory",
-    "backward re-measure: /home/env/bin/python: No such file or directory",
-    "/usr/local/py311/bin/python3: cannot execute: required file not found",
-    "resolve failed: NPU_PYTHON_BIN=/stale/bin points at a missing python — No such file or directory",
-])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # bash exec-not-found form: `<bin>/python3: No such file or directory` (exit 127).
+        # Deliberately WITHOUT the pre-existing "verifier exit" token so this exercises
+        # the DEBT-O5-INFRA-0-MISCLASSIFY rule, not the NODE-5 catalog.
+        "pass_a re-measure: /usr/local/py311/bin/python3: No such file or directory (exit 127)",
+        "bash: line 1: /opt/a5/py3/bin/python3: No such file or directory",
+        "backward re-measure: /home/env/bin/python: No such file or directory",
+        "/usr/local/py311/bin/python3: cannot execute: required file not found",
+        "resolve failed: NPU_PYTHON_BIN=/stale/bin points at a missing python — No such file or directory",
+    ],
+)
 def test_interpreter_127_signature_is_infra(msg):
     """Interpreter-resolution failure (stale NPU_PYTHON_BIN, exit 127) → 'infra'."""
     assert classify_runner_error(msg) == "infra"
 
 
-@pytest.mark.parametrize("msg", [
-    # A legit kernel/source file-not-found: bare "No such file" must NOT match.
-    "compile error: my_kernel.h: No such file or directory",
-    "fatal error: pass_a_runner.hpp: No such file or directory",
-    # A python3 dir merely appearing in an unrelated path must NOT match
-    # (`/python3.11/...kernel.cpp:` is not the interpreter itself).
-    "/opt/python3.11/site-packages/foo/kernel.cpp: No such file or directory",
-    # Script-open failure (run_pass_b.py discoverability) — the class that
-    # legitimately rolls to await_worker; "can't open file" must veto.
-    "python3: can't open file '/root/task/run_pass_b.py': [Errno 2] No such file or directory",
-    # Plain exit-127 with no interpreter/file signature at all.
-    "verifier returned 127",
-])
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # A legit kernel/source file-not-found: bare "No such file" must NOT match.
+        "compile error: my_kernel.h: No such file or directory",
+        "fatal error: pass_a_runner.hpp: No such file or directory",
+        # A python3 dir merely appearing in an unrelated path must NOT match
+        # (`/python3.11/...kernel.cpp:` is not the interpreter itself).
+        "/opt/python3.11/site-packages/foo/kernel.cpp: No such file or directory",
+        # Script-open failure (run_pass_b.py discoverability) — the class that
+        # legitimately rolls to await_worker; "can't open file" must veto.
+        "python3: can't open file '/root/task/run_pass_b.py': [Errno 2] No such file or directory",
+        # Plain exit-127 with no interpreter/file signature at all.
+        "verifier returned 127",
+    ],
+)
 def test_non_interpreter_not_found_is_not_infra(msg):
     """Tight-scope guard: bare/kernel-file/script-open 'No such file' → 'algorithm'."""
     assert classify_runner_error(msg) == "algorithm"
@@ -124,16 +132,18 @@ def stub_common(monkeypatch):
     return the list of rollback target states recorded (via record_transition).
     """
     import importlib
+
     monkeypatch.setattr(importlib, "reload", lambda m: m)
     monkeypatch.setattr(events, "emit", lambda *a, **k: None)
-    monkeypatch.setattr(F, "_sleep", lambda seconds: None)  # no real backoff in ut
+    monkeypatch.setattr(F_flow, "_sleep", lambda seconds: None)  # no real backoff in ut
     monkeypatch.setattr(phase_o5, "expected_truth_source", lambda ws: "benchmark")
     monkeypatch.setattr(phase_o5, "format_block_message", lambda op, o5: "")
     monkeypatch.setattr(phase_o5, "record_harness_state", lambda ws, rep: True)
     monkeypatch.setattr(finalize_pipeline, "record_rollback", lambda *a, **k: None)
     recorded: list = []
     monkeypatch.setattr(
-        state_executor, "record_transition",
+        state_executor,
+        "record_transition",
         lambda ws, dec: recorded.append(dec.next_state),
     )
     # below-cap by default (so an exhausted-retry rollback records, not exit-2)
@@ -163,43 +173,71 @@ def _seq_runner(monkeypatch, results):
     return calls
 
 
+def _infra_python_bin_missing():
+    """The canonical DEBT-O5-INFRA-0 exec-not-found O5 report."""
+    return _O5(
+        "RUNNER_FAILED",
+        rollback_kind="infra",
+        summary="/bin/python3: No such file or directory",
+    )
+
+
 def test_infra_runner_failed_retries_then_succeeds(stub_common, monkeypatch, tmp_path):
     """Infra RUNNER_FAILED → re-attempt O5 in place; retry succeeds (VERIFIED)
     → finalize proceeds (None), NO await_worker rollback recorded.
     """
-    calls = _seq_runner(monkeypatch, [
-        _O5("RUNNER_FAILED", rollback_kind="infra", summary="/bin/python3: No such file or directory"),
-        _O5("VERIFIED", harness_git_state="CLEAN", summary="ok on re-attempt"),
-    ])
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    calls = _seq_runner(
+        monkeypatch,
+        [
+            _infra_python_bin_missing(),
+            _O5("VERIFIED", harness_git_state="CLEAN", summary="ok on re-attempt"),
+        ],
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert res is None, "retry-success must proceed to finalize (return None)"
     assert stub_common == [], "must NOT roll back to await_worker when retry succeeds"
     assert len(calls) == 2, "expected 1 initial + 1 retry O5 re-measure"
 
 
-def test_infra_runner_failed_exhausts_then_rolls_to_await_worker(stub_common, monkeypatch, tmp_path):
+def test_infra_runner_failed_exhausts_then_rolls_to_await_worker(
+    stub_common, monkeypatch, tmp_path
+):
     """Infra RUNNER_FAILED that never recovers → after the bounded retries, still
     rolls to await_worker (fail loud, not silent).
     """
-    calls = _seq_runner(monkeypatch, [
-        _O5("RUNNER_FAILED", rollback_kind="infra", summary="/bin/python3: No such file or directory"),
-    ])  # always infra-fail
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    calls = _seq_runner(
+        monkeypatch,
+        [_infra_python_bin_missing()],  # always infra-fail
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert res is not None and res.action == "continue"
-    assert stub_common == ["await_worker"], "exhausted infra retry must fail loud → await_worker"
+    assert stub_common == ["await_worker"], (
+        "exhausted infra retry must fail loud → await_worker"
+    )
     # initial + _O5_INFRA_MAX_RETRIES re-attempts, all still infra-failing
-    assert len(calls) == 1 + getattr(F, '_O5_INFRA_MAX_RETRIES')
+    assert len(calls) == 1 + getattr(F, "_O5_INFRA_MAX_RETRIES")
 
 
-def test_infra_retry_surfaces_real_mismatch_is_handled(stub_common, monkeypatch, tmp_path):
+def test_infra_retry_surfaces_real_mismatch_is_handled(
+    stub_common, monkeypatch, tmp_path
+):
     """A re-attempt that reveals a genuine MISMATCH flows through the MISMATCH
     arm (rolls await_worker) — the retry does not mask a real discrepancy.
     """
-    calls = _seq_runner(monkeypatch, [
-        _O5("RUNNER_FAILED", rollback_kind="infra", summary="/bin/python3: No such file or directory"),
-        _O5("MISMATCH", mismatches=[1, 2], summary="counts differ", claimed={}, measured={}),
-    ])
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    calls = _seq_runner(
+        monkeypatch,
+        [
+            _infra_python_bin_missing(),
+            _O5(
+                "MISMATCH",
+                mismatches=[1, 2],
+                summary="counts differ",
+                claimed={},
+                measured={},
+            ),
+        ],
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert res is not None and res.action == "continue"
     assert stub_common == ["await_worker"]
     assert len(calls) == 2, "one retry then the MISMATCH verdict is dispatched"
@@ -209,10 +247,13 @@ def test_algorithm_runner_failed_unchanged_no_retry(stub_common, monkeypatch, tm
     """Non-infra ('algorithm') RUNNER_FAILED → NO retry (exactly one O5
     re-measure), rolls to await_worker exactly as before.
     """
-    calls = _seq_runner(monkeypatch, [
-        _O5("RUNNER_FAILED", rollback_kind="algorithm", summary="precision FAIL"),
-    ])
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    calls = _seq_runner(
+        monkeypatch,
+        [
+            _O5("RUNNER_FAILED", rollback_kind="algorithm", summary="precision FAIL"),
+        ],
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert res is not None and res.action == "continue"
     assert stub_common == ["await_worker"]
     assert len(calls) == 1, "algorithm RUNNER_FAILED must NOT be retried"
@@ -224,10 +265,11 @@ def test_infra_runner_failed_at_cap_still_exits_2(stub_common, monkeypatch, tmp_
     an infinite loop, never a silent pass).
     """
     monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: True)
-    _seq_runner(monkeypatch, [
-        _O5("RUNNER_FAILED", rollback_kind="infra", summary="/bin/python3: No such file or directory"),
-    ])
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    _seq_runner(
+        monkeypatch,
+        [_infra_python_bin_missing()],
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert (res.action, res.exit_code) == ("return", 2)
     assert stub_common == [], "loop-guard exit must not record a rollback"
 
@@ -244,23 +286,28 @@ def test_host_transient_mismatch_retries_as_infra(stub_common, monkeypatch, tmp_
     (5070xx/aivec) are now split into the device class (zero backoff,
     same-signature parking) — covered in tests/ut/test_same_signature_parking.py.
     """
-    calls = _seq_runner(monkeypatch, [
-        _O5(
-            "MISMATCH",
-            summary="precision status is 'ERROR', not PASS",
-            measured={
-                "precision": {
-                    "reason": (
-                        "RuntimeError: copy_between_host_and_device_opapi "
-                        "... host bus timeout, connection reset by peer"
-                    )
-                }
-            },
-        ),
-        _O5("VERIFIED", harness_git_state="CLEAN", summary="ok on re-attempt"),
-    ])
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
-    assert res is None, "transient copy-fault mismatch must retry in place, not roll back"
+    calls = _seq_runner(
+        monkeypatch,
+        [
+            _O5(
+                "MISMATCH",
+                summary="precision status is 'ERROR', not PASS",
+                measured={
+                    "precision": {
+                        "reason": (
+                            "RuntimeError: copy_between_host_and_device_opapi "
+                            "... host bus timeout, connection reset by peer"
+                        )
+                    }
+                },
+            ),
+            _O5("VERIFIED", harness_git_state="CLEAN", summary="ok on re-attempt"),
+        ],
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
+    assert res is None, (
+        "transient copy-fault mismatch must retry in place, not roll back"
+    )
     assert stub_common == [], "must NOT roll back to await_worker"
     assert len(calls) == 2, "expected 1 initial + 1 infra re-attempt"
 
@@ -323,6 +370,7 @@ def test_host_copy_fault_escalates_after_cap(stub_common, monkeypatch, tmp_path)
     assert "ASCEND_LAUNCH_BLOCKING=1" in o5.summary, "worker debug recipe attached"
 
     import json as _json
+
     ledger = _json.loads(
         (ctx.workspace / getattr(F, "_HOST_COPY_FAULT_ESCALATION_FILE")).read_text()
     )

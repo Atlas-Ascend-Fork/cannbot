@@ -40,6 +40,7 @@ The Ascend950PR `npu-smi info` device block (verified on .171, CANN 25.7.rc1):
     | 0      | Ascend950PR      | Alarm         | 205.7    71      0     / 0       |
     |        |                  | 0000:71:00.0  | 100      0  / 0   90633 / 114688 |
 """
+
 from __future__ import annotations
 
 import re
@@ -50,8 +51,8 @@ from typing import Callable, Optional
 @dataclass
 class DeviceHealth:
     device_id: int
-    health: str            # "OK" / "Alarm" / other
-    util_pct: float        # AICore util %
+    health: str  # "OK" / "Alarm" / other
+    util_pct: float  # AICore util %
     hbm_used_mb: int
     hbm_total_mb: int
 
@@ -133,17 +134,27 @@ def pick_healthy_device(
     device is absent from the map, return `requested` unchanged (best-effort).
     """
     if not health:
-        return requested, "no health data (npu-smi empty/unparsed) — keep requested lane"
+        return (
+            requested,
+            "no health data (npu-smi empty/unparsed) — keep requested lane",
+        )
     req = health.get(requested)
     if req is not None and req.is_healthy(hbm_frac_max=hbm_frac_max, util_max=util_max):
-        return requested, f"requested lane {requested} healthy (hbm={req.hbm_frac:.0%}, util={req.util_pct:.0f}%)"
+        return (
+            requested,
+            f"requested lane {requested} healthy (hbm={req.hbm_frac:.0%}, util={req.util_pct:.0f}%)",
+        )
     if req is None:
         # requested device not visible in npu-smi — don't second-guess, keep it.
-        return requested, f"requested lane {requested} not in npu-smi — keep (fail-open)"
+        return (
+            requested,
+            f"requested lane {requested} not in npu-smi — keep (fail-open)",
+        )
     # Requested is unhealthy: pick the healthiest alternative (lowest HBM frac
     # among OK + util-ok devices). Deterministic tie-break by device id.
     candidates = [
-        d for d in health.values()
+        d
+        for d in health.values()
         if d.is_healthy(hbm_frac_max=hbm_frac_max, util_max=util_max)
     ]
     if not candidates:
@@ -179,9 +190,15 @@ def resolve_healthy_device(
     try:
         rc, out, err = runner(user, host)
     except Exception as e:  # noqa: BLE001
-        return requested, f"npu-smi invocation error ({e!r}) — keep requested lane (fail-open)"
+        return (
+            requested,
+            f"npu-smi invocation error ({e!r}) — keep requested lane (fail-open)",
+        )
     if rc != 0:
-        return requested, f"npu-smi rc={rc} ({err.strip()[:80]}) — keep requested lane (fail-open)"
+        return (
+            requested,
+            f"npu-smi rc={rc} ({err.strip()[:80]}) — keep requested lane (fail-open)",
+        )
     health = parse_npu_health(out)
     return pick_healthy_device(
         requested, health, hbm_frac_max=hbm_frac_max, util_max=util_max
@@ -190,14 +207,37 @@ def resolve_healthy_device(
 
 def _ssh_npu_smi(user: str, host: str) -> tuple[int, str, str]:
     """Host-level `npu-smi info` via ssh (NOT docker-exec — npu-smi resolves
-    on the A5 host, and docker-exec swallows its output under nested quoting)."""
+    on the A5 host, and docker-exec swallows its output under nested quoting).
+
+    `host` may carry a port (`ip:port` / `[v6]:port`, same accepted forms as
+    the multirank endpoint blocks) — split it out to ssh's -p instead of
+    passing the whole string as the hostname (ssh would fail to resolve
+    `127.0.0.1:21122` and the probe would silently fall back)."""
     import subprocess
+
+    ssh_host, port_args = host, []
+    if host.startswith("[") and "]:" in host:
+        ssh_host, _, port = host.rpartition("]:")
+        ssh_host += "]"
+        port_args = ["-p", port]
+    elif host.count(":") == 1:
+        ssh_host, _, port = host.partition(":")
+        port_args = ["-p", port]
     try:
         r = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=no",
-             "-o", "UserKnownHostsFile=/dev/null",
-             f"{user}@{host}", "npu-smi info"],
-            capture_output=True, text=True, timeout=15,
+            [
+                "ssh",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                *port_args,
+                f"{user}@{ssh_host}",
+                "npu-smi info",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         return r.returncode, r.stdout or "", r.stderr or ""
     except subprocess.TimeoutExpired:

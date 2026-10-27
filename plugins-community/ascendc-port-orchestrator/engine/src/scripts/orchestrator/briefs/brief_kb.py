@@ -21,6 +21,7 @@ b-tier 路径，检索为空/失败时 fail-loud（响亮标记，不回退旧�
 `_detect_forced_architecture` 与 `_FORCED_ARCH_TAGS` 保留（kw/ko brief 的
 forced-arch 块在用，与知识来源无关）。
 """
+
 from __future__ import annotations
 import json
 import re
@@ -158,6 +159,7 @@ def kb_manifest_block(
 # (list of {"topic","skill","reference_hint"}). Empty/absent => no tier-a block (byte-identical brief).
 def _cba_tier_a_routes_block(op, workspace=None) -> str:
     import json as _json
+
     if workspace is None:
         return ""
     rf = workspace / ".cba_required_routes.json"
@@ -169,19 +171,29 @@ def _cba_tier_a_routes_block(op, workspace=None) -> str:
         return ""
     if not routes:
         return ""
-    _write_a_tier_load_record(op, workspace, routes)   # §5.2 C2: objective harness LOAD record
-    lines = ["", "# CBA TIER-A ROUTES (MANDATORY — §5.2 c>b>a)",
-             "以下 topic 的权威知识在 **cannbot 社区 skill（tier-a）**、不在自带 b-tier KB。"
-             "生成中需要该 topic 时，**必须用 Skill 工具 invoke 指定的 cannbot skill**（仅 b-tier 不够）；"
-             "invoke 后在 PROGRESS 写 provenance marker。**若该 Skill 未被 invoke，本 run 视为 CBA_MISSING_A_TIER（不放行）。**", ""]
+    _write_a_tier_load_record(
+        op, workspace, routes
+    )  # §5.2 C2: objective harness LOAD record
+    lines = [
+        "",
+        "# CBA TIER-A ROUTES (MANDATORY — §5.2 c>b>a)",
+        "以下 topic 的权威知识在 **cannbot 社区 skill（tier-a）**、不在自带 b-tier KB。"
+        "生成中需要该 topic 时，**必须用 Skill 工具 invoke 指定的 cannbot skill**（仅 b-tier 不够）；"
+        "invoke 后在 PROGRESS 写 provenance marker。**若该 Skill 未被 invoke，本 run 视为 CBA_MISSING_A_TIER（不放行）。**",
+        "",
+    ]
     for r in routes:
         t = r.get("topic", "?")
         sk = r.get("skill", "?")
         hint = r.get("reference_hint", "")
         lines.append(f"- topic: `{t}`")
-        lines.append(f"  - invoke Skill: **`{sk}`**" + (f"（参考 {hint}）" if hint else ""))
+        lines.append(
+            f"  - invoke Skill: **`{sk}`**" + (f"（参考 {hint}）" if hint else "")
+        )
         lines.append(f"  - 写 marker: `CBA_USED tier=a topic={t} skill={sk}`")
-        lines.append(f"  - 若 invoke 失败/不可用 → 停并报 `CBA_MISSING_A_TIER topic={t}`")
+        lines.append(
+            f"  - 若 invoke 失败/不可用 → 停并报 `CBA_MISSING_A_TIER topic={t}`"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -198,6 +210,7 @@ def _write_a_tier_load_record(op, workspace, routes) -> None:
     Finalize merges a compact form into verification.json.a_tier_loaded."""
     import json as _json
     import datetime as _dt
+
     try:
         mf = workspace / "a_tier_manifest.json"
         created_ts = None
@@ -209,23 +222,38 @@ def _write_a_tier_load_record(op, workspace, routes) -> None:
             except Exception:
                 created_ts = None
         if not created_ts:
-            created_ts = _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
-        surfaced = [{
-            "topic": r.get("topic", "?"),
-            "skill": r.get("skill", "?"),
-            "kind": "REQUIRED",
-            "reason": "cba-route",
-            "reference_hint": r.get("reference_hint", ""),
-        } for r in routes]
-        mf.write_text(_json.dumps(
-            {"op": op, "schema_version": 1, "created_ts": created_ts, "surfaced": surfaced},
-            indent=2))
+            created_ts = (
+                _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+            )
+        surfaced = [
+            {
+                "topic": r.get("topic", "?"),
+                "skill": r.get("skill", "?"),
+                "kind": "REQUIRED",
+                "reason": "cba-route",
+                "reference_hint": r.get("reference_hint", ""),
+            }
+            for r in routes
+        ]
+        mf.write_text(
+            _json.dumps(
+                {
+                    "op": op,
+                    "schema_version": 1,
+                    "created_ts": created_ts,
+                    "surfaced": surfaced,
+                },
+                indent=2,
+            )
+        )
     except Exception:
         # fail-open: the LOAD record is additive; never block brief construction on it
         return
 
 
-def _c_tier_lessons_block(op: str, workspace: Optional[Path] = None, target: str = "a5") -> str:
+def _c_tier_lessons_block(
+    op: str, workspace: Optional[Path] = None, target: str = "a5"
+) -> str:
     """c-tier (user-local KB) lessons, injected AHEAD of the b-tier manifest (c>b>a precedence).
 
     The READ side of the c>b>a feedback loop: surfaces deployment-local lessons the running
@@ -237,6 +265,7 @@ def _c_tier_lessons_block(op: str, workspace: Optional[Path] = None, target: str
     """
     import sys as _sys
     from pathlib import Path as _Path
+
     _SCRIPTS = _Path(__file__).resolve().parent.parent.parent  # src/scripts/
     if str(_SCRIPTS) not in _sys.path:
         _sys.path.insert(0, str(_SCRIPTS))
@@ -248,18 +277,25 @@ def _c_tier_lessons_block(op: str, workspace: Optional[Path] = None, target: str
     try:
         if kb_write_root() != "customer":
             return ""
-        arb = build_arbiter()                         # c (runtime-resolved) + bundled b
+        arb = build_arbiter()  # c (runtime-resolved) + bundled b
         kws = [op] + op.replace("_", " ").split()
-        rows = [r for r in inject_for_brief(arb, keywords=kws) if r["tier"] == "customer"]
+        rows = [
+            r for r in inject_for_brief(arb, keywords=kws) if r["tier"] == "customer"
+        ]
     except Exception:
-        return ""                                     # read path must never break brief construction
+        return ""  # read path must never break brief construction
     if not rows:
         return ""
-    lines = ["# 用户本地 KB（c 层）— 相关经验（**最高优先 c>b>a**，来自本部署沉淀）", ""]
-    for r in rows[:12]:                               # cap → keep brief bounded
+    lines = [
+        "# 用户本地 KB（c 层）— 相关经验（**最高优先 c>b>a**，来自本部署沉淀）",
+        "",
+    ]
+    for r in rows[:12]:  # cap → keep brief bounded
         e = r["row"]
         lines.append(f"  - [{getattr(e, 'id', '')}] {getattr(e, 'claim', '')}")
-    lines.append("  （纯经验为本地覆盖；若与官方 b 层正/反模式冲突，读侧浮出冲突交由证据裁决）")
+    lines.append(
+        "  （纯经验为本地覆盖；若与官方 b 层正/反模式冲突，读侧浮出冲突交由证据裁决）"
+    )
     lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -298,9 +334,7 @@ def _okf_query_text(op: str, workspace: Optional[Path], target: str) -> str:
         from briefs.op_taxonomy import lookup as _lookup
 
         taxonomy = _lookup(op, workspace=workspace, target=target)
-        return " ".join(
-            [op.replace("_", " ")] + list(getattr(taxonomy, "tags", []))[:6]
-        )
+        return " ".join([op.replace("_", " ")] + list(getattr(taxonomy, "tags", [])))
     except Exception:
         return op.replace("_", " ")
 

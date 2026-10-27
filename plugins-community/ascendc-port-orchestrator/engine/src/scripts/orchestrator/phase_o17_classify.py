@@ -23,14 +23,15 @@ Architecture:
 
 Subprocess layer is testable via monkeypatch — unit tests inject a fake backend.
 """
+
 from __future__ import annotations
 import logging
 
 import hashlib
 import json
-import os
+import os  # noqa: F401
 import subprocess  # noqa: F401 (retained for test monkeypatch compat + TimeoutExpired symbol)
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field  # noqa: F401
 from pathlib import Path
 from typing import Optional
 
@@ -60,8 +61,24 @@ class OpClassification:
 
 
 _SKILL_NAME = "aog-op-classify"
+
+
+def _empty_classification(
+    workspace: Path, cur_sha: str, *, error: Optional[str] = None, rationale: str = ""
+) -> OpClassification:
+    """The empty-tags fallback result for a degraded/failed classify run."""
+    return OpClassification(
+        op=_strip_backend_suffix(workspace.name),
+        op_class_tags=[],
+        kb_recommendations=[],
+        rationale=rationale,
+        source_signatures_observed=[],
+        source_sha256=cur_sha,
+        error=error,
+    )
+
+
 _CACHE_FILENAME = "op_classification.json"
-_ERROR_FILENAME = "op_classification.error"
 # P135.O17 (2026-05-18): sentinel written when claude CLI reports the skill
 # is missing in this checkout. Caches the "skill unavailable" outcome so
 # subsequent orchestrator restarts (e.g. --resume after pause) skip the
@@ -185,43 +202,49 @@ def _write_unclassified_fallback(workspace: Path, cur_sha: str) -> OpClassificat
         )
     except OSError:
         pass
-    return OpClassification(
-        op=_strip_backend_suffix(workspace.name),
-        op_class_tags=[],
-        kb_recommendations=[],
-        rationale=rationale,
-        source_signatures_observed=[],
-        source_sha256=cur_sha,
-    )
+    return _empty_classification(workspace, cur_sha, rationale=rationale)
 
 
-def _invoke_claude_skill(workspace: Path, timeout: int = 300) -> tuple[bool, str, str]:
+def _invoke_claude_skill(
+    workspace: Path, timeout: int = 900
+) -> tuple[bool, str, str, bool]:
     """Run `/aog-op-classify <workspace>` via headless `claude --print`.
 
     Note: claude CLI does NOT support `--skill <name>` flag. Skills resolve via
     `/skill-name` syntax in the prompt body (per `claude --help` "Skills still
     resolve via /skill-name"). So we pipe `/<skill> <args>` as the prompt.
 
-    Returns (ok, stdout, stderr). ok=False indicates subprocess error or non-zero exit.
+    Returns (ok, stdout, stderr, timed_out). ok=False indicates subprocess error
+    or non-zero exit; timed_out=True marks a wall-clock timeout — the caller
+    must NOT sha-pin that outcome (see classify()).
+
+    Runs with bypassPermissions: headless `--print` has no interactive approval
+    channel, so a restrictive permission mode would hang the first non-edit
+    tool call until the subprocess timeout. Classification runs at a bounded
+    effort: enough reasoning to read the source and map it onto op-class/KB
+    knowledge, without spending a deep-reasoning budget.
     """
     prompt = f"/{_SKILL_NAME} {workspace}"
-    # Claude's historical O1.7 shape is acceptEdits + plain text + stdin.  OpenCode
-    # rejects all permission requests unless --auto is used, and its backend maps
-    # bypassPermissions to that explicit --auto flag, so preserve the behavior rather
-    # than silently degrading this phase under the OpenCode harness.
-    permission_mode = "bypassPermissions" if getattr(_backend, "name", "") == "opencode" else "acceptEdits"
-    env = _backend.dispatch(_SKILL_NAME, prompt, kind="skill", timeout=timeout,
-                            permission_mode=permission_mode, output_format=None, stdin_prompt=True)
+    env = _backend.dispatch(
+        _SKILL_NAME,
+        prompt,
+        kind="skill",
+        timeout=timeout,
+        permission_mode="bypassPermissions",
+        effort="medium",
+        output_format=None,
+        stdin_prompt=True,
+    )
     raw = env.raw_envelope
     if raw.get("timed_out"):
-        return False, "", f"timeout after {timeout}s"
+        return False, "", f"timeout after {timeout}s", True
     if raw.get("not_found"):
-        return False, "", f"claude CLI not found: {raw.get('stderr')}"
+        return False, "", f"claude CLI not found: {raw.get('stderr')}", False
     stdout = env.output_text or ""
     stderr = raw.get("stderr") or raw.get("reason") or ""
     if env.is_error:  # returncode != 0
-        return False, stdout, stderr or f"exit {raw.get('returncode')}"
-    return True, stdout, stderr
+        return False, stdout, stderr or f"exit {raw.get('returncode')}", False
+    return True, stdout, stderr, False
 
 
 def _try_existing_classification(
@@ -245,6 +268,7 @@ def _try_existing_classification(
     the original error OpClassification).
     """
     import json as _json
+
     cls_path = workspace / _CACHE_FILENAME
     if not cls_path.is_file():
         return None
@@ -272,13 +296,67 @@ def _try_existing_classification(
     )
 
 
-def classify(workspace: Path, *, force: bool = False, timeout: int = 300) -> OpClassification:
+def _sentinel_short_circuit(workspace: Path, cur_sha: str) -> "OpClassification | None":
+    """P135.O17 skill-unavailable sentinel — if a prior invocation already
+    determined this checkout's claude CLI doesn't know /aog-op-classify, skip
+    the subprocess. Sentinel is sha-pinned so a source-content change still
+    re-tries (in case the skill was installed in between)."""
+    sentinel = workspace / _SKILL_UNAVAILABLE_SENTINEL
+    if not sentinel.exists():
+        return None
+    try:
+        pinned_sha = sentinel.read_text().strip()
+    except OSError:
+        pinned_sha = ""
+    if pinned_sha != cur_sha:
+        return None
+    # P135.O17c (2026-05-23 review): mirror the cached-error fallback —
+    # check for existing valid op_classification.json BEFORE returning empty.
+    # Same intrinsic-taxonomy reasoning as the cached-error path.
+    stale = _try_existing_classification(
+        workspace,
+        cur_sha,
+        "skill unavailable (cached sentinel — /aog-op-classify not installed in this checkout)",
+    )
+    if stale is not None:
+        return stale
+    return _empty_classification(
+        workspace,
+        cur_sha,
+        error="skill unavailable (cached sentinel; brief will use default-only KB)",
+    )
+
+
+def _skill_missing_fallback(
+    workspace: Path, cur_sha: str, stdout: str
+) -> OpClassification:
+    """Claude CLI exited 0 but the skill produced no output file. Cache the
+    outcome so the next orchestrator restart short-circuits."""
+    try:
+        (workspace / _SKILL_UNAVAILABLE_SENTINEL).write_text(cur_sha)
+    except OSError:
+        pass
+    return _empty_classification(
+        workspace,
+        cur_sha,
+        error=(
+            "skill exited 0 but op_classification.json not written or sha "
+            f"mismatch; stdout_tail={stdout[-200:]!r}"
+        ),
+    )
+
+
+def classify(
+    workspace: Path, *, force: bool = False, timeout: int = 900
+) -> OpClassification:
     """Run Phase O1.7 classification on a workspace.
 
     Args:
         workspace: path to workspace dir
         force: if True, ignore cache and re-run skill
-        timeout: subprocess timeout in seconds
+        timeout: subprocess timeout in seconds — a hang fuse bounding the
+            worst case so one stuck classify cannot stall the pipeline; NOT
+            the expected duration of a healthy classification run.
 
     Returns:
         OpClassification (with error field populated on failure — never raises)
@@ -288,121 +366,41 @@ def classify(workspace: Path, *, force: bool = False, timeout: int = 300) -> OpC
         cached = _read_cached(workspace)
         if cached is not None:
             return cached
-        # P135.O17 (2026-05-18): skill-unavailable sentinel — if a prior
-        # invocation already determined this checkout's claude CLI doesn't
-        # know /aog-op-classify, skip the subprocess. Sentinel is sha-pinned
-        # so a source-content change still re-tries (in case the skill was
-        # installed in between).
-        sentinel = workspace / _SKILL_UNAVAILABLE_SENTINEL
-        if sentinel.exists():
-            try:
-                pinned_sha = sentinel.read_text().strip()
-            except OSError:
-                pinned_sha = ""
-            if pinned_sha == cur_sha:
-                # P135.O17c (2026-05-23 review):
-                # mirror the cached-error fallback — check for existing valid
-                # op_classification.json BEFORE returning empty. Same intrinsic-
-                # taxonomy reasoning as the cached-error path below.
-                stale = _try_existing_classification(
-                    workspace, cur_sha,
-                    "skill unavailable (cached sentinel — /aog-op-classify not installed in this checkout)",
-                )
-                if stale is not None:
-                    return stale
-                return OpClassification(
-                    op=_strip_backend_suffix(workspace.name),
-                    op_class_tags=[], kb_recommendations=[], rationale="",
-                    source_signatures_observed=[], source_sha256=cur_sha,
-                    error="skill unavailable (cached sentinel; brief will use default-only KB)",
-                )
+        # P135.O17 (2026-05-18): skill-unavailable sentinel (sha-pinned so a
+        # source-content change still re-tries).
+        short = _sentinel_short_circuit(workspace, cur_sha)
+        if short is not None:
+            return short
 
-    # P135.O17b (2026-05-18 DS): reap cached error from prior timeout.
-    # If op_classification.error exists with matching sha256, the prior
-    # run timed out — return the cached error immediately instead of
-    # re-invoking claude --print (another 120s + $0.05-0.50).
-    error_file = workspace / _ERROR_FILENAME
-    if error_file.exists():
-        try:
-            cached_err = error_file.read_text().strip()
-        except OSError:
-            cached_err = ""
-        # sha-pin the error cache: if source files haven't changed,
-        # the skill would time out again — skip it.
-        error_sha_file = workspace / (_ERROR_FILENAME + ".sha256")
-        try:
-            pinned = error_sha_file.read_text().strip() if error_sha_file.exists() else ""
-        except OSError:
-            pinned = ""
-        if pinned == cur_sha:
-            # P135.O17c (independent review 2026-05-23T19:25Z): when
-            # cached error pins current sha, FALL BACK to existing
-            # op_classification.json (stale-but-valid) before returning
-            # empty tags. Op_class is the operator's INTRINSIC taxonomy
-            # (FA op is FA regardless of kernel iter); source_sha tracks
-            # regen-relevant changes, NOT taxonomy validity. Returning
-            # empty tags here was breaking all op_class-aware paths (PR
-            # #127 FA-class gates, structural-rewrite routing, DEBT-080
-            # escalation, and the op-class-aware escalation-threshold and
-            # reference-truth strategy selectors).
-            #
-            # Empirical: workspace/3_FusionAttention had valid FA tags in
-            # op_classification.json from 2026-05-19 (sha f368fa85...),
-            # current sha aeae25c7... after kernel iter, error.sha256
-            # matched current → pre-fix returned tags=[] → is_fa_class()
-            # → False → 0/7 gates fire on the FA op the gates were built
-            # for.
-            stale = _try_existing_classification(
-                workspace, cur_sha,
-                f"skill unavailable (cached error: {cached_err[:120]})",
-            )
-            if stale is not None:
-                return stale
-            # No stale classification available — return error-as-before
-            return OpClassification(
-                op=_strip_backend_suffix(workspace.name),
-                op_class_tags=[], kb_recommendations=[], rationale="",
-                source_signatures_observed=[], source_sha256=cur_sha,
-                error=f"skill unavailable (cached error: {cached_err[:200]})",
-            )
+    # No cached-error short-circuit (multirank e2e finding #12, 2026-10-15):
+    # failures are never recorded as a "same source failed before" marker.
+    # Whether a failure is transient (infra hiccup) or deterministic is not
+    # knowable from the error text — a mis-guessed transient failure would
+    # pin the workspace into permanently degraded classification until
+    # manual cleanup. Retrying costs one bounded classify call; the retry
+    # path is the only way a transient failure self-heals. Legacy
+    # op_classification.error/.sha256 files from older builds are ignored.
 
-    ok, stdout, stderr = _invoke_claude_skill(workspace, timeout=timeout)
+    ok, stdout, stderr, _ = _invoke_claude_skill(workspace, timeout=timeout)
     if not ok:
         # DEBT-134 (2026-05-26): on a first-invocation skill failure/timeout,
         # prefer a prior valid op_classification.json (non-empty tags) over an
         # empty-tags error — op_class is the operator's INTRINSIC taxonomy,
-        # stable across kernel iters of the same op (same reasoning as the
-        # P135.O17c L3b stale-fallback, just fired on the FIRST timeout instead
-        # of waiting for a second invocation to sha-pin the error). Still write
-        # the error file + sha pin so subsequent invocations short-circuit via
-        # the cheaper L3a cached-error path.
+        # stable across kernel iters of the same op.
+        # No error file/marker is written (finding #12): a failure is never
+        # cached as a source property — the next invocation retries the
+        # skill; transient failures self-heal and deterministic ones merely
+        # cost one extra bounded call.
         stale = _try_existing_classification(
-            workspace, cur_sha,
+            workspace,
+            cur_sha,
             f"skill subprocess failed (first invocation): {stderr[:120]}",
         )
         if stale is not None:
-            try:
-                error_file.write_text(f"skill subprocess failed: {stderr[:400]}")
-                (workspace / (_ERROR_FILENAME + ".sha256")).write_text(cur_sha)
-            except OSError:
-                pass
             return stale
-        err = OpClassification(
-            op=_strip_backend_suffix(workspace.name),
-            op_class_tags=[],
-            kb_recommendations=[],
-            rationale="",
-            source_signatures_observed=[],
-            source_sha256=cur_sha,
-            error=f"skill subprocess failed: {stderr[:400]}",
+        return _empty_classification(
+            workspace, cur_sha, error=f"skill subprocess failed: {stderr[:400]}"
         )
-        try:
-            error_file.write_text(err.error or "")
-            # P135.O17b: pin sha256 so next resume skips the 120s timeout
-            (workspace / (_ERROR_FILENAME + ".sha256")).write_text(cur_sha)
-        except OSError:
-            pass
-        return err
 
     # Skill writes the JSON to workspace/op_classification.json directly; we just
     # re-read it. Sanity-check that the skill emitted the expected file.
@@ -411,29 +409,25 @@ def classify(workspace: Path, *, force: bool = False, timeout: int = 300) -> OpC
         return cached
     # P135.O17 (2026-05-18): claude CLI exited 0 but the skill produced no
     # output file. The deterministic cause is "Unknown command: /<skill>" —
-    # the skill is not installed/registered in this checkout. Cache the
-    # outcome so the next orchestrator restart short-circuits.
+    # the skill is not installed/registered in this checkout.
     if "Unknown command" in stdout:
-        try:
-            (workspace / _SKILL_UNAVAILABLE_SENTINEL).write_text(cur_sha)
-        except OSError:
-            pass
-        return OpClassification(
-            op=_strip_backend_suffix(workspace.name),
-            op_class_tags=[],
-            kb_recommendations=[],
-            rationale="",
-            source_signatures_observed=[],
-            source_sha256=cur_sha,
-            error=(
-                "skill exited 0 but op_classification.json not written or sha "
-                f"mismatch; stdout_tail={stdout[-200:]!r}"
-            ),
-        )
+        return _skill_missing_fallback(workspace, cur_sha, stdout)
     # scan 2026-07-24 (O1.7-glitch fix, main-assigned #4; OL-282 vehicle-id family):
     # non-"Unknown command" exit-0-without-file = the classifier narrated / asked a
     # clarifying question instead of writing (no benchmark source in scope to classify
     # — for example an --optimize re-entry). Write a deterministic sha-matched fallback
     # (see _write_unclassified_fallback) so re-runs on the same source skip the flaky
     # 120s re-invoke + downstream always has a file; a source change re-triggers classify.
+    # exit-0-without-(sha-matching)-file: before writing the deterministic
+    # empty fallback, respect an existing non-empty classification (multirank
+    # CLI-flag preseed, or a prior valid agent write whose sha scheme
+    # predates the --classify-sha contract) — op_class is intrinsic to the
+    # op; never clobber non-empty tags with an empty fallback.
+    stale = _try_existing_classification(
+        workspace,
+        cur_sha,
+        "skill exited 0 without a sha-matching op_classification.json",
+    )
+    if stale is not None:
+        return stale
     return _write_unclassified_fallback(workspace, cur_sha)

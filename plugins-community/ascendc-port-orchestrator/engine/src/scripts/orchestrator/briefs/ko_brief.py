@@ -13,6 +13,7 @@ V3.8.4 escalation rule: this agent fires when worker self-declared
 "done" with perf < 0.6×. Goal: incremental tuning that beats threshold
 without precision regression.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,10 +21,17 @@ from typing import Optional
 
 from briefs._common import (
     env_quirks_block,
-    AscendCEnv, load_env,
-    env_block, hard_floors_block, kb_manifest_block,
-    schema_contract_block, fixed_layout_block, safety_block, g7_slug,
-    self_introspection_block, _detect_forced_architecture,
+    AscendCEnv,
+    load_env,
+    env_block,
+    hard_floors_block,
+    kb_manifest_block,
+    schema_contract_block,
+    fixed_layout_block,
+    safety_block,
+    g7_slug,
+    self_introspection_block,
+    _detect_forced_architecture,
 )
 
 
@@ -44,12 +52,16 @@ def build_optimizer_brief(
         env = load_env()
     # P131 follow-up: inherit env.backend when kwarg defaults (P131 main PR pattern)
     from briefs._common import resolve_backend_from_env
+
     backend = resolve_backend_from_env(backend, env)
     # Phase 2 (2026-05-19, Q3 main agent answer): self-resolve plugin if caller
     # didn't pre-resolve. Eliminates need for inline `if backend == "X"` in helpers.
     if plugin is None:
         from briefs._common import resolve_plugin_for_brief
-        plugin = resolve_plugin_for_brief(env, workspace=workspace, backend_override=backend)
+
+        plugin = resolve_plugin_for_brief(
+            env, workspace=workspace, backend_override=backend
+        )
     slug = g7_slug(op, "aog-kernel-optimizer", spawn_index)
 
     sections = [
@@ -63,8 +75,13 @@ def build_optimizer_brief(
         "",
         kb_manifest_block(op, workspace=workspace, target=env.target),
         "",
-        _optimizer_phase_block(directive_text, handoff_from_worker,
-                               iter_cap_remaining, plugin=plugin, workspace=workspace),
+        _optimizer_phase_block(
+            directive_text,
+            handoff_from_worker,
+            iter_cap_remaining,
+            plugin=plugin,
+            workspace=workspace,
+        ),
         "",
         schema_contract_block(),
         fixed_layout_block(),
@@ -133,6 +150,11 @@ def _forced_architecture_ko_block(workspace: Optional[Path]) -> str:
     )
 
 
+def _overlay_str(title: str, text: Optional[str]) -> str:
+    """The '\\n\\n## <title>\\n\\n<text>' overlay block (empty when text absent)."""
+    return f"\n\n## {title}\n\n{text}" if text else ""
+
+
 def _optimizer_phase_block(
     directive_text: Optional[str],
     handoff_from_worker: Optional[str],
@@ -141,10 +163,22 @@ def _optimizer_phase_block(
     plugin: Optional[object] = None,
     workspace: Optional[Path] = None,
 ) -> str:
-    handoff_str = (
-        f"\n\n## Handoff from worker\n\n{handoff_from_worker}" if handoff_from_worker else ""
-    )
-    directive_str = f"\n\n## Directive (from prior probe / fo)\n\n{directive_text}" if directive_text else ""
+    handoff_str = _overlay_str("Handoff from worker", handoff_from_worker)
+    directive_str = _overlay_str("Directive (from prior probe / fo)", directive_text)
+
+    # Mode plugins may own the whole optimizer protocol via
+    # ko_brief_phase_block (override pattern mirrors pp_brief FIX-5). The
+    # hook existed on the multirank extension plugin but was dead code —
+    # `plugin` was accepted here and never called, so multirank optimizers
+    # got the generic single-card brief (kernel/ + deploy_to_npu_lane.sh —
+    # wrong entries for the nest layout). BasePlugin's default returns
+    # None → non-overriding plugins unchanged.
+    if plugin is not None:
+        override = plugin.ko_brief_phase_block(
+            handoff_str=handoff_str, directive_str=directive_str
+        )
+        if override is not None:
+            return override
 
     # Forced-architecture honor (2026-06-16): bind ko to optimize within the
     # forced arch only (no Outcome-B rewrite / no OL-54 arch-switch). Prepended
@@ -153,7 +187,9 @@ def _optimizer_phase_block(
     _forced_block = _forced_architecture_ko_block(workspace)
     _forced_prefix = (_forced_block + "\n\n") if _forced_block else ""
 
-    return _forced_prefix + f"""# PHASES (aog-kernel-optimizer){handoff_str}{directive_str}
+    return (
+        _forced_prefix
+        + f"""# PHASES (aog-kernel-optimizer){handoff_str}{directive_str}
 
 **SCOPE — optimize performance without weakening migration provenance.** The arch35
 implementation must remain independently authored from arch22 interfaces and algorithm
@@ -197,6 +233,7 @@ fused_optimizer (V3.7.12 fo→ko escalation reverse path: ko-found-arch-issue
 
 If precision regresses on ANY iter → REVERT immediately + log in
 optimization_log.md."""
+    )
 
 
 def _optimizer_exit_handoff_block() -> str:

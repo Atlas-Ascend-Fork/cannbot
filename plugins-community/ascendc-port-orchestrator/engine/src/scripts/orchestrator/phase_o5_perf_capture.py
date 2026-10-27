@@ -75,6 +75,7 @@ existing worker-authored timing path.
   design doc). Wiring will land as a separate commit after foreach_sqrt
   pilot validates the local-execution path.
 """
+
 from __future__ import annotations
 
 import json
@@ -141,7 +142,12 @@ class PerfResult:
 
 def is_enabled() -> bool:
     """Feature flag check. Default off pending pilot validation."""
-    return os.environ.get("AOG_PERF_CAPTURE", "").strip() in ("1", "true", "TRUE", "yes")
+    return os.environ.get("AOG_PERF_CAPTURE", "").strip() in (
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+    )
 
 
 def measure_op_perf(
@@ -161,11 +167,20 @@ def measure_op_perf(
     NOT_VERIFIED_SAME_METHOD on dispatch gaps / runner failures — caller
     should NOT trust ratio when status starts with NOT_VERIFIED.
     """
-    plugin_name = (getattr(plugin, "name", None)
-                   or type(plugin).__name__.lower())
+    plugin_name = getattr(plugin, "name", None) or type(plugin).__name__.lower()
     method = METHOD_LABEL.format(warmup=warmup, repeats=repeats)
 
     try:
+        # Plugin-owned finalize perf capture (BasePlugin.finalize_perf_capture):
+        # a paradigm with a custom measurement engine / status mapping /
+        # resource-shortage pause implements the hook; core dispatches to it
+        # instead of branching on the plugin name.
+        _plugin_capture = getattr(plugin, "finalize_perf_capture", None)
+        if callable(_plugin_capture):
+            _res = _plugin_capture(workspace, op)
+            if _res is not None:
+                return _res
+
         candidate_filename = _candidate_filename_for(plugin_name, workspace)
 
         if "port_a3" in plugin_name:
@@ -207,8 +222,7 @@ def _candidate_filename_for(plugin_name: str, workspace: Path) -> str:
     if (workspace / "model_new_ascendc.py").exists():
         return "model_new_ascendc.py"
     raise _PerfCaptureFailure(
-        f"no candidate model file found in {workspace} — expected "
-        "model_new_ascendc.py"
+        f"no candidate model file found in {workspace} — expected model_new_ascendc.py"
     )
 
 
@@ -294,11 +308,10 @@ def _parse_harness_output(stdout: str) -> tuple[list, list]:
             f"stdout_tail={stdout[-300:]}"
         )
     try:
-        payload = json.loads(line[len(marker):])
+        _mlen = len(marker)
+        payload = json.loads(line[_mlen:])
     except json.JSONDecodeError as exc:
-        raise _PerfCaptureFailure(
-            f"harness output JSON parse failed: {exc}"
-        ) from exc
+        raise _PerfCaptureFailure(f"harness output JSON parse failed: {exc}") from exc
     ref = payload.get("ref")
     cand = payload.get("cand")
     if not isinstance(ref, list) or not isinstance(cand, list):

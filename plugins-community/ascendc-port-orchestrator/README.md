@@ -3,8 +3,7 @@
 面向 AscendC 算子的社区编排插件。**跨代际移植推荐优先使用 Lite 版本 `ascendc-cross-gen-migration`**，尤其适合基于已有 A2/A3 算子快速迁移、尚未准备 KernelBench 风格 golden 的场景。Lite 按阶段推进迁移；需要确定性编排、安全网和双层知识库反馈环时，可选择完整版本 `ascendc-cross-gen-port`。
 
 本插件提供三个入口，其中前两个共享完整编排器，Lite 独立执行：
-
-1. **`ascendc-cross-gen-port` — 跨代际移植**：把 arch22 源算子移植到 **arch35 / A5**（如 Ascend910C/V220 → Ascend950PR/V300）。目标架构用自然语言指定，来源架构由代码分析自动识别。
+1. **`ascendc-cross-gen-port` — 跨代际移植**：把 arch22 源算子移植到 **arch35 / A5**（如 Ascend910C/V220 → Ascend950PR/V300）。目标架构用自然语言指定，来源架构由代码分析自动识别。另有 **multirank 多卡分支**（通信/通算融合语义触发）：同样以待移植源算子目录为必选输入，迁移计算与跨 rank 集合通信融进同一 kernel 的融合算子（真值默认= task 参考实现在 A5 上的多 rank 执行，`--multirank`）。
 2. **`ascendc-backward-gen` — 正向→反向生成**：由可微 PyTorch 正向规格生成并验证 AscendC 反向（梯度）算子。
 3. **`ascendc-cross-gen-migration` — 轻量迁移**：`ascendc-cross-gen-port` 的轻量入口。无 KernelBench 风格的 golden 输入，或希望基于已有的 A2/A3 算子修改后快速迁移时使用：按阶段门禁完成 910b/910_93→950/arch35 算子迁移，全程免交互自动推进；精度标杆由 agent 逆向源码自合成并与 A5 实测双向互检。**不经上述编排流水线（设计如此）**。Skill 本体由 cannbot-skills 仓 [`ops/ascendc-cross-gen-migration`](https://gitcode.com/cann/cannbot-skills/tree/master/ops/ascendc-cross-gen-migration) 维护，安装时经 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块链接，本插件作统一入口。
 
@@ -76,6 +75,9 @@ task `.py` 暴露 `Model` 与 `get_input_groups()`（可选 `get_init_inputs()`�
 TileLang2AscendC 工程来源只支持 `npubench` golden。
 **两种模式的加速比基准不同（golden 参考实现 vs A3 实现），数值不可直接横向比较。**
 
+多卡迁移在 `--mode port-a3-ops` 上加 `--multirank` 启动，golden 的选择与单卡相同。
+多卡 task 的格式约定见 [`docs/USAGE.md`](./docs/USAGE.md) §7。
+
 ## 支持的运行底座
 
 插件支持 **Claude Code** 和 **OpenCode** 两条独立运行路径，共用 `engine/` 中的编排器和安全网；启动器会按当前
@@ -83,7 +85,7 @@ TileLang2AscendC 工程来源只支持 `npubench` golden。
 
 | 底座 | 用户入口 | 运行时要求 |
 |---|---|---|
-| Claude Code | `/ascendc-cross-gen-port`、`/ascendc-backward-gen` Skills | 可调用的 `claude` CLI 与已配置的认证/模型 |
+| Claude Code | `/ascendc-cross-gen-port`（含 multirank 多卡分支）、`/ascendc-backward-gen` Skills | 可调用的 `claude` CLI 与已配置的认证/模型 |
 | OpenCode | 同名 `/ascendc-*` Commands | 可调用的 `opencode` CLI、`node` 或 `bun`、已配置的 provider/model |
 
 ## 运行前需要准备什么
@@ -93,7 +95,6 @@ TileLang2AscendC 工程来源只支持 `npubench` golden。
 `source` CANN 的 `set_env.sh`。完整依赖清单与检查命令见 [`docs/USAGE.md`](docs/USAGE.md) §1.5。
 NPU 主机/容器、CANN 路径、SoC 等配置写入 `engine/workspace/.ascendc_env`（可能含凭证，已 gitignore，绝不能提交）。
 官方 b 层知识必须先由独立 `cannbot-knowledge` 仓的 `install.sh` 以 `consumer` 模式安装到算子项目；它负责准备完整 checkout、索引、查询 Skill 和项目 `.cannbot/knowledge.env`。port 只消费该安装结果，缺失时 fail-closed。
-
 ## 文档导航
 
 - [`quickstart.md`](quickstart.md)：最短的 Claude Code / OpenCode 上手路径。

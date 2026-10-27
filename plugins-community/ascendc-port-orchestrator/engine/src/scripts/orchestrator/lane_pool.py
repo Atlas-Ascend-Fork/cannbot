@@ -42,6 +42,7 @@ with more NPUs (e.g. an 8-NPU 950DT) via the AOG_LANE_IDS env var — a
 comma-separated id list such as "0,1,2,3,4,5,6,7". A malformed value falls
 back to the default rather than silently widening the pool.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -103,19 +104,32 @@ class NpuStatus:
     has_running_process: bool
 
 
-def parse_npu_smi(text: str) -> dict[int, NpuStatus]:
+def parse_npu_smi(text: str, valid_ids=VALID_LANES) -> dict[int, NpuStatus]:
     """Parse `npu-smi info` stdout and return per-NPU status.
 
-    Looks for two patterns:
-      1. Util/memory line:  `| <id>      | Ascend...  | OK            | <power>     <temp>           ...`
-                            `| .. | <id>:00.0 | <util>      <mem>...`
-      2. Process table:     `| <id>                       | <pid>       | <name>...`
-                            `| No running processes found in NPU <id>`
+    Header-row layouts accepted (npu-smi output differs per chip/driver):
+      A5 (950PR): `| 0      | Ascend950PR      | OK ...` (id cell split)
+      910B4:      `| 0     910B4               | OK ...` (id+Name one cell)
+      910C:       `| 0     Ascend910           | OK ...` (one Name row PER
+                  CHIP — util aggregates as max across the NPU's chips)
+    Util is read from the data row carrying the Bus-Id (`<util> <mem>` after
+    `0000:XX:00.0`). Process table: `| <id> | <pid> | <name>...` /
+    `No running processes found in NPU <id>`.
+
+    valid_ids: allowed NPU-id set. Default VALID_LANES (the A5 3-lane
+    universe) keeps existing callers' behavior; pass None to accept every
+    parsed id (multi-card non-A5 hosts, e.g. 8-card a2).
 
     Returns dict {npu_id: NpuStatus}.
     """
     result: dict[int, NpuStatus] = {}
 
+    # NPU header line — three npu-smi layouts in the field. The quoted cell
+    # sketches show id and chip-Name placement:
+    #   A5 950PR:     "| 0      | Ascend950PR      | OK ..."   id cell split
+    #   910B4:        "| 0     910B4               | OK ..."   id and Name in one cell
+    #   910C:         "| 0     Ascend910           | OK ..."   id and Name in one cell,
+    #                two chip rows per NPU — max-aggregated below
     # Util line: appears 2 lines after the header; "| ... | <util>           <mem>..."
     # We just grab the first two-decimal integer after `|         | <bus> |` where bus
     # belongs to that NPU. Easier: NPU util always appears as "| <util>           <mem>"
@@ -123,11 +137,11 @@ def parse_npu_smi(text: str) -> dict[int, NpuStatus]:
 
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        m = re.match(r"^\|\s*(\d+)\s+\|\s+Ascend", line)
+        m = re.match(r"^\|\s*(\d+)\s+(?:\|\s*)?(?:Ascend\S*|910B\d+)\s*\|", line)
         if not m:
             continue
         npu_id = int(m.group(1))
-        if npu_id not in VALID_LANES:
+        if valid_ids is not None and npu_id not in valid_ids:
             continue
         # Look at next 1-2 lines for the util row: "|        |  ...  | <util>     <mem> / <total>  ..."
         util_pct = 0
@@ -138,8 +152,17 @@ def parse_npu_smi(text: str) -> dict[int, NpuStatus]:
             if um:
                 util_pct = int(um.group(1))
                 break
-        result[npu_id] = NpuStatus(npu_id=npu_id, util_pct=util_pct,
-                                    has_running_process=False)
+        # Multi-chip NPUs (e.g. 910C: one Name row + one data row PER CHIP,
+        # both Name rows matching the header regex with the same NPU id) —
+        # aggregate conservatively: the NPU is only as idle as its BUSIEST
+        # chip. Last-write-wins here would silently report a busy NPU idle
+        # whenever its last chip row happens to be quiet.
+        prev = result.get(npu_id)
+        if prev is not None:
+            util_pct = max(prev.util_pct, util_pct)
+        result[npu_id] = NpuStatus(
+            npu_id=npu_id, util_pct=util_pct, has_running_process=False
+        )
 
     # Process table
     proc_pat = re.compile(r"^\|\s*(\d+)\s+\|\s+(\d+)\s+\|", re.MULTILINE)
@@ -164,28 +187,36 @@ def probe_idle_npus(text: str, *, util_threshold: int = 5) -> list[int]:
     """
     statuses = parse_npu_smi(text)
     return [
-        npu_id for npu_id, s in sorted(statuses.items())
+        npu_id
+        for npu_id, s in sorted(statuses.items())
         if s.util_pct <= util_threshold and not s.has_running_process
     ]
 
 
-def fetch_npu_smi(host: str, user: str, password: str,
-                  *, timeout_sec: int = 30) -> str:
+def fetch_npu_smi(host: str, user: str, password: str, *, timeout_sec: int = 30) -> str:
     """Run npu-smi info over ssh; return stdout.
 
     Raises subprocess.CalledProcessError on ssh failure. Caller decides
     how to handle (log + raise vs silently return empty).
     """
     cmd = [
-        "sshpass", "-p", password,
+        "sshpass",
+        "-p",
+        password,
         "ssh",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
         f"{user}@{host}",
         "npu-smi info",
     ]
     completed = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout_sec, check=True,
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+        check=True,
     )
     return completed.stdout
 
@@ -203,16 +234,27 @@ def _now_z() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def write_state(lane: int, *, state: str, op: Optional[str], pid: Optional[int],
-                host: Optional[str] = None, root: Optional[Path] = None) -> Path:
+def write_state(
+    lane: int,
+    *,
+    state: str,
+    op: Optional[str],
+    pid: Optional[int],
+    host: Optional[str] = None,
+    root: Optional[Path] = None,
+) -> Path:
     """Write lane state file. Used by allocate/release; also useful in tests."""
     if state not in ("free", "busy"):
         raise ValueError(f"state must be free|busy, got {state!r}")
     sf = _state_file(lane, root)
     sf.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "lane": lane, "state": state, "op": op, "pid": pid,
-        "ts": _now_z(), "host": host,
+        "lane": lane,
+        "state": state,
+        "op": op,
+        "pid": pid,
+        "ts": _now_z(),
+        "host": host,
     }
     sf.write_text(json.dumps(payload, indent=2))
     return sf
@@ -244,9 +286,14 @@ def list_lanes(root: Optional[Path] = None) -> dict[int, dict]:
     return out
 
 
-def allocate_lane(op: str, *, idle_lanes: Optional[list[int]] = None,
-                  pid: Optional[int] = None, host: Optional[str] = None,
-                  root: Optional[Path] = None) -> Optional[int]:
+def allocate_lane(
+    op: str,
+    *,
+    idle_lanes: Optional[list[int]] = None,
+    pid: Optional[int] = None,
+    host: Optional[str] = None,
+    root: Optional[Path] = None,
+) -> Optional[int]:
     """Atomically allocate a free lane to `op`.
 
     Args:
@@ -279,9 +326,15 @@ def allocate_lane(op: str, *, idle_lanes: Optional[list[int]] = None,
     return None
 
 
-def allocate_lanes(op: str, n: int, *, idle_lanes: Optional[list[int]] = None,
-                   pid: Optional[int] = None, host: Optional[str] = None,
-                   root: Optional[Path] = None) -> Optional[list[int]]:
+def allocate_lanes(
+    op: str,
+    n: int,
+    *,
+    idle_lanes: Optional[list[int]] = None,
+    pid: Optional[int] = None,
+    host: Optional[str] = None,
+    root: Optional[Path] = None,
+) -> Optional[list[int]]:
     """Atomically allocate n free lanes to op (all-or-nothing).
 
     Collects n free candidates, then writes busy only if the full set is
@@ -295,8 +348,7 @@ def allocate_lanes(op: str, n: int, *, idle_lanes: Optional[list[int]] = None,
     if n <= 0:
         return []
     if n == 1:
-        ln = allocate_lane(op, idle_lanes=idle_lanes, pid=pid,
-                           host=host, root=root)
+        ln = allocate_lane(op, idle_lanes=idle_lanes, pid=pid, host=host, root=root)
         return [ln] if ln is not None else None
     candidates = idle_lanes if idle_lanes is not None else list(VALID_LANES)
     chosen: list[int] = []
@@ -317,8 +369,9 @@ def allocate_lanes(op: str, n: int, *, idle_lanes: Optional[list[int]] = None,
     return chosen
 
 
-def release_lane(lane: int, *, op: Optional[str] = None,
-                 root: Optional[Path] = None) -> None:
+def release_lane(
+    lane: int, *, op: Optional[str] = None, root: Optional[Path] = None
+) -> None:
     """Release a busy lane. Idempotent: releasing an already-free lane is fine.
 
     If op is given and doesn't match the recorded op, refuses to release
@@ -333,8 +386,9 @@ def release_lane(lane: int, *, op: Optional[str] = None,
     write_state(lane, state="free", op=None, pid=None, root=root)
 
 
-def release_lanes(lanes: list[int], *, op: Optional[str] = None,
-                  root: Optional[Path] = None) -> None:
+def release_lanes(
+    lanes: list[int], *, op: Optional[str] = None, root: Optional[Path] = None
+) -> None:
     """Release a group of lanes (inverse of allocate_lanes). Delegates to
     release_lane per lane (idempotent; op consistency checked per lane).
     """
@@ -351,14 +405,17 @@ def _cli_status(root: Optional[Path] = None) -> int:
     print("-" * 80)
     for ln in sorted(lanes):
         s = lanes[ln]
-        print(f"{ln:<6d} {s.get('state','?'):<8s} {str(s.get('op') or '-'):<30s} "
-              f"{str(s.get('pid') or '-'):<8s} {s.get('ts','-'):<25s}")
+        print(
+            f"{ln:<6d} {s.get('state', '?'):<8s} {str(s.get('op') or '-'):<30s} "
+            f"{str(s.get('pid') or '-'):<8s} {s.get('ts', '-'):<25s}"
+        )
     return 0
 
 
 if __name__ == "__main__":
     import argparse
     import sys
+
     ap = argparse.ArgumentParser(description="lane_pool — NPU lane allocator")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="show all lane state files")

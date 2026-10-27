@@ -19,9 +19,10 @@ Step 2 of the refactor (additive: nothing funnels through CCBackend yet → orac
 skill/resume are wired at their respective funnel steps (kb_invoke / resume site) to reuse the
 exact existing logic rather than reimplement subprocess handling prematurely.
 """
+
 from __future__ import annotations
 import json
-import logging
+import logging  # noqa: F401
 import os
 import re
 from pathlib import Path
@@ -106,91 +107,114 @@ def _parse_cc_transcript(text: str) -> tuple[dict, set, bool]:
 class CCBackend(Backend):
     name = "claude_code"
 
-    def dispatch(self, target: str, prompt: str, *, kind: str = "agent", mode: str = "foreground",
-                 settings: Optional[str] = None, session: Optional[str] = None,
-                 timeout: Optional[float] = None, sandbox_prefix: Optional[list] = None,
-                 progress_callback=None, tee_path=None, silence_timeout: Optional[int] = None,
-                 extra_args: Optional[list] = None, output_file=None, cwd=None,
-                 permission_mode: str = "bypassPermissions", output_format: Optional[str] = "json",
-                 stdin_prompt: bool = False) -> Any:
+    @staticmethod
+    def _build_resume_cmd(
+        session_id: str, prompt: str, *, output_format: Optional[str] = "json"
+    ) -> list:
+        """CC session-resume argv (`claude --resume <session_id> --print [--output-format json] <prompt>`).
+        opencode mirrors this with `--continue`. Static + arg-free → unit-testable without spawning."""
+        base = [
+            os.environ.get("CLAUDE_BIN", "claude"),
+            "--resume",
+            session_id,
+            "--print",
+        ]
+        if output_format:
+            base += ["--output-format", output_format]
+        base += [prompt]
+        return base
+
+    @staticmethod
+    def _build_skill_cmd(
+        prompt: str,
+        *,
+        sandbox_prefix: Optional[list] = None,
+        permission_mode: str = "bypassPermissions",
+        output_format: Optional[str] = "json",
+        stdin_prompt: bool = False,
+        effort: Optional[str] = None,
+    ) -> list:
+        """Faithful kb_invoke-style skill cmd (was hardcoded 'claude' → now CLAUDE_BIN-parameterized;
+        sandbox_prefix opaque verbatim-prepend). Testable without spawning.
+
+        Divergent-shape params (added for phase_o17_classify): `permission_mode`
+        (default bypassPermissions — headless --print has no approval channel,
+        so acceptEdits hangs on any non-edit tool), `output_format`
+        (default 'json'; None → omit the flag entirely = plain text), `stdin_prompt`
+        (default False = prompt in argv; True → prompt goes to subprocess stdin, so
+        it is NOT appended to the cmd), `effort` (default None → omit; e.g. 'low'
+        for cheap classify-style skills that only need title-level output)."""
+        base = [os.environ.get("CLAUDE_BIN", "claude"), "--print"]
+        if output_format:
+            base += ["--output-format", output_format]
+        base += ["--permission-mode", permission_mode]
+        if effort:
+            base += ["--effort", effort]
+        if not stdin_prompt:
+            base += [prompt]
+        return list(sandbox_prefix or []) + base
+
+    def dispatch(
+        self,
+        target: str,
+        prompt: str,
+        *,
+        kind: str = "agent",
+        mode: str = "foreground",
+        settings: Optional[str] = None,
+        session: Optional[str] = None,
+        timeout: Optional[float] = None,
+        sandbox_prefix: Optional[list] = None,
+        progress_callback=None,
+        tee_path=None,
+        silence_timeout: Optional[int] = None,
+        extra_args: Optional[list] = None,
+        output_file=None,
+        cwd=None,
+        permission_mode: str = "bypassPermissions",
+        output_format: Optional[str] = "json",
+        stdin_prompt: bool = False,
+        effort: Optional[str] = None,
+    ) -> Any:
         # sandbox_prefix (main-ratified 2026-07-05): an OPAQUE orchestrator-built argv-prefix that the
         # backend VERBATIM-prepends, with ZERO bwrap knowledge (airtight stays orchestrator-owned, inv#2).
         # mode: foreground (blocking→Envelope) | streaming (blocking+progress→Envelope) |
         #       background (fire-and-forget→raw Popen handle, NOT an Envelope). streaming/background carry
         #       sandbox_prefix (agent_transport supports it there; foreground does not).
         if kind == "agent":
-            import agent_transport as _at  # canonical CC run (owns cmd-build + bwrap-prefix + envelope parse)
-            extra = list(extra_args or [])
-            if settings:
-                extra += ["--settings", settings]
-            extra = extra or None
-            tkw: dict = {"timeout_sec": int(timeout)} if timeout is not None else {}
-            if mode == "foreground":
-                if sandbox_prefix:
-                    raise NotImplementedError(
-                        "foreground + sandbox_prefix unsupported by agent_transport.spawn_agent_foreground; "
-                        "the graybox/bwrap path uses mode='streaming' or 'background'")
-                return self.normalize(_at.spawn_agent_foreground(target, prompt, extra_args=extra, cwd=cwd, **tkw))
-            if mode == "streaming":
-                return self.normalize(_at.spawn_agent_streaming(
-                    target, prompt, tee_path=tee_path, extra_args=extra, cwd=cwd,
-                    progress_callback=progress_callback, silence_timeout_sec=silence_timeout,
-                    sandbox_prefix=sandbox_prefix, **tkw))
-            if mode == "background":
-                if output_file is None:
-                    raise ValueError("dispatch(mode='background') requires output_file")
-                # fire-and-forget: returns the raw Popen handle (NOT an Envelope) — caller manages
-                # lifecycle + reads output_file, exactly as spawn_for_state did pre-funnel.
-                return _at.spawn_agent_background(target, prompt, output_file,
-                                                  extra_args=extra, sandbox_prefix=sandbox_prefix)
-            raise ValueError(f"unknown dispatch mode: {mode!r}")
+            return self._dispatch_agent(
+                target,
+                prompt,
+                mode=mode,
+                settings=settings,
+                timeout=timeout,
+                sandbox_prefix=sandbox_prefix,
+                progress_callback=progress_callback,
+                tee_path=tee_path,
+                silence_timeout=silence_timeout,
+                extra_args=extra_args,
+                output_file=output_file,
+                cwd=cwd,
+            )
         if kind == "skill":
-            import subprocess
-            cmd = self._build_skill_cmd(prompt, sandbox_prefix=sandbox_prefix,
-                                        permission_mode=permission_mode,
-                                        output_format=output_format, stdin_prompt=stdin_prompt)
-            run_kw = {"capture_output": True, "text": True,
-                      "timeout": int(timeout) if timeout else None}
-            if stdin_prompt:
-                run_kw["input"] = prompt  # divergent shape: prompt via stdin, not argv
-            try:
-                completed = subprocess.run(cmd, **run_kw)
-            except subprocess.TimeoutExpired:
-                return Envelope(is_error=True, output_text="",
-                                raw_envelope={"timed_out": True, "returncode": None,
-                                              "stderr": "(skill dispatch timed out)"})
-            except FileNotFoundError as e:
-                # faithful to sites that catch a missing CLI (phase_o17_classify) — surface, don't raise
-                return Envelope(is_error=True, output_text="",
-                                raw_envelope={"not_found": True, "returncode": None,
-                                              "stderr": str(e)})
-            return Envelope(
-                is_error=(completed.returncode != 0),
-                output_text=completed.stdout or "",
-                raw_envelope={"returncode": completed.returncode,
-                              "stderr": completed.stderr or "", "cmd_kind": "skill"},
+            return self._dispatch_skill(
+                prompt,
+                sandbox_prefix=sandbox_prefix,
+                permission_mode=permission_mode,
+                output_format=output_format,
+                stdin_prompt=stdin_prompt,
+                effort=effort,
+                timeout=timeout,
             )
         raise ValueError(f"unknown dispatch kind: {kind!r}")
 
-    @staticmethod
-    def _build_skill_cmd(prompt: str, *, sandbox_prefix: Optional[list] = None,
-                         permission_mode: str = "bypassPermissions",
-                         output_format: Optional[str] = "json",
-                         stdin_prompt: bool = False) -> list:
-        """Faithful kb_invoke-style skill cmd (was hardcoded 'claude' → now CLAUDE_BIN-parameterized;
-        sandbox_prefix opaque verbatim-prepend). Testable without spawning.
+    # ---- agent-format: a5ops agents ARE already CC-native (Read/Write/... tool names) -> identity ----
+    def format_agent(self, agent_def: dict) -> dict:
+        return agent_def
 
-        Divergent-shape params (added for phase_o17_classify, which uses acceptEdits + plain-text
-        output + prompt-via-stdin): `permission_mode` (default bypassPermissions), `output_format`
-        (default 'json'; None → omit the flag entirely = plain text), `stdin_prompt` (default False =
-        prompt in argv; True → prompt goes to subprocess stdin, so it is NOT appended to the cmd)."""
-        base = [os.environ.get("CLAUDE_BIN", "claude"), "--print"]
-        if output_format:
-            base += ["--output-format", output_format]
-        base += ["--permission-mode", permission_mode]
-        if not stdin_prompt:
-            base += [prompt]
-        return list(sandbox_prefix or []) + base
+    # ---- RECOVERY coupling (mirrors recover._classify_proc / _extract_op_from_cmd) ----
+    def identify_cmd(self, cmd: str) -> bool:
+        return any(m in cmd for m in _CLAUDE_PRINT_MARKERS)
 
     def normalize(self, raw: Any) -> Envelope:
         """Normalize a transport result or raw envelope into the canonical Envelope."""
@@ -225,38 +249,9 @@ class CCBackend(Backend):
             raw_envelope=re_env,
         )
 
-    # ---- agent-format: a5ops agents ARE already CC-native (Read/Write/... tool names) -> identity ----
-    def format_agent(self, agent_def: dict) -> dict:
-        return agent_def
-
-    # ---- wire_safety: CC triggers canonical checkers via a --settings file (hooks); logic stays canonical
-    def wire_safety(self, checkers: list) -> Optional[str]:
-        # CC's trigger config is the settings.json hooks file already emitted by
-        # agent_dispatch._build_extra_args (--settings). checkers are canonical Python, untouched.
-        return None  # passthrough — CC hook wiring lives in the settings file, not synthesized here
-
-    @staticmethod
-    def _build_resume_cmd(session_id: str, prompt: str, *, output_format: Optional[str] = "json") -> list:
-        """CC session-resume argv (`claude --resume <session_id> --print [--output-format json] <prompt>`).
-        opencode mirrors this with `--continue`. Static + arg-free → unit-testable without spawning."""
-        base = [os.environ.get("CLAUDE_BIN", "claude"), "--resume", session_id, "--print"]
-        if output_format:
-            base += ["--output-format", output_format]
-        base += [prompt]
-        return base
-
-    def transcript_skills(self, transcript_path) -> TranscriptSkills:
-        """Parse Claude Code stream-json Skill calls, excluding errored invocations."""
-        try:
-            text = Path(transcript_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return TranscriptSkills(parseable=False, note=f"transcript unreadable: {transcript_path}")
-        skill_calls, errored_ids, cc_shaped = _parse_cc_transcript(text)
-        if not cc_shaped:
-            return TranscriptSkills(
-                parseable=False, note="transcript is not Claude Code stream-json (no message events)")
-        invoked = {name for call_id, name in skill_calls.items() if call_id not in errored_ids}
-        return TranscriptSkills(invoked=invoked, parseable=True)
+    def parse_op_from_cmd(self, cmd: str) -> Optional[str]:
+        m = _OP_SLUG_RE.search(cmd)
+        return m.group(1) if m else None
 
     def resume(self, session_id: str, prompt: str) -> Envelope:
         """Resume a prior CC session. NOTE (survey finding, 2026-07-05): a5ops has **no live caller**
@@ -267,24 +262,173 @@ class CCBackend(Backend):
         live-site conformance funnel. Behaviorally faithful to the skill-dispatch subprocess pattern.
         """
         import subprocess
+
         cmd = self._build_resume_cmd(session_id, prompt)
         try:
             completed = subprocess.run(cmd, capture_output=True, text=True)
         except FileNotFoundError as e:
-            return Envelope(is_error=True, output_text="",
-                            raw_envelope={"not_found": True, "returncode": None, "stderr": str(e)})
-        return self.normalize({
-            "is_error": completed.returncode != 0,
-            "result": completed.stdout or "",
-            "returncode": completed.returncode,
-            "stderr": completed.stderr or "",
-            "cmd_kind": "resume",
-        })
+            return Envelope(
+                is_error=True,
+                output_text="",
+                raw_envelope={"not_found": True, "returncode": None, "stderr": str(e)},
+            )
+        return self.normalize(
+            {
+                "is_error": completed.returncode != 0,
+                "result": completed.stdout or "",
+                "returncode": completed.returncode,
+                "stderr": completed.stderr or "",
+                "cmd_kind": "resume",
+            }
+        )
 
-    # ---- RECOVERY coupling (mirrors recover._classify_proc / _extract_op_from_cmd) ----
-    def identify_cmd(self, cmd: str) -> bool:
-        return any(m in cmd for m in _CLAUDE_PRINT_MARKERS)
+    def transcript_skills(self, transcript_path) -> TranscriptSkills:
+        """Parse Claude Code stream-json Skill calls, excluding errored invocations."""
+        try:
+            text = Path(transcript_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return TranscriptSkills(
+                parseable=False, note=f"transcript unreadable: {transcript_path}"
+            )
+        skill_calls, errored_ids, cc_shaped = _parse_cc_transcript(text)
+        if not cc_shaped:
+            return TranscriptSkills(
+                parseable=False,
+                note="transcript is not Claude Code stream-json (no message events)",
+            )
+        invoked = {
+            name for call_id, name in skill_calls.items() if call_id not in errored_ids
+        }
+        return TranscriptSkills(invoked=invoked, parseable=True)
 
-    def parse_op_from_cmd(self, cmd: str) -> Optional[str]:
-        m = _OP_SLUG_RE.search(cmd)
-        return m.group(1) if m else None
+    # ---- wire_safety: CC triggers canonical checkers via a --settings file (hooks); logic stays canonical
+    def wire_safety(self, checkers: list) -> Optional[str]:
+        # CC's trigger config is the settings.json hooks file already emitted by
+        # agent_dispatch._build_extra_args (--settings). checkers are canonical Python, untouched.
+        return None  # passthrough — CC hook wiring lives in the settings file, not synthesized here
+
+    def _dispatch_agent(
+        self,
+        target,
+        prompt,
+        *,
+        mode,
+        settings,
+        timeout,
+        sandbox_prefix,
+        progress_callback,
+        tee_path,
+        silence_timeout,
+        extra_args,
+        output_file,
+        cwd,
+    ):
+        """The canonical CC agent run (agent_transport owns cmd-build +
+        bwrap-prefix + envelope parse)."""
+        import agent_transport as _at
+
+        extra = list(extra_args or [])
+        if settings:
+            extra += ["--settings", settings]
+        extra = extra or None
+        tkw: dict = {"timeout_sec": int(timeout)} if timeout is not None else {}
+        if mode == "foreground":
+            if sandbox_prefix:
+                raise NotImplementedError(
+                    "foreground + sandbox_prefix unsupported by agent_transport.spawn_agent_foreground; "
+                    "the graybox/bwrap path uses mode='streaming' or 'background'"
+                )
+            return self.normalize(
+                _at.spawn_agent_foreground(
+                    target, prompt, extra_args=extra, cwd=cwd, **tkw
+                )
+            )
+        if mode == "streaming":
+            return self.normalize(
+                _at.spawn_agent_streaming(
+                    target,
+                    prompt,
+                    tee_path=tee_path,
+                    extra_args=extra,
+                    cwd=cwd,
+                    progress_callback=progress_callback,
+                    silence_timeout_sec=silence_timeout,
+                    sandbox_prefix=sandbox_prefix,
+                    **tkw,
+                )
+            )
+        if mode == "background":
+            if output_file is None:
+                raise ValueError("dispatch(mode='background') requires output_file")
+            # fire-and-forget: returns the raw Popen handle (NOT an Envelope) — caller manages
+            # lifecycle + reads output_file, exactly as spawn_for_state did pre-funnel.
+            return _at.spawn_agent_background(
+                target,
+                prompt,
+                output_file,
+                extra_args=extra,
+                sandbox_prefix=sandbox_prefix,
+            )
+        raise ValueError(f"unknown dispatch mode: {mode!r}")
+
+    def _dispatch_skill(
+        self,
+        prompt,
+        *,
+        sandbox_prefix,
+        permission_mode,
+        output_format,
+        stdin_prompt,
+        effort,
+        timeout,
+    ) -> Envelope:
+        """Faithful kb_invoke-style skill subprocess run."""
+        import subprocess
+
+        cmd = self._build_skill_cmd(
+            prompt,
+            sandbox_prefix=sandbox_prefix,
+            permission_mode=permission_mode,
+            output_format=output_format,
+            stdin_prompt=stdin_prompt,
+            effort=effort,
+        )
+        run_kw = {
+            "capture_output": True,
+            "text": True,
+            "timeout": int(timeout) if timeout else None,
+        }
+        if stdin_prompt:
+            run_kw["input"] = prompt  # divergent shape: prompt via stdin, not argv
+        try:
+            completed = subprocess.run(cmd, **run_kw)
+        except subprocess.TimeoutExpired:
+            return Envelope(
+                is_error=True,
+                output_text="",
+                raw_envelope={
+                    "timed_out": True,
+                    "returncode": None,
+                    "stderr": "(skill dispatch timed out)",
+                },
+            )
+        except FileNotFoundError as e:
+            # faithful to sites that catch a missing CLI (phase_o17_classify) — surface, don't raise
+            return Envelope(
+                is_error=True,
+                output_text="",
+                raw_envelope={
+                    "not_found": True,
+                    "returncode": None,
+                    "stderr": str(e),
+                },
+            )
+        return Envelope(
+            is_error=(completed.returncode != 0),
+            output_text=completed.stdout or "",
+            raw_envelope={
+                "returncode": completed.returncode,
+                "stderr": completed.stderr or "",
+                "cmd_kind": "skill",
+            },
+        )

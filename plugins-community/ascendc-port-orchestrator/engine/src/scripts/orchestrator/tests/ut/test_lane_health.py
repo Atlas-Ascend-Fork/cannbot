@@ -15,6 +15,7 @@ GDN recurrent / selective_scan runs: NPU0 + NPU1 wedged by an external tenant
 (100% util, high HBM), NPU2 healthy. This is the exact condition that hung the
 hardcoded-lane-0 verify.
 """
+
 from __future__ import annotations
 
 import sys
@@ -80,9 +81,9 @@ def test_process_table_not_parsed_as_devices():
 
 def test_health_flags():
     h = parse_npu_health(_NPU_SMI_171)
-    assert not h[0].is_healthy()   # Alarm + 79% HBM + 100% util
-    assert not h[1].is_healthy()   # Alarm + 100% util
-    assert h[2].is_healthy()       # OK + 4% HBM + 0% util
+    assert not h[0].is_healthy()  # Alarm + 79% HBM + 100% util
+    assert not h[1].is_healthy()  # Alarm + 100% util
+    assert h[2].is_healthy()  # OK + 4% HBM + 0% util
 
 
 def test_pick_reroutes_wedged_lane0_to_healthy_lane2():
@@ -116,6 +117,7 @@ def test_pick_fail_open_when_no_healthy_device():
 def test_resolve_fail_open_on_npu_smi_error():
     def _boom(user, host):
         return 1, "", "ssh: connect refused"
+
     dev, reason = resolve_healthy_device(0, "h", run_npu_smi=_boom)
     assert dev == 0 and "fail-open" in reason
 
@@ -123,5 +125,41 @@ def test_resolve_fail_open_on_npu_smi_error():
 def test_resolve_reroutes_via_injected_smi():
     def _smi(user, host):
         return 0, _NPU_SMI_171, ""
+
     dev, reason = resolve_healthy_device(0, "h", run_npu_smi=_smi)
     assert dev == 2 and "rerouted" in reason
+
+
+def test_ssh_npu_smi_splits_host_port(monkeypatch):
+    """`host` may carry a port (`ip:port` / `[v6]:port`) — the port goes to
+
+    ssh -p; passing the whole string as the hostname fails resolution and the
+    probe silently falls back (misleading logs).
+    """
+    import lane_health as lh
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        import types as _t
+
+        captured["cmd"] = cmd
+        return _t.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)  # local import in _ssh_npu_smi
+    rc, out, _ = getattr(lh, "_ssh_npu_smi")("root", "127.0.0.1:21122")
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "21122"
+    assert "root@127.0.0.1" in cmd
+    assert "root@127.0.0.1:21122" not in cmd
+    # bare host: no -p
+    getattr(lh, "_ssh_npu_smi")("root", "10.1.1.5")
+    cmd = captured["cmd"]
+    assert "-p" not in cmd
+    assert "root@10.1.1.5" in cmd
+    # v6 bracket form
+    getattr(lh, "_ssh_npu_smi")("root", "[fe80::1]:2222")
+    cmd = captured["cmd"]
+    assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "2222"
+    assert "root@[fe80::1]" in cmd

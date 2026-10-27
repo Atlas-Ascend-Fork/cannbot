@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 """Scope and fail-closed tests for the customer plugin registry."""
+
 from __future__ import annotations
 
 import json
@@ -52,9 +53,11 @@ def _state(workspace: Path, mode: str) -> Path:
 def test_registry_is_exact_customer_allowlist():
     assert [plugin.name for plugin in all_plugins()] == [
         "backward",
+        "multirank",
         "port_a3_to_a5",
     ]
     assert get_plugin("backward").cli_flag == "--backward"
+    assert get_plugin("multirank").cli_flag is None
     assert get_plugin("port_a3_to_a5").cli_flag == "--port-a3"
     assert get_plugin("nonexistent_mode") is None
 

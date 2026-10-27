@@ -20,6 +20,7 @@ test_phase_o5_blocks_finalize_on_mismatch; these are the cheap complement.
 Run: cd src/scripts/orchestrator && PYTHONPATH=. python3 -m pytest \
      tests/ut/test_fsm_phase_finalize.py -v
 """
+
 from __future__ import annotations
 
 import json
@@ -40,11 +41,12 @@ sys.path.insert(0, str(_HERE.parent.parent.parent))
 import orchestrator  # noqa: E402,F401
 import events  # noqa: E402
 import fsm_phase_finalize as F  # noqa: E402
+import fsm_finalize_o5_flow as F_flow  # noqa: E402
 import kb_invoke  # noqa: E402
 import phase_o5  # noqa: E402
-import phase_o5_runner  # noqa: E402
 import state_executor  # noqa: E402
 import finalize_pipeline  # noqa: E402
+from _o5_post_verify_stubs import wire_recorded_transitions  # noqa: E402
 from fsm_context import OrchestratorContext  # noqa: E402
 
 _bump_host_copy_fault_escalation = getattr(F, "_bump_host_copy_fault_escalation")
@@ -73,20 +75,9 @@ class _O5:
 @pytest.fixture
 def stub_common(monkeypatch, tmp_path):
     """Neutralize the reload + emit + truth-source seams shared by every path."""
-    import importlib
     monkeypatch.setenv("NPUBENCH_REPAIR_BACKUP_ROOT", str(tmp_path / "repair-backups"))
-    monkeypatch.setattr(importlib, "reload", lambda m: m)
-    monkeypatch.setattr(events, "emit", lambda *a, **k: None)
-    monkeypatch.setattr(F, "_sleep", lambda seconds: None)  # no real backoff in ut
-    monkeypatch.setattr(phase_o5, "expected_truth_source", lambda ws: "benchmark")
-    monkeypatch.setattr(phase_o5, "format_block_message", lambda op, o5: "")
-    monkeypatch.setattr(finalize_pipeline, "record_rollback", lambda *a, **k: None)
-    recorded = []
-    monkeypatch.setattr(
-        state_executor, "record_transition",
-        lambda ws, dec: recorded.append(dec.next_state),
-    )
-    return recorded
+    monkeypatch.setattr(F_flow, "_sleep", lambda seconds: None)  # no real backoff in ut
+    return wire_recorded_transitions(monkeypatch, "benchmark")
 
 
 def _ctx(tmp_path) -> OrchestratorContext:
@@ -119,14 +110,32 @@ def _stub_candidate_contract_failure(monkeypatch, summary, *, at_cap=False):
     monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
 
 
+def _stub_o5_result(monkeypatch, o5, *, at_cap: bool) -> None:
+    """Route post-verify to a fixed report and pin the iter-cap answer."""
+    monkeypatch.setattr(
+        phase_o5, "post_verify_for_finalize", lambda ws, op, lane, runner: o5
+    )
+    monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: at_cap)
+    monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
+
+
+def _write_npubench_candidate_state(ctx) -> None:
+    """Write the npubench tilelang-candidate state + entry file."""
+    state = {
+        "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
+        "reference": {"source": "npubench"},
+    }
+    (ctx.workspace / ".opgen_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+    (ctx.workspace / "model_new_ascendc.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+
 def test_o5_mismatch_worker_at_cap_returns_exit_2(stub_common, monkeypatch, tmp_path):
     """MISMATCH + await_worker already at iter_cap → loop-guard exit 2 (no
     rollback recorded).
     """
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: _O5("MISMATCH", mismatches=[1]))
-    monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: True)
-    monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
+    _stub_o5_result(monkeypatch, _O5("MISMATCH", mismatches=[1]), at_cap=True)
     res = F.handle_finalize(_ctx(tmp_path), _Snap())
     assert (res.action, res.exit_code) == ("return", 2)
     assert stub_common == []
@@ -134,10 +143,7 @@ def test_o5_mismatch_worker_at_cap_returns_exit_2(stub_common, monkeypatch, tmp_
 
 def test_o5_mismatch_rollback_continues(stub_common, monkeypatch, tmp_path):
     """MISMATCH + worker below cap → record rollback + continue."""
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: _O5("MISMATCH", mismatches=[1]))
-    monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: False)
-    monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
+    _stub_o5_result(monkeypatch, _O5("MISMATCH", mismatches=[1]), at_cap=False)
     res = F.handle_finalize(_ctx(tmp_path), _Snap())
     assert res.action == "continue"
     assert stub_common == ["await_worker"]  # legacy rollback target
@@ -145,20 +151,14 @@ def test_o5_mismatch_rollback_continues(stub_common, monkeypatch, tmp_path):
 
 def test_o5_runner_failed_rollback_continues(stub_common, monkeypatch, tmp_path):
     """RUNNER_FAILED + worker below cap → record rollback + continue."""
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: _O5("RUNNER_FAILED", summary="ssh down"))
-    monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: False)
-    monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
+    _stub_o5_result(monkeypatch, _O5("RUNNER_FAILED", summary="ssh down"), at_cap=False)
     res = F.handle_finalize(_ctx(tmp_path), _Snap())
     assert res.action == "continue"
     assert stub_common == ["await_worker"]
 
 
 def test_o5_runner_failed_at_cap_returns_exit_2(stub_common, monkeypatch, tmp_path):
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: _O5("RUNNER_FAILED", summary="x"))
-    monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: True)
-    monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
+    _stub_o5_result(monkeypatch, _O5("RUNNER_FAILED", summary="x"), at_cap=True)
     res = F.handle_finalize(_ctx(tmp_path), _Snap())
     assert (res.action, res.exit_code) == ("return", 2)
 
@@ -180,7 +180,9 @@ def test_o5_direct_910_capability_stop_returns_exit_2_without_rollback(
     assert stub_common == []
 
 
-def test_tilelang_candidate_rejection_rolls_back_to_await_worker(stub_common, monkeypatch, tmp_path):
+def test_tilelang_candidate_rejection_rolls_back_to_await_worker(
+    stub_common, monkeypatch, tmp_path
+):
     """Anti-copy independence-gate rejections are worker-fixable: route
     back to await_worker (re-author independently) instead of the terminal
     direct-npubench stop.
@@ -210,12 +212,7 @@ def test_npubench_target_or_evaluator_failure_stops_without_worker_respawn(
     stub_common, monkeypatch, tmp_path, failure_kind
 ):
     ctx = _ctx(tmp_path)
-    state = {
-        "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
-        "reference": {"source": "npubench"},
-    }
-    (ctx.workspace / ".opgen_state.json").write_text(json.dumps(state), encoding="utf-8")
-    (ctx.workspace / "model_new_ascendc.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _write_npubench_candidate_state(ctx)
     monkeypatch.setattr(
         phase_o5,
         "post_verify_for_finalize",
@@ -238,14 +235,7 @@ def test_npubench_candidate_failure_is_not_retried_as_infra(
 ):
     """The receipt category is dispatched before bounded infra retries."""
     ctx = _ctx(tmp_path)
-    (ctx.workspace / ".opgen_state.json").write_text(
-        json.dumps({
-            "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
-            "reference": {"source": "npubench"},
-        }),
-        encoding="utf-8",
-    )
-    (ctx.workspace / "model_new_ascendc.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _write_npubench_candidate_state(ctx)
     calls = []
 
     def verify(*args, **kwargs):
@@ -279,13 +269,8 @@ def test_npubench_candidate_failure_is_not_retried_as_infra(
     assert stub_common == ["await_worker"]
 
 
-def test_npubench_candidate_failure_persists_worker_handoff_and_reason(
-    monkeypatch, tmp_path
-):
-    """The real handler writer and rollback brief reader share one durable record."""
-    ctx = _ctx(tmp_path)
-    repair_backup_root = tmp_path / "repair-backups"
-    monkeypatch.setenv("NPUBENCH_REPAIR_BACKUP_ROOT", str(repair_backup_root))
+def _stage_stale_candidate_tree(ctx) -> None:
+    """Write a stale tilelang candidate tree the repair path will archive."""
     (ctx.workspace / "kernel" / "arch35").mkdir(parents=True)
     (ctx.workspace / "kernel" / "arch35" / "pybind11.cpp").write_text(
         "stale candidate\n", encoding="utf-8"
@@ -294,6 +279,35 @@ def test_npubench_candidate_failure_persists_worker_handoff_and_reason(
     (ctx.workspace / "op_host" / "arch35" / "stale.cpp").write_text(
         "stale candidate\n", encoding="utf-8"
     )
+
+
+def _assert_npubench_repair_archive(ctx, repair_backup_root) -> None:
+    """The repair record + archived tree match the archived repair contract."""
+    repair = json.loads((ctx.workspace / ".npubench_candidate_repair.json").read_text())
+    assert repair["schema"] == "cannbot.npubench_candidate_repair/v1"
+    assert repair["failure_kind"] == "candidate_contract"
+    assert "kernel/CMakeLists.txt" in repair["failure_reason"]
+    assert set(repair["moved"]) == {"kernel/", "op_host/"}
+    assert not (ctx.workspace / "kernel").exists()
+    assert not (ctx.workspace / "op_host").exists()
+    assert (
+        repair_backup_root
+        / "op"
+        / repair["archive_id"]
+        / "kernel"
+        / "arch35"
+        / "pybind11.cpp"
+    ).is_file()
+
+
+def test_npubench_candidate_failure_persists_worker_handoff_and_reason(
+    monkeypatch, tmp_path
+):
+    """The real handler writer and rollback brief reader share one durable record."""
+    ctx = _ctx(tmp_path)
+    repair_backup_root = tmp_path / "repair-backups"
+    monkeypatch.setenv("NPUBENCH_REPAIR_BACKUP_ROOT", str(repair_backup_root))
+    _stage_stale_candidate_tree(ctx)
     monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: False)
     o5 = _O5(
         "RUNNER_FAILED",
@@ -321,16 +335,7 @@ def test_npubench_candidate_failure_persists_worker_handoff_and_reason(
     assert "legacy pass_b verifier" in transition["rationale"]
     assert rollback["gate"] == "phase_o5_npubench_candidate_contract"
     assert "kernel/CMakeLists.txt" in rollback["reason"]
-    repair = json.loads(
-        (ctx.workspace / ".npubench_candidate_repair.json").read_text()
-    )
-    assert repair["schema"] == "cannbot.npubench_candidate_repair/v1"
-    assert repair["failure_kind"] == "candidate_contract"
-    assert "kernel/CMakeLists.txt" in repair["failure_reason"]
-    assert set(repair["moved"]) == {"kernel/", "op_host/"}
-    assert not (ctx.workspace / "kernel").exists()
-    assert not (ctx.workspace / "op_host").exists()
-    assert (repair_backup_root / "op" / repair["archive_id"] / "kernel" / "arch35" / "pybind11.cpp").is_file()
+    _assert_npubench_repair_archive(ctx, repair_backup_root)
 
     from briefs._common import rollback_context_block
 
@@ -347,15 +352,7 @@ def test_real_measured_result_report_and_fsm_route_candidate_failure(
 
     ctx = _ctx(tmp_path)
     monkeypatch.setenv("NPUBENCH_REPAIR_BACKUP_ROOT", str(tmp_path / "repair-backups"))
-    (ctx.workspace / ".opgen_state.json").write_text(
-        json.dumps(
-            {
-                "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
-                "reference": {"source": "npubench"},
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_npubench_candidate_state(ctx)
     monkeypatch.setattr(importlib, "reload", lambda module: module)
     monkeypatch.setattr(events, "emit", lambda *args, **kwargs: None)
     monkeypatch.setattr(phase_o5, "expected_truth_source", lambda ws: "npubench")
@@ -398,16 +395,7 @@ def test_npubench_candidate_contract_failure_reenters_worker(
 ):
     """A pre-build candidate defect is repairable by the authoring worker."""
     ctx = _ctx(tmp_path)
-    state = {
-        "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
-        "reference": {"source": "npubench"},
-    }
-    (ctx.workspace / ".opgen_state.json").write_text(
-        json.dumps(state), encoding="utf-8"
-    )
-    (ctx.workspace / "model_new_ascendc.py").write_text(
-        "VALUE = 1\n", encoding="utf-8"
-    )
+    _write_npubench_candidate_state(ctx)
     _stub_candidate_contract_failure(
         monkeypatch,
         "npubench runner reported error: candidate rejected before build: "
@@ -425,15 +413,7 @@ def test_npubench_candidate_failure_at_worker_cap_stops_without_handoff(
 ):
     """A capped candidate repair must terminate without another rollback."""
     ctx = _ctx(tmp_path)
-    (ctx.workspace / ".opgen_state.json").write_text(
-        json.dumps(
-            {
-                "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
-                "reference": {"source": "npubench"},
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_npubench_candidate_state(ctx)
     monkeypatch.setattr(F, "_o5_runner_for_workspace", lambda *args, **kwargs: object())
     _stub_candidate_contract_failure(
         monkeypatch,
@@ -476,28 +456,35 @@ def test_scheme_drift_and_missing_snapshot_are_refreezable():
     from fsm_phase_finalize import _eligibility_is_harness_refreezable
 
     assert _eligibility_is_harness_refreezable(
-        {"reason": "NPUBENCH_EVIDENCE_INVALID: candidate digest scheme drift "
-         "(evidence frozen under scheme 'npubench-candidate-scope/v2', ...)"}
+        {
+            "reason": "NPUBENCH_EVIDENCE_INVALID: candidate digest scheme drift "
+            "(evidence frozen under scheme 'npubench-candidate-scope/v2', ...)"
+        }
     )
     assert _eligibility_is_harness_refreezable(
-        {"reason": "NPUBENCH_EVIDENCE_INVALID: immutable candidate snapshot is "
-         "missing or escapes workspace"}
+        {
+            "reason": "NPUBENCH_EVIDENCE_INVALID: immutable candidate snapshot is "
+            "missing or escapes workspace"
+        }
     )
     assert not _eligibility_is_harness_refreezable(
-        {"reason": "NPUBENCH_EVIDENCE_INVALID: current candidate scope differs "
-         "from the frozen evaluation snapshot"}
+        {
+            "reason": "NPUBENCH_EVIDENCE_INVALID: current candidate scope differs "
+            "from the frozen evaluation snapshot"
+        }
     )
-    assert not _eligibility_is_harness_refreezable({"reason": "some worker fixable issue"})
+    assert not _eligibility_is_harness_refreezable(
+        {"reason": "some worker fixable issue"}
+    )
 
 
-def test_o5_mismatch_rollback_target_is_await_worker(stub_common, monkeypatch, tmp_path):
+def test_o5_mismatch_rollback_target_is_await_worker(
+    stub_common, monkeypatch, tmp_path
+):
     """O5 MISMATCH rollback always targets await_worker (re-iterate emission
     via the worker).
     """
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: _O5("MISMATCH", mismatches=[1]))
-    monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: False)
-    monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
+    _stub_o5_result(monkeypatch, _O5("MISMATCH", mismatches=[1]), at_cap=False)
     res = F.handle_finalize(_ctx(tmp_path), _Snap())
     assert res.action == "continue"
     assert stub_common == ["await_worker"]
@@ -528,10 +515,14 @@ def o5_observers(monkeypatch):
     """
     emitted: list = []
     stamped: list = []
-    monkeypatch.setattr(events, "emit",
-                        lambda ws, name, **kw: emitted.append((name, kw)))
-    monkeypatch.setattr(phase_o5, "record_harness_state",
-                        lambda ws, rep: (stamped.append((ws, rep)), True)[1])
+    monkeypatch.setattr(
+        events, "emit", lambda ws, name, **kw: emitted.append((name, kw))
+    )
+    monkeypatch.setattr(
+        phase_o5,
+        "record_harness_state",
+        lambda ws, rep: (stamped.append((ws, rep)), True)[1],
+    )
     return emitted, stamped
 
 
@@ -551,13 +542,18 @@ def test_o5_provisional_stamps_emits_and_proceeds(
     """
     emitted, stamped = o5_observers
     dirty = ["src/scripts/orchestrator/phase_o5_runner.py"]
-    o5 = _O5("PROVISIONAL", harness_git_state="DIRTY", harness_dirty=dirty,
-             summary="O5 PROVISIONAL (DEBT-213): ...")
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: o5)
+    o5 = _O5(
+        "PROVISIONAL",
+        harness_git_state="DIRTY",
+        harness_dirty=dirty,
+        summary="O5 PROVISIONAL (DEBT-213): ...",
+    )
+    monkeypatch.setattr(
+        phase_o5, "post_verify_for_finalize", lambda ws, op, lane, runner: o5
+    )
     ctx = _ctx(tmp_path)
 
-    res = getattr(F, '_o5_post_verify')(ctx, _Snap())
+    res = getattr(F, "_o5_post_verify")(ctx, _Snap())
 
     # proceeds — PROVISIONAL is not a rollback (part (c) re-verifies, not (b))
     assert res is None
@@ -569,8 +565,9 @@ def test_o5_provisional_stamps_emits_and_proceeds(
     # the finding is visible
     names = [n for n, _ in emitted]
     assert "orchestrator.phase_o5_provisional" in names
-    data = next(kw["data"] for n, kw in emitted
-                if n == "orchestrator.phase_o5_provisional")
+    data = next(
+        kw["data"] for n, kw in emitted if n == "orchestrator.phase_o5_provisional"
+    )
     assert data["harness_git_state"] == "DIRTY"
     assert data["harness_dirty"] == dirty
 
@@ -583,20 +580,23 @@ def test_o5_verified_stamps_harness_state(
     """
     _, stamped = o5_observers
     o5 = _O5("VERIFIED", harness_git_state="CLEAN", summary="O5 VERIFIED: ...")
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: o5)
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    monkeypatch.setattr(
+        phase_o5, "post_verify_for_finalize", lambda ws, op, lane, runner: o5
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert res is None
     assert len(stamped) == 1, "VERIFIED must record the CLEAN evidence too"
 
 
 def test_o5_unknown_verdict_fails_closed(stub_common, monkeypatch, tmp_path):
     monkeypatch.setattr(
-        phase_o5, "post_verify_for_finalize", lambda ws, op, lane, runner: _O5("SURPRISE")
+        phase_o5,
+        "post_verify_for_finalize",
+        lambda ws, op, lane, runner: _O5("SURPRISE"),
     )
     monkeypatch.setattr(state_executor, "at_iter_cap", lambda ws, st: False)
     monkeypatch.setattr(state_executor, "iter_cap", lambda st, workspace=None: 9)
-    result = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    result = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert result.action == "continue"
     assert stub_common == ["await_worker"]
 
@@ -604,9 +604,12 @@ def test_o5_unknown_verdict_fails_closed(stub_common, monkeypatch, tmp_path):
 def test_o5_skipped_does_not_stamp(stub_common, o5_observers, monkeypatch, tmp_path):
     """SKIPPED never re-measured, so there is no verdict to qualify."""
     _, stamped = o5_observers
-    monkeypatch.setattr(phase_o5, "post_verify_for_finalize",
-                        lambda ws, op, lane, runner: _O5("SKIPPED"))
-    res = getattr(F, '_o5_post_verify')(_ctx(tmp_path), _Snap())
+    monkeypatch.setattr(
+        phase_o5,
+        "post_verify_for_finalize",
+        lambda ws, op, lane, runner: _O5("SKIPPED"),
+    )
+    res = getattr(F, "_o5_post_verify")(_ctx(tmp_path), _Snap())
     assert res is None
     assert stamped == []
 
@@ -649,10 +652,14 @@ def test_o5_failure_never_reaches_static_or_merge(monkeypatch, tmp_path):
     """O5 rejection must stop before any static check or knowledge merge."""
     ctx = _ctx(tmp_path)
     calls = []
-    monkeypatch.setattr(F, "_o5_post_verify",
-                        lambda *_: (calls.append("o5_fail"), F.HandlerResult.cont())[1])
-    monkeypatch.setattr(F, "_run_delivery_static_check",
-                        lambda *_: calls.append("static"))
+    monkeypatch.setattr(
+        F,
+        "_o5_post_verify",
+        lambda *_: (calls.append("o5_fail"), F.HandlerResult.cont())[1],
+    )
+    monkeypatch.setattr(
+        F, "_run_delivery_static_check", lambda *_: calls.append("static")
+    )
     monkeypatch.setattr(kb_invoke, "merge_one", lambda *_: calls.append("merge"))
 
     res = F.handle_finalize(ctx, _Snap())
@@ -677,8 +684,9 @@ def test_critic_eligibility_failure_never_reaches_static_or_merge(
         "_check_eligibility_and_rollback",
         lambda *_: (calls.append("eligibility_fail"), F.HandlerResult.cont())[1],
     )
-    monkeypatch.setattr(F, "_run_delivery_static_check",
-                        lambda *_: calls.append("static"))
+    monkeypatch.setattr(
+        F, "_run_delivery_static_check", lambda *_: calls.append("static")
+    )
     monkeypatch.setattr(kb_invoke, "merge_one", lambda *_: calls.append("merge"))
 
     res = F.handle_finalize(ctx, _Snap())
@@ -710,16 +718,18 @@ def test_datacopy_byte_count_static_failure_blocks_promotion_and_merge(
         "};\n"
     )
     (ctx.workspace / "knowledge_update.md").write_text("candidate\n" * 20)
-    monkeypatch.setattr(finalize_pipeline, "_get_active_plugin",
-                        lambda _ws: _BackwardDelivery())
+    monkeypatch.setattr(
+        finalize_pipeline, "_get_active_plugin", lambda _ws: _BackwardDelivery()
+    )
     calls = []
-    monkeypatch.setattr(finalize_pipeline, "finalize_op",
-                        lambda *_: calls.append("promotion"))
+    monkeypatch.setattr(
+        finalize_pipeline, "finalize_op", lambda *_: calls.append("promotion")
+    )
     monkeypatch.setattr(kb_invoke, "merge_one", lambda *_: calls.append("merge"))
     monkeypatch.setattr(events, "emit", lambda *a, **k: None)
 
-    report = getattr(F, '_run_delivery_static_check')(ctx.workspace)
-    res = getattr(F, '_promote_and_route')(ctx)
+    report = getattr(F, "_run_delivery_static_check")(ctx.workspace)
+    res = getattr(F, "_promote_and_route")(ctx)
 
     assert report["passed"] is False
     assert any(
@@ -748,10 +758,11 @@ def test_static_check_does_not_scan_unrelated_or_build_only_sources(
     (build / "generated_old.h").write_text(
         "void generated() { unsigned copyBytes = 32; DataCopy(x, y, copyBytes); }\n"
     )
-    monkeypatch.setattr(finalize_pipeline, "_get_active_plugin",
-                        lambda _ws: _BackwardDelivery())
+    monkeypatch.setattr(
+        finalize_pipeline, "_get_active_plugin", lambda _ws: _BackwardDelivery()
+    )
 
-    report = getattr(F, '_run_delivery_static_check')(ctx.workspace)
+    report = getattr(F, "_run_delivery_static_check")(ctx.workspace)
 
     assert report["passed"] is True
     assert report["skipped"] == "no declared present AscendC delivery source"
@@ -762,8 +773,9 @@ def test_success_order_o5_critic_static_promotion_then_merge(monkeypatch, tmp_pa
     ctx = _ctx(tmp_path)
     _write_clean_delivery(ctx)
     (ctx.workspace / "knowledge_update.md").write_text("validated knowledge\n" * 20)
-    monkeypatch.setattr(finalize_pipeline, "_get_active_plugin",
-                        lambda _ws: _BackwardDelivery())
+    monkeypatch.setattr(
+        finalize_pipeline, "_get_active_plugin", lambda _ws: _BackwardDelivery()
+    )
     monkeypatch.setattr(events, "emit", lambda *a, **k: None)
     order = []
     monkeypatch.setattr(F, "_o5_post_verify", lambda *_: order.append("o5"))
@@ -776,7 +788,7 @@ def test_success_order_o5_critic_static_promotion_then_merge(monkeypatch, tmp_pa
         "_check_eligibility_and_rollback",
         lambda *_: (order.append("eligibility"), None)[1],
     )
-    real_static_check = getattr(F, '_run_delivery_static_check')
+    real_static_check = getattr(F, "_run_delivery_static_check")
 
     def checked(workspace):
         order.append("static")
@@ -812,8 +824,14 @@ def test_success_order_o5_critic_static_promotion_then_merge(monkeypatch, tmp_pa
 
     assert res.action == "continue"
     assert order == [
-        "o5", "perf", "critic", "eligibility", "static",
-        "promotion", "merge", "route",
+        "o5",
+        "perf",
+        "critic",
+        "eligibility",
+        "static",
+        "promotion",
+        "merge",
+        "route",
     ]
 
 
@@ -833,7 +851,9 @@ def test_finalize_promotion_errors_block_merge_and_done(monkeypatch, tmp_path):
     )
     calls = []
     monkeypatch.setattr(kb_invoke, "merge_one", lambda *_: calls.append("merge"))
-    monkeypatch.setattr(state_executor, "next_state", lambda *_args, **_kwargs: calls.append("route"))
+    monkeypatch.setattr(
+        state_executor, "next_state", lambda *_args, **_kwargs: calls.append("route")
+    )
     monkeypatch.setattr(events, "emit", lambda *a, **k: None)
 
     result = getattr(F, "_promote_and_route")(ctx)
@@ -847,9 +867,7 @@ def test_finalize_promotion_errors_block_merge_and_done(monkeypatch, tmp_path):
 
 def test_finalize_does_not_trust_entries_token_marker(monkeypatch, tmp_path):
     ctx = _ctx(tmp_path)
-    (ctx.workspace / "knowledge_update.md").write_text(
-        "validated knowledge\n" * 20
-    )
+    (ctx.workspace / "knowledge_update.md").write_text("validated knowledge\n" * 20)
     (ctx.workspace / ".kb_merged").write_text("entries=3\n")
     monkeypatch.setattr(events, "emit", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -879,7 +897,7 @@ def test_finalize_does_not_trust_entries_token_marker(monkeypatch, tmp_path):
         lambda *a, **k: _Decision(),
     )
 
-    res = getattr(F, '_promote_and_route')(ctx)
+    res = getattr(F, "_promote_and_route")(ctx)
 
     assert res.action == "continue"
     assert calls == ["merge"]
@@ -950,7 +968,9 @@ def _write_durable_state(ws, state):
 
 def _write_generic_kernel_project(ws):
     (ws / "kernel").mkdir(exist_ok=True)
-    (ws / "kernel" / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.16)\n")
+    (ws / "kernel" / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+    )
     (ws / "model_new_ascendc.py").write_text("# candidate entry\n")
 
 
@@ -980,24 +1000,33 @@ def test_direct_npubench_candidate_failure_generic_route_requires_npubench(tmp_p
 
 def test_direct_npubench_candidate_failure_tilelang_route_unchanged(tmp_path):
     """The original TileLang2AscendC gate keeps classifying as before."""
-    _write_durable_state(tmp_path, {
-        "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
-        "reference": {"source": "npubench"},
-    })
+    _write_durable_state(
+        tmp_path,
+        {
+            "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
+            "reference": {"source": "npubench"},
+        },
+    )
     assert _is_direct_npubench_candidate_failure(tmp_path) is True
     # TileLang2AscendC kind without the npubench reference is still rejected.
-    _write_durable_state(tmp_path, {
-        "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
-        "reference": {"source": "torch_ref"},
-    })
+    _write_durable_state(
+        tmp_path,
+        {
+            "port_source": {"kind": "port-aclnn-tilelang2ascendc"},
+            "reference": {"source": "torch_ref"},
+        },
+    )
     assert _is_direct_npubench_candidate_failure(tmp_path) is False
 
 
 def test_direct_npubench_candidate_failure_unknown_source_kind_rejected(tmp_path):
     """An unrecognized port_source kind never enters the candidate taxonomy."""
-    _write_durable_state(tmp_path, {
-        "port_source": {"kind": "some-future-kind"},
-        "reference": {"source": "npubench"},
-    })
+    _write_durable_state(
+        tmp_path,
+        {
+            "port_source": {"kind": "some-future-kind"},
+            "reference": {"source": "npubench"},
+        },
+    )
     _write_generic_kernel_project(tmp_path)
     assert _is_direct_npubench_candidate_failure(tmp_path) is False

@@ -2,14 +2,13 @@
 
 本插件提供三个入口：
 
-- `ascendc-cross-gen-port`：将 **arch22** AscendC 算子移植到 **arch35 / A5**。
+- `ascendc-cross-gen-port`：将 **arch22** AscendC 算子移植到 **arch35 / A5**；加 `--multirank` 参数启动多卡版本迁移（通信计算融合算子的多 rank 融合 kernel，详见 [`docs/USAGE.md`](./docs/USAGE.md) §7）。
 - `ascendc-backward-gen`：由可微 PyTorch 正向规格生成反向 AscendC 算子。
 - `ascendc-cross-gen-migration`（Lite，跨代际移植推荐优先使用）：无 golden 时也可使用的轻量迁移入口——agent 逆向源码自合成标杆并与 A5 实测互检，免交互，不经引擎。Skill 本体在 cannbot-skills 仓 `ops/ascendc-cross-gen-migration`，随安装经 `vendor/cannbot-skills` 子模块链接。
 
 **Lite 用户请先阅读 [README「推荐使用 Lite」](README.md#推荐使用-lite)**：Lite 无法拦截 Agent 在 reward ranking 过程中绕过真实验证的行为，结果需由用户独立验证；缺少完整版本的反馈环，生成失败、精度不对齐或性能未达标时，应显式提高编译、精度对齐、性能优化各阶段的迭代次数，或执行手头已有的 debug 工具、脚本或技能后继续修复验证。
 
 下文介绍**完整编排器**（`ascendc-cross-gen-port` / `ascendc-backward-gen`）的上手路径，其 golden 要求、引擎依赖、安全网、续跑和产物约定不应直接套用于 Lite；Lite 的具体步骤以其 Skill 为准。完整编排器可在 **Claude Code** 或 **OpenCode** 中运行；两者的入口名相同，但安装步骤不同。
-
 ## 0. 开始前确认
 
 默认由本地 agent 生成算子，并在本地 A5 目标上验证。只有选择显式远程验证时，才需要 SSH/SCP。注意引擎会以
@@ -22,6 +21,10 @@ CLI 本体：Claude Code 需要可调用的 `claude` CLI 和认证/模型，Open
 `torch`/`torch_npu`，并在启动前 `source` CANN 的 `set_env.sh`；部分驱动栈（如 950DT）还需
 `export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH` 才能运行 `npu-smi`。完整清单与检查命令见
 [`docs/USAGE.md`](./docs/USAGE.md) §1.5「环境前置依赖清单」。
+
+- **跨代移植**：必须同时可访问来源 A3 和独立的目标 A5，源目录必须包含 `op_host/` 与 `op_kernel/`，且会被检测为 arch22。
+- **跨代移植 --multirank（多卡融合算子分支）**：目标侧多张 NPU（逐 case 多 rank 验证）+ 源端参考算子（a3_live 档真值为源端真实算子的 NPU 执行，需源端 wrapper 工程）；输入为入口 skill 引导撰写的 KernelBench 风格 task `.py` + 同 stem sidecar。
+- **反向生成**：只需所选目标 NPU；输入是定义 `forward(...)` 与 `BACKWARD_SPEC` 的可微 PyTorch `.py` 规格。
 
 **术语速览**（首次使用建议先扫一眼）：
 
@@ -210,6 +213,7 @@ npubench 或 a3_live）**：
 
 ```text
 /ascendc-backward-gen 为 /path/to/forward_spec.py 生成反向算子
+/ascendc-cross-gen-port 把这个融合算子迁移到 A5（多卡）
 ```
 
 Claude Code 中它们是 Skills；OpenCode 中它们是安装器写入的 Commands。启动器会自动选择当前 harness。

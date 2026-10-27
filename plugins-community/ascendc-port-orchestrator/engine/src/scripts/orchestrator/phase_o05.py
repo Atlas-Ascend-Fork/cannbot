@@ -19,6 +19,7 @@ Scope:
 Idempotent: re-init updates `last_seen_ts` but preserves `started_ts`
 and other origin metadata.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -54,8 +55,8 @@ def init_durable_state(
     On re-runs: updates last_seen_ts, increments invocation_count.
     Other origin fields (op, target, started_ts, opgen_mode) are preserved.
     The mode is explicit and immutable: callers must choose arch22→arch35
-    migration or backward generation, and a workspace cannot switch between
-    them during refresh.
+    migration, backward generation, or the multirank extension
+    generation, and a workspace cannot switch between them during refresh.
 
     """
     if opgen_mode not in SUPPORTED_OPGEN_MODES:

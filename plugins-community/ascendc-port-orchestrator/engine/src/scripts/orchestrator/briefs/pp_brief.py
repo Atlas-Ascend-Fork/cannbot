@@ -14,6 +14,7 @@ brief design — must include a "rigid output schema" requirement so probe
 writes probe_result.json (codex P1 #58 future), and explicit anti-pattern
 warning about declaring `requirement` while clusters remain UNTESTED.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,9 +22,15 @@ from typing import Optional
 
 from briefs._common import (
     env_quirks_block,
-    AscendCEnv, load_env,
-    env_block, hard_floors_block, kb_manifest_block,
-    schema_contract_block, fixed_layout_block, safety_block, g7_slug,
+    AscendCEnv,
+    load_env,
+    env_block,
+    hard_floors_block,
+    kb_manifest_block,
+    schema_contract_block,
+    fixed_layout_block,
+    safety_block,
+    g7_slug,
     self_introspection_block,
 )
 
@@ -44,11 +51,15 @@ def build_probe_brief(
         env = load_env()
     # P131 follow-up: inherit env.backend when kwarg defaults
     from briefs._common import resolve_backend_from_env
+
     backend = resolve_backend_from_env(backend, env)
     # Phase 2 plugin-as-param (Q3 main agent): auto-resolve if caller didn't.
     if plugin is None:
         from briefs._common import resolve_plugin_for_brief
-        plugin = resolve_plugin_for_brief(env, workspace=workspace, backend_override=backend)
+
+        plugin = resolve_plugin_for_brief(
+            env, workspace=workspace, backend_override=backend
+        )
     slug = g7_slug(op, "aog-precision-probe", spawn_index)
 
     sections = [
@@ -88,7 +99,23 @@ def _probe_phase_block(
     *,
     plugin: Optional[object] = None,
 ) -> str:
-    handoff_str = f"\n\n## Handoff from worker\n\n{handoff_from_worker}" if handoff_from_worker else ""
+    handoff_str = (
+        f"\n\n## Handoff from worker\n\n{handoff_from_worker}"
+        if handoff_from_worker
+        else ""
+    )
+    # Mode plugins may own the whole probe protocol via pp_brief_phase_block
+    # (override pattern mirrors kw_brief._phase_instructions_block). FIX-5
+    # (2026-08-20 repro): the hook existed on the former mc2 plugin but was dead
+    # code — `plugin` was accepted here and never called, so multirank probes got
+    # the generic single-rank brief without the mandatory sync/comm KB load.
+    # BasePlugin's default returns None → non-overriding plugins unchanged.
+    if plugin is not None:
+        override = plugin.pp_brief_phase_block(
+            handoff_str=handoff_str, iter_cap=iter_cap
+        )
+        if override is not None:
+            return override
     return f"""# PHASES (aog-precision-probe){handoff_str}
 
 A. **KB Manifest LOAD** — read every section listed above.

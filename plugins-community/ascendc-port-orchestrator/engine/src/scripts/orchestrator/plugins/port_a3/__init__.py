@@ -20,6 +20,7 @@ Phase 1 of DEBT-094 (2026-05-15): migrated from
 - scan_delegation_cheating._is_port_a3_workspace + PORT_A3_VERIFY_FILES +
   PORT_A3_VERIFY_FORBIDDEN + CPU_AS_REFERENCE_ANTIPATTERN
 """
+
 from __future__ import annotations
 import logging
 
@@ -30,15 +31,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Optional
 
-from ..base import BasePlugin, is_attention_named
+from ..base import BasePlugin, is_attention_named  # noqa: F401
 
 
 # ── Module-level constants (kept here, NOT in core) ─────────────────────
 
 VERIFY_FILES: tuple[str, ...] = (
-    "run_a5_verify.py",   # A5-side verification entry
-    "pass_a_runner.py",   # Pass A canonical verifier
-    "run_pass_b.py",      # Pass B canonical verifier
+    "run_a5_verify.py",  # A5-side verification entry
+    "pass_a_runner.py",  # Pass A canonical verifier
+    "run_pass_b.py",  # Pass B canonical verifier
 )
 
 # Sanctioned `truth_source` substrings for the verify-path-provenance gate
@@ -53,8 +54,8 @@ VERIFY_FILES: tuple[str, ...] = (
 # sanity asserts gate ⊇ brief-sanctioned to prevent the drift recurring
 # (OL-160 spirit: key off ONE canonical vocabulary, not duplicated literals).
 SANCTIONED_TRUTH_SOURCE_SUBSTRINGS: tuple[str, ...] = (
-    "aclnn",                                  # aclnn-direct C++ runner / aclnnGather etc.
-    "a3_cann",                                # A3-CANN captured reference
+    "aclnn",  # aclnn-direct C++ runner / aclnnGather etc.
+    "a3_cann",  # A3-CANN captured reference
     "a3_capture_via_pybind_aclrtlaunch_kernel",  # pybind + ACLRT_LAUNCH_KERNEL real NPU launch (P140)
 )
 
@@ -66,21 +67,31 @@ SANCTIONED_TRUTH_SOURCE_SUBSTRINGS: tuple[str, ...] = (
 # / `torch_npu.npu_*` calls ARE legitimate in run_a3_reference.py (A3 has
 # working CANN install) but FATAL in run_a5_verify.py / pass_a_runner.py.
 VERIFY_FORBIDDEN: list[tuple[str, str]] = [
-    (r'\btorch\.nn\.functional\.[a-z_]+\s*\(',
+    (
+        r"\btorch\.nn\.functional\.[a-z_]+\s*\(",
         "torch.nn.functional.<op>() in A5 verify path — falls back to "
-        "AICPU when our .so unloaded; runs stock PyTorch instead of our kernel"),
-    (r'\bF\.[a-z_]+\s*\(',
+        "AICPU when our .so unloaded; runs stock PyTorch instead of our kernel",
+    ),
+    (
+        r"\bF\.[a-z_]+\s*\(",
         "F.<op>() in A5 verify path — same fallback risk; use "
-        "aclnn-direct shim instead"),
-    (r'\btorch\._foreach_[a-z]+\s*\(',
+        "aclnn-direct shim instead",
+    ),
+    (
+        r"\btorch\._foreach_[a-z]+\s*\(",
         "torch._foreach_<op>() in A5 verify path — routes through "
-        "PyTorch foreach dispatcher, NOT our kernel"),
-    (r'\btorch_npu\.npu_[a-zA-Z_]+\s*\(',
+        "PyTorch foreach dispatcher, NOT our kernel",
+    ),
+    (
+        r"\btorch_npu\.npu_[a-zA-Z_]+\s*\(",
         "torch_npu.npu_<op>() in A5 verify path — may unbind on A5 "
-        "(per OL-68); use aclnn-direct ctypes shim"),
-    (r'\btorch\.gather\s*\(.*device\s*=\s*[\'"]npu',
+        "(per OL-68); use aclnn-direct ctypes shim",
+    ),
+    (
+        r'\btorch\.gather\s*\(.*device\s*=\s*[\'"]npu',
         "torch.gather() on NPU in A5 verify path — uses stock PyTorch "
-        "gather, NOT our aclnnGatherElementsV2"),
+        "gather, NOT our aclnnGatherElementsV2",
+    ),
 ]
 
 # CPU-as-reference anti-pattern: pass_a_runner / run_a5_verify computes
@@ -89,10 +100,11 @@ VERIFY_FORBIDDEN: list[tuple[str, str]] = [
 # the violation message is clear.
 CPU_AS_REFERENCE_ANTIPATTERN: list[tuple[str, str]] = [
     (
-        r'tensor\.(abs|exp|log|sqrt|rsqrt|sigmoid|tanh|gelu|silu|softmax|sum|mean|'
-        r'var|max|min|argmax|argmin|topk|sort|cumsum|gather|scatter)\s*\(',
+        r"tensor\.(abs|exp|log|sqrt|rsqrt|sigmoid|tanh|gelu|silu|softmax|sum|mean|"
+        r"var|max|min|argmax|argmin|topk|sort|cumsum|gather|scatter)\s*\(",
         "CPU tensor.<op>() as 'reference' in verify path — never "
-        "exercises A5 NPU let alone our kernel; verify is meaningless"),
+        "exercises A5 NPU let alone our kernel; verify is meaningless",
+    ),
 ]
 
 # Archive layout path mapping (W7, migrated from finalize_pipeline.py).
@@ -116,130 +128,146 @@ TILELANG2ASCENDC_SOURCE_KIND = "port-aclnn-tilelang2ascendc"
 # this list conservative and explicit: it is used only to identify the
 # candidate kernel sources that must be regular files, never to infer source
 # semantics or an ABI from their contents.
-DIRECT_LAUNCH_CPP_SOURCE_SUFFIXES = frozenset({
-    ".asc",
-    ".c",
-    ".cc",
-    ".cpp",
-    ".cxx",
-    ".h",
-    ".hh",
-    ".hpp",
-    ".hxx",
-    ".inc",
-    ".tpp",
-})
+DIRECT_LAUNCH_CPP_SOURCE_SUFFIXES = frozenset(
+    {
+        ".asc",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".h",
+        ".hh",
+        ".hpp",
+        ".hxx",
+        ".inc",
+        ".tpp",
+    }
+)
 
 # A header-only wrapper is not a kernel delivery.  Keep this separate from
 # the broader source suffix set used while walking a candidate so that a
 # header cannot satisfy the implementation-unit completeness gate.
-DIRECT_LAUNCH_IMPLEMENTATION_SUFFIXES = frozenset({
-    ".asc",
-    ".c",
-    ".cc",
-    ".cpp",
-    ".cxx",
-})
+DIRECT_LAUNCH_IMPLEMENTATION_SUFFIXES = frozenset(
+    {
+        ".asc",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+    }
+)
 
 # Build products in the direct profile are source-delivery artifacts.  CMake
 # is the required primary recipe, but a reproducible kernel can legitimately
 # carry an auxiliary Makefile, CMake include, generated-tiling descriptor, or
 # a small Python/build helper.  These are deliberately listed here instead of
 # relying on a blanket "copy everything under kernel/" rule.
-DIRECT_LAUNCH_BUILD_FILENAMES = frozenset({
-    "CMakeLists.txt",
-    "Makefile",
-    "GNUmakefile",
-})
-DIRECT_LAUNCH_KERNEL_AUXILIARY_SUFFIXES = frozenset({
-    ".cmake",
-    ".in",
-    ".json",
-    ".py",
-    ".sh",
-    ".txt",
-    ".yaml",
-    ".yml",
-})
-DIRECT_LAUNCH_ROOT_AUXILIARY_FILENAMES = frozenset({
-    "LICENSE",
-    "MANIFEST.in",
-    "NOTICE",
-    "pyproject.toml",
-    "requirements.txt",
-    "setup.cfg",
-    "setup.py",
-})
+DIRECT_LAUNCH_BUILD_FILENAMES = frozenset(
+    {
+        "CMakeLists.txt",
+        "Makefile",
+        "GNUmakefile",
+    }
+)
+DIRECT_LAUNCH_KERNEL_AUXILIARY_SUFFIXES = frozenset(
+    {
+        ".cmake",
+        ".in",
+        ".json",
+        ".py",
+        ".sh",
+        ".txt",
+        ".yaml",
+        ".yml",
+    }
+)
+DIRECT_LAUNCH_ROOT_AUXILIARY_FILENAMES = frozenset(
+    {
+        "LICENSE",
+        "MANIFEST.in",
+        "NOTICE",
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.cfg",
+        "setup.py",
+    }
+)
 
 # Binary and controller/runtime artifacts must never become part of the
 # customer-facing flat direct-launch archive.  The freshly built extension is
 # consumed by NPUKernelBench before finalization, but the archive contains the
 # reproducible sources and build recipe instead of a host-specific binary.
-DIRECT_LAUNCH_BINARY_SUFFIXES = frozenset({
-    ".a",
-    ".bin",
-    ".dll",
-    ".dylib",
-    ".exe",
-    ".o",
-    ".obj",
-    ".pyc",
-    ".pyd",
-    ".so",
-})
+DIRECT_LAUNCH_BINARY_SUFFIXES = frozenset(
+    {
+        ".a",
+        ".bin",
+        ".dll",
+        ".dylib",
+        ".exe",
+        ".o",
+        ".obj",
+        ".pyc",
+        ".pyd",
+        ".so",
+    }
+)
 
-DIRECT_LAUNCH_ARCHIVE_EXCLUDED_DIRS = frozenset({
-    ".lingxi_verify_logs",
-    ".npubench_candidate",
-    ".source_arch22",
-    ".tilelang2ascendc_source",
-    "__pycache__",
-    "build",
-    "dist",
-    "install",
-    "logs",
-    # NPUKernelBench/controller evidence and the graybox plugin snapshot are
-    # runtime inputs, not customer-deliverable kernel sources.  These entries
-    # belong to the strict TileLang2AscendC delivery profile; the established legacy
-    # archive policy remains untouched.
-    ".graybox_plugin_runtime",
-    "npubench_evidence",
-    "output",
-    "port_source",
-    "reference_inputs",
-    "reports",
-    "source_stage",
-})
+DIRECT_LAUNCH_ARCHIVE_EXCLUDED_DIRS = frozenset(
+    {
+        ".lingxi_verify_logs",
+        ".npubench_candidate",
+        ".source_arch22",
+        ".tilelang2ascendc_source",
+        "__pycache__",
+        "build",
+        "dist",
+        "install",
+        "logs",
+        # NPUKernelBench/controller evidence and the graybox plugin snapshot are
+        # runtime inputs, not customer-deliverable kernel sources.  These entries
+        # belong to the strict TileLang2AscendC delivery profile; the established legacy
+        # archive policy remains untouched.
+        ".graybox_plugin_runtime",
+        "npubench_evidence",
+        "output",
+        "port_source",
+        "reference_inputs",
+        "reports",
+        "source_stage",
+    }
+)
 
-DIRECT_LAUNCH_ARCHIVE_EXCLUDED_FILES = frozenset({
-    "analysis.md",
-    ".DS_Store",
-    "PROGRESS.md",
-    "a_tier_manifest.json",
-    "audit_self_critic_post_worker.md",
-    "construction_manifest.json",
-    "evaluation.json",
-    "evaluation_results.json",
-    "failures_ledger.md",
-    "finalize_precheck.md",
-    "fused_analysis.md",
-    "kb_draft_from_user_decision.md",
-    "knowledge_update.md",
-    "op_classification.json",
-    "orchestrator_events.jsonl",
-    "optimization_directive.md",
-    "optimization_log.md",
-    "perf_report.json",
-    "performance.json",
-    "progress.md",
-    "probe_report.md",
-    "reference_manifest.jsonl",
-    "report.md",
-    "self_critic_report.md",
-    "state_transitions.jsonl",
-    "user_decision.md",
-    "verification.json",
-})
+DIRECT_LAUNCH_ARCHIVE_EXCLUDED_FILES = frozenset(
+    {
+        "analysis.md",
+        ".DS_Store",
+        "PROGRESS.md",
+        "a_tier_manifest.json",
+        "audit_self_critic_post_worker.md",
+        "construction_manifest.json",
+        "evaluation.json",
+        "evaluation_results.json",
+        "failures_ledger.md",
+        "finalize_precheck.md",
+        "fused_analysis.md",
+        "kb_draft_from_user_decision.md",
+        "knowledge_update.md",
+        "op_classification.json",
+        "orchestrator_events.jsonl",
+        "optimization_directive.md",
+        "optimization_log.md",
+        "perf_report.json",
+        "performance.json",
+        "progress.md",
+        "probe_report.md",
+        "reference_manifest.jsonl",
+        "report.md",
+        "self_critic_report.md",
+        "state_transitions.jsonl",
+        "user_decision.md",
+        "verification.json",
+    }
+)
 
 # These are controller/runtime products, not candidate delivery files.  Keep
 # the list intentionally explicit: an unrecognized dot file must be reported
@@ -279,11 +307,13 @@ TILELANG_PROFILE_INVALID = "invalid_tilelang2ascendc_claim"
 
 # GE op_host delivery files the finalize GE assembler injects at workspace
 # top-level op_host/ (FA-class trio + op-parameterized def/infershape/tiling).
-TILELANG_GE_OPHOST_DELIVERY_FILENAMES = frozenset({
-    "ge_host_shim.h",
-    "wp_fa_host_cache.h",
-    "wp_fa_host_tiling.h",
-})
+TILELANG_GE_OPHOST_DELIVERY_FILENAMES = frozenset(
+    {
+        "ge_host_shim.h",
+        "wp_fa_host_cache.h",
+        "wp_fa_host_tiling.h",
+    }
+)
 TILELANG_GE_OPHOST_DELIVERY_SUFFIXES = (
     "_def.cpp",
     "_infershape.cpp",
@@ -487,9 +517,8 @@ def _delivery_path_is_retained(profile: str, workspace_rel_path: str) -> bool:
         # cannot ride the kernel build).  They ARE required delivery
         # source — the GE_OPHOST_RAW_CANN_COPY gate verifies them — so the
         # TileLang2AscendC delivery profile retains them explicitly.
-        return (
-            name in TILELANG_GE_OPHOST_DELIVERY_FILENAMES
-            or name.endswith(TILELANG_GE_OPHOST_DELIVERY_SUFFIXES)
+        return name in TILELANG_GE_OPHOST_DELIVERY_FILENAMES or name.endswith(
+            TILELANG_GE_OPHOST_DELIVERY_SUFFIXES
         )
     if parts[0] != "kernel":
         return False
@@ -502,9 +531,24 @@ def _delivery_path_is_retained(profile: str, workspace_rel_path: str) -> bool:
     )
 
 
-def _delivery_path_rejection(
-    profile: str, workspace_rel_path: str
-) -> Optional[str]:
+def _delivery_path_is_excluded(parts, name: str) -> bool:
+    """An intentional controller/runtime exclusion (never a delivery error)."""
+    if any(part in DIRECT_LAUNCH_ARCHIVE_EXCLUDED_DIRS for part in parts):
+        return True
+    return (
+        name in DIRECT_LAUNCH_ARCHIVE_EXCLUDED_FILES
+        or any(
+            name.startswith(prefix)
+            for prefix in DIRECT_LAUNCH_ARCHIVE_EXCLUDED_FILE_PREFIXES
+        )
+        or any(
+            name.startswith(prefix)
+            for prefix in DIRECT_LAUNCH_REFERENCE_ARTIFACT_PREFIXES
+        )
+    )
+
+
+def _delivery_path_rejection(profile: str, workspace_rel_path: str) -> Optional[str]:
     """Return a hard-failure reason for a non-excluded direct path.
 
     ``None`` means either the path is retained or it is an intentional
@@ -525,13 +569,7 @@ def _delivery_path_rejection(
         return f"{delivery_label} delivery path is unsafe: {workspace_rel_path!r}"
     parts = relative.parts
     name = relative.name
-    if any(part in DIRECT_LAUNCH_ARCHIVE_EXCLUDED_DIRS for part in parts):
-        return None
-    if (
-        name in DIRECT_LAUNCH_ARCHIVE_EXCLUDED_FILES
-        or any(name.startswith(prefix) for prefix in DIRECT_LAUNCH_ARCHIVE_EXCLUDED_FILE_PREFIXES)
-        or any(name.startswith(prefix) for prefix in DIRECT_LAUNCH_REFERENCE_ARTIFACT_PREFIXES)
-    ):
+    if _delivery_path_is_excluded(parts, name):
         return None
     # Option B (2026-08-22, campaign): the strict whitelist previously
     # failed the whole promotion on harness-runtime artifacts OUTSIDE the
@@ -624,7 +662,77 @@ class _PortA3ArchiveView:
 
 class PortA3Plugin(BasePlugin):
     name = "port_a3_to_a5"
+
     cli_flag = "--port-a3"
+
+    @staticmethod
+    def _archive_path_rejection_for_profile(
+        profile: str, workspace_rel_path: str
+    ) -> Optional[str]:
+        """Return a hard-failure reason for a non-excluded direct path."""
+        return _delivery_path_rejection(profile, workspace_rel_path)
+
+    @staticmethod
+    def _derive_op_name(workspace: Path, vj: dict) -> Optional[str]:
+        """Best-effort op name lookup: verification.json.op,
+        .opgen_state.json.op, or workspace dir name."""
+        op = vj.get("op")
+        if op:
+            return op
+        state_path = workspace / ".opgen_state.json"
+        if state_path.is_file():
+            try:
+                op = json.loads(state_path.read_text()).get("op")
+                if op:
+                    return op
+            except Exception as error:
+                logging.getLogger(__name__).debug(
+                    "Recoverable operation failed.", exc_info=error
+                )
+        # Last resort: workspace dir name (works for both
+        # workspace/<op>/ and output/<project>/src/kernels/<op>/)
+        return workspace.name if workspace.is_dir() else None
+
+    @staticmethod
+    def _direct_path_is_retained(profile: str, workspace_rel_path: str) -> bool:
+        """Classify only explicitly retained strict-delivery files."""
+        return _delivery_path_is_retained(profile, workspace_rel_path)
+
+    @staticmethod
+    def _load_durable_state(workspace: Path) -> Mapping[str, Any] | None:
+        """Load one regular, non-symlink state file for profile binding."""
+        state_file = Path(workspace) / ".opgen_state.json"
+        try:
+            metadata = state_file.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                return None
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None
+        return state if isinstance(state, Mapping) else None
+
+    @staticmethod
+    def _npubench_binding(workspace: Path) -> Optional[Mapping[str, Any]]:
+        """Return an explicitly selected NPUKernelBench block, if present.
+
+        The detailed completeness and immutable-stage checks stay in the
+        provider contract.  This narrow discriminator is deliberately enough
+        to route a malformed ``source=npubench`` state to that fail-closed
+        contract instead of accidentally applying a live-A3 provenance rule.
+        """
+        state_path = Path(workspace) / ".opgen_state.json"
+        try:
+            if state_path.is_symlink() or not state_path.is_file():
+                return None
+            state = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(state, Mapping):
+            return None
+        reference = state.get("reference")
+        if not isinstance(reference, Mapping):
+            return None
+        return reference if reference.get("source") == "npubench" else None
 
     # ── Internal helpers ───────────────────────────────────────────────
     # Class-member order is static methods, then the classmethod profile
@@ -657,44 +765,34 @@ class PortA3Plugin(BasePlugin):
         kind = source.get("kind")
         return kind if isinstance(kind, str) else None
 
+    # ── Finalize gates ─────────────────────────────────────────────────
     @staticmethod
-    def _load_durable_state(workspace: Path) -> Mapping[str, Any] | None:
-        """Load one regular, non-symlink state file for profile binding."""
-        state_file = Path(workspace) / ".opgen_state.json"
+    def _provenance_local_file(
+        root: Path, cp: dict, field: str, failures: list
+    ) -> "Path | None":
+        """Resolve one provenance file field to a real workspace file (None +
+        failure note when absent/unsafe)."""
+
+        def _fail(note: str) -> None:
+            failures.append(f"{field} {note}")
+
+        raw = cp.get(field)
+        if not isinstance(raw, str) or not raw.strip():
+            _fail("missing")
+            return None
+        candidate = Path(raw)
+        candidate = candidate if candidate.is_absolute() else root / candidate
         try:
-            metadata = state_file.lstat()
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-                return None
-            state = json.loads(state_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
+            if candidate.is_symlink():
+                raise ValueError("symlink")
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+            if not resolved.is_file():
+                raise ValueError("not a regular file")
+        except Exception as exc:
+            _fail(f"is not a workspace file ({exc})")
             return None
-        return state if isinstance(state, Mapping) else None
-
-    @staticmethod
-    def _resolve_source_from_workspace_source_entries(
-        cp: Mapping[str, Any], root: Path
-    ) -> Optional[Path]:
-        """Resolve ONE real workspace source from deliverable list entries.
-
-        5_MatmulTransB emitted the plural ``workspace_sources`` spelling, so
-        accept both; translation units (.cpp) are preferred.
-        """
-        entries = cp.get("workspace_source")
-        if not isinstance(entries, list):
-            entries = cp.get("workspace_sources")
-        if not isinstance(entries, list):
-            return None
-        candidates = [
-            entry.get("path")
-            for entry in entries
-            if isinstance(entry, Mapping) and isinstance(entry.get("path"), str)
-        ]
-        cpp = [p for p in candidates if str(p).endswith(".cpp")]
-        for raw in (cpp or candidates):
-            source_resolved = _resolved_workspace_file(root, raw)
-            if source_resolved is not None:
-                return source_resolved
-        return None
+        return resolved
 
     @staticmethod
     def _reconcile_runner_built_provenance(
@@ -767,30 +865,40 @@ class PortA3Plugin(BasePlugin):
         return reconciled
 
     @staticmethod
+    def _resolve_source_from_workspace_source_entries(
+        cp: Mapping[str, Any], root: Path
+    ) -> Optional[Path]:
+        """Resolve ONE real workspace source from deliverable list entries.
+
+        5_MatmulTransB emitted the plural ``workspace_sources`` spelling, so
+        accept both; translation units (.cpp) are preferred.
+        """
+        entries = cp.get("workspace_source")
+        if not isinstance(entries, list):
+            entries = cp.get("workspace_sources")
+        if not isinstance(entries, list):
+            return None
+        candidates = [
+            entry.get("path")
+            for entry in entries
+            if isinstance(entry, Mapping) and isinstance(entry.get("path"), str)
+        ]
+        cpp = [p for p in candidates if str(p).endswith(".cpp")]
+        for raw in cpp or candidates:
+            source_resolved = _resolved_workspace_file(root, raw)
+            if source_resolved is not None:
+                return source_resolved
+        return None
+
+    @staticmethod
+    def _should_archive_path_for_profile(profile: str, workspace_rel_path: str) -> bool:
+        """Return whether a path is explicitly retained by the strict profile."""
+        return _delivery_path_is_archived(profile, workspace_rel_path)
+
+    @staticmethod
     def _snake_to_pascal(snake: str) -> str:
         """top_k_top_p_sample → TopKTopPSample"""
         return "".join(p.capitalize() for p in snake.split("_") if p)
-
-    @staticmethod
-    def _derive_op_name(workspace: Path, vj: dict) -> Optional[str]:
-        """Best-effort op name lookup: verification.json.op,
-        .opgen_state.json.op, or workspace dir name."""
-        op = vj.get("op")
-        if op:
-            return op
-        state_path = workspace / ".opgen_state.json"
-        if state_path.is_file():
-            try:
-                op = json.loads(state_path.read_text()).get("op")
-                if op:
-                    return op
-            except Exception as error:
-                logging.getLogger(__name__).debug(
-                    "Recoverable operation failed.", exc_info=error
-                )
-        # Last resort: workspace dir name (works for both
-        # workspace/<op>/ and output/<project>/src/kernels/<op>/)
-        return workspace.name if workspace.is_dir() else None
 
     @staticmethod
     def _tilelang2ascendc_delivery_sources(workspace: Path) -> list[str]:
@@ -804,7 +912,11 @@ class PortA3Plugin(BasePlugin):
             except OSError:
                 failures.append(f"{label} is missing")
                 return
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode) or metadata.st_size == 0:
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_size == 0
+            ):
                 failures.append(f"{label} must be a non-empty regular non-symlink file")
 
         _regular(root / "model_new_ascendc.py", "model_new_ascendc.py")
@@ -827,53 +939,65 @@ class PortA3Plugin(BasePlugin):
                 except OSError:
                     failures.append(f"kernel/{name}/{path.name} is unreadable")
                     continue
-                if stat.S_ISLNK(item.st_mode) or (path.is_file() and item.st_nlink != 1):
-                    failures.append(f"kernel/{name}/{path.relative_to(directory).as_posix()} is unsafe")
-                elif path.is_file() and path.suffix.lower() in DIRECT_LAUNCH_IMPLEMENTATION_SUFFIXES:
+                if stat.S_ISLNK(item.st_mode) or (
+                    path.is_file() and item.st_nlink != 1
+                ):
+                    failures.append(
+                        f"kernel/{name}/{path.relative_to(directory).as_posix()} is unsafe"
+                    )
+                elif (
+                    path.is_file()
+                    and path.suffix.lower() in DIRECT_LAUNCH_IMPLEMENTATION_SUFFIXES
+                ):
                     source_files.append(path.relative_to(root).as_posix())
             if not source_files:
                 failures.append(f"kernel/{name}/ has no authored C/C++ source")
         return failures
 
     @staticmethod
-    def _should_archive_path_for_profile(profile: str, workspace_rel_path: str) -> bool:
-        """Return whether a path is explicitly retained by the strict profile."""
-        return _delivery_path_is_archived(profile, workspace_rel_path)
+    def _verify_built_from_lineage(cp: dict, failures: list) -> None:
+        """built_from == workspace source digest == deployed source digest."""
+        built_from = cp.get("built_from_source_sha256")
+        if (
+            not isinstance(built_from, str)
+            or len(built_from) != 64
+            or any(char not in "0123456789abcdef" for char in built_from.lower())
+        ):
+            failures.append("built_from_source_sha256 is not a 64-hex SHA256")
+            return
+        source_digest = cp.get("workspace_source_sha256")
+        deploy_digest = cp.get("deploy_source_sha256")
+        if (
+            isinstance(source_digest, str)
+            and isinstance(deploy_digest, str)
+            and not (
+                source_digest.lower() == deploy_digest.lower() == built_from.lower()
+            )
+        ):
+            failures.append("source/deploy/built-from SHA256 lineage differs")
 
     @staticmethod
-    def _direct_path_is_retained(profile: str, workspace_rel_path: str) -> bool:
-        """Classify only explicitly retained strict-delivery files."""
-        return _delivery_path_is_retained(profile, workspace_rel_path)
+    def _verify_digest_fields(cp: dict, digest_fields: dict, failures: list) -> None:
+        """Every declared digest field is 64-hex and matches workspace bytes."""
 
-    @staticmethod
-    def _archive_path_rejection_for_profile(
-        profile: str, workspace_rel_path: str
-    ) -> Optional[str]:
-        """Return a hard-failure reason for a non-excluded direct path."""
-        return _delivery_path_rejection(profile, workspace_rel_path)
+        def _sha256(path: Path) -> str:
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
 
-    @staticmethod
-    def _npubench_binding(workspace: Path) -> Optional[Mapping[str, Any]]:
-        """Return an explicitly selected NPUKernelBench block, if present.
-
-        The detailed completeness and immutable-stage checks stay in the
-        provider contract.  This narrow discriminator is deliberately enough
-        to route a malformed ``source=npubench`` state to that fail-closed
-        contract instead of accidentally applying a live-A3 provenance rule.
-        """
-        state_path = Path(workspace) / ".opgen_state.json"
-        try:
-            if state_path.is_symlink() or not state_path.is_file():
-                return None
-            state = json.loads(state_path.read_text())
-        except (OSError, ValueError):
-            return None
-        if not isinstance(state, Mapping):
-            return None
-        reference = state.get("reference")
-        if not isinstance(reference, Mapping):
-            return None
-        return reference if reference.get("source") == "npubench" else None
+        for field, path in digest_fields.items():
+            declared = cp.get(field)
+            if not isinstance(declared, str) or len(declared) != 64:
+                failures.append(f"{field} is not a 64-hex SHA256")
+                continue
+            declared = declared.lower()
+            if any(char not in "0123456789abcdef" for char in declared):
+                failures.append(f"{field} is not a 64-hex SHA256")
+                continue
+            if path is not None and _sha256(path) != declared:
+                failures.append(f"{field} does not match workspace bytes")
 
     @classmethod
     def _tilelang2ascendc_profile_status(cls, workspace: Path) -> tuple[str, str]:
@@ -882,201 +1006,242 @@ class PortA3Plugin(BasePlugin):
         if state is None:
             return DIRECT_PROFILE_LEGACY, "durable state is absent or unreadable"
         source = state.get("port_source")
-        if not isinstance(source, Mapping) or source.get("kind") != TILELANG2ASCENDC_SOURCE_KIND:
-            return DIRECT_PROFILE_LEGACY, "source kind is not port-aclnn-tilelang2ascendc"
+        if (
+            not isinstance(source, Mapping)
+            or source.get("kind") != TILELANG2ASCENDC_SOURCE_KIND
+        ):
+            return (
+                DIRECT_PROFILE_LEGACY,
+                "source kind is not port-aclnn-tilelang2ascendc",
+            )
         candidate = state.get("candidate")
-        if not isinstance(candidate, Mapping) or candidate.get("kind") != "tilelang2ascendc_custom_op":
-            return TILELANG_PROFILE_INVALID, "candidate.kind must be tilelang2ascendc_custom_op"
+        if (
+            not isinstance(candidate, Mapping)
+            or candidate.get("kind") != "tilelang2ascendc_custom_op"
+        ):
+            return (
+                TILELANG_PROFILE_INVALID,
+                "candidate.kind must be tilelang2ascendc_custom_op",
+            )
         if candidate.get("target_arch") != "arch35":
             return TILELANG_PROFILE_INVALID, "candidate.target_arch must be arch35"
+        return cls._verify_tilelang_stage(workspace, state)
+
+    @classmethod
+    def _verify_tilelang_stage(cls, workspace: Path, state) -> tuple[str, str]:
+        """Run the TileLang source + NPUBench reference stage verifiers."""
         try:
             from tilelang2ascendc_source import verify_tilelang2ascendc_source_stage
 
-            valid, reason, _manifest = verify_tilelang2ascendc_source_stage(Path(workspace), state)
+            valid, reason, _manifest = verify_tilelang2ascendc_source_stage(
+                Path(workspace), state
+            )
         except Exception as exc:  # pragma: no cover - import/environment guard
-            return TILELANG_PROFILE_INVALID, f"TileLang2AscendC source verifier failed: {type(exc).__name__}: {exc}"
+            return (
+                TILELANG_PROFILE_INVALID,
+                f"TileLang2AscendC source verifier failed: {type(exc).__name__}: {exc}",
+            )
         if not valid:
-            return TILELANG_PROFILE_INVALID, f"TileLang2AscendC source stage invalid: {reason}"
+            return (
+                TILELANG_PROFILE_INVALID,
+                f"TileLang2AscendC source stage invalid: {reason}",
+            )
         reference = state.get("reference")
         if not isinstance(reference, Mapping) or reference.get("source") != "npubench":
-            return TILELANG_PROFILE_INVALID, "port-aclnn-tilelang2ascendc requires reference.source=npubench"
+            return (
+                TILELANG_PROFILE_INVALID,
+                "port-aclnn-tilelang2ascendc requires reference.source=npubench",
+            )
         try:
             from reference_source import resolve_reference_binding
             from npubench.npubench_inputs import verify_npubench_stage
 
             bound_reference = resolve_reference_binding(state)
-            valid, reason, _manifest = verify_npubench_stage(Path(workspace), bound_reference)
+            valid, reason, _manifest = verify_npubench_stage(
+                Path(workspace), bound_reference
+            )
         except Exception as exc:  # pragma: no cover - import/environment guard
-            return TILELANG_PROFILE_INVALID, f"NPUBench reference verifier failed: {type(exc).__name__}: {exc}"
+            return (
+                TILELANG_PROFILE_INVALID,
+                f"NPUBench reference verifier failed: {type(exc).__name__}: {exc}",
+            )
         if not valid:
-            return TILELANG_PROFILE_INVALID, f"NPUBench reference stage invalid: {reason}"
-        return TILELANG_PROFILE_VALID, "TileLang2AscendC source, candidate, and NPUBench bindings verified"
+            return (
+                TILELANG_PROFILE_INVALID,
+                f"NPUBench reference stage invalid: {reason}",
+            )
+        return (
+            TILELANG_PROFILE_VALID,
+            "TileLang2AscendC source, candidate, and NPUBench bindings verified",
+        )
 
-    # ── Mode detection ─────────────────────────────────────────────────
-    def detect(self, workspace: Path) -> bool:
-        """Detect only an explicit, readable migration state.
-
-        Target-shaped files are outputs, not authorization to enter migration
-        mode.  Inspecting them during detection would also violate the source-
-        only boundary before the mode is established.
+    def archive_layout_mapping(self, workspace: Path) -> dict[str, str]:
+        """Returns path-prefix mapping. Caller uses this dict OR
+        calls resolve_archive_target() per-file. Both APIs supported.
         """
-        state_file = workspace / ".opgen_state.json"
-        if not state_file.is_file():
-            return False
+        return dict(ARCHIVE_PATH_MAP)
+
+    def archive_project_claim(self, env) -> Optional[str]:
+        """Destination-scoped claim on the archive project namespace.
+
+        The a3_to_a5_port namespace is the A5-destination contract only. For
+        any other declared destination (310p) the env-derived target-aware
+        project in briefs._common.load_env decides (a3_to_310p_port) —
+        claiming the a5 project for a 310p port would archive the op under a
+        namespace that says "ported for A5", which is a wrong-chip record no
+        downstream consumer can detect. Returns None for non-a5 destinations.
+        """
+        target = (getattr(env, "target", "a5") or "").strip().lower()
+        if target.endswith("-ds"):
+            target = target[:-3]
+        if target != "a5":
+            return None
+        return self.archive_project_subdir()
+
+    # ── Archive layout (migrated from finalize_pipeline.py phase 2) ────
+    def archive_project_subdir(self) -> Optional[str]:
+        return "a3_to_a5_port"
+
+    def canonical_pass_a_skip_reason(self, workspace: Path) -> Optional[str]:
+        """port_a3's native two-tier verdict comes from the worker's pass_a_runner.py
+        (per-op ModelNew/Model live run → precision_eval_port_a3_two_tier.classify_port_a3_case:
+        ours on NPU, a3 from edge_dataset, cpu_truth on CPU), NOT the generic canonical
+        file-evaluator (which live-recomputes via a generic `model(*group)` call that
+        port_a3's per-op call signatures — e.g. FA `m(q,k,v,*args)` — break). Two-tier
+        ENGAGEMENT is gated post-runner in ssh_runner._gate_port_a3_two_tier. (task#82;
+        DEBT-161 plugin-method extraction of the former phase_o5 `plugin.name ==` branch.)
+        """
+        return (
+            "canonical pass_a skipped: port_a3_to_a5 native two-tier comes "
+            "from worker pass_a_runner.py (per-op ModelNew/Model live run); "
+            "two-tier engagement gated post-runner"
+        )
+
+    def check_binary_provenance(self, workspace: Path, vj: dict) -> Optional[str]:
+        """Verify the current workspace build lineage without probing CANN.
+
+        A migration run may only attest artifacts it authored and copied back
+        into its workspace.  Installed CANN trees and their target binaries are
+        deliberately outside this proof model.
+        """
+        prec = vj.get("precision", {}) or {}
+        status = prec.get("status")
+        if status not in ("PASS", "PASS_WITHIN_TOLERANCE"):
+            return None
+        build_ev = vj.get("build_evidence", {}) or {}
+        cp = build_ev.get("compiled_provenance")
+        if not isinstance(cp, dict):
+            return (
+                f"port_a3 precision.status={status} but build_evidence."
+                "compiled_provenance is missing — current-build SHA256 lineage "
+                "is mandatory; installed CANN artifacts are not admissible."
+            )
+
+        root = workspace.resolve()
+        failures: list[str] = []
+        reconciled = self._reconcile_runner_built_provenance(root, cp)
+        if reconciled is not None:
+            cp = reconciled
+
+        source = self._provenance_local_file(root, cp, "source", failures)
+        deployed_source = self._provenance_local_file(
+            root, cp, "deployed_source", failures
+        )
+        object_file = self._provenance_local_file(root, cp, "object", failures)
+        shared_lib = self._provenance_local_file(root, cp, "shared_lib", failures)
+
+        if source and deployed_source and source.name != deployed_source.name:
+            failures.append("deployed_source basename differs from source")
+        if source and object_file and object_file.name != f"{source.name}.o":
+            failures.append("object basename is not <source>.o")
+        if shared_lib and ".so" not in shared_lib.name:
+            failures.append("shared_lib is not a .so artifact")
+
+        self._verify_digest_fields(
+            cp,
+            {
+                "workspace_source_sha256": source,
+                "deploy_source_sha256": deployed_source,
+                "object_sha256": object_file,
+                "shared_lib_sha256": shared_lib,
+            },
+            failures,
+        )
+        self._verify_built_from_lineage(cp, failures)
+
+        if failures:
+            return (
+                f"port_a3 precision.status={status} but current-build provenance "
+                f"FAILED: {failures[:5]}. Installed CANN target artifacts are "
+                "outside the allowed evidence boundary."
+            )
+        return None
+
+    def check_npubench_provenance(self, workspace: Path, vj: dict) -> Optional[str]:
+        """Validate runner-owned NPUKernelBench evidence without A3 fallback.
+
+        NPUKernelBench has one immutable old-format task bundle and an
+        orchestrator-owned precision/performance result.  It does not use the
+        historical live-A3 runner-file or truth-source vocabulary.
+        """
+        if self._npubench_binding(workspace) is None:
+            return None
         try:
-            declared = json.loads(state_file.read_text()).get("opgen_mode")
-        except Exception:
-            return False
-        return declared == self.name
+            from npubench.npubench_finalize_contract import (
+                resolve_npubench_workspace,
+                validate_npubench_finalize_evidence,
+            )
 
-    # ── Scanner contributions ──────────────────────────────────────────
-    def kernel_logic_files(self) -> tuple[str, ...]:
-        """port_a3 keeps compute in the canonical entry-point:
-        `model_new_ascendc.py` subprocess-invokes the aclnn-runner binary
-        we generate, and the Python surface is where a torch_npu/aclnn
-        fallback would be smuggled in. `model_new_ascendc.py` is the sole
-        supported Python compute surface.
+            is_npubench, source_error = resolve_npubench_workspace(Path(workspace))
+        except Exception as exc:
+            return (
+                "npubench provenance: could not resolve provider state: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        if not is_npubench:
+            return None
+        if source_error:
+            return source_error
+        return validate_npubench_finalize_evidence(Path(workspace), vj)
 
-        The C++ side is declared separately in `kernel_cpp_dirs()` (this
-        hook is the Python-compute surface). Until that hook existed, this
-        mode's C++ lived OUTSIDE the scanner's hard-coded `kernel/` walk and
-        was entirely UNSCANNED — the DEBT-211 directory-level recurrence of
-        OL-160 that made the finalize POST_WORKER_AUDIT gate inert for the
-        whole mode; `kernel_cpp_dirs()` closes it.
-        """
-        return ("model_new_ascendc.py",)
+    def check_op_host_completeness(self, workspace: Path) -> Optional[str]:
+        """Choose the delivery-completeness gate from durable source state.
 
-    def kernel_cpp_dirs(self) -> tuple[str, ...]:
-        """port_a3 mirrors the ops-nn tree: its AscendC C++ is in `op_host/`
-        (GE host: <op>_def.cpp / <op>_tiling.cpp/.h / <op>_infershape.cpp) and
-        `op_kernel/` (device kernel incl. `op_kernel/arch35/`, pybind11.cpp).
-        There is NO flat `kernel/` dir. Before this declaration the scanner
-        walked only `kernel/`, traversed nothing, and reported `violations=0`
-        on every port_a3 archive — host-compute delegation shipped unscanned
-        (DEBT-211 directory-level; the finalize POST_WORKER_AUDIT gate was
-        inert for the whole mode).
-
-        `op_api/` (the op's own generated aclnn C-API definitions —
-        `aclnnXxxGetWorkspaceSize` / `aclnnXxx` DEFINITIONS) is NOT declared:
-        it is API plumbing, not host-compute delegation, and core skips any
-        `op_api/` layer it encounters so those definitions don't mass-flag.
-        The top-level `*_runner.cpp` (the aclnn-direct verify runner, which
-        legitimately CALLS aclnn) is likewise outside the declared compute
-        dirs and so is not scanned for delegation here.
-        """
-        return ("op_host", "op_kernel")
-
-    def kernel_cpp_dirs_for_workspace(self, workspace: Path) -> tuple[str, ...]:
-        """Return the candidate C++ scan roots for one durable workspace.
-
-        ``kernel_cpp_dirs()`` intentionally remains the legacy ops-nn answer
-        so protocol users and old archives keep their established behavior.
-        New scanner callers should use this workspace-aware hook:
-        TileLang2AscendC candidates put all host/device C++ under ``kernel/``
-        and must not scan stale ``op_host/`` or ``op_kernel/`` trees that may
-        be present as unrelated harness/source material.
+        The legacy archive path keeps BasePlugin's PB-33 behavior.
+        Only a persisted ``port_source.kind=port-aclnn-tilelang2ascendc``
+        replaces it with the TileLang2AscendC project contract above.
         """
         tile_status, _tile_reason = self._tilelang2ascendc_profile_status(workspace)
         if tile_status in {TILELANG_PROFILE_VALID, TILELANG_PROFILE_INVALID}:
-            return ("kernel",)
-        # NPUBench-reference workspaces (ops-nn source + npubench golden) also
-        # author the candidate C++ under ``kernel/``: the runner's candidate
-        # contract — adapter view, candidate snapshot, ``model_new_ascendc.py``
-        # entry — is keyed on that flat layout, never on ``op_host``/``op_kernel``
-        # (those exist only in the frozen source archive). Declaring the ops-nn
-        # roots for them re-creates DEBT-211 in mirror image: the real compute
-        # is covered only by the backward-compat ``kernel/`` walk while the
-        # fail-loud gate sees its declared roots absent and blocks finalize
-        # (interleave_rope: the only scan finding was the coverage gap
-        # itself, over an actually-scanned 3-file ``kernel/`` tree).
-        state = self._load_durable_state(Path(workspace))
-        reference = state.get("reference") if isinstance(state, Mapping) else None
-        if isinstance(reference, Mapping) and reference.get("source") == "npubench":
-            return ("kernel",)
-        return self.kernel_cpp_dirs()
+            return self.check_tilelang2ascendc_delivery_completeness(workspace)
+        return super().check_op_host_completeness(workspace)
 
-    def verify_files(self) -> tuple[str, ...]:
-        return VERIFY_FILES
+    def check_tilelang2ascendc_delivery_completeness(
+        self, workspace: Path
+    ) -> Optional[str]:
+        """Validate the TileLang2AscendC candidate before archive promotion."""
+        status, reason = self._tilelang2ascendc_profile_status(Path(workspace))
+        if status == DIRECT_PROFILE_LEGACY:
+            return None
+        if status == TILELANG_PROFILE_INVALID:
+            return f"port-aclnn-tilelang2ascendc delivery profile is invalid: {reason}"
+        failures = self._tilelang2ascendc_delivery_sources(Path(workspace))
+        if not failures:
+            try:
+                from npubench.npubench_target import (
+                    _validate_candidate_for_controlled_build,
+                )
 
-    def forbidden_patterns(self) -> list[tuple[str, str]]:
-        return VERIFY_FORBIDDEN + CPU_AS_REFERENCE_ANTIPATTERN
-
-    def scanner_category(self) -> str:
-        """Back-compat: existing scanner consumers + tests reference
-        `port_a3_verify_forbidden` (not the default `port_a3_to_a5_...`
-        derived from plugin.name). Keep the historical tag.
-        """
-        return "port_a3_verify_forbidden"
-
-    def requires_source_architecture_gate(self) -> bool:
-        """Migration must preserve the fresh arch22 source architecture class."""
-        return True
-
-    # ── pass_b shape contract (P96, 2026-05-15) ─────────────────────────
-    def pass_b_required(self) -> bool:
-        """port_a3_to_a5 mode: pass_b is DEGENERATE by design.
-
-        Pass A consumes the immutable, source-specific reference evidence
-        (live A3 capture or frozen NPUKernelBench bundle), so a second pass_b verifier
-        would only repeat the same fixed corpus.
-        """
-        return False
-
-    def pass_b_default_when_skipped(self) -> dict:
-        """Canonical N/A shape for port_a3 mode pass_b. Worker MUST write
-        this exact shape; finalize gate rejects deviations.
-        """
-        return {
-            "status": "N/A",
-            "reason": (
-                "port_a3_to_a5 mode: pass_b is subsumed by pass_a; "
-                "source-specific immutable evidence makes pass_b degenerate."
-            ),
-            "method": "n/a — port_a3 migration pass_b not applicable",
-        }
-
-    def verifier_canonical_filenames(self) -> tuple[str, ...]:
-        """port_a3 mode uses pass_a_runner.py + <op>_runner.cpp; no
-        run_pass_b.py (the legacy generic template).
-        """
-        return ("pass_a_runner.py",)
-
-    def forbidden_workspace_files(self) -> tuple[str, ...]:
-        """run_pass_b.py is a legacy generic template — migration pass_b
-        is degenerate, this file MUST NOT exist at workspace root. Caught
-        2026-05-15 gather_elements_v2 kw-2 (P94 cycle gate tripped on
-        self-citing run_pass_b.py).
-        """
-        return ("run_pass_b.py",)
-
-    def docs_source_files(self, workspace):
-        """Copy upstream `cann/ops-nn/<category>/<op>/docs/aclnn*.md` into
-        archive/docs/. Universal output-format contribution (2026-05-16).
-        """
-        import json as _json
-
-        state_file = Path(workspace) / ".opgen_state.json"
-        if not state_file.is_file():
-            return []
-        try:
-            state = _json.loads(state_file.read_text())
-            from source_arch import verify_source_stage
-
-            valid, _reason, _manifest = verify_source_stage(Path(workspace), state)
-            if not valid:
-                return []
-            port_src = state.get("port_a3_source")
-        except Exception:
-            return []
-        if not port_src:
-            return []
-        src_docs_dir = Path(port_src) / "docs"
-        if not src_docs_dir.is_dir():
-            return []
-        result = []
-        for f in src_docs_dir.glob("aclnn*.md"):
-            result.append((f.name, f))
-        return result
+                _validate_candidate_for_controlled_build(
+                    Path(workspace), TILELANG2ASCENDC_SOURCE_KIND
+                )
+            except Exception as exc:
+                failures.append(str(exc))
+        if failures:
+            return "port-aclnn-tilelang2ascendc delivery completeness: " + "; ".join(
+                failures
+            )
+        return None
 
     def check_verifier_uses_modelnew(self, workspace, vj):
         """P96 follow-up (2026-05-15): anti-decorative-bypass.
@@ -1157,7 +1322,8 @@ class PortA3Plugin(BasePlugin):
 
         # Marker 3: instance is actually invoked — `<name>(` OR `<name>.<attr>(`
         # in code AFTER the instantiation site
-        post = code_text[m.end():]
+        _mend = m.end()
+        post = code_text[_mend:]
         call_re = re.compile(rf"\b{re.escape(instance_name)}\s*(?:\(|\.\w+\s*\()")
         if call_re.search(post) is None:
             return (
@@ -1169,229 +1335,7 @@ class PortA3Plugin(BasePlugin):
             )
         return None
 
-    # ── Finalize gates ─────────────────────────────────────────────────
-    def check_binary_provenance(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
-        """Verify the current workspace build lineage without probing CANN.
-
-        A migration run may only attest artifacts it authored and copied back
-        into its workspace.  Installed CANN trees and their target binaries are
-        deliberately outside this proof model.
-        """
-        prec = vj.get("precision", {}) or {}
-        status = prec.get("status")
-        if status not in ("PASS", "PASS_WITHIN_TOLERANCE"):
-            return None
-        build_ev = vj.get("build_evidence", {}) or {}
-        cp = build_ev.get("compiled_provenance")
-        if not isinstance(cp, dict):
-            return (
-                f"port_a3 precision.status={status} but build_evidence."
-                "compiled_provenance is missing — current-build SHA256 lineage "
-                "is mandatory; installed CANN artifacts are not admissible."
-            )
-
-        root = workspace.resolve()
-        failures: list[str] = []
-        reconciled = self._reconcile_runner_built_provenance(root, cp)
-        if reconciled is not None:
-            cp = reconciled
-
-        def _local_file(field: str) -> Optional[Path]:
-            raw = cp.get(field)
-            if not isinstance(raw, str) or not raw.strip():
-                failures.append(f"{field} missing")
-                return None
-            candidate = Path(raw)
-            candidate = candidate if candidate.is_absolute() else root / candidate
-            try:
-                if candidate.is_symlink():
-                    raise ValueError("symlink")
-                resolved = candidate.resolve(strict=True)
-                resolved.relative_to(root)
-                if not resolved.is_file():
-                    raise ValueError("not a regular file")
-            except Exception as exc:
-                failures.append(f"{field} is not a workspace file ({exc})")
-                return None
-            return resolved
-
-        source = _local_file("source")
-        deployed_source = _local_file("deployed_source")
-        object_file = _local_file("object")
-        shared_lib = _local_file("shared_lib")
-
-        if source and deployed_source and source.name != deployed_source.name:
-            failures.append("deployed_source basename differs from source")
-        if source and object_file and object_file.name != f"{source.name}.o":
-            failures.append("object basename is not <source>.o")
-        if shared_lib and ".so" not in shared_lib.name:
-            failures.append("shared_lib is not a .so artifact")
-
-        def _sha256(path: Path) -> str:
-            digest = hashlib.sha256()
-            with path.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            return digest.hexdigest()
-
-        digest_fields = {
-            "workspace_source_sha256": source,
-            "deploy_source_sha256": deployed_source,
-            "object_sha256": object_file,
-            "shared_lib_sha256": shared_lib,
-        }
-        actual: dict[str, str] = {}
-        for field, path in digest_fields.items():
-            declared = cp.get(field)
-            if not isinstance(declared, str) or len(declared) != 64:
-                failures.append(f"{field} is not a 64-hex SHA256")
-                continue
-            declared = declared.lower()
-            if any(char not in "0123456789abcdef" for char in declared):
-                failures.append(f"{field} is not a 64-hex SHA256")
-                continue
-            if path is not None:
-                actual[field] = _sha256(path)
-                if actual[field] != declared:
-                    failures.append(f"{field} does not match workspace bytes")
-
-        built_from = cp.get("built_from_source_sha256")
-        if not isinstance(built_from, str) or len(built_from) != 64 or any(
-            char not in "0123456789abcdef" for char in built_from.lower()
-        ):
-            failures.append("built_from_source_sha256 is not a 64-hex SHA256")
-        else:
-            source_digest = cp.get("workspace_source_sha256")
-            deploy_digest = cp.get("deploy_source_sha256")
-            if (
-                isinstance(source_digest, str)
-                and isinstance(deploy_digest, str)
-                and not (
-                    source_digest.lower()
-                    == deploy_digest.lower()
-                    == built_from.lower()
-                )
-            ):
-                failures.append("source/deploy/built-from SHA256 lineage differs")
-
-        if failures:
-            return (
-                f"port_a3 precision.status={status} but current-build provenance "
-                f"FAILED: {failures[:5]}. Installed CANN target artifacts are "
-                "outside the allowed evidence boundary."
-            )
-        return None
-
-    # ── Archive layout (migrated from finalize_pipeline.py phase 2) ────
-    def archive_project_subdir(self) -> Optional[str]:
-        return "a3_to_a5_port"
-
-    def archive_project_claim(self, env) -> Optional[str]:
-        """Destination-scoped claim on the archive project namespace.
-
-        The a3_to_a5_port namespace is the A5-destination contract only. For
-        any other declared destination (310p) the env-derived target-aware
-        project in briefs._common.load_env decides (a3_to_310p_port) —
-        claiming the a5 project for a 310p port would archive the op under a
-        namespace that says "ported for A5", which is a wrong-chip record no
-        downstream consumer can detect. Returns None for non-a5 destinations.
-        """
-        target = (getattr(env, "target", "a5") or "").strip().lower()
-        if target.endswith("-ds"):
-            target = target[:-3]
-        if target != "a5":
-            return None
-        return self.archive_project_subdir()
-
-    def archive_layout_mapping(self, workspace: Path) -> dict[str, str]:
-        """Returns path-prefix mapping. Caller uses this dict OR
-        calls resolve_archive_target() per-file. Both APIs supported.
-        """
-        return dict(ARCHIVE_PATH_MAP)
-
-    def check_tilelang2ascendc_delivery_completeness(self, workspace: Path) -> Optional[str]:
-        """Validate the TileLang2AscendC candidate before archive promotion."""
-        status, reason = self._tilelang2ascendc_profile_status(Path(workspace))
-        if status == DIRECT_PROFILE_LEGACY:
-            return None
-        if status == TILELANG_PROFILE_INVALID:
-            return f"port-aclnn-tilelang2ascendc delivery profile is invalid: {reason}"
-        failures = self._tilelang2ascendc_delivery_sources(Path(workspace))
-        if not failures:
-            try:
-                from npubench.npubench_target import _validate_candidate_for_controlled_build
-
-                _validate_candidate_for_controlled_build(
-                    Path(workspace), TILELANG2ASCENDC_SOURCE_KIND
-                )
-            except Exception as exc:
-                failures.append(str(exc))
-        if failures:
-            return "port-aclnn-tilelang2ascendc delivery completeness: " + "; ".join(failures)
-        return None
-
-    def check_op_host_completeness(self, workspace: Path) -> Optional[str]:
-        """Choose the delivery-completeness gate from durable source state.
-
-        The legacy archive path keeps BasePlugin's PB-33 behavior.
-        Only a persisted ``port_source.kind=port-aclnn-tilelang2ascendc``
-        replaces it with the TileLang2AscendC project contract above.
-        """
-        tile_status, _tile_reason = self._tilelang2ascendc_profile_status(workspace)
-        if tile_status in {TILELANG_PROFILE_VALID, TILELANG_PROFILE_INVALID}:
-            return self.check_tilelang2ascendc_delivery_completeness(workspace)
-        return super().check_op_host_completeness(workspace)
-
-    def resolve_archive_target(
-        self, workspace_rel_path: str, op: str
-    ) -> str:
-        """W7: map workspace-relative path → archive-relative target."""
-        # Migration-plan filenames → docs/
-        for suffix in ARCHIVE_DOCS_SUFFIXES:
-            if workspace_rel_path.endswith(suffix):
-                return f"docs/{workspace_rel_path}"
-        # Subdir prefix remaps (order matters — longer first)
-        for src_prefix, dst_prefix in ARCHIVE_PATH_MAP:
-            if workspace_rel_path.startswith(src_prefix):
-                return dst_prefix + workspace_rel_path[len(src_prefix):]
-        # Default: top-level archive
-        return workspace_rel_path
-
-    def resolve_archive_target_for_workspace(
-        self, workspace: Path, workspace_rel_path: str, op: str
-    ) -> str:
-        """Resolve archive paths with an explicit direct-launch flat branch.
-
-        The direct product preserves ``kernel/`` unchanged — it must never be
-        remapped to ``op_kernel/``.  Legacy workspaces still delegate to the
-        established mapper above, including migration-plan-to-docs routing.
-        """
-        return self.freeze_archive_view(workspace, op).resolve_archive_target(
-            workspace_rel_path, op
-        )
-
-    def freeze_archive_view(self, workspace: Path, op: str) -> _PortA3ArchiveView:
-        """Freeze profile-dependent archive policy for one promotion pass."""
-        profile, reason = self._tilelang2ascendc_profile_status(workspace)
-        return _PortA3ArchiveView(self, profile, reason)
-
-    def should_archive_path(self, workspace: Path, workspace_rel_path: str) -> bool:
-        """Return whether a strict-profile workspace path belongs in delivery.
-
-        This is a delivery allow/deny decision, not an evaluator decision.  It
-        excludes controller state, frozen source/reference inputs, historical
-        reports and build artifacts while retaining candidate sources and their
-        explicit ``kernel/CMakeLists.txt`` recipe.  Legacy workspaces
-        retain the historical archive-everything policy.
-        """
-        profile, _reason = self._tilelang2ascendc_profile_status(workspace)
-        return self._should_archive_path_for_profile(profile, workspace_rel_path)
-
-    def check_verify_path_provenance(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
+    def check_verify_path_provenance(self, workspace: Path, vj: dict) -> Optional[str]:
         """DEBT-NEW (2026-05-14) port_a3-specific verify-path provenance.
 
         Rejects PASS when workspace can't prove the A5-side verify
@@ -1459,84 +1403,350 @@ class PortA3Plugin(BasePlugin):
             )
         return None
 
+    # ── Mode detection ─────────────────────────────────────────────────
+    def detect(self, workspace: Path) -> bool:
+        """Detect only an explicit, readable migration state.
+
+        Target-shaped files are outputs, not authorization to enter migration
+        mode.  Inspecting them during detection would also violate the source-
+        only boundary before the mode is established.
+        """
+        state_file = workspace / ".opgen_state.json"
+        if not state_file.is_file():
+            return False
+        try:
+            declared = json.loads(state_file.read_text()).get("opgen_mode")
+        except Exception:
+            return False
+        return declared == self.name
+
+    def docs_source_files(self, workspace):
+        """Copy upstream `cann/ops-nn/<category>/<op>/docs/aclnn*.md` into
+        archive/docs/. Universal output-format contribution (2026-05-16).
+        """
+        import json as _json
+
+        state_file = Path(workspace) / ".opgen_state.json"
+        if not state_file.is_file():
+            return []
+        try:
+            state = _json.loads(state_file.read_text())
+            from source_arch import verify_source_stage
+
+            valid, _reason, _manifest = verify_source_stage(Path(workspace), state)
+            if not valid:
+                return []
+            port_src = state.get("port_a3_source")
+        except Exception:
+            return []
+        if not port_src:
+            return []
+        src_docs_dir = Path(port_src) / "docs"
+        if not src_docs_dir.is_dir():
+            return []
+        result = []
+        for f in src_docs_dir.glob("aclnn*.md"):
+            result.append((f.name, f))
+        return result
+
     def extra_finalize_checks(self):
         """Register immutable-provider proofs on the real finalize path.
 
         The gate is a no-op for legacy/live-A3 state, so it cannot relax
         or alter the pre-existing A3-CANN truth-source contract.
+
+        For multirank workspaces, delegate to the multirank extension plugin's
+        finalize checks without invading the core finalize pipeline.
         """
-        return [
+        checks = [
             (
                 "port_a3_npubench_provenance",
                 self.check_npubench_provenance,
-            )
+            ),
         ]
-
-    def check_npubench_provenance(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
-        """Validate runner-owned NPUKernelBench evidence without A3 fallback.
-
-        NPUKernelBench has one immutable old-format task bundle and an
-        orchestrator-owned precision/performance result.  It does not use the
-        historical live-A3 runner-file or truth-source vocabulary.
-        """
-        if self._npubench_binding(workspace) is None:
-            return None
         try:
-            from npubench.npubench_finalize_contract import (
-                resolve_npubench_workspace,
-                validate_npubench_finalize_evidence,
+            mp = self._multirank_plugin()
+            if mp is not None:
+                checks.extend(mp.extra_finalize_checks())
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "multirank plugin unavailable; base finalize checks only", exc_info=True
             )
+        return checks
 
-            is_npubench, source_error = resolve_npubench_workspace(Path(workspace))
-        except Exception as exc:
-            return (
-                "npubench provenance: could not resolve provider state: "
-                f"{type(exc).__name__}: {exc}"
-            )
-        if not is_npubench:
-            return None
-        if source_error:
-            return source_error
-        return validate_npubench_finalize_evidence(Path(workspace), vj)
+    def finalize_perf_capture(self, workspace: Path, op: str) -> Optional[dict]:
+        """Delegate the finalize perf capture to the multirank extension for
+        multirank workspaces; single-card workspaces keep the engine default.
 
-    def canonical_pass_a_skip_reason(self, workspace: Path) -> Optional[str]:
-        """port_a3's native two-tier verdict comes from the worker's pass_a_runner.py
-        (per-op ModelNew/Model live run → precision_eval_port_a3_two_tier.classify_port_a3_case:
-        ours on NPU, a3 from edge_dataset, cpu_truth on CPU), NOT the generic canonical
-        file-evaluator (which live-recomputes via a generic `model(*group)` call that
-        port_a3's per-op call signatures — e.g. FA `m(q,k,v,*args)` — break). Two-tier
-        ENGAGEMENT is gated post-runner in ssh_runner._gate_port_a3_two_tier. (task#82;
-        DEBT-161 plugin-method extraction of the former phase_o5 `plugin.name ==` branch.)
+        `measure_op_perf` resolves the ACTIVE plugin via detect_plugin, which
+        for a multirank workspace (opgen_mode=port_a3_to_a5 + multirank:true)
+        is THIS plugin — without this delegation the capture would fall
+        through to the generic single-card path instead of the extension's
+        multi-NPU multirank_runner --perf campaign. Single-card workspaces
+        keep BasePlugin's None (engine default) so their perf behavior is
+        unchanged.
         """
-        return (
-            "canonical pass_a skipped: port_a3_to_a5 native two-tier comes "
-            "from worker pass_a_runner.py (per-op ModelNew/Model live run); "
-            "two-tier engagement gated post-runner"
+        if self.is_multirank_workspace(workspace):
+            mp = self._multirank_plugin()
+            if mp is not None:
+                return mp.finalize_perf_capture(workspace, op)
+        return super().finalize_perf_capture(workspace, op)
+
+    def forbidden_patterns(self) -> list[tuple[str, str]]:
+        base = VERIFY_FORBIDDEN + CPU_AS_REFERENCE_ANTIPATTERN
+        try:
+            mp = self._multirank_plugin()
+            if mp is not None:
+                return base + mp.forbidden_patterns()
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "multirank plugin unavailable; base forbidden patterns only",
+                exc_info=True,
+            )
+        return base
+
+    def forbidden_workspace_files(self) -> tuple[str, ...]:
+        """run_pass_b.py is a legacy generic template — migration pass_b
+        is degenerate, this file MUST NOT exist at workspace root. Caught
+        2026-05-15 gather_elements_v2 kw-2 (P94 cycle gate tripped on
+        self-citing run_pass_b.py).
+        """
+        return ("run_pass_b.py",)
+
+    def freeze_archive_view(self, workspace: Path, op: str) -> _PortA3ArchiveView:
+        """Freeze profile-dependent archive policy for one promotion pass."""
+        profile, reason = self._tilelang2ascendc_profile_status(workspace)
+        return _PortA3ArchiveView(self, profile, reason)
+
+    def is_multirank_workspace(self, workspace: Path) -> bool:
+        """Detect whether this port_a3 workspace should use the multirank
+        extension (compute + collective-communication fusion).
+
+        Order of precedence:
+        1. .opgen_state.json["multirank"] == true
+        2. source directory contains multirank signals
+           (HcclOpParam, winContext, mc2Context, CollectiveComm, shmem,
+           world_size, cross-rank sync, etc.)
+        3. workspace contains spec.py / architecture.md
+        """
+        state_file = workspace / ".opgen_state.json"
+        if state_file.is_file():
+            try:
+                state = json.loads(state_file.read_text())
+                if state.get("multirank") is True:
+                    return True
+            except (OSError, ValueError):
+                pass
+        # Pre-handoff artifacts (spec.py + architecture.md) mark a multirank
+        # workspace even before the state file exists.
+        if (workspace / "spec.py").is_file() and (
+            workspace / "architecture.md"
+        ).is_file():
+            return True
+        return False
+
+    def kernel_cpp_dirs(self) -> tuple[str, ...]:
+        """port_a3 mirrors the ops-nn tree: its AscendC C++ is in `op_host/`
+        (GE host: <op>_def.cpp / <op>_tiling.cpp/.h / <op>_infershape.cpp) and
+        `op_kernel/` (device kernel incl. `op_kernel/arch35/`, pybind11.cpp).
+        There is NO flat `kernel/` dir. Before this declaration the scanner
+        walked only `kernel/`, traversed nothing, and reported `violations=0`
+        on every port_a3 archive — host-compute delegation shipped unscanned
+        (DEBT-211 directory-level; the finalize POST_WORKER_AUDIT gate was
+        inert for the whole mode).
+
+        `op_api/` (the op's own generated aclnn C-API definitions —
+        `aclnnXxxGetWorkspaceSize` / `aclnnXxx` DEFINITIONS) is NOT declared:
+        it is API plumbing, not host-compute delegation, and core skips any
+        `op_api/` layer it encounters so those definitions don't mass-flag.
+        The top-level `*_runner.cpp` (the aclnn-direct verify runner, which
+        legitimately CALLS aclnn) is likewise outside the declared compute
+        dirs and so is not scanned for delegation here.
+        """
+        return ("op_host", "op_kernel")
+
+    def kernel_cpp_dirs_for_workspace(self, workspace: Path) -> tuple[str, ...]:
+        """Return the candidate C++ scan roots for one durable workspace.
+
+        ``kernel_cpp_dirs()`` intentionally remains the legacy ops-nn answer
+        so protocol users and old archives keep their established behavior.
+        New scanner callers should use this workspace-aware hook:
+        TileLang2AscendC candidates put all host/device C++ under ``kernel/``
+        and must not scan stale ``op_host/`` or ``op_kernel/`` trees that may
+        be present as unrelated harness/source material.
+        """
+        tile_status, _tile_reason = self._tilelang2ascendc_profile_status(workspace)
+        if tile_status in {TILELANG_PROFILE_VALID, TILELANG_PROFILE_INVALID}:
+            return ("kernel",)
+        # Multirank workspaces author the candidate under the msopgen nest
+        # (prj-<op>/op_kernel + op_host) even with an npubench reference —
+        # the scanner resolves declared roots at both ws/ and prj-*/
+        # level, so the ops-nn dir names are the right declaration.
+        if self.is_multirank_workspace(workspace):
+            return self.kernel_cpp_dirs()
+        # NPUBench-reference workspaces (ops-nn source + npubench golden) also
+        # author the candidate C++ under ``kernel/``: the runner's candidate
+        # contract — adapter view, candidate snapshot, ``model_new_ascendc.py``
+        # entry — is keyed on that flat layout, never on ``op_host``/``op_kernel``
+        # (those exist only in the frozen source archive). Declaring the ops-nn
+        # roots for them re-creates DEBT-211 in mirror image: the real compute
+        # is covered only by the backward-compat ``kernel/`` walk while the
+        # fail-loud gate sees its declared roots absent and blocks finalize
+        # (interleave_rope: the only scan finding was the coverage gap
+        # itself, over an actually-scanned 3-file ``kernel/`` tree).
+        state = self._load_durable_state(Path(workspace))
+        reference = state.get("reference") if isinstance(state, Mapping) else None
+        if isinstance(reference, Mapping) and reference.get("source") == "npubench":
+            return ("kernel",)
+        return self.kernel_cpp_dirs()
+
+    # ── Scanner contributions ──────────────────────────────────────────
+    def kernel_logic_files(self) -> tuple[str, ...]:
+        """port_a3 keeps compute in the canonical entry-point:
+        `model_new_ascendc.py` subprocess-invokes the aclnn-runner binary
+        we generate, and the Python surface is where a torch_npu/aclnn
+        fallback would be smuggled in. `model_new_ascendc.py` is the sole
+        supported Python compute surface.
+
+        The C++ side is declared separately in `kernel_cpp_dirs()` (this
+        hook is the Python-compute surface). Until that hook existed, this
+        mode's C++ lived OUTSIDE the scanner's hard-coded `kernel/` walk and
+        was entirely UNSCANNED — the DEBT-211 directory-level recurrence of
+        OL-160 that made the finalize POST_WORKER_AUDIT gate inert for the
+        whole mode; `kernel_cpp_dirs()` closes it.
+        """
+        return ("model_new_ascendc.py",)
+
+    def pass_b_default_when_skipped(self) -> dict:
+        """Canonical N/A shape for port_a3 mode pass_b. Worker MUST write
+        this exact shape; finalize gate rejects deviations.
+        """
+        return {
+            "status": "N/A",
+            "reason": (
+                "port_a3_to_a5 mode: pass_b is subsumed by pass_a; "
+                "source-specific immutable evidence makes pass_b degenerate."
+            ),
+            "method": "n/a — port_a3 migration pass_b not applicable",
+        }
+
+    # ── pass_b shape contract (P96, 2026-05-15) ─────────────────────────
+    def pass_b_required(self) -> bool:
+        """port_a3_to_a5 mode: pass_b is DEGENERATE by design.
+
+        Pass A consumes the immutable, source-specific reference evidence
+        (live A3 capture or frozen NPUKernelBench bundle), so a second pass_b verifier
+        would only repeat the same fixed corpus.
+        """
+        return False
+
+    def requires_source_architecture_gate(self) -> bool:
+        """Migration must preserve the fresh arch22 source architecture class."""
+        return True
+
+    def resolve_archive_target(self, workspace_rel_path: str, op: str) -> str:
+        """W7: map workspace-relative path → archive-relative target."""
+        # Migration-plan filenames → docs/
+        for suffix in ARCHIVE_DOCS_SUFFIXES:
+            if workspace_rel_path.endswith(suffix):
+                return f"docs/{workspace_rel_path}"
+        # Subdir prefix remaps (order matters — longer first)
+        for src_prefix, dst_prefix in ARCHIVE_PATH_MAP:
+            if workspace_rel_path.startswith(src_prefix):
+                _cut = len(src_prefix)
+                return dst_prefix + workspace_rel_path[_cut:]
+        # Default: top-level archive
+        return workspace_rel_path
+
+    def resolve_archive_target_for_workspace(
+        self, workspace: Path, workspace_rel_path: str, op: str
+    ) -> str:
+        """Resolve archive paths with an explicit direct-launch flat branch.
+
+        The direct product preserves ``kernel/`` unchanged — it must never be
+        remapped to ``op_kernel/``.  Legacy workspaces still delegate to the
+        established mapper above, including migration-plan-to-docs routing.
+        """
+        return self.freeze_archive_view(workspace, op).resolve_archive_target(
+            workspace_rel_path, op
         )
 
-    def truth_source(self) -> Optional[str]:
-        """port_a3 truth = upstream Ascend910 (A3/V220) CANN aclnn binary,
-        recorded in edge_dataset (worker pass_a_runner.py two-tier compares
-        ours-on-NPU vs a3). Plugin-method dispatch (DEBT-161 paradigm) —
-        burns down the phase_o5 `opgen_mode == "port_a3_to_a5"` literal-branch.
+    def scanner_category(self) -> str:
+        """Back-compat: existing scanner consumers + tests reference
+        `port_a3_verify_forbidden` (not the default `port_a3_to_a5_...`
+        derived from plugin.name). Keep the historical tag.
         """
-        return "a3_cann"
+        return "port_a3_verify_forbidden"
 
-    # FA paradigm = template-assembly (owner 2026-06-07): FA-class L4 routes to
-    # the standard kw worker, which derives arch35 output from the admitted
-    # arch22 source and public KB templates.
+    def should_archive_path(self, workspace: Path, workspace_rel_path: str) -> bool:
+        """Return whether a strict-profile workspace path belongs in delivery.
+
+        This is a delivery allow/deny decision, not an evaluator decision.  It
+        excludes controller state, frozen source/reference inputs, historical
+        reports and build artifacts while retaining candidate sources and their
+        explicit ``kernel/CMakeLists.txt`` recipe.  Legacy workspaces
+        retain the historical archive-everything policy.
+        """
+        profile, _reason = self._tilelang2ascendc_profile_status(workspace)
+        return self._should_archive_path_for_profile(profile, workspace_rel_path)
 
     # A bounded research-recovery pass is useful when the standard arch22 ->
     # arch35 migration researcher cannot close a gap. Its sealed-input scanners
     # and compile/copy-shape/KB-overlap checks remain mandatory; recovered
     # material is advisory and never replaces fresh source-NPU truth.
     def should_auto_cann_learn_on_gap(
-        self, op_class: str, op_complexity: str, worker_signal: str,
-        *, workspace=None,
+        self,
+        op_class: str,
+        op_complexity: str,
+        worker_signal: str,
+        *,
+        workspace=None,
     ) -> bool:
         return True
+
+    def truth_source(self) -> Optional[str]:
+        """port_a3 truth = upstream Ascend910 (A3/V220) CANN aclnn binary,
+        recorded in edge_dataset (worker pass_a_runner.py two-tier compares
+        ours-on-NPU vs a3). Plugin-method dispatch (DEBT-161 paradigm) —
+        burns down the phase_o5 `opgen_mode == "port_a3_to_a5"` literal-branch.
+
+        Multirank workspaces (`multirank: true` in durable state) never reach
+        this method: phase_o5.expected_truth_source resolves the umbrella
+        "multirank" key from state before the plugin dispatch.
+        """
+        return "a3_cann"
+
+    def verifier_canonical_filenames(self) -> tuple[str, ...]:
+        """port_a3 mode uses pass_a_runner.py + <op>_runner.cpp; no
+        run_pass_b.py (the legacy generic template).
+        """
+        return ("pass_a_runner.py",)
+
+    def verify_files(self) -> tuple[str, ...]:
+        # The multirank extension contributes an extra verify file; it is only
+        # meaningful for multirank workspaces and is skipped by the scanner when
+        # absent, so it is safe to include unconditionally.
+        try:
+            mp = self._multirank_plugin()
+            if mp is not None:
+                return VERIFY_FILES + mp.verify_files()
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "multirank plugin unavailable; base verify files only", exc_info=True
+            )
+        return VERIFY_FILES
+
+    def _multirank_plugin(self):
+        """Lazy resolver for the multirank extension plugin.
+
+        Returns None if the extension is not installed/registered.
+        """
+        try:
+            from .. import multirank
+
+            return multirank.get_plugin_instance()
+        except Exception:
+            return None
 
 
 _INSTANCE = PortA3Plugin()
@@ -1548,4 +1758,5 @@ def get_plugin_instance():
 
 # Self-register at import time
 from .. import register_plugin  # noqa: E402
+
 register_plugin(_INSTANCE)

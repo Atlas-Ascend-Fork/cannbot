@@ -1,47 +1,46 @@
 # ascendc-port-orchestrator — 架构设计（cannbot 插件）
 
 > 本文档描述 **cannbot 插件 `ascendc-port-orchestrator`** 的架构，**不是** a5_ops harness 的文档。随插件维护、低频更新。
-> 插件对外仅提供两项能力：**① 跨代际算子移植（当前 arch22→arch35）② 正向→反向生成**。其余能力不在本插件对外范围。
+> 插件对外提供两项主能力：**① 跨代际算子移植（当前 arch22→arch35，含通信/通算融合算子的 multirank 扩展，§13.1）② 正向→反向生成**。其余能力不在本插件对外范围。
 
 ## 1. 总体结构
 
-```
-用户（自然语言指定目标架构/产品）
-        │
-        ▼
-┌─────────────────────────────────────────────┐
-│ 两个入口 skill（薄 NL 前端）                    │
-│       ① cross-gen-port ② backward-gen            │
-│  - 解析 NL 目标 → canonical target              │
-│  - 来源架构由代码分析自动识别                    │
-└───────────────┬─────────────────────────────┘
-                ▼  （底层同一编排器，保持完整能力）
-┌─────────────────────────────────────────────┐
-│ 确定性流水线（FSM）  +  安全网（gates）           │
-│        ▲                                         │
-│        │  按需注入 / 生成后沉淀                    │
-│ 反馈环：用户本地 KB(c) > 插件自带 KB(b) > 社区 skills(a) │
-└─────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    U["用户（自然语言指定目标架构 / 多卡算子描述）"]
+    E1["① ascendc-cross-gen-port（薄 NL skill）<br/>NL 目标 → canonical target<br/>来源架构由代码分析自动识别"]
+    E2["② ascendc-backward-gen（薄 NL skill）"]
+    E3["(1) ascendc-cross-gen-port 的 multirank 分支<br/>（通信/通算融合语义）<br/>预交接 task.py + sidecar → --multirank"]
+    FSM["确定性流水线（FSM）+ 安全网（gates）<br/>底层同一编排器，保持完整能力"]
+    KB["反馈环：用户本地 KB(c) > 插件自带 KB(b) > 社区 skills(a)"]
+    U --> E1
+    U --> E2
+    U --> E3
+    E1 --> FSM
+    E2 --> FSM
+    E3 --> FSM
+    KB -->|按需注入| FSM
+    FSM -->|生成后沉淀| KB
 ```
 
 ## 1.1 执行模型（强制约束：bundle-orch）
 
 - **编排器引擎打包进插件**：FSM + 安全网 + 迭代到绿 + 子 agent 调度的**完整编排器引擎随插件交付**（`plugins-community/ascendc-port-orchestrator/` 内自带 scripts + engine），**不依赖外部 a5_ops checkout**。
-- **入口 skill = 薄壳**：两个入口 skill 解析目标后**调用打包进来的编排器**；由编排器亲自驱动 FSM —— **不是**让 AGENTS.md 这个 primary agent 用自然语言临时编排各阶段。确定性（状态机/钩子/迭代上限）来自引擎，NL prose 复刻不了。
+- **入口 skill = 薄壳**：两个入口 skill 解析意图（multirank 扩展的预交接产物撰写在 `ascendc-cross-gen-port` 内）后**调用打包进来的编排器**；由编排器亲自驱动 FSM —— **不是**让 AGENTS.md 这个 primary agent 用自然语言临时编排各阶段。确定性（状态机/钩子/迭代上限）来自引擎，NL prose 复刻不了。
 - **运行时**：多 harness（Claude Code / opencode / codearts），引擎经 `backends/` 统一抽象拉起子 agent，`AOG_HARNESS_BACKEND` 切换、互不依赖（见 §8）。
 - **引擎布局**：编排器保留平铺模块布局；harness 适配器位于 `engine/src/scripts/orchestrator/backends/`，不依赖目录重构。
 - **强制一致性**：`AGENTS.md` / `install.sh` / `plugin.json` 必须与本模型一致（编排器打包 + 入口调用编排器）。**若 AGENTS.md 出现「自包含 NL 方法论执行、不调用编排器（orch-less）」的描述 = 与本文档冲突，以本文档为准，须改回 orch-shell。** 任何改动先改本文档、再改实现（§11）。
 
 ## 2. 确定性流水线（FSM）
 
-状态机驱动、可中断/恢复/复现。每阶段产出机器可读状态。两项能力共享流水线，差异在「迁移/反向生成」阶段。
+状态机驱动、可中断/恢复/复现。每阶段产出机器可读状态。三项能力共享流水线，差异在「参考/真值」与「生成」阶段（移植 / 反向 / 多卡迁移）。
 
 | 阶段 | 职责 | 关键产出 |
 |---|---|---|
 | Parse / 配置 | 解析入口意图 + 目标(NL→canonical) + 来源(代码分析自动识别) | 任务配置（source-arch, target-arch, mode） |
 | 分类 | 算子族分类、确定性策略分类（required/best-effort/n/a） | op-family, det-policy |
-| 参考/真值 | 移植：获取来源参考；反向：由正向生成精确梯度真值 | reference / golden |
-| **迁移 / 反向生成** | 移植：跨代际生成目标算子；反向：生成反向算子 | 目标 AscendC kernel |
+| 参考/真值 | 移植：获取来源参考；反向：由正向生成精确梯度真值；多卡迁移：参考来源同单卡词汇（§2.3）——npubench 参考实现在 A5 上多 rank 执行，a3_live 源端真实算子多 rank 采集 | reference / golden |
+| **迁移 / 反向 / 多卡迁移** | 移植：跨代际生成目标算子；反向：生成反向算子；多卡迁移：在 msopgen nest 工程内生成多卡通算融合 kernel | 目标 AscendC kernel |
 | 构建 | 在目标架构上编译 | build artifact + provenance |
 | 精度验证 | 与真值比对（分层阈值 + 特殊场景） | precision verdict |
 | 性能优化（可选） | 按 roofline/profiling 调优、再验精度 | perf ratio |
@@ -93,6 +92,22 @@ cannbot 生态里「workflow」的官方定义（`docs/STANDARDS.md §目录结�
 `a3_live` 路径的精度与加速比都对照当次来源 A3 实测（加速比 = 目标实现 vs A3 实现实测）。TileLang2AscendC 工程来源
 只支持 `npubench`（`orchestrator_cmds.py` 对该来源与 `a3_live` 的组合显式拒绝）。
 
+### 2.3 多卡迁移的参考来源（multirank 扩展）
+
+`--multirank`（§13.1）是 `port_a3_to_a5` 的 **multirank 扩展**。参考真值来源与单卡同词汇
+（CLI `--reference-source`）：`npubench` 的参考实现在 A5 上多 rank 执行；
+`a3_live` 由源侧真实算子在源架构 NPU 上按声明的 world_size 组多 rank 执行，输出回收为
+golden（CLI 预检对端点与源端 wrapper 工程 fail-closed）。
+多 rank 真值的唯一声明点是 KernelBench 风格 task `.py` + 同 stem sidecar（case 级
+`world_size`、`needs_ep_comm`、rank 关键字签名声明位；CLI 入口经 `task_to_spec` 静态
+转换为内部 `spec.py`），`multirank_phase_o25` 在 worker 写任何 kernel 之前按它展开
+case × world_size × profile 并产出 per-case golden 树：
+
+- `golden/<case>.pt`（每个展开 case 一个；内容 = identity + `full_inputs`
+  + `canonical_outputs`；rank 份额是确定性 derive，verify 时按 spec 重新推导、从不落盘）。
+- `golden/manifest.json`（campaign 索引，绑定 **spec 内容哈希**）：spec 未变 → 幂等缓存命中；spec 变 → 重采。
+
+完整设计见 [`design/multirank.md`](./design/multirank.md)。
 ## 3. 插件结构
 
 ```
@@ -113,7 +128,7 @@ plugins-community/ascendc-port-orchestrator/
 └── kb/                    # 插件本地运行时规则与少量 porter 自有资产；官方知识由 cannbot-knowledge 交付
 ```
 > 插件结构沿用 `agents/` 扁平 + `hooks/` + `init.sh` 约定；当前作为社区插件交付。`engine/` 打包是本插件独有的 bundle-orch 设计（§1.1）。
-两个具名入口 skill：`ascendc-cross-gen-port`（跨代际移植）、`ascendc-backward-gen`（正向→反向）；各自解析目标、调用同一编排能力（orch 保持完整）。
+两个具名入口 skill：`ascendc-cross-gen-port`（跨代际移植，含 multirank 扩展分支）、`ascendc-backward-gen`（正向→反向）；各自解析意图、调用同一编排能力（orch 保持完整）。multirank 扩展**不设独立入口**：`ascendc-cross-gen-port` 识别到通信、通算融合语义时，入口侧职责是**预交接**——按用户描述产出 KernelBench 风格 task `.py` + 同 stem sidecar（与单卡 npubench 同格式），再经 `--multirank` 调用同一编排器（task 静态转换为内部 spec.py）；两侧 harness 的启动都经统一启动器 `scripts/launch_orchestrator.sh`（`--mode port-a3-ops --multirank`）。
 
 轻量入口 skill：`ascendc-cross-gen-migration`（与 `ascendc-cross-gen-port` 同级入口）——无 golden 场景的 910b/910_93→950/arch35 分阶段迁移，阶段门禁驱动、免人工确认，不经 engine FSM、不要求 KernelBench golden，由用户选择 `/ascendc-cross-gen-migration` 入口进入。该 Skill 本体由 cannbot-skills 仓 `ops/ascendc-cross-gen-migration` 维护（本插件内不保留副本），安装时经 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块 symlink。
 
@@ -130,6 +145,8 @@ plugins-community/ascendc-port-orchestrator/
 | hardware-probe | 经验性硬件/编译行为探针（产出探针报告，非生产算子） | 需 HW 行为确证 |
 
 （agent 集合随能力范围裁定；上表为流水线核心角色。）
+
+**multirank 扩展不新增 agent**：复用上表角色不变 —— multirank workspace（`port_a3_to_a5` + `multirank: true`）由拓展插件 `plugins/multirank`（`MultiRankPlugin`）整体替换 kernel-worker / precision-probe / kernel-optimizer 的 brief，仅 O5 runner 换为 `multirank_runner`（每 case 一次多 rank 验证）。agent 类型与 FSM 状态与单卡模式完全一致。
 
 ## 5. 反馈环 · 双层 KB + 社区 skills 知识源
 
@@ -223,6 +240,16 @@ plugins-community/ascendc-port-orchestrator/
 
 结论：本次失效是「自披露测量无效后仍声明通过」与「门失败后未 fail-fast」两个缺陷叠加，非性能策略需要放宽。
 
+### 6.3 多卡迁移反作弊门（multirank 扩展）
+
+multirank workspace 在 §6 通用安全网之上新增三个扩展门（经 `PortA3Plugin.extra_finalize_checks` 并入 `plugins/multirank` 提供；作用域判 `_workspace_is_multirank`，单卡 workspace 自动 out-of-scope、行为零变更）：
+
+- **MULTIRANK_FORBIDDEN（委托扫描）**：禁止 host 侧 HCCL 委托 —— `torch.distributed.*` / `hcom.*` / `aclnn*Hcom*` / `torch_npu.npu_*collective*` 等 7 类模式扫描 `model_new_ascendc.py` + `op_host/**` + `op_kernel/**`。通信必须写进融合 kernel 内部；把「通信」退化成 host 侧集合通信等于把最难的部分委托给 HCCL，直接拒绝。
+- **MULTIRANK_RANK_VERDICTS（6 不变量）**：`verification.json["multirank"]` 必须满足 —— ① `multirank` rank-verdict 块存在；② 每个声明的 world_size 是 ≥1 的整数；③ 每个实际运行的 world_size 恰有 ws 条分类为 PASS/FAIL 的 rank 条目（per-case 发射折叠回 group 形状）；④ 判定⟺声明双向一致（对 partial 计数盖全 PASS 模板在逻辑上不可能，拒绝）；⑤ UNVERIFIED 记录（整组或 per-case）仅在携带客观 probe 证据时被接受；⑥ 当 `multirank.cases` 声明 campaign 时，已折叠 ∪ UNVERIFIED 按 world_size 恰好划分声明的 cases（不静默丢、不重复计）。
+- **MULTIRANK_NAMESPACE_VIOLATION**：`op_kernel/` 与 `model_new_ascendc.py` 内禁止 `using namespace AscendC`（须显式限定 `AscendC::`）。
+
+配套的**篡改面消除**：canonical verifier `multirank_verify.py` **在拓展插件内原位执行**（`engine/src/scripts/orchestrator/plugins/multirank/reference_provider/`），绝不 stage 进 workspace —— staged 副本是 worker 可篡改面，原位执行从构造上移除该向量，并把每个 op 钉在 harness verifier 版本上。细节见 [`design/multirank.md`](./design/multirank.md)。
+
 ## 7. 跨代际可扩展
 
 当前 arch22→arch35。新增目标架构/产品 = 加 NL→canonical-target 映射 + 该目标的 KB，**入口与流水线范式不变**。规划：更多目标 + 反向跨代际移植（如 910C→910A）。
@@ -298,7 +325,7 @@ opencode 首次安装需一次性拉插件依赖（npm registry）。完全离�
 把 §2 流水线 / §5 三源 / §6 安全网串成一个**自包含、可运行**的插件：
 
 1. **装配**：编排器引擎（FSM + 子 agent 调度）+ aog-* 子 agent 定义 + scripts 打包进插件目录；官方知识由 cannbot-knowledge 安装器准备，port 初始化用户 KB（c）根目录。
-2. **入口→编排器**：两个入口 skill 解析 NL 目标 → 调打包进来的编排器（`python -m orchestrator …` 形态）。
+2. **入口→编排器**：两个入口 skill 解析 NL 意图（multirank 分支含预交接产物） → 调打包进来的编排器（`python -m orchestrator …` 形态）。
 3. **每阶段 wiring**：Parse→分类→参考/真值→**生成**（编排器据分类用 `cba_resolver`(§5.2) 取三源 → 注入子 agent brief → 子 agent 生成 + 内层修复循环）→构建→精度→（性能）→报告→**沉淀写回用户 KB(c)**(§5.3)。
 4. **gate 边界**(§6.1)：生成前钩子/前置门；阶段边界 provenance/自检/精度门；fail-closed 只拦交付。
 5. **验证**：cannbot-知识-被用 = differential A/B（抽掉 a 层 → 该 topic 在 B 不可解 → 证 a 真被用）+ provenance transcript。
@@ -313,6 +340,7 @@ opencode 首次安装需一次性拉插件依赖（npm registry）。完全离�
 | 用户 KB 存储+索引 | ✅ §5.1 | ❌ 待实现 | ❌ |
 | 写回用户 KB(c)、不改 b | ✅ §5.3 | ❌ 待实现 | ❌ |
 | **集成（bundle-orch 端到端生成算子）** | ✅ §10 | ✅ **已 bundle**：入口 skill → `python -m orchestrator` → 全流水线随插件交付 | ✅ 引擎单测全绿 + PR #814（含 opencode harness）e2e 走通 |
+| **multirank 扩展（port_a3_to_a5 的多卡融合算子路径）** | ✅ §13.1（multirank 扩展分支） + [`design/multirank.md`](./design/multirank.md) | ✅ 拓展插件 `plugins/multirank`（provision/runner/三门/brief 覆盖/perf 委托）| — |
 
 > 本表是「恐惧清单」的对账：已实现+测的不是幻觉（44 单测过）；❌ 项是真空白，按本文档落地。
 
@@ -340,7 +368,7 @@ codex（read-only、喂了本文档 + cba_resolver/converter/coverage_gate + AGE
 
 ## 13. 算子生成模式说明（#363 标准结构）
 
-> 按 RFC #363 的统一模式结构（9 段）描述本插件的两个算子生成模式，供「算子生成模式总览」收录 + reviewer 评估。两模式共用确定性流水线（§2），差异在「生成」阶段。
+> 按 RFC #363 的统一模式结构（9 段）描述本插件的三个算子生成模式，供「算子生成模式总览」收录 + reviewer 评估。三模式共用确定性流水线（§2），差异在「参考/真值 + 生成」阶段。
 
 ### 13.0 共享标准工作流（阶段 | Owner | 输入 | 输出 | 门禁）
 
@@ -349,16 +377,14 @@ codex（read-only、喂了本文档 + cba_resolver/converter/coverage_gate + AGE
 | 钩子完整性 O0 | Primary(orch-shell) | 插件 hook 配置 | 完整性 verdict | hook 完整或自愈 |
 | 解析/配置 O1 | Primary(orch-shell) | 用户 NL 目标 + 源算子 | 任务配置(source/target/mode) | 目标可归一、源可识别 |
 | 分类 O1.5 | orchestrator | 源算子 | op-family + det-policy | 分类完成 |
-| 参考/真值 O2.5 | orchestrator | 移植源算子 + 推荐 KernelBench 风格 task/sidecar（a3_live 按需显式，仅常规 ops-nn 来源）/ 正向规格（反向） | reference / golden | 真值自洽、来源与 state 绑定 |
+| 参考/真值 O2.5 | orchestrator | 移植源算子 + 推荐 KernelBench 风格 task/sidecar（a3_live 按需显式，仅常规 ops-nn 来源）/ 正向规格（反向）/ 多卡 task+sidecar（双档真值采集，§13.1） | reference / golden | 真值自洽、来源与 state 绑定 |
 | **生成 O4（差异阶段）** | aog-kernel-worker | 配置 + 参考 | 目标 AscendC kernel | 编译通过 |
 | 构建 | build harness | kernel | .so + provenance | build green |
 | 精度验证 O5 | orchestrator + precision | kernel + 真值 | precision verdict(分层) | 达阈值 / 记录 ceiling |
 | 性能(可选) | aog-kernel-optimizer | kernel + profiling | perf ratio | ≥阈值 或 记录 |
 | 报告 O6 | aog-report-gen | 全产物 | REPORT + 复现指引 | 报告完整 |
 
-差异阶段 = 参考 O2.5 与生成 O4：cross-gen-port 推荐走 npubench 冻结 task/sidecar 真值→目标 kernel；
-也可按需显式走实时 A3-CANN；backward-gen 走 CPU/fp64 autograd 梯度真值→反向 kernel。
-其余阶段两模式共用。
+差异阶段 = 参考 O2.5 与生成 O4：cross-gen-port 推荐走 npubench 冻结 task/sidecar 真值→目标 kernel，也可按需显式走实时 A3-CANN；backward-gen 走 CPU/fp64 autograd 梯度真值→反向 kernel；multirank workspace 走双档真值（a3_live 源端真实算子多 rank 采集，默认；npubench spec 参考实现 A5 执行）→`prj-<op>/` nest 工程内多卡融合 kernel（§13.1 multirank 扩展分支）。其余阶段共用。
 
 ### 13.1 模式 A：ascendc-cross-gen-port（跨代际算子移植）
 
@@ -375,6 +401,19 @@ codex（read-only、喂了本文档 + cba_resolver/converter/coverage_gate + AGE
 - **工件契约**：state（`workspace/{op}/.opgen_state.json`）、内容寻址的 KernelBench 风格 task/sidecar bundle（推荐）或 A3 reference provenance、kernel（`workspace/{op}/kernel/*.{h,cpp}` + pybind11.cpp）、build provenance、precision/perf report、user-KB 写回文件。消费者 = 后续阶段 + reviewer + 用户复现。
 - **失败恢复**：可重试（编译/精度内层循环、`--optimize` 再入）；可回滚（状态机回退阶段）；保留现场（workspace 持久化、可中断恢复）；blocked（真值不可得/硬件不支持 → 升级 aog-researcher 或 await_user_decision）；用户需补充（目标歧义时回询）。
 - **用户入口示例**：`把这个算子移植到 arch35：<算子源/名称>`；`移植到 950PR / A5：<算子源/名称>`。
+
+#### multirank 扩展分支（`--multirank` 多卡融合算子迁移）
+
+模式 A 的 multirank 扩展，**非独立第三个 mode**：`--multirank` 叠加在 `--port-a3-ops` 上（launcher 形态 `--mode port-a3-ops --multirank`），workspace 落在 `opgen_mode="port_a3_to_a5"` + durable state `multirank: true`，能力由扩展插件 `engine/src/scripts/orchestrator/plugins/multirank/`（`MultiRankPlugin`）承载，`PortA3Plugin` 只做最小委托。服务**通信、通算融合**算子（跨 rank 集合通信与计算融进同一个 kernel 的多卡算子）的 A3/A2→A5 迁移。
+
+- **输入模态**：与单卡 npubench 同格式的 KernelBench 风格 task `.py` + 同 stem sidecar（`Model` 参考实现 + 接受 `rank`/`world_size` 的 `get_input_groups`/`get_init_inputs`；case 声明 `world_size`；`NEEDS_EP_COMM` 可选），CLI 入口经 `task_to_spec` 静态转换为内部 spec.py（派生式 spec 形态已退役）。
+- **工作流差异**（其余阶段同 §13.0）：O2.5 由扩展插件 provision golden——参考来源同单卡词汇（§2.3），`npubench` 参考实现在 A5 上多 rank 执行，`a3_live` 源端真实算子多 rank 采集；golden 树绑定 spec 内容哈希幂等缓存。O4 经 `multirank_msopgen_scaffold` 生成 `prj-<op>/` nest 工程（已存在则拒绝覆盖）→ worker 在其内撰写融合 kernel → `multirank_build` cmake opc 三段构建；O5 `multirank_runner` 驱动插件内正本 `multirank_verify.py` 逐 case 多 rank 验证（每 case 一次 HCCL 进程组，ALL-rank PASS 才算 PASS；单进程自验被禁止）+ 覆盖感知 reconcile + UNVERIFIED 逃生舱（卡短缺记 UNVERIFIED 暂停，等卡重测或持 ACCEPT-UNVERIFIED 令牌接受降级 campaign，绝不静默通过）；物理卡组由 `npu_probe` 逐 case 自动分配。
+- **工件契约**：`spec.py`（只读）、`golden/<case>.pt` + `manifest.json`、`prj-<op>/` nest 工程（op_kernel / op_host / op_api / py_ext / run.py / scripts）、canonical 入口 `model_new_ascendc.py` + `model.py`（OL-160 单名契约）、`verification.json`（含 `multirank` rank-verdict 块：`world_sizes` / `cases` / `rank_verdicts` / UNVERIFIED 双通道 + `performance` 与 `independent_re_measure`）。归档 = nest 布局整体晋升（`py_ext/_C*.so` 构建产物随行，客户端重建覆盖）。
+- **perf 范式**：多卡性能数据写 `verification.json`——`finalize_perf_capture` 驱动 `multirank_runner --perf` 逐 case A/B（spec 声明的 `perf_baseline`；未声明 → 诚实 `N/A`），两级聚合（case 内跨 rank 均值、跨 case 中位各投一票）；tier 感知性能门（仅 NPU tier）；perf 轮永不改写精度产物。
+- **反作弊**：host 侧 HCCL 集合通信实现被 `MULTIRANK_FORBIDDEN` 扫描拒绝（§6.3 三门）；UNVERIFIED 由 harness 持有、probe 背书；`MULTIRANK_RANK_VERDICTS` 只收证据。
+- **用户入口示例**：`把 A3 上这个融合算子迁移到 A5（多卡）`（`/ascendc-cross-gen-port` 的 multirank 分支）；CLI：`--multirank --port-a3-ops <ops-nn-dir> --npubench-task <task.py>`。
+
+> multirank 扩展的完整设计（原则 / 架构 / 生命周期表 / 真值模型 / UNVERIFIED 逃生舱 / perf 范式 / 归档）见 [`design/multirank.md`](./design/multirank.md)。
 
 ### 13.2 模式 B：ascendc-backward-gen（正向 → 反向生成）
 

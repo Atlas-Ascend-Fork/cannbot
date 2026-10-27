@@ -15,6 +15,7 @@ These tests intentionally cover the parts that differ from Claude Code:
 opencode must receive long prompts on stdin, and its host-hook support is a
 plugin artifact rather than a .claude/settings.json file.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -47,7 +48,7 @@ _dispatch_foreground = getattr(OpencodeBackend, "_dispatch_foreground")
 def test_opencode_run_cmd_uses_stdin_and_dir_not_positional_prompt() -> None:
     backend = OpencodeBackend(opencode_bin="/tmp/opencode")
 
-    cmd = getattr(backend, '_build_run_cmd')(
+    cmd = getattr(backend, "_build_run_cmd")(
         session_id="ses_1",
         auto=True,
         cwd="/repo",
@@ -63,7 +64,9 @@ def test_opencode_run_cmd_uses_stdin_and_dir_not_positional_prompt() -> None:
     assert "Return marker" not in cmd
 
 
-def test_opencode_stream_silence_uses_shared_default_and_local_override(monkeypatch) -> None:
+def test_opencode_stream_silence_uses_shared_default_and_local_override(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("AOG_OPENCODE_STREAM_SILENCE_TIMEOUT_SEC", raising=False)
     assert _stream_silence_timeout(None) == STREAM_SILENCE_TIMEOUT_SEC
 
@@ -85,7 +88,8 @@ def test_opencode_frontmatter_fallback_works_without_pyyaml(monkeypatch) -> None
 
     monkeypatch.setattr(builtins, "__import__", _import)
     frontmatter, body = _parse_frontmatter(
-        "---\nname: aog-test\ntools:\n  - Read\n---\nagent body\n")
+        "---\nname: aog-test\ntools:\n  - Read\n---\nagent body\n"
+    )
     assert frontmatter == {"name": "aog-test", "tools": ["Read"]}
     assert body == "agent body\n"
 
@@ -94,7 +98,7 @@ def test_opencode_run_cmd_can_pin_model_from_env(monkeypatch) -> None:
     monkeypatch.setenv("AOG_OPENCODE_MODEL", "mini/model")
     backend = OpencodeBackend(opencode_bin="/tmp/opencode")
 
-    cmd = getattr(backend, '_build_run_cmd')(cwd="/repo")
+    cmd = getattr(backend, "_build_run_cmd")(cwd="/repo")
 
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "mini/model"
@@ -104,7 +108,7 @@ def test_opencode_run_cmd_does_not_duplicate_explicit_model(monkeypatch) -> None
     monkeypatch.setenv("AOG_OPENCODE_MODEL", "mini/default")
     backend = OpencodeBackend(opencode_bin="/tmp/opencode")
 
-    cmd = getattr(backend, '_build_run_cmd')(extra_args=["--model", "mini/explicit"])
+    cmd = getattr(backend, "_build_run_cmd")(extra_args=["--model", "mini/explicit"])
 
     assert cmd.count("--model") == 1
     assert "mini/explicit" in cmd
@@ -116,7 +120,7 @@ def test_opencode_run_cmd_can_pin_agent_and_variant_from_env(monkeypatch) -> Non
     monkeypatch.setenv("AOG_OPENCODE_VARIANT", "high")
     backend = OpencodeBackend(opencode_bin="/tmp/opencode")
 
-    cmd = getattr(backend, '_build_run_cmd')(cwd="/repo")
+    cmd = getattr(backend, "_build_run_cmd")(cwd="/repo")
 
     assert "--agent" in cmd
     assert cmd[cmd.index("--agent") + 1] == "a5-ops-kernel-worker"
@@ -124,12 +128,16 @@ def test_opencode_run_cmd_can_pin_agent_and_variant_from_env(monkeypatch) -> Non
     assert cmd[cmd.index("--variant") + 1] == "high"
 
 
-def test_opencode_run_cmd_does_not_duplicate_explicit_agent_or_variant(monkeypatch) -> None:
+def test_opencode_run_cmd_does_not_duplicate_explicit_agent_or_variant(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("AOG_OPENCODE_AGENT", "default-agent")
     monkeypatch.setenv("AOG_OPENCODE_VARIANT", "high")
     backend = OpencodeBackend(opencode_bin="/tmp/opencode")
 
-    cmd = getattr(backend, '_build_run_cmd')(extra_args=["--agent", "explicit-agent", "--variant", "minimal"])
+    cmd = getattr(backend, "_build_run_cmd")(
+        extra_args=["--agent", "explicit-agent", "--variant", "minimal"]
+    )
 
     assert cmd.count("--agent") == 1
     assert cmd.count("--variant") == 1
@@ -139,17 +147,30 @@ def test_opencode_run_cmd_does_not_duplicate_explicit_agent_or_variant(monkeypat
     assert "high" not in cmd
 
 
-def test_opencode_model_selection_prefers_target_then_kind_then_global(monkeypatch) -> None:
+def test_opencode_model_selection_prefers_target_then_kind_then_global(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("AOG_OPENCODE_MODEL", "global/model")
     monkeypatch.setenv("AOG_OPENCODE_SKILL_MODEL", "skill/model")
     monkeypatch.setenv("AOG_OPENCODE_MODEL_AOG_KERNEL_WORKER", "worker/model")
 
-    assert getattr(OpencodeBackend, '_select_model')("aog-op-classify", "skill") == "skill/model"
-    assert getattr(OpencodeBackend, '_select_model')("aog-kernel-worker", "agent") == "worker/model"
-    assert getattr(OpencodeBackend, '_select_model')("aog-precision-probe", "agent") == "global/model"
+    assert (
+        getattr(OpencodeBackend, "_select_model")("aog-op-classify", "skill")
+        == "skill/model"
+    )
+    assert (
+        getattr(OpencodeBackend, "_select_model")("aog-kernel-worker", "agent")
+        == "worker/model"
+    )
+    assert (
+        getattr(OpencodeBackend, "_select_model")("aog-precision-probe", "agent")
+        == "global/model"
+    )
 
 
-def test_opencode_agent_and_variant_selection_prefers_target_then_kind_then_global(monkeypatch) -> None:
+def test_opencode_agent_and_variant_selection_prefers_target_then_kind_then_global(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("AOG_OPENCODE_AGENT", "global-agent")
     monkeypatch.setenv("AOG_OPENCODE_SKILL_AGENT", "skill-agent")
     monkeypatch.setenv("AOG_OPENCODE_AGENT_AOG_KERNEL_WORKER", "worker-agent")
@@ -157,18 +178,36 @@ def test_opencode_agent_and_variant_selection_prefers_target_then_kind_then_glob
     monkeypatch.setenv("AOG_OPENCODE_SKILL_VARIANT", "skill-variant")
     monkeypatch.setenv("AOG_OPENCODE_VARIANT_AOG_KERNEL_WORKER", "worker-variant")
 
-    assert getattr(OpencodeBackend, '_select_agent')("aog-op-classify", "skill") == "skill-agent"
-    assert getattr(OpencodeBackend, '_select_agent')("aog-kernel-worker", "agent") == "worker-agent"
-    assert getattr(OpencodeBackend, '_select_agent')("aog-precision-probe", "agent") == "global-agent"
-    assert getattr(OpencodeBackend, '_select_variant')("aog-op-classify", "skill") == "skill-variant"
-    assert getattr(OpencodeBackend, '_select_variant')("aog-kernel-worker", "agent") == "worker-variant"
-    assert getattr(OpencodeBackend, '_select_variant')("aog-precision-probe", "agent") == "global-variant"
+    assert (
+        getattr(OpencodeBackend, "_select_agent")("aog-op-classify", "skill")
+        == "skill-agent"
+    )
+    assert (
+        getattr(OpencodeBackend, "_select_agent")("aog-kernel-worker", "agent")
+        == "worker-agent"
+    )
+    assert (
+        getattr(OpencodeBackend, "_select_agent")("aog-precision-probe", "agent")
+        == "global-agent"
+    )
+    assert (
+        getattr(OpencodeBackend, "_select_variant")("aog-op-classify", "skill")
+        == "skill-variant"
+    )
+    assert (
+        getattr(OpencodeBackend, "_select_variant")("aog-kernel-worker", "agent")
+        == "worker-variant"
+    )
+    assert (
+        getattr(OpencodeBackend, "_select_variant")("aog-precision-probe", "agent")
+        == "global-variant"
+    )
 
 
 def test_opencode_streaming_cmd_requests_json_events() -> None:
     backend = OpencodeBackend(opencode_bin="/tmp/opencode")
 
-    cmd = getattr(backend, '_build_run_cmd')(cwd="/repo", format_json=True)
+    cmd = getattr(backend, "_build_run_cmd")(cwd="/repo", format_json=True)
 
     assert "--format" in cmd
     assert cmd[cmd.index("--format") + 1] == "json"
@@ -179,7 +218,7 @@ def test_opencode_dispatch_feeds_formatted_prompt_to_stdin(tmp_path) -> None:
     fake.write_text(
         "#!/usr/bin/env python3\n"
         + textwrap.dedent(
-            r'''
+            r"""
             import sys
 
             args = sys.argv[1:]
@@ -203,7 +242,7 @@ def test_opencode_dispatch_feeds_formatted_prompt_to_stdin(tmp_path) -> None:
                 print("missing skill context or user prompt", file=sys.stderr)
                 raise SystemExit(7)
             print("OPENCODE_OK")
-            '''
+            """
         )
     )
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
@@ -221,7 +260,9 @@ def test_opencode_dispatch_feeds_formatted_prompt_to_stdin(tmp_path) -> None:
     assert env.output_text == "OPENCODE_OK\n"
 
 
-def test_opencode_background_dispatch_accepts_output_file(tmp_path, monkeypatch) -> None:
+def test_opencode_background_dispatch_accepts_output_file(
+    tmp_path, monkeypatch
+) -> None:
     writes: list[str] = []
 
     class FakeStdin:
@@ -265,7 +306,7 @@ def test_opencode_skill_json_format_is_opt_in(tmp_path, monkeypatch) -> None:
     fake.write_text(
         "#!/usr/bin/env python3\n"
         + textwrap.dedent(
-            r'''
+            r"""
             import json
             import sys
 
@@ -279,14 +320,16 @@ def test_opencode_skill_json_format_is_opt_in(tmp_path, monkeypatch) -> None:
                 "sessionID": "ses_skill",
                 "part": {"type": "text", "text": "OPENCODE_JSON_OK"}
             }), flush=True)
-            '''
+            """
         )
     )
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("AOG_OPENCODE_SKILL_FORMAT", "json")
     backend = OpencodeBackend(opencode_bin=str(fake))
 
-    env = backend.dispatch("aog-op-classify", "Return marker", kind="skill", cwd=tmp_path, timeout=10)
+    env = backend.dispatch(
+        "aog-op-classify", "Return marker", kind="skill", cwd=tmp_path, timeout=10
+    )
 
     assert not env.is_error
     assert env.output_text == "OPENCODE_JSON_OK"
@@ -322,7 +365,9 @@ def test_backend_prompt_carries_no_semantic_policy() -> None:
     """
     backend = OpencodeBackend()
     for target in ("aog-kernel-worker", "aog-kernel-optimizer", "aog-precision-probe"):
-        prompt = getattr(backend, "_format_prompt")(target, "Return marker", kind="agent")
+        prompt = getattr(backend, "_format_prompt")(
+            target, "Return marker", kind="agent"
+        )
         for leaked in (
             "compatibility guard",
             "runtime smoke guard",
@@ -384,7 +429,9 @@ def test_kernel_authoring_guards_carry_no_operator_specific_environment() -> Non
 def test_opencode_skill_prompt_does_not_carry_kernel_worker_guard() -> None:
     backend = OpencodeBackend(opencode_bin="/tmp/opencode")
 
-    prompt = getattr(backend, '_format_prompt')("aog-op-classify", "Return marker", kind="skill")
+    prompt = getattr(backend, "_format_prompt")(
+        "aog-op-classify", "Return marker", kind="skill"
+    )
 
     assert "kernel-worker authoring guard" not in prompt
     assert "kernel-optimizer authoring guard" not in prompt
@@ -414,29 +461,39 @@ def test_opencode_prespawn_critic_timeout_default_is_shorter() -> None:
     assert proc.stdout.strip() == "180"
 
 
-def test_opencode_dispatch_blocks_when_runtime_check_fails(monkeypatch, tmp_path) -> None:
+def test_opencode_dispatch_blocks_when_runtime_check_fails(
+    monkeypatch, tmp_path
+) -> None:
     """A refused runtime self-check blocks dispatch before it can spawn."""
     monkeypatch.delenv("AOG_OPENCODE_SKIP_RUNTIME_CHECK", raising=False)
     monkeypatch.setattr(
         "backends.opencode_runtime.ensure_opencode_runtime",
-        lambda bin: types.SimpleNamespace(ok=False, reason="safety-net probe failed", warnings=[]),
+        lambda bin: types.SimpleNamespace(
+            ok=False, reason="safety-net probe failed", warnings=[]
+        ),
     )
     spawned = []
     monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: spawned.append(cmd))
     backend = OpencodeBackend(opencode_bin=str(tmp_path / "opencode"))
-    env = backend.dispatch("aog-op-classify", "Return marker", kind="skill", mode="foreground")
+    env = backend.dispatch(
+        "aog-op-classify", "Return marker", kind="skill", mode="foreground"
+    )
     assert env.is_error
     assert env.raw_envelope["runtime_check_failed"] is True
     assert "safety-net probe failed" in env.raw_envelope["reason"]
     assert spawned == [], "a refused runtime check must not reach a spawn"
 
 
-def test_opencode_dispatch_passes_through_ok_runtime_check(monkeypatch, tmp_path) -> None:
+def test_opencode_dispatch_passes_through_ok_runtime_check(
+    monkeypatch, tmp_path
+) -> None:
     """G5: ok check (with a warning) lets dispatch proceed to the fake opencode spawn."""
     monkeypatch.delenv("AOG_OPENCODE_SKIP_RUNTIME_CHECK", raising=False)
     monkeypatch.setattr(
         "backends.opencode_runtime.ensure_opencode_runtime",
-        lambda bin: types.SimpleNamespace(ok=True, reason="ok", warnings=["probe SKIP"]),
+        lambda bin: types.SimpleNamespace(
+            ok=True, reason="ok", warnings=["probe SKIP"]
+        ),
     )
 
     class _Popen:
@@ -451,21 +508,30 @@ def test_opencode_dispatch_passes_through_ok_runtime_check(monkeypatch, tmp_path
 
     monkeypatch.setattr(subprocess, "Popen", _Popen)
     backend = OpencodeBackend(opencode_bin=str(tmp_path / "opencode"))
-    env = backend.dispatch("aog-op-classify", "Return marker", kind="skill", mode="foreground", timeout=10)
+    env = backend.dispatch(
+        "aog-op-classify", "Return marker", kind="skill", mode="foreground", timeout=10
+    )
     assert not env.is_error
 
 
-def test_opencode_background_runtime_failure_raises_not_envelope(monkeypatch, tmp_path) -> None:
+def test_opencode_background_runtime_failure_raises_not_envelope(
+    monkeypatch, tmp_path
+) -> None:
     """Background callers own a Popen lifecycle, so fail-closed must not return an Envelope."""
     monkeypatch.delenv("AOG_OPENCODE_SKIP_RUNTIME_CHECK", raising=False)
     monkeypatch.setattr(
         "backends.opencode_runtime.ensure_opencode_runtime",
-        lambda bin: types.SimpleNamespace(ok=False, reason="safety-net probe failed", warnings=[]),
+        lambda bin: types.SimpleNamespace(
+            ok=False, reason="safety-net probe failed", warnings=[]
+        ),
     )
     backend = OpencodeBackend(opencode_bin=str(tmp_path / "opencode"))
     with pytest.raises(RuntimeError, match="runtime self-check failed"):
         backend.dispatch(
-            "aog-kernel-worker", "Return marker", kind="agent", mode="background",
+            "aog-kernel-worker",
+            "Return marker",
+            kind="agent",
+            mode="background",
             output_file=tmp_path / "opencode.log",
         )
 
@@ -476,15 +542,23 @@ def test_opencode_runtime_skip_requires_exact_one(monkeypatch, tmp_path) -> None
     monkeypatch.setenv("AOG_OPENCODE_SKIP_RUNTIME_CHECK", "0")
     monkeypatch.setattr(
         "backends.opencode_runtime.ensure_opencode_runtime",
-        lambda bin: calls.append(bin) or types.SimpleNamespace(ok=False, reason="refused", warnings=[]),
+        lambda bin: (
+            calls.append(bin)
+            or types.SimpleNamespace(ok=False, reason="refused", warnings=[])
+        ),
     )
     env = OpencodeBackend(opencode_bin=str(tmp_path / "opencode")).dispatch(
-        "aog-op-classify", "Return marker", kind="skill")
+        "aog-op-classify", "Return marker", kind="skill"
+    )
     assert env.is_error and calls == [str(tmp_path / "opencode")]
 
 
 def test_o17_uses_opencode_auto_compatible_permissions(monkeypatch, tmp_path) -> None:
-    """O1.7 keeps Claude's acceptEdits shape, but OpenCode needs --auto."""
+    """FIX-4: O1.7 dispatches bypassPermissions under EVERY backend (headless
+
+    --print has no approval channel; acceptEdits hung non-edit tool calls on
+    claude and OpenCode always needed --auto anyway).
+    """
     import phase_o17_classify as o17
 
     calls = []
@@ -497,14 +571,14 @@ def test_o17_uses_opencode_auto_compatible_permissions(monkeypatch, tmp_path) ->
     claude_backend = types.SimpleNamespace(name="claude_code", dispatch=dispatch)
     monkeypatch.setattr(o17, "_backend", opencode_backend)
     invoke_claude_skill = getattr(o17, "_invoke_claude_skill")
-    ok, _, _ = invoke_claude_skill(tmp_path)
+    ok, _, _, _ = invoke_claude_skill(tmp_path)
     assert ok
     assert calls[-1]["permission_mode"] == "bypassPermissions"
 
     monkeypatch.setattr(o17, "_backend", claude_backend)
-    ok, _, _ = invoke_claude_skill(tmp_path)
+    ok, _, _, _ = invoke_claude_skill(tmp_path)
     assert ok
-    assert calls[-1]["permission_mode"] == "acceptEdits"
+    assert calls[-1]["permission_mode"] == "bypassPermissions"
 
 
 def test_o17_surfaces_opencode_runtime_refusal_reason(monkeypatch, tmp_path) -> None:
@@ -527,7 +601,7 @@ def test_o17_surfaces_opencode_runtime_refusal_reason(monkeypatch, tmp_path) -> 
 
     monkeypatch.setattr(o17, "_backend", _Backend())
     invoke_claude_skill = getattr(o17, "_invoke_claude_skill")
-    ok, _, stderr = invoke_claude_skill(tmp_path)
+    ok, _, stderr, _ = invoke_claude_skill(tmp_path)
     assert not ok
     assert "safety-net probe failed" in stderr
 
@@ -537,7 +611,6 @@ def test_opencode_foreground_timeout_terminates_process_group(monkeypatch) -> No
     calls = []
 
     class _Popen:
-
         def __init__(self):
             self.pid = 123
             self.returncode = None
@@ -546,7 +619,9 @@ def test_opencode_foreground_timeout_terminates_process_group(monkeypatch) -> No
         def communicate(self, _input=None, timeout=None):
             self.communicate_calls += 1
             if self.communicate_calls == 1:
-                raise subprocess.TimeoutExpired(["opencode", "run"], timeout, output="partial", stderr="late")
+                raise subprocess.TimeoutExpired(
+                    ["opencode", "run"], timeout, output="partial", stderr="late"
+                )
             self.returncode = -15
             return "partial", "late"
 
@@ -559,9 +634,19 @@ def test_opencode_foreground_timeout_terminates_process_group(monkeypatch) -> No
     monkeypatch.setattr(subprocess, "Popen", _fake_popen)
     terminated = []
     monkeypatch.setattr(
-        "backends.opencode_runtime.terminate_process_group", lambda p: terminated.append(p))
-    env = _dispatch_foreground(OpencodeBackend(opencode_bin="opencode"),
-        ["opencode", "run"], "prompt", {}, 1, None, "agent", "foreground")
+        "backends.opencode_runtime.terminate_process_group",
+        lambda p: terminated.append(p),
+    )
+    env = _dispatch_foreground(
+        OpencodeBackend(opencode_bin="opencode"),
+        ["opencode", "run"],
+        "prompt",
+        {},
+        1,
+        None,
+        "agent",
+        "foreground",
+    )
     assert env.is_error and env.raw_envelope["timed_out"] is True
     assert env.output_text == "partial"
     assert terminated == [proc]
@@ -622,12 +707,14 @@ def test_opencode_dispatch_keeps_an_agreeing_inherited_workspace(monkeypatch) ->
     "inherited",
     [
         "/repo/workspace/some_other_op",  # a SIBLING — the worst case, see below
-        "/repo/workspace",                # the workspace root
-        "/repo",                          # an ancestor of it
-        "/explicit/workspace",            # outside the tree entirely
+        "/repo/workspace",  # the workspace root
+        "/repo",  # an ancestor of it
+        "/explicit/workspace",  # outside the tree entirely
     ],
 )
-def test_opencode_dispatch_replaces_a_disagreeing_inherited_workspace(monkeypatch, inherited) -> None:
+def test_opencode_dispatch_replaces_a_disagreeing_inherited_workspace(
+    monkeypatch, inherited
+) -> None:
     """Any inherited value naming a different place is replaced by the dispatch's own.
 
     The door scopes its cross-workspace rules to this variable, so a wrong value does not
@@ -655,7 +742,7 @@ def test_opencode_streaming_extracts_json_text_events(tmp_path) -> None:
     fake.write_text(
         "#!/usr/bin/env python3\n"
         + textwrap.dedent(
-            r'''
+            r"""
             import json
             import sys
 
@@ -681,7 +768,7 @@ def test_opencode_streaming_extracts_json_text_events(tmp_path) -> None:
                     "tokens": {"total": 11}
                 }
             }), flush=True)
-            '''
+            """
         )
     )
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
@@ -714,7 +801,7 @@ def test_opencode_streaming_timeout_returns_partial_output(tmp_path) -> None:
     fake.write_text(
         "#!/usr/bin/env python3\n"
         + textwrap.dedent(
-            r'''
+            r"""
             import json
             import sys
             import time
@@ -726,7 +813,7 @@ def test_opencode_streaming_timeout_returns_partial_output(tmp_path) -> None:
                 "part": {"type": "text", "text": "partial"}
             }), flush=True)
             time.sleep(60)
-            '''
+            """
         )
     )
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
@@ -752,7 +839,7 @@ def test_opencode_streaming_silence_timeout_returns_partial_output(tmp_path) -> 
     fake.write_text(
         "#!/usr/bin/env python3\n"
         + textwrap.dedent(
-            r'''
+            r"""
             import json
             import sys
             import time
@@ -764,7 +851,7 @@ def test_opencode_streaming_silence_timeout_returns_partial_output(tmp_path) -> 
                 "part": {"type": "text", "text": "partial"}
             }), flush=True)
             time.sleep(60)
-            '''
+            """
         )
     )
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
@@ -787,18 +874,22 @@ def test_opencode_streaming_silence_timeout_returns_partial_output(tmp_path) -> 
 
     assert exc_info.value.agent_type == "aog-precision-probe"
     assert exc_info.value.silent_seconds >= 0.9
-    assert exc_info.value.last_event_type is None  # _StreamState has no event type field
+    assert (
+        exc_info.value.last_event_type is None
+    )  # _StreamState has no event type field
     assert exc_info.value.partial_output == "partial"
     assert exc_info.value.raw_envelope["silence_timed_out"] is True
 
 
-def test_opencode_json_skill_silence_returns_envelope_for_graceful_fallback(tmp_path, monkeypatch) -> None:
+def test_opencode_json_skill_silence_returns_envelope_for_graceful_fallback(
+    tmp_path, monkeypatch
+) -> None:
     """JSON transport is also used by skills, but only FSM agent work may raise retry signals."""
     fake = tmp_path / "opencode"
     fake.write_text(
         "#!/usr/bin/env python3\n"
         + textwrap.dedent(
-            r'''
+            r"""
             import json
             import sys
             import time
@@ -807,14 +898,18 @@ def test_opencode_json_skill_silence_returns_envelope_for_graceful_fallback(tmp_
             print(json.dumps({"type": "text", "sessionID": "ses_skill",
                               "part": {"type": "text", "text": "partial"}}), flush=True)
             time.sleep(60)
-            '''
+            """
         )
     )
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("AOG_OPENCODE_SKILL_FORMAT", "json")
     env = OpencodeBackend(opencode_bin=str(fake)).dispatch(
-        "aog-op-classify", "Return marker", kind="skill", cwd=tmp_path,
-        timeout=30, silence_timeout=1,
+        "aog-op-classify",
+        "Return marker",
+        kind="skill",
+        cwd=tmp_path,
+        timeout=30,
+        silence_timeout=1,
     )
     assert env.is_error
     assert env.output_text == "partial"
@@ -826,7 +921,7 @@ def test_opencode_streaming_invalid_tool_event_fails_fast(tmp_path) -> None:
     fake.write_text(
         "#!/usr/bin/env python3\n"
         + textwrap.dedent(
-            r'''
+            r"""
             import json
             import sys
             import time
@@ -850,7 +945,7 @@ def test_opencode_streaming_invalid_tool_event_fails_fast(tmp_path) -> None:
                 }
             }), flush=True)
             time.sleep(60)
-            '''
+            """
         )
     )
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
@@ -903,10 +998,14 @@ def test_generated_config_is_byte_stable_across_processes() -> None:
     digests = set()
     for seed in ("0", "1", "12345"):
         env = dict(os.environ, PYTHONHASHSEED=seed)
-        out = sp.run([sys.executable, "-c", src], capture_output=True, text=True, env=env)
+        out = sp.run(
+            [sys.executable, "-c", src], capture_output=True, text=True, env=env
+        )
         assert out.returncode == 0, out.stderr
         digests.add(hashlib.sha256(out.stdout.strip().encode()).hexdigest())
-    assert len(digests) == 1, f"config varies with PYTHONHASHSEED: {len(digests)} variants"
+    assert len(digests) == 1, (
+        f"config varies with PYTHONHASHSEED: {len(digests)} variants"
+    )
 
 
 def test_write_group_semantics_are_respected() -> None:
@@ -920,7 +1019,9 @@ def test_write_group_semantics_are_respected() -> None:
         "bypasses every generated-code guard"
     )
     # `patch` aliases the same group: emitting it as False switches write off entirely.
-    assert "patch" not in kw, "patch must not be emitted — it aliases the edit/write group"
+    assert "patch" not in kw, (
+        "patch must not be emitted — it aliases the edit/write group"
+    )
 
     analyzer = agents["aog-determinism-analyzer"]["tools"]
     assert analyzer.get("edit") is False and analyzer.get("write") is False, (
@@ -934,7 +1035,9 @@ def test_write_group_semantics_are_respected() -> None:
     keys = list(kw)
     granted = [k for k in keys if kw[k] is True]
     denied_keys = [k for k in keys if kw[k] is False]
-    assert denied_keys and granted, "expected both denials and grants for a kernel author"
+    assert denied_keys and granted, (
+        "expected both denials and grants for a kernel author"
+    )
     assert keys.index(granted[0]) > keys.index(denied_keys[-1]), (
         "grants are not emitted last; under opencode's last-key-wins alias resolution the "
         "write group would resolve to denied"
@@ -954,7 +1057,9 @@ def test_skills_are_bindable_agents() -> None:
     """Skill dispatch passes --agent; the name must exist or identity self-contradicts."""
     cfg = json.loads(_opencode_config_content())
     for skill in ("aog-knowledge-maintain", "aog-op-classify", "aog-a3-author"):
-        assert skill in cfg["agent"], f"{skill} is dispatched with --agent but not registered"
+        assert skill in cfg["agent"], (
+            f"{skill} is dispatched with --agent but not registered"
+        )
         assert cfg["agent"][skill]["mode"] == "primary"
     assert _select_agent("aog-knowledge-maintain", "skill") == "aog-knowledge-maintain"
 

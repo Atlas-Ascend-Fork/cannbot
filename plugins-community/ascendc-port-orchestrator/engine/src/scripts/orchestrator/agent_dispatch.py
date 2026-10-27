@@ -25,6 +25,7 @@ Internally:
 Codex C5 spike confirmed subagent transport from Python is feasible. This
 module is the production-ready wrapper.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -39,14 +40,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import agent_transport
+import agent_transport  # noqa: F401
 import state_executor
+
 # Harness-decoupling: agent spawn goes through the Backend (CC plugin), not agent_transport directly.
 # spawn_for_state still owns brief + graybox/bwrap sandbox_prefix build (orchestrator-canonical, inv#2);
 # it passes the OPAQUE prefix to the backend, which verbatim-prepends it.
 from backends import get_backend
 from backends.base import Envelope
-from briefs._common import g7_slug, load_env
+from briefs._common import g7_slug, load_env  # noqa: F401
 from briefs.kw_brief import build_worker_brief
 from briefs.pp_brief import build_probe_brief
 from source_arch import (
@@ -79,12 +81,9 @@ def _tilelang2ascendc_source_api():
 
 def _is_tilelang2ascendc_source_state(state: dict) -> bool:
     port_source = state.get("port_source")
-    return (
-        state.get("source_kind") == TILELANG2ASCENDC_SOURCE_KIND
-        or (
-            isinstance(port_source, dict)
-            and port_source.get("kind") == TILELANG2ASCENDC_SOURCE_KIND
-        )
+    return state.get("source_kind") == TILELANG2ASCENDC_SOURCE_KIND or (
+        isinstance(port_source, dict)
+        and port_source.get("kind") == TILELANG2ASCENDC_SOURCE_KIND
     )
 
 
@@ -120,10 +119,17 @@ def _verify_tilelang2ascendc_source_binding(workspace: Path, state: dict):
     port_source = state.get("port_source")
     if state.get("source_kind") != TILELANG2ASCENDC_SOURCE_KIND:
         return False, "TileLang2AscendC source_kind is missing or mismatched", None
-    if not isinstance(port_source, dict) or port_source.get("kind") != TILELANG2ASCENDC_SOURCE_KIND:
+    if (
+        not isinstance(port_source, dict)
+        or port_source.get("kind") != TILELANG2ASCENDC_SOURCE_KIND
+    ):
         return False, "TileLang2AscendC port_source.kind is missing or mismatched", None
     if state.get("source_arch") != "arch35" or state.get("target_arch") != "arch35":
-        return False, "TileLang2AscendC route must persist source_arch=target_arch=arch35", None
+        return (
+            False,
+            "TileLang2AscendC route must persist source_arch=target_arch=arch35",
+            None,
+        )
     required = {
         "port_a3_source": "stage root",
         "source_stage_manifest": "stage manifest",
@@ -136,11 +142,20 @@ def _verify_tilelang2ascendc_source_binding(workspace: Path, state: dict):
         if value is None or value == "":
             return False, f"TileLang2AscendC {label} is missing", None
     if _tilelang2ascendc_stage_mismatch(port_source, state):
-        return False, "TileLang2AscendC stage metadata disagrees with durable port_source", None
+        return (
+            False,
+            "TileLang2AscendC stage metadata disagrees with durable port_source",
+            None,
+        )
     try:
         return _tilelang2ascendc_source_api()(workspace, state)
     except Exception as exc:
-        return False, f"TileLang2AscendC source-stage verifier unavailable or failed: {exc}", None
+        return (
+            False,
+            f"TileLang2AscendC source-stage verifier unavailable or failed: {exc}",
+            None,
+        )
+
 
 _backend = get_backend()
 
@@ -217,10 +232,17 @@ def _active_agent_marker(workspace: Path, agent_type: str):
         return
     marker = workspace / marker_name
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(json.dumps({
-        "agent_type": agent_type,
-        "ts": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-    }) + "\n")
+    marker.write_text(
+        json.dumps(
+            {
+                "agent_type": agent_type,
+                "ts": _dt.datetime.now(_dt.timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+        )
+        + "\n"
+    )
     # agent_transport owns the child-process signal/reap handler.  Install it
     # before wrapping the signals so our wrapper can clear the marker and then
     # delegate to the transport handler (which terminates the child process
@@ -232,7 +254,9 @@ def _active_agent_marker(workspace: Path, agent_type: str):
     # so tests that replace it on the transport module still see their
     # replacement, and so a backend without the hook raises ImportError here.
     try:
-        from agent_transport import _install_cleanup_handlers as install_cleanup_handlers
+        from agent_transport import (
+            _install_cleanup_handlers as install_cleanup_handlers,
+        )
 
         install_cleanup_handlers()
     except (ImportError, AttributeError, OSError, ValueError) as error:
@@ -352,7 +376,9 @@ def _read_dispatch_state(state_file: Path) -> dict:
         ) from exc
 
 
-def _verify_migration_source_stage(workspace: Path, state_data: dict, reference) -> bool:
+def _verify_migration_source_stage(
+    workspace: Path, state_data: dict, reference
+) -> bool:
     """Verify the immutable source stage selected by a migration workspace."""
     tilelang_source = _is_tilelang2ascendc_source_state(state_data)
     if tilelang_source:
@@ -379,7 +405,9 @@ def _bind_migration_source(env, state_data: dict, tilelang_source: bool) -> None
     if tilelang_source:
         tilelang_stage = state_data.get("port_a3_source")
         if not isinstance(tilelang_stage, str) or not tilelang_stage:
-            raise RuntimeError("migration workspace is missing a verified target-format source stage")
+            raise RuntimeError(
+                "migration workspace is missing a verified target-format source stage"
+            )
         env.port_a3_source = tilelang_stage
         return
 
@@ -388,7 +416,9 @@ def _bind_migration_source(env, state_data: dict, tilelang_source: bool) -> None
     if not legacy_stage and isinstance(legacy_source, dict):
         legacy_stage = legacy_source.get("stage_root")
     if not isinstance(legacy_stage, str) or not legacy_stage:
-        raise RuntimeError("migration workspace is missing a verified port source stage")
+        raise RuntimeError(
+            "migration workspace is missing a verified port source stage"
+        )
     env.port_a3_source = legacy_stage
 
 
@@ -434,9 +464,15 @@ def _build_migration_graybox_config(
     graybox_cfg = {
         "enabled": True,
         "source_kind": TILELANG2ASCENDC_SOURCE_KIND if tilelang_source else None,
-        "arch22_dir": state_data.get("graybox_source_dir") or state_data.get("graybox_arch22_dir") or (
+        "arch22_dir": state_data.get("graybox_source_dir")
+        or state_data.get("graybox_arch22_dir")
+        or (
             state_data.get("port_a3_source")
-            or (legacy_source.get("stage_root") if isinstance(legacy_source, dict) else None)
+            or (
+                legacy_source.get("stage_root")
+                if isinstance(legacy_source, dict)
+                else None
+            )
         ),
         "npubench_bundle": None,
         "npubench_state": None,
@@ -468,9 +504,19 @@ def _resolve_dispatch_config(workspace: Path, env) -> dict:
     if ws_mode and ws_mode != env.opgen_mode:
         env.opgen_mode = ws_mode
     if ws_mode == "port_a3_to_a5":
+        # Multirank workspaces (port_a3_to_a5 + `multirank: true`) carry a
+        # self-contained reference — the spec golden, produced at O2.5 by
+        # the multirank provision branch (same flag check as
+        # fsm_phase_o25_dispatch). There is no arch22 source stage and no
+        # npubench/a3_live reference binding to verify or seal, so the
+        # migration graybox gate does not apply.
+        if state_data.get("multirank") is True:
+            return graybox_cfg
         return _build_migration_graybox_config(workspace, state_file, state_data, env)
     if env.opgen_mode == "port_a3_to_a5":
-        raise RuntimeError("refusing migration agent spawn without a verified migration state")
+        raise RuntimeError(
+            "refusing migration agent spawn without a verified migration state"
+        )
     return graybox_cfg
 
 
@@ -515,7 +561,10 @@ def spawn_for_state(
             _STOP_GATE_LOG.warning(
                 "spawn hit whitelisted engine exception (%s: %s); "
                 "re-spawning in place (%d/%d) instead of agent_died (P1-2)",
-                type(exc).__name__, str(exc)[:200], attempt, max_respawns,
+                type(exc).__name__,
+                str(exc)[:200],
+                attempt,
+                max_respawns,
             )
             try:
                 import events as _events
@@ -550,7 +599,8 @@ def spawn_for_state(
             _STOP_GATE_LOG.warning(
                 "spawn recovered after %d whitelisted engine exception(s); "
                 "cleared stale .agent_died_at_%s marker if present",
-                attempt, state,
+                attempt,
+                state,
             )
         return result
 
@@ -618,6 +668,7 @@ def _opencode_graybox_binds(repo_root: Path) -> list[Path]:
     # the worker turn (CBA_MISSING_A_TIER) and hid the root cause.
     try:
         from backends.opencode_backend import OpencodeBackend
+
         OpencodeBackend.prepare_skills_runtime(repo_root)
         OpencodeBackend.prepare_opencode_runtime(repo_root)
     except Exception:
@@ -778,9 +829,7 @@ def _external_kb_scan_exempt() -> set:
         _kb_root = _ext_kb.external_kb_root()
         if _kb_root is not None:
             for _gov_name in ("registries.yaml", "profiles.yaml"):
-                exempt.add(
-                    (_kb_root / "governance" / "schemas" / _gov_name).resolve()
-                )
+                exempt.add((_kb_root / "governance" / "schemas" / _gov_name).resolve())
         return exempt
     except Exception as exc:
         logging.getLogger(__name__).debug(
@@ -790,7 +839,11 @@ def _external_kb_scan_exempt() -> set:
 
 
 def _graybox_scan_srcs(
-    workspace: Path, graybox_cfg: dict, kb_dir: Path, repo_root: Path, extra_ro: list,
+    workspace: Path,
+    graybox_cfg: dict,
+    kb_dir: Path,
+    repo_root: Path,
+    extra_ro: list,
 ) -> list:
     """Curated deep-scan sources for the construction manifest."""
     # 2026-08-26 (flash_attention_score_oc spawn rejection): the
@@ -841,6 +894,7 @@ def _graybox_manifest_with_gate_retry(write_manifest, workspace: Path):
         if "answer-bearing curated input" not in str(_gate_err):
             raise
         from orchestrator_coldstart import _prepare_npubench_candidate_repair
+
         logging.getLogger(__name__).warning(
             "graybox answer gate rejected respawn with an in-workspace "
             "candidate present; archiving stale candidate outputs and "
@@ -849,9 +903,7 @@ def _graybox_manifest_with_gate_retry(write_manifest, workspace: Path):
         )
         _prepare_npubench_candidate_repair(
             Path(workspace),
-            failure_reason=(
-                "graybox answer gate rejected respawn: " + str(_gate_err)
-            ),
+            failure_reason=("graybox answer gate rejected respawn: " + str(_gate_err)),
             failure_kind="graybox_answer_gate_respawn",
         )
         return write_manifest()
@@ -890,17 +942,21 @@ def _graybox_allow_and_seal(
         # `python3 -m orchestrator --resume` (no run-port-agent.sh env) then
         # silently spawns no-network workers that die on the first API call
         # ("Cannot connect to API").  Key off the active backend instead.
-        share_model_network = bool(os.environ.get("ANTHROPIC_BASE_URL", "").strip()) or (
-            getattr(_backend, "name", "") in ("opencode", "codearts")
-        )
+        share_model_network = bool(
+            os.environ.get("ANTHROPIC_BASE_URL", "").strip()
+        ) or (getattr(_backend, "name", "") in ("opencode", "codearts"))
         plugin_arg = _graybox_plugin_arg(_gs, allow_ro)
         if plugin_arg:
             extra_args = [*(extra_args or []), *plugin_arg]
-        scan_srcs = _graybox_scan_srcs(workspace, graybox_cfg, kb_dir, repo_root, extra_ro)
+        scan_srcs = _graybox_scan_srcs(
+            workspace, graybox_cfg, kb_dir, repo_root, extra_ro
+        )
 
         def _write_graybox_manifest():
             return _gs.write_construction_manifest(
-                workspace, allow_ro, allow_rw,
+                workspace,
+                allow_ro,
+                allow_rw,
                 inner_cmd=[*_backend_manifest_cmd(agent_type), *plugin_arg],
                 source_stage_root=graybox_cfg["arch22_dir"],
                 # Plugin runtime binds are infrastructure, not task inputs.  Keep
@@ -922,7 +978,10 @@ def _graybox_allow_and_seal(
         # the backend argv inside the selected platform sandbox.  Filesystem
         # isolation still excludes CANN and all answer/output trees.
         sandbox_prefix = _gs.build_isolated_cmd(
-            [], allow_ro=allow_ro, allow_rw=allow_rw, workdir=workspace,
+            [],
+            allow_ro=allow_ro,
+            allow_rw=allow_rw,
+            workdir=workspace,
             share_net=share_model_network,
         )
         if graybox_cfg["npubench_bundle"] is not None:
@@ -950,10 +1009,12 @@ def _build_graybox_seal(
     if not graybox_cfg["enabled"]:
         return _GrayboxSeal(extra_args=extra_args)
     import sys as _sys
+
     _wf = Path(__file__).resolve().parents[1] / "workflow"
     if str(_wf) not in _sys.path:
         _sys.path.insert(0, str(_wf))
     import graybox_sandbox as _gs
+
     if not _gs.isolation_available():
         raise RuntimeError(
             "migration authoring requires strict platform isolation, but no "
@@ -966,14 +1027,22 @@ def _build_graybox_seal(
     kb_dir = repo_root.parent / "kb" / "shared"
     extra_ro = _graybox_extra_ro(graybox_cfg, repo_root)
     return _graybox_allow_and_seal(
-        _gs, workspace, agent_type, graybox_cfg,
-        kb_dir=kb_dir, repo_root=repo_root,
-        extra_ro=extra_ro, extra_args=extra_args,
+        _gs,
+        workspace,
+        agent_type,
+        graybox_cfg,
+        kb_dir=kb_dir,
+        repo_root=repo_root,
+        extra_ro=extra_ro,
+        extra_args=extra_args,
     )
 
 
 def _dispatch_background(
-    agent_type: str, brief: str, request: _SpawnRequest, seal: _GrayboxSeal,
+    agent_type: str,
+    brief: str,
+    request: _SpawnRequest,
+    seal: _GrayboxSeal,
 ):
     """Legacy non-graybox background dispatch — returns a bare Popen."""
     if seal.allow_ro is not None:
@@ -994,14 +1063,22 @@ def _dispatch_background(
             f"background dispatch for {agent_type} needs explicit active-marker cleanup"
         )
     return _backend.dispatch(
-        agent_type, brief, kind="agent", mode="background",
-        output_file=request.output_file, extra_args=seal.extra_args,
+        agent_type,
+        brief,
+        kind="agent",
+        mode="background",
+        output_file=request.output_file,
+        extra_args=seal.extra_args,
         sandbox_prefix=seal.sandbox_prefix,
     )
 
 
 def _dispatch_foreground(
-    workspace: Path, agent_type: str, brief: str, request: _SpawnRequest, seal: _GrayboxSeal,
+    workspace: Path,
+    agent_type: str,
+    brief: str,
+    request: _SpawnRequest,
+    seal: _GrayboxSeal,
 ):
     """Streaming foreground dispatch: manifest verify, stop gate, envelope."""
     tee = workspace / f".cc_stream_log_{agent_type}_{request.spawn_index}.jsonl"
@@ -1017,8 +1094,12 @@ def _dispatch_foreground(
     try:
         with _active_agent_marker(workspace, agent_type):
             result = _backend.dispatch(
-                agent_type, brief, kind="agent", mode="streaming",
-                tee_path=tee, timeout=request.timeout_sec,
+                agent_type,
+                brief,
+                kind="agent",
+                mode="streaming",
+                tee_path=tee,
+                timeout=request.timeout_sec,
                 progress_callback=progress_cb,
                 extra_args=seal.extra_args,
                 silence_timeout=None,
@@ -1035,7 +1116,11 @@ def _dispatch_foreground(
             )
         _run_stop_gate(workspace, agent_type, result)
         persist_envelope(
-            workspace, agent_type, result, spawn_index=request.spawn_index, brief=brief,
+            workspace,
+            agent_type,
+            result,
+            spawn_index=request.spawn_index,
+            brief=brief,
         )
         return result
     finally:
@@ -1085,6 +1170,7 @@ def _spawn_for_state_once(
     # workspace": swallowing it would silently build a generic brief and
     # bypass migration/backward-specific safeguards.
     from plugins import detect_plugin
+
     plugin = detect_plugin(workspace)
 
     # iter_cap_remaining for budget hint to agent. iter_cap honors any
@@ -1204,7 +1290,9 @@ def _run_stop_gate(workspace, agent_type: str, result) -> None:
     gate = Path(__file__).resolve().parents[4] / "hooks" / "agent-gate-dispatch.py"
     if not gate.is_file():
         _mark_stop_gate_failure(
-            workspace, agent_type, result,
+            workspace,
+            agent_type,
+            result,
             f"agent gate dispatcher missing at {gate}; a gate we cannot run is not a gate "
             "that passed",
         )
@@ -1217,28 +1305,38 @@ def _run_stop_gate(workspace, agent_type: str, result) -> None:
     # CLAUDE_ACTIVE_WORKSPACE branch, so the env var alone cannot rescue it; Claude Code
     # never hit this because its hooks run with the engine as cwd.
     engine_root = Path(__file__).resolve().parents[3]
-    payload = json.dumps({
-        "hook_event_name": "SubagentStop",
-        "agent_type": agent_type,
-        "agent_id": f"{_backend.name}:{agent_type}",
-        "cwd": str(engine_root),
-    })
+    payload = json.dumps(
+        {
+            "hook_event_name": "SubagentStop",
+            "agent_type": agent_type,
+            "agent_id": f"{_backend.name}:{agent_type}",
+            "cwd": str(engine_root),
+        }
+    )
     gate_env = dict(os.environ)
     gate_env["CLAUDE_ACTIVE_WORKSPACE"] = str(workspace)
     gate_env["ASCENDC_WORKSPACE"] = str(workspace)
     try:
         proc = subprocess.run(
             [sys.executable, str(gate), "stop"],
-            input=payload, text=True, capture_output=True,
-            cwd=str(engine_root), env=gate_env, timeout=120,
+            input=payload,
+            text=True,
+            capture_output=True,
+            cwd=str(engine_root),
+            env=gate_env,
+            timeout=120,
         )
     except Exception as exc:  # a gate we cannot run is not a gate that passed
-        _mark_stop_gate_failure(workspace, agent_type, result, f"stop gate could not run: {exc!r}")
+        _mark_stop_gate_failure(
+            workspace, agent_type, result, f"stop gate could not run: {exc!r}"
+        )
         return
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()[:1500]
         _mark_stop_gate_failure(
-            workspace, agent_type, result,
+            workspace,
+            agent_type,
+            result,
             f"stop gate rejected {agent_type} (rc={proc.returncode}): {detail}",
         )
 
@@ -1251,7 +1349,9 @@ def _clear_stop_gate_marker(workspace, agent_type: str) -> None:
 def _mark_stop_gate_failure(workspace, agent_type: str, result, reason: str) -> None:
     _STOP_GATE_LOG.error("[stop-gate] %s", reason)
     try:
-        (Path(workspace) / f"{_STOP_GATE_MARKER}_{agent_type}").write_text(reason + "\n")
+        (Path(workspace) / f"{_STOP_GATE_MARKER}_{agent_type}").write_text(
+            reason + "\n"
+        )
     except OSError as exc:
         # The verdict is already logged; a marker we cannot persist must not be swallowed.
         _STOP_GATE_LOG.warning("[stop-gate] cannot persist failure marker: %s", exc)
@@ -1268,7 +1368,9 @@ def _mark_stop_gate_failure(workspace, agent_type: str, result, reason: str) -> 
                 f"Fix the rejected artifacts before handing off again.\n\n{reason}\n"
             )
     except OSError as exc:
-        _STOP_GATE_LOG.warning("[stop-gate] cannot append rejection to PROGRESS.md: %s", exc)
+        _STOP_GATE_LOG.warning(
+            "[stop-gate] cannot append rejection to PROGRESS.md: %s", exc
+        )
     if result is not None:
         result.is_error = True
         result.output_text = f"{reason}\n\n{result.output_text or ''}"
@@ -1389,9 +1491,17 @@ def _backend_manifest_cmd(agent_type: str) -> list[str]:
     if backend_name == "codex":
         return [os.environ.get("AOG_CODEX_BIN", "codex"), "exec", f"agent:{agent_type}"]
     if backend_name == "opencode":
-        return [os.environ.get("AOG_OPENCODE_BIN", "opencode"), "run", f"agent:{agent_type}"]
+        return [
+            os.environ.get("AOG_OPENCODE_BIN", "opencode"),
+            "run",
+            f"agent:{agent_type}",
+        ]
     if backend_name == "codearts":
-        return [os.environ.get("AOG_CODEARTS_BIN", "codearts"), "run", f"agent:{agent_type}"]
+        return [
+            os.environ.get("AOG_CODEARTS_BIN", "codearts"),
+            "run",
+            f"agent:{agent_type}",
+        ]
     return [backend_name or "unknown-backend", f"agent:{agent_type}"]
 
 
@@ -1438,7 +1548,8 @@ def _state_to_counter(state: str) -> str:
     e.g. await_worker → worker, await_optimizer → optimizer.
     """
     if state.startswith("await_"):
-        return state[len("await_"):]
+        _pl = len("await_")
+        return state[_pl:]
     return state
 
 
@@ -1448,21 +1559,28 @@ def _state_to_counter(state: str) -> str:
 if __name__ == "__main__":
     import argparse
 
-    ap = argparse.ArgumentParser(description="agent_dispatch — preview a brief without spawning")
+    ap = argparse.ArgumentParser(
+        description="agent_dispatch — preview a brief without spawning"
+    )
     ap.add_argument("--op", required=True)
     ap.add_argument("--workspace", required=True, type=Path)
-    ap.add_argument("--state", default="await_worker",
-                    help="YAML state name (default: await_worker)")
+    ap.add_argument(
+        "--state",
+        default="await_worker",
+        help="YAML state name (default: await_worker)",
+    )
     ap.add_argument("--lane", type=int, default=0)
     ap.add_argument("--spawn-index", type=int, default=1)
     ap.add_argument("--directive", default=None)
-    ap.add_argument("--print-only", action="store_true",
-                    help="just print the brief, don't spawn")
+    ap.add_argument(
+        "--print-only", action="store_true", help="just print the brief, don't spawn"
+    )
     args = ap.parse_args()
 
     if not args.print_only:
         print("(--print-only required for CLI smoke; spawning a worker is expensive)")
         import sys
+
         sys.exit(2)
 
     agent_type = state_executor.next_agent(args.state)
@@ -1472,9 +1590,12 @@ if __name__ == "__main__":
         sys.exit(2)
     env = load_env()
     iter_cap = state_executor.iter_cap(args.state, workspace=args.workspace)
-    iter_count = state_executor.iter_count(args.workspace, _state_to_counter(args.state))
+    iter_count = state_executor.iter_count(
+        args.workspace, _state_to_counter(args.state)
+    )
     brief = builder(
-        args.op, args.workspace,
+        args.op,
+        args.workspace,
         lane=args.lane,
         spawn_index=args.spawn_index,
         iter_cap_remaining=iter_cap - iter_count,

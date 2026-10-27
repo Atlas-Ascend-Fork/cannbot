@@ -31,6 +31,7 @@ that overrides a symbol one of these functions reads must `monkeypatch.setattr(<
 binding used here). No current test patches these on orchestrator; this note prevents a future one
 from a silent no-op.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -42,6 +43,7 @@ from pathlib import Path
 from typing import Optional
 
 from logging_config import get_logger
+
 # Harness-decoupling: the claude self-critic invocation goes through the Backend, not hardcoded.
 from backends import get_backend
 
@@ -139,12 +141,13 @@ _AOG_HANDOFF_PREFIXES = (
 
 
 # Post-worker self-critic skill call timeout (env-overridable, default 1800s).
-SELF_CRITIC_POST_WORKER_TIMEOUT_SEC = int(os.environ.get("AOG_SELF_CRITIC_POST_WORKER_TIMEOUT_SEC", "1800"))
+SELF_CRITIC_POST_WORKER_TIMEOUT_SEC = int(
+    os.environ.get("AOG_SELF_CRITIC_POST_WORKER_TIMEOUT_SEC", "1800")
+)
 
 
 def _embedded_aog_handoff(tail: str) -> Optional[str]:
-    """Return a nested @aog handoff from an improvised wrapper, if present.
-    """
+    """Return a nested @aog handoff from an improvised wrapper, if present."""
     for inner_prefix in _AOG_HANDOFF_PREFIXES:
         inner_idx = tail.find(inner_prefix)
         if inner_idx != -1:
@@ -156,29 +159,37 @@ def _keyword_prefix_matches(text: str, keyword: str) -> bool:
     """Match a handoff keyword without accepting an alphanumeric suffix."""
     if not text.startswith(keyword):
         return False
-    suffix = text[len(keyword):]
+    _kl = len(keyword)
+    suffix = text[_kl:]
     return not suffix or bool(re.match(r"^[^\w-]", suffix))
 
 
-def _normalize_canonical_handoff(prefix: str, tail: str, line: str, prefix_idx: int) -> str:
-    """Normalize one matched canonical handoff while retaining malformed forms.
-    """
+def _normalize_canonical_handoff(
+    prefix: str, tail: str, line: str, prefix_idx: int
+) -> str:
+    """Normalize one matched canonical handoff while retaining malformed forms."""
     if prefix in _ARROW_TO_AT_FORM:
         at_form_prefix = _ARROW_TO_AT_FORM[prefix]
-        return at_form_prefix + tail[len(prefix):]
+        _pl = len(prefix)
+        return at_form_prefix + tail[_pl:]
 
     if prefix == "@orchestrator:":
-        if prefix_idx >= 2 and line[prefix_idx - 2:prefix_idx] == "→ ":
+        _p2 = prefix_idx - 2
+        if prefix_idx >= 2 and line[_p2:prefix_idx] == "→ ":
             return tail
-        rest = tail[len(prefix):].lstrip()
-        if any(_keyword_prefix_matches(rest, keyword) for keyword in _VALID_ARROW_KEYWORDS):
+        _pl2 = len(prefix)
+        rest = tail[_pl2:].lstrip()
+        if any(
+            _keyword_prefix_matches(rest, keyword) for keyword in _VALID_ARROW_KEYWORDS
+        ):
             return "→ orchestrator: " + rest
         return tail
 
     if prefix != "→ orchestrator:":
         return tail
 
-    rest = tail[len(prefix):].lstrip()
+    _pl2 = len(prefix)
+    rest = tail[_pl2:].lstrip()
     if any(_keyword_prefix_matches(rest, keyword) for keyword in _VALID_ARROW_KEYWORDS):
         return "→ orchestrator: " + rest
     return _embedded_aog_handoff(tail) or tail
@@ -242,10 +253,12 @@ def delegation_cpp_dir_names(workspace: Path) -> list[str]:
     """
     try:
         import sys as _sys
+
         _orch = Path(__file__).resolve().parent
         if str(_orch) not in _sys.path:
             _sys.path.insert(0, str(_orch))
         from plugins import detect_plugin
+
         plug = detect_plugin(workspace)
         if plug is not None:
             workspace_aware = getattr(plug, "kernel_cpp_dirs_for_workspace", None)
@@ -265,9 +278,9 @@ def delegation_cpp_dir_names(workspace: Path) -> list[str]:
 
 
 def _newest_matching_file_mtime(
-        directory: Path, suffixes: tuple[str, ...], *, recursive: bool) -> float:
-    """Return the newest matching file mtime below or directly in `directory`.
-    """
+    directory: Path, suffixes: tuple[str, ...], *, recursive: bool
+) -> float:
+    """Return the newest matching file mtime below or directly in `directory`."""
     if recursive:
         candidates = directory.rglob("*")
     else:
@@ -281,8 +294,7 @@ def _newest_matching_file_mtime(
 
 
 def _newest_workspace_file_mtime(workspace: Path, filenames: tuple[str, ...]) -> float:
-    """Return the newest mtime among the named direct workspace artifacts.
-    """
+    """Return the newest mtime among the named direct workspace artifacts."""
     newest = 0.0
     for filename in filenames:
         ws_file = workspace / filename
@@ -293,16 +305,31 @@ def _newest_workspace_file_mtime(workspace: Path, filenames: tuple[str, ...]) ->
 
 def _newest_delegation_input_mtime(workspace: Path) -> float:
     """Return the newest delegation-scanned input mtime for `workspace`.
+
+    Each declared dir is resolved through `_candidate_subdirs` so the multirank
+    NEST (`workspace/<op>/prj-<op>/op_kernel/`) is covered, not only the
+    single-layer `workspace/<dir>`. The gate side
+    (finalize_checks_provenance._check_delegation_scan_marker) resolves the
+    same way — producer and gate MUST resolve the same directory set: a
+    producer that misses the nest dirs sees newest=0 → "marker fresh" → no
+    re-scan, while the gate sees the real nest mtime and keeps rejecting
+    the marker as stale → infinite rollback.
     """
+    from plugins.multirank.multirank_finalize_check_rank_verdicts import (
+        _candidate_subdirs,
+    )
+
     newest = 0.0
     cpp_suffixes = (".h", ".hpp", ".cpp", ".cc", ".cxx", ".py")
     for directory_name in delegation_cpp_dir_names(workspace):
-        kernel_dir = workspace / directory_name
-        if kernel_dir.is_dir():
-            newest = max(
-                newest,
-                _newest_matching_file_mtime(kernel_dir, cpp_suffixes, recursive=True),
-            )
+        for kernel_dir in _candidate_subdirs(workspace, directory_name):
+            if kernel_dir.is_dir():
+                newest = max(
+                    newest,
+                    _newest_matching_file_mtime(
+                        kernel_dir, cpp_suffixes, recursive=True
+                    ),
+                )
     workspace_files = ("model_new_ascendc.py", "pybind11.cpp")
     return max(newest, _newest_workspace_file_mtime(workspace, workspace_files))
 
@@ -336,13 +363,14 @@ def deleg_marker_needs_refresh(workspace: Path) -> bool:
 
 
 def _newest_audit_input_mtime(workspace: Path) -> float:
-    """Return the newest post-worker self-critic input mtime for `workspace`.
-    """
+    """Return the newest post-worker self-critic input mtime for `workspace`."""
     newest = 0.0
     kernel_dir = workspace / "kernel"
     if kernel_dir.exists():
         kernel_suffixes = (".h", ".cpp", ".py")
-        newest = _newest_matching_file_mtime(kernel_dir, kernel_suffixes, recursive=False)
+        newest = _newest_matching_file_mtime(
+            kernel_dir, kernel_suffixes, recursive=False
+        )
 
     workspace_files = (
         "model_new_ascendc.py",
@@ -387,9 +415,10 @@ def audit_doc_needs_refresh(workspace: Path) -> bool:
         return False  # best-effort: if we can't tell, don't force a re-gen
 
 
-def _record_delegation_scan_result(workspace: Path, result: subprocess.CompletedProcess) -> None:
-    """Write the delegation scanner's pass marker or violation evidence.
-    """
+def _record_delegation_scan_result(
+    workspace: Path, result: subprocess.CompletedProcess
+) -> None:
+    """Write the delegation scanner's pass marker or violation evidence."""
     deleg_marker = workspace / ".delegation_scan_passed"
     if result.returncode == 0:
         deleg_marker.write_text(
@@ -408,8 +437,7 @@ def _record_delegation_scan_result(workspace: Path, result: subprocess.Completed
 
 
 def _refresh_delegation_scan_artifact(workspace: Path) -> None:
-    """Refresh delegation scan evidence when the source marker is stale.
-    """
+    """Refresh delegation scan evidence when the source marker is stale."""
     if not deleg_marker_needs_refresh(workspace):
         return
 
@@ -430,11 +458,12 @@ def _refresh_delegation_scan_artifact(workspace: Path) -> None:
 
 
 def _archive_stale_audit_doc(audit_doc: Path) -> None:
-    """Archive the stale audit document without allowing archive failures to escape.
-    """
+    """Archive the stale audit document without allowing archive failures to escape."""
     import time as _time
 
-    stale = audit_doc.with_name(f"audit_self_critic_post_worker.STALE_{int(_time.time())}.md")
+    stale = audit_doc.with_name(
+        f"audit_self_critic_post_worker.STALE_{int(_time.time())}.md"
+    )
     try:
         audit_doc.rename(stale)
         log.info(f"audit: archived stale post-worker audit → {stale.name}")
@@ -444,6 +473,11 @@ def _archive_stale_audit_doc(audit_doc: Path) -> None:
 
 def _post_worker_audit_prompt(workspace: Path, op_name: str) -> str:
     """Build the self-critic request without changing the gate contract.
+
+    The verdict-line format is pinned deliberately: the finalize gate's
+    parser (_post_worker_audit_verdict) matches an English `verdict` line —
+    a translated or prose-buried verdict parses as NO verdict and blocks
+    finalize, so the prompt states the exact machine-parsed spelling.
     """
     return (
         f"Run /aog-self-critic skill in post-worker mode for op {op_name}. "
@@ -452,13 +486,18 @@ def _post_worker_audit_prompt(workspace: Path, op_name: str) -> str:
         "hallucinated metrics, C18 delegation cheating, C25/C26 anti-overfit, "
         "and any other catalog item that fires on kw output). Write "
         "audit_self_critic_post_worker.md in the workspace with verdict + "
-        "findings. Verdict must be PASS, PARTIAL+waiver, or BLOCK."
+        "findings. The verdict MUST appear on its own line, in English, "
+        "exactly as `Verdict: PASS` / `Verdict: PARTIAL + waiver` / "
+        "`Verdict: BLOCK` — the finalize gate parses this exact line; any "
+        "other spelling (translated heading, bold-only, buried in prose) "
+        "parses as NO verdict and blocks finalize."
     )
 
 
-def _dispatch_post_worker_self_critic(op_name: str, prompt: str) -> _types.SimpleNamespace:
-    """Invoke the backend and preserve the prior result-shaped adapter.
-    """
+def _dispatch_post_worker_self_critic(
+    op_name: str, prompt: str
+) -> _types.SimpleNamespace:
+    """Invoke the backend and preserve the prior result-shaped adapter."""
     timeout_label = f"aog-self-critic post-worker ({op_name})"
     envelope = _backend.dispatch(
         "aog-self-critic",
@@ -467,7 +506,9 @@ def _dispatch_post_worker_self_critic(op_name: str, prompt: str) -> _types.Simpl
         timeout=SELF_CRITIC_POST_WORKER_TIMEOUT_SEC,
     )
     if envelope.raw_envelope.get("timed_out"):
-        raise subprocess.TimeoutExpired(timeout_label, SELF_CRITIC_POST_WORKER_TIMEOUT_SEC)
+        raise subprocess.TimeoutExpired(
+            timeout_label, SELF_CRITIC_POST_WORKER_TIMEOUT_SEC
+        )
     return _types.SimpleNamespace(
         returncode=envelope.raw_envelope.get("returncode"),
         stdout=envelope.output_text or "",
@@ -476,18 +517,21 @@ def _dispatch_post_worker_self_critic(op_name: str, prompt: str) -> _types.Simpl
 
 
 def _materialize_post_worker_audit(
-        audit_doc: Path,
-        self_critic_report: Path,
-        report_mtime_before: float,
-        op_name: str,
-        result: _types.SimpleNamespace) -> None:
-    """Keep the self-critic's file, promote its fallback, or synthesize evidence.
-    """
+    audit_doc: Path,
+    self_critic_report: Path,
+    report_mtime_before: float,
+    op_name: str,
+    result: _types.SimpleNamespace,
+) -> None:
+    """Keep the self-critic's file, promote its fallback, or synthesize evidence."""
     if audit_doc.exists():
         log.info("audit: post-worker self-critic doc written")
         return
 
-    if self_critic_report.exists() and self_critic_report.stat().st_mtime > report_mtime_before:
+    if (
+        self_critic_report.exists()
+        and self_critic_report.stat().st_mtime > report_mtime_before
+    ):
         audit_doc.write_text(
             f"# Post-Worker Self-Critic Audit — {op_name}\n\n"
             f"_Auto-promoted from `self_critic_report.md` "
@@ -507,7 +551,11 @@ def _materialize_post_worker_audit(
         f"`self_critic_report.md` was produced by the skill._\n\n"
         f"## Subprocess returncode: {result.returncode}\n\n"
         f"## Subprocess stdout (truncated 8000)\n\n```\n{stdout_text}\n```\n\n"
-        + (f"## Subprocess stderr (truncated 2000)\n\n```\n{stderr_text}\n```\n" if stderr_text else "")
+        + (
+            f"## Subprocess stderr (truncated 2000)\n\n```\n{stderr_text}\n```\n"
+            if stderr_text
+            else ""
+        )
     )
     log.info(
         f"audit: skill produced no audit doc; synthesized from "
@@ -516,8 +564,7 @@ def _materialize_post_worker_audit(
 
 
 def _refresh_post_worker_audit(workspace: Path) -> None:
-    """Refresh the post-worker audit document when its inputs are newer.
-    """
+    """Refresh the post-worker audit document when its inputs are newer."""
     if not audit_doc_needs_refresh(workspace):
         return
 
@@ -550,8 +597,7 @@ def _refresh_post_worker_audit(workspace: Path) -> None:
 
 
 def _ensure_audit_artifacts(workspace: Path, *, lane: int = 0) -> None:
-    """Produce the delegation and post-worker audit artifacts the finalize gate requires.
-    """
+    """Produce the delegation and post-worker audit artifacts the finalize gate requires."""
     try:
         from . import scan_delegation as _sd  # type: ignore[attr-defined]
     except Exception:
@@ -588,17 +634,17 @@ def _consume_applied_user_decision(workspace: Path) -> bool:
 
 
 def _contains_kb_keyword(text: str, keywords: tuple[str, ...]) -> bool:
-    """Return whether `text` contains one of the supplied classifier keywords.
-    """
+    """Return whether `text` contains one of the supplied classifier keywords."""
     for keyword in keywords:
         if keyword in text:
             return True
     return False
 
 
-def _structured_kb_distillation(content: str) -> Optional[tuple[dict[str, str], str, str]]:
-    """Parse a structured kb_distillation block, returning None when absent.
-    """
+def _structured_kb_distillation(
+    content: str,
+) -> Optional[tuple[dict[str, str], str, str]]:
+    """Parse a structured kb_distillation block, returning None when absent."""
     distill_match = re.search(
         r"^kb_distillation:\s*$\n((?:^[ \t]+.+\n)+)", content, re.MULTILINE
     )
@@ -608,7 +654,13 @@ def _structured_kb_distillation(content: str) -> Optional[tuple[dict[str, str], 
     block_body = distill_match.group(1)
     sub_fields = {}
     for field in (
-            "rule", "evidence", "applies_to", "anti_pattern_caught", "anti_pattern", "kb_target"):
+        "rule",
+        "evidence",
+        "applies_to",
+        "anti_pattern_caught",
+        "anti_pattern",
+        "kb_target",
+    ):
         match = re.search(
             rf"^[ \t]+{re.escape(field)}:\s*[\"']?([^\"'\n]+)[\"']?\s*$",
             block_body,
@@ -616,34 +668,75 @@ def _structured_kb_distillation(content: str) -> Optional[tuple[dict[str, str], 
         )
         if match:
             sub_fields[field] = match.group(1).strip()
-    anti_pattern = sub_fields.get("anti_pattern_caught") or sub_fields.get("anti_pattern", "")
+    anti_pattern = sub_fields.get("anti_pattern_caught") or sub_fields.get(
+        "anti_pattern", ""
+    )
     return sub_fields, anti_pattern, sub_fields.get("kb_target", "candidate")
 
 
-def _heuristic_kb_distillation(content: str, op: str) -> tuple[dict[str, str], str, str]:
-    """Classify an unstructured user decision while retaining its fallback contract.
-    """
+# Heuristic keyword groups → KB target class (checked in order; no match
+# falls back to "candidate").
+_HEURISTIC_KB_KEYWORDS = (
+    (
+        "PB",
+        (
+            "vendor",
+            "not registered",
+            "561000",
+            "561003",
+            "561004",
+            "561103",
+            "561108",
+            "no binary",
+            "kernel not registered",
+            "tiling-key-no-match",
+        ),
+    ),
+    (
+        "OL",
+        (
+            "precedent",
+            "paradigm",
+            "pattern",
+            "approach",
+            "swi_glu",
+            "flat_quant",
+            "similar to commit",
+            "port pattern",
+            "v220→v300",
+            "v220->v300",
+        ),
+    ),
+    (
+        "EC",
+        (
+            "build error",
+            "compile fail",
+            "compile error",
+            "ec-",
+            "错误码",
+            "make fail",
+            "linker error",
+        ),
+    ),
+)
+
+
+def _heuristic_kb_target(reason_lower: str) -> str:
+    """The first keyword-group match picks the KB target class."""
+    for target, keywords in _HEURISTIC_KB_KEYWORDS:
+        if _contains_kb_keyword(reason_lower, keywords):
+            return target
+    return "candidate"
+
+
+def _heuristic_kb_distillation(
+    content: str, op: str
+) -> tuple[dict[str, str], str, str]:
+    """Classify an unstructured user decision while retaining its fallback contract."""
     reason_match = re.search(r"^reason:\s*\|?\s*\n((?:.+\n)+)", content, re.MULTILINE)
     reason_text = reason_match.group(1) if reason_match else content
-    reason_lower = reason_text.lower()
-
-    if _contains_kb_keyword(reason_lower, (
-            "vendor", "not registered", "561000", "561003", "561004", "561103",
-            "561108", "no binary", "kernel not registered", "tiling-key-no-match",
-    )):
-        kb_target = "PB"
-    elif _contains_kb_keyword(reason_lower, (
-            "precedent", "paradigm", "pattern", "approach", "swi_glu", "flat_quant",
-            "similar to commit", "port pattern", "v220→v300", "v220->v300",
-    )):
-        kb_target = "OL"
-    elif _contains_kb_keyword(reason_lower, (
-            "build error", "compile fail", "compile error", "ec-", "错误码", "make fail",
-            "linker error",
-    )):
-        kb_target = "EC"
-    else:
-        kb_target = "candidate"
+    kb_target = _heuristic_kb_target(reason_text.lower())
 
     sub_fields = {
         "rule": (
@@ -657,16 +750,16 @@ def _heuristic_kb_distillation(content: str, op: str) -> tuple[dict[str, str], s
 
 
 def _kb_draft_body(
-        marker: str,
-        op: str,
-        timestamp: str,
-        mode: str,
-        sub_fields: dict[str, str],
-        anti_pattern: str,
-        kb_target: str,
-        content: str) -> list[str]:
-    """Render the KB-draft artifact with its established provenance text.
-    """
+    marker: str,
+    op: str,
+    timestamp: str,
+    mode: str,
+    sub_fields: dict[str, str],
+    anti_pattern: str,
+    kb_target: str,
+    content: str,
+) -> list[str]:
+    """Render the KB-draft artifact with its established provenance text."""
     return [
         marker,
         "",
@@ -741,6 +834,7 @@ def _extract_kb_draft_from_user_decision(workspace: Path, op: str) -> Optional[P
         return draft_path
 
     from datetime import datetime, timezone
+
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     structured = _structured_kb_distillation(content)
     if structured:

@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 """Unit tests for the arch22-to-arch35 migration plugin."""
+
 from __future__ import annotations
 
 import hashlib
@@ -106,6 +107,60 @@ def test_verify_files_include_canonical_entries(plugin):
     }
 
 
+# ── finalize_perf_capture conditional delegation (multirank extension) ─────
+
+
+def test_finalize_perf_capture_single_card_keeps_engine_default(tmp_path, plugin):
+    """A single-card workspace (no multirank flag, no spec.py) must keep the
+
+    BasePlugin None sentinel so the engine default capture path runs.
+    """
+    ws = tmp_path / "gelu"
+    ws.mkdir()
+    (ws / ".opgen_state.json").write_text(json.dumps({"opgen_mode": "port_a3_to_a5"}))
+    assert plugin.finalize_perf_capture(ws, "gelu") is None
+
+
+def test_finalize_perf_capture_multirank_delegates_to_extension(
+    tmp_path, plugin, monkeypatch
+):
+    """A multirank-flagged workspace routes the capture to the extension
+
+    plugin's multi-NPU campaign (measure_op_perf resolves THIS plugin via
+    detect_plugin, so the delegation is the only route to the extension).
+    """
+    ws = tmp_path / "fused_op"
+    ws.mkdir()
+    (ws / ".opgen_state.json").write_text(
+        json.dumps({"opgen_mode": "port_a3_to_a5", "multirank": True})
+    )
+    calls: list = []
+
+    class _FakeExt:
+        @staticmethod
+        def finalize_perf_capture(workspace, op):
+            calls.append((workspace, op))
+            return {"status": "PASS", "ratio": 1.2}
+
+    monkeypatch.setattr(PortA3Plugin, "_multirank_plugin", lambda self: _FakeExt())
+    out = plugin.finalize_perf_capture(ws, "fused_op")
+    assert calls == [(ws, "fused_op")]
+    assert out == {"status": "PASS", "ratio": 1.2}
+
+
+def test_finalize_perf_capture_multirank_extension_missing_fails_open_to_default(
+    tmp_path, plugin, monkeypatch
+):
+    """Extension unresolvable → fall back to the engine default (None), never crash the finalize path."""
+    ws = tmp_path / "fused_op"
+    ws.mkdir()
+    (ws / ".opgen_state.json").write_text(
+        json.dumps({"opgen_mode": "port_a3_to_a5", "multirank": True})
+    )
+    monkeypatch.setattr(PortA3Plugin, "_multirank_plugin", lambda self: None)
+    assert plugin.finalize_perf_capture(ws, "fused_op") is None
+
+
 def test_forbidden_patterns_cover_dispatch_and_cpu_reference(plugin):
     descriptions = [description for _, description in plugin.forbidden_patterns()]
     assert any("F.<op>" in item for item in descriptions)
@@ -114,10 +169,13 @@ def test_forbidden_patterns_cover_dispatch_and_cpu_reference(plugin):
 
 
 def test_binary_provenance_non_pass_is_not_applicable(tmp_path, plugin):
-    assert plugin.check_binary_provenance(
-        tmp_path,
-        {"precision": {"status": "PARTIAL"}},
-    ) is None
+    assert (
+        plugin.check_binary_provenance(
+            tmp_path,
+            {"precision": {"status": "PARTIAL"}},
+        )
+        is None
+    )
 
 
 def test_binary_provenance_requires_own_build_lineage(tmp_path, plugin):
@@ -131,10 +189,13 @@ def test_binary_provenance_requires_own_build_lineage(tmp_path, plugin):
 
 
 def test_binary_provenance_accepts_current_workspace_sha256_chain(tmp_path, plugin):
-    assert plugin.check_binary_provenance(
-        tmp_path,
-        _passing_verification(tmp_path),
-    ) is None
+    assert (
+        plugin.check_binary_provenance(
+            tmp_path,
+            _passing_verification(tmp_path),
+        )
+        is None
+    )
 
 
 def test_binary_provenance_rejects_tampered_source(tmp_path, plugin):
@@ -154,9 +215,7 @@ def test_binary_provenance_rejects_source_deploy_lineage_mismatch(tmp_path, plug
     assert "source/deploy/built-from" in result
 
 
-def test_binary_provenance_rejects_non_string_digest_without_crashing(
-    tmp_path, plugin
-):
+def test_binary_provenance_rejects_non_string_digest_without_crashing(tmp_path, plugin):
     verification = _passing_verification(tmp_path)
     compiled = verification["build_evidence"]["compiled_provenance"]
     compiled["workspace_source_sha256"] = 0
@@ -193,7 +252,7 @@ def test_binary_provenance_rejects_installed_tree_substitution(tmp_path, plugin)
 
 
 def test_snake_to_pascal_conversion(plugin):
-    assert getattr(plugin, '_snake_to_pascal')("top_k_top_p_sample") == "TopKTopPSample"
+    assert getattr(plugin, "_snake_to_pascal")("top_k_top_p_sample") == "TopKTopPSample"
 
 
 def test_archive_layout_mapping(plugin, tmp_path):
@@ -210,8 +269,7 @@ def test_verifier_accepts_one_expression_modelnew_call(tmp_path, plugin):
     ws = tmp_path / "op_l1"
     ws.mkdir()
     (ws / "pass_a_runner.py").write_text(
-        "import model_new_ascendc\n"
-        "out = model_new_ascendc.ModelNew()(inputs)\n"
+        "import model_new_ascendc\nout = model_new_ascendc.ModelNew()(inputs)\n"
     )
     result = plugin.check_verifier_uses_modelnew(ws, {"precision": {"status": "PASS"}})
     assert result is None, result
@@ -232,16 +290,15 @@ def test_tilelang_archive_retains_nested_host_and_device_sources(plugin):
     ):
         assert direct_path_is_retained(TILELANG_PROFILE_VALID, path), path
         assert archive_path_rejection(TILELANG_PROFILE_VALID, path) is None, path
-    assert not direct_path_is_retained(
-        TILELANG_PROFILE_VALID, "kernel/build/libadd.so"
-    )
+    assert not direct_path_is_retained(TILELANG_PROFILE_VALID, "kernel/build/libadd.so")
 
 
 def test_legacy_archive_policy_and_completeness_are_unchanged(tmp_path, plugin):
     assert plugin.archive_layout_mapping(tmp_path)["kernel/"] == "op_kernel/"
-    assert plugin.resolve_archive_target_for_workspace(
-        tmp_path, "kernel/add.cpp", "add"
-    ) == "op_kernel/add.cpp"
+    assert (
+        plugin.resolve_archive_target_for_workspace(tmp_path, "kernel/add.cpp", "add")
+        == "op_kernel/add.cpp"
+    )
     # No direct state means the established PB-33 op_host check still runs.
     assert plugin.check_op_host_completeness(tmp_path) is not None
     assert plugin.should_archive_path(tmp_path, ".port_source/anything") is True
@@ -249,18 +306,21 @@ def test_legacy_archive_policy_and_completeness_are_unchanged(tmp_path, plugin):
 
 def test_archive_target_resolution(plugin):
     assert plugin.archive_project_subdir() == "a3_to_a5_port"
-    assert plugin.resolve_archive_target(
-        "kernel/arch35/foo.h", "foo"
-    ) == "op_kernel/arch35/foo.h"
-    assert plugin.resolve_archive_target(
-        "kernel/foo_apt.cpp", "foo"
-    ) == "op_kernel/foo_apt.cpp"
-    assert plugin.resolve_archive_target(
-        "foo_a5_migration_plan.md", "foo"
-    ) == "docs/foo_a5_migration_plan.md"
-    assert plugin.resolve_archive_target(
-        "verification.json", "foo"
-    ) == "verification.json"
+    assert (
+        plugin.resolve_archive_target("kernel/arch35/foo.h", "foo")
+        == "op_kernel/arch35/foo.h"
+    )
+    assert (
+        plugin.resolve_archive_target("kernel/foo_apt.cpp", "foo")
+        == "op_kernel/foo_apt.cpp"
+    )
+    assert (
+        plugin.resolve_archive_target("foo_a5_migration_plan.md", "foo")
+        == "docs/foo_a5_migration_plan.md"
+    )
+    assert (
+        plugin.resolve_archive_target("verification.json", "foo") == "verification.json"
+    )
 
 
 def test_neutral_phase_hooks(plugin):

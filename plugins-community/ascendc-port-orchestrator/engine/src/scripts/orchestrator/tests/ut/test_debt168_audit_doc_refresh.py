@@ -25,6 +25,7 @@ pass_a_runner.py) and docs (knowledge_update.md / PROGRESS.md), not just
 kernel code. A coverage-only worker respawn changes none of the kernel files
 but DOES change those result files — a kernel-only check would miss it.
 """
+
 from __future__ import annotations
 import os
 import sys
@@ -32,7 +33,7 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
+import pytest  # noqa: F401
 
 _HERE = Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parent.parent))
@@ -53,6 +54,23 @@ def test_audit_absent_needs_refresh(tmp_path):
     assert orchestrator.audit_doc_needs_refresh(tmp_path) is True
 
 
+def test_post_worker_audit_prompt_pins_verdict_line_format(tmp_path):
+    """The prompt must pin the verdict to the exact English line the finalize
+
+    gate parses (`Verdict: PASS` / `Verdict: PARTIAL + waiver` /
+    `Verdict: BLOCK`). Without the pin the self-critic LLM free-forms the
+    heading (a translated `## 裁决: **PARTIAL + waiver**` was observed) —
+    semantically correct, but the parser matches an English `verdict` line
+    only, so it reads NO verdict and finalize is blocked.
+    """
+    import handoff_audit
+
+    prompt = getattr(handoff_audit, "_post_worker_audit_prompt")(tmp_path, "fixture_op")
+    for spelling in ("Verdict: PASS", "Verdict: PARTIAL + waiver", "Verdict: BLOCK"):
+        assert spelling in prompt, spelling
+    assert "its own line" in prompt and "in English" in prompt
+
+
 def test_audit_fresh_no_refresh(tmp_path):
     # all kw-output artifacts OLDER than the audit → not stale → no refresh.
     _touch(tmp_path / "kernel" / "k_kernel.h", 1000.0)
@@ -68,9 +86,9 @@ def test_audit_stale_after_verification_json_change(tmp_path):
     # verification.json (PASS count went 16->... re-measured) but did NOT
     # touch kernel code. Kernel-only freshness would miss this; the audit
     # trigger set MUST include verification.json.
-    _touch(tmp_path / "kernel" / "k_kernel.h", 1000.0)        # older than audit
+    _touch(tmp_path / "kernel" / "k_kernel.h", 1000.0)  # older than audit
     _touch(tmp_path / AUDIT, 2000.0)
-    _touch(tmp_path / "verification.json", 3000.0)            # rewritten AFTER audit
+    _touch(tmp_path / "verification.json", 3000.0)  # rewritten AFTER audit
     assert orchestrator.audit_doc_needs_refresh(tmp_path) is True
 
 
@@ -110,16 +128,27 @@ def test_within_slack_not_stale(tmp_path):
     assert orchestrator.audit_doc_needs_refresh(tmp_path) is False
 
 
+def _write_verification_claim(ws: Path) -> None:
+    """The 16/16 PASS precision + N/A performance verification.json claim."""
+    (ws / "verification.json").write_text(
+        json.dumps(
+            {
+                "precision": {
+                    "status": "PASS",
+                    "pass_a": {"status": "PASS", "tier1_pass": 16, "total": 16},
+                },
+                "performance": {"status": "N/A"},
+            }
+        )
+    )
+
+
 def _seed_ws_for_ensure_audit(ws: Path) -> None:
     """Workspace state when _ensure_audit_artifacts fires (step-1
     delegation-scan short-circuits via the marker; only step-2 self-critic
     fires)."""
     ws.mkdir(parents=True, exist_ok=True)
-    (ws / "verification.json").write_text(json.dumps({
-        "precision": {"status": "PASS",
-                      "pass_a": {"status": "PASS", "tier1_pass": 16, "total": 16}},
-        "performance": {"status": "N/A"},
-    }))
+    _write_verification_claim(ws)
     (ws / ".delegation_scan_passed").write_text("stub: scan passed\n")
 
 
@@ -138,11 +167,7 @@ def test_stale_audit_archived_then_regenerated(tmp_path, monkeypatch):
     audit.write_text(stale_body)
     os.utime(audit, (1000.0, 1000.0))
     # rewrite verification.json so it's newer than the stale audit
-    (ws / "verification.json").write_text(json.dumps({
-        "precision": {"status": "PASS",
-                      "pass_a": {"status": "PASS", "tier1_pass": 16, "total": 16}},
-        "performance": {"status": "N/A"},
-    }))
+    _write_verification_claim(ws)
     assert orchestrator.audit_doc_needs_refresh(ws) is True
 
     fresh_body = "# FRESH audit\nVerdict: PASS\nC13: clean.\n"
@@ -151,6 +176,7 @@ def test_stale_audit_archived_then_regenerated(tmp_path, monkeypatch):
         # skill writes the gate filename directly (happy path)
         (ws / AUDIT).write_text(fresh_body)
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     getattr(orchestrator, "_ensure_audit_artifacts")(ws, lane=0)
@@ -158,8 +184,14 @@ def test_stale_audit_archived_then_regenerated(tmp_path, monkeypatch):
     # (b) regenerated
     assert audit.read_text() == fresh_body
     # (a) stale doc archived
-    archived = [p for p in ws.iterdir() if p.name.startswith("audit_self_critic_post_worker.STALE_")]
-    assert len(archived) == 1, f"expected exactly one STALE archive, got {[p.name for p in ws.iterdir()]}"
+    archived = [
+        p
+        for p in ws.iterdir()
+        if p.name.startswith("audit_self_critic_post_worker.STALE_")
+    ]
+    assert len(archived) == 1, (
+        f"expected exactly one STALE archive, got {[p.name for p in ws.iterdir()]}"
+    )
     assert archived[0].read_text() == stale_body
 
 
@@ -182,6 +214,7 @@ def test_fresh_audit_not_touched(tmp_path, monkeypatch):
     def fake_run(cmd, **kwargs):
         subprocess_fired[0] = True
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     getattr(orchestrator, "_ensure_audit_artifacts")(ws, lane=0)

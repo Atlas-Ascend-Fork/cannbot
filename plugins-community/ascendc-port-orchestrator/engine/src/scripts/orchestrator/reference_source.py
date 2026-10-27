@@ -15,6 +15,7 @@ must resolve its ``source`` through this module.  In particular, a missing
 reference is *not* inferred to mean live A3: operators must invoke an explicit
 legacy migration before resuming such a workspace.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -83,8 +84,10 @@ def resolve_reference_binding(workspace: Path | Mapping[str, Any]) -> Mapping[st
     state = _load_state(workspace)
     if "reference" not in state or state.get("reference") is None:
         raise ReferenceSourceError(
-            "durable state has no explicit reference binding; run the explicit "
-            "a3_live migration before resume"
+            "durable state has no explicit reference binding; the workspace "
+            "predates startup-time binding — re-create it (re-run the entry "
+            "command, or --cold-start), or run the explicit a3_live migration "
+            "for a legacy a3_live workspace"
         )
     reference = state.get("reference")
     if not isinstance(reference, Mapping):
@@ -169,7 +172,9 @@ def migrate_legacy_a3_state(state: Mapping[str, Any]) -> dict[str, Any]:
                 "legacy migration refuses a non-A3 or malformed reference binding"
             )
         if dict(existing) == explicit_a3_live_binding():
-            raise ReferenceSourceError("state already has the canonical a3_live binding")
+            raise ReferenceSourceError(
+                "state already has the canonical a3_live binding"
+            )
     migrated = dict(state)
     migrated["reference"] = explicit_a3_live_binding()
     return migrated
@@ -197,7 +202,9 @@ def _validate_complete_binding(reference: Mapping[str, Any], source: str) -> Non
                 "cannbench reference binding is incomplete or has unsupported fields"
             )
         if status is not None and not _is_valid_cannbench_status(status):
-            raise ReferenceSourceError("cannbench unsupported-provider status is malformed")
+            raise ReferenceSourceError(
+                "cannbench unsupported-provider status is malformed"
+            )
         return
     if source == NPUBENCH:
         _require_fields(reference, _NPUBENCH_REQUIRED_FIELDS, source)

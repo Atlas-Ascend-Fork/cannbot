@@ -20,6 +20,7 @@ non-port_a3 modes? Audit found:
 This test pins both invariants so future scanner edits can't silently
 regress mode-coverage in either direction.
 """
+
 from __future__ import annotations
 
 import json
@@ -41,13 +42,20 @@ from plugins import all_plugins, get_plugin  # noqa: E402
 # Universal pattern coverage — model_new_ascendc.py in every mode
 # ---------------------------------------------------------------------------
 
-def _make_workspace(tmp_path: Path, opgen_mode: str, *,
-                    model_new_body: str = "x = 1\n") -> Path:
+
+def _make_workspace(
+    tmp_path: Path, opgen_mode: str, *, model_new_body: str = "x = 1\n"
+) -> Path:
     ws = tmp_path / f"ws_{opgen_mode}"
     ws.mkdir()
-    (ws / ".opgen_state.json").write_text(json.dumps({
-        "op": "fixture", "opgen_mode": opgen_mode,
-    }))
+    (ws / ".opgen_state.json").write_text(
+        json.dumps(
+            {
+                "op": "fixture",
+                "opgen_mode": opgen_mode,
+            }
+        )
+    )
     (ws / "model_new_ascendc.py").write_text(model_new_body)
     return ws
 
@@ -57,17 +65,16 @@ def test_python_wrapper_torch_npu_caught_in_all_modes(tmp_path, mode):
     """torch_npu.<api>() is CANN delegation regardless of mode. Universal
     scan must catch it in both supported modes.
     """
-    body = (
-        "import torch_npu\n"
-        "def f(x):\n"
-        "    return torch_npu.npu_rms_norm(x)\n"
-    )
+    body = "import torch_npu\ndef f(x):\n    return torch_npu.npu_rms_norm(x)\n"
     ws = _make_workspace(tmp_path, mode, model_new_body=body)
     result = sdc.scan_op_workspace(ws)
-    assert not result["ok"], f"mode={mode}: universal scan should flag torch_npu.<api>()"
+    assert not result["ok"], (
+        f"mode={mode}: universal scan should flag torch_npu.<api>()"
+    )
     descs = [v["desc"] for v in result["violations"]]
-    assert any("torch_npu" in d or "CANN delegation" in d for d in descs), \
+    assert any("torch_npu" in d or "CANN delegation" in d for d in descs), (
         f"mode={mode}: missing torch_npu violation in {descs}"
+    )
 
 
 @pytest.mark.parametrize("mode", ["port_a3_to_a5", "backward"])
@@ -82,6 +89,7 @@ def test_python_wrapper_aclnn_caught_in_all_modes(tmp_path, mode):
 # ---------------------------------------------------------------------------
 # port_a3-specific patterns must NOT fire on non-port_a3 modes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("mode", ["backward"])
 def test_port_a3_verify_forbidden_does_not_fire_in_other_modes(tmp_path, mode):
@@ -105,8 +113,11 @@ def test_port_a3_verify_forbidden_does_not_fire_in_other_modes(tmp_path, mode):
     )
     result = sdc.scan_op_workspace(ws)
     # The port_a3-only category must be absent
-    port_a3_cat_hits = [v for v in result["violations"]
-                        if v.get("category") == "port_a3_verify_forbidden"]
+    port_a3_cat_hits = [
+        v
+        for v in result["violations"]
+        if v.get("category") == "port_a3_verify_forbidden"
+    ]
     assert not port_a3_cat_hits, (
         f"mode={mode}: port_a3_verify_forbidden fired on non-port_a3 mode — "
         f"hits: {port_a3_cat_hits}"
@@ -120,13 +131,14 @@ def test_port_a3_verify_forbidden_does_fire_in_port_a3_mode(tmp_path):
     """
     ws = _make_workspace(tmp_path, "port_a3_to_a5")
     (ws / "run_a5_verify.py").write_text(
-        "import torch.nn.functional as F\n"
-        "def verify(x):\n"
-        "    return F.softmax(x)\n"
+        "import torch.nn.functional as F\ndef verify(x):\n    return F.softmax(x)\n"
     )
     result = sdc.scan_op_workspace(ws)
-    port_a3_cat_hits = [v for v in result["violations"]
-                        if v.get("category") == "port_a3_verify_forbidden"]
+    port_a3_cat_hits = [
+        v
+        for v in result["violations"]
+        if v.get("category") == "port_a3_verify_forbidden"
+    ]
     assert port_a3_cat_hits, (
         "port_a3_verify_forbidden didn't fire on port_a3 workspace — "
         "either mode detection broken or pattern catalog missing F.<op>"
@@ -137,11 +149,15 @@ def test_port_a3_verify_forbidden_does_fire_in_port_a3_mode(tmp_path):
 # Mode detection by .opgen_state.json — primary truth source
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("mode,expected_port_a3", [
-    ("port_a3_to_a5", True),
-    ("backward", False),
-    ("unsupported", False),
-])
+
+@pytest.mark.parametrize(
+    "mode,expected_port_a3",
+    [
+        ("port_a3_to_a5", True),
+        ("backward", False),
+        ("unsupported", False),
+    ],
+)
 def test_is_port_a3_workspace_respects_state_file(tmp_path, mode, expected_port_a3):
     """_is_port_a3_workspace MUST read .opgen_state.json opgen_mode field
     first, before falling back to PORT_A3_VERIFY_FILES heuristic. Without
@@ -150,10 +166,15 @@ def test_is_port_a3_workspace_respects_state_file(tmp_path, mode, expected_port_
     """
     ws = tmp_path / f"ws_{mode}"
     ws.mkdir()
-    (ws / ".opgen_state.json").write_text(json.dumps({
-        "op": "fixture", "opgen_mode": mode,
-    }))
-    assert getattr(sdc, '_is_port_a3_workspace')(ws) == expected_port_a3, (
+    (ws / ".opgen_state.json").write_text(
+        json.dumps(
+            {
+                "op": "fixture",
+                "opgen_mode": mode,
+            }
+        )
+    )
+    assert getattr(sdc, "_is_port_a3_workspace")(ws) == expected_port_a3, (
         f"mode={mode}: _is_port_a3_workspace={getattr(sdc, '_is_port_a3_workspace')(ws)} "
         f"expected={expected_port_a3}"
     )
@@ -163,6 +184,7 @@ def test_is_port_a3_workspace_respects_state_file(tmp_path, mode, expected_port_
 # CPP scanner reaches kernel/ in every mode
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("mode", ["port_a3_to_a5", "backward"])
 def test_cpp_aclnn_caught_in_kernel_dir_all_modes(tmp_path, mode):
     """Kernel-dir .cpp is scanned for aclnn* in every mode."""
@@ -171,8 +193,8 @@ def test_cpp_aclnn_caught_in_kernel_dir_all_modes(tmp_path, mode):
     (ws / "kernel" / "main.cpp").write_text(
         '#include "kernel.h"\n'
         'extern "C" void launch() {\n'
-        '    aclnnRmsNorm(x, gamma);\n'
-        '}\n'
+        "    aclnnRmsNorm(x, gamma);\n"
+        "}\n"
     )
     result = sdc.scan_op_workspace(ws)
     assert not result["ok"], f"mode={mode}: kernel-dir aclnn* must be caught"
@@ -182,11 +204,13 @@ def test_cpp_aclnn_caught_in_kernel_dir_all_modes(tmp_path, mode):
 # A scan that traverses no declared source is a hard coverage failure
 # ---------------------------------------------------------------------------
 
+
 def test_every_supported_mode_declares_python_and_cpp_compute_surfaces():
-    """The two RFC workflows must remain mechanically scannable."""
+    """Every registered workflow must remain mechanically scannable."""
     assert {plugin.name for plugin in all_plugins()} == {
         "port_a3_to_a5",
         "backward",
+        "multirank",
     }
     for plugin in all_plugins():
         assert plugin.kernel_logic_files(), plugin.name
@@ -198,10 +222,14 @@ def test_missing_declared_python_logic_is_coverage_failure(tmp_path, mode):
     plugin = get_plugin(mode)
     ws = tmp_path / f"missing_python_{mode}"
     ws.mkdir()
-    (ws / ".opgen_state.json").write_text(json.dumps({
-        "op": "fixture",
-        "opgen_mode": mode,
-    }))
+    (ws / ".opgen_state.json").write_text(
+        json.dumps(
+            {
+                "op": "fixture",
+                "opgen_mode": mode,
+            }
+        )
+    )
     for rel in plugin.kernel_cpp_dirs():
         (ws / rel).mkdir(parents=True)
 

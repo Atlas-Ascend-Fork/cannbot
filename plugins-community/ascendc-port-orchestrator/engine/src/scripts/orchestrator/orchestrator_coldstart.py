@@ -19,6 +19,7 @@ fresh cold-start re-evaluation. Self-contained over filesystem + workspace
 artifacts; NOT monkeypatched; calls no orchestrator-local function. Tests
 call it via `orchestrator._cold_start_reset_workspace`, so orchestrator
 re-imports it (bottom import) to keep that access path stable."""
+
 from __future__ import annotations
 import logging
 
@@ -60,9 +61,8 @@ _NPUBENCH_REPAIR_MANIFEST_SCHEMA = "cannbot.npubench_candidate_repair_manifest/v
 
 def _npubench_repair_backup_root(workspace: Path) -> Path:
     """Return the out-of-workspace backup root shared by all repair resets."""
-    backup_root_env = (
-        os.environ.get("NPUBENCH_REPAIR_BACKUP_ROOT")
-        or os.environ.get("COLD_START_BACKUP_ROOT")
+    backup_root_env = os.environ.get("NPUBENCH_REPAIR_BACKUP_ROOT") or os.environ.get(
+        "COLD_START_BACKUP_ROOT"
     )
     return (
         Path(backup_root_env) / workspace.name
@@ -78,7 +78,9 @@ def _npubench_repair_archive_dir(workspace: Path) -> Path:
     backup_root = _npubench_repair_backup_root(workspace)
     backup_root.mkdir(parents=True, exist_ok=True)
     timestamp = int(_dt.datetime.now(_dt.timezone.utc).timestamp())
-    archive = backup_root / f"npubench-candidate-repair-{timestamp}-{uuid.uuid4().hex[:12]}"
+    archive = (
+        backup_root / f"npubench-candidate-repair-{timestamp}-{uuid.uuid4().hex[:12]}"
+    )
     archive.mkdir()
     return archive
 
@@ -92,16 +94,24 @@ def _npubench_repair_candidates(workspace: Path) -> list[Path]:
     preflight (same contract as the O5 rollback cleanup in
     fsm_phase_finalize._clear_harness_build_artifacts).
     """
-    candidates: list[Path] = [workspace / name for name in _NPUBENCH_REPAIR_OUTPUT_NAMES]
+    candidates: list[Path] = [
+        workspace / name for name in _NPUBENCH_REPAIR_OUTPUT_NAMES
+    ]
     candidates.extend(sorted(workspace.glob("model_new_*.py")))
     candidates.extend(sorted(workspace.glob("pybind11*.cpp")))
-    candidates.extend(
-        sorted(
-            item
-            for suffix in ("*.c", "*.cc", "*.cpp", "*.cxx", "*.h", "*.hpp", "*.so", "*.tgz")
-            for item in workspace.glob(suffix)
-        )
-    )
+    _items = []
+    for suffix in (
+        "*.c",
+        "*.cc",
+        "*.cpp",
+        "*.cxx",
+        "*.h",
+        "*.hpp",
+        "*.so",
+        "*.tgz",
+    ):
+        _items.extend(workspace.glob(suffix))
+    candidates.extend(sorted(_items))
     return candidates
 
 
@@ -205,7 +215,9 @@ def _npubench_repair_failure_class(workspace: Path) -> str:
     fail-closed: ``"unknown"`` keeps the legacy move-out semantics.
     """
     engine_infra, candidate = _npubench_evaluate_report_flags(workspace)
-    transition_engine_infra, transition_candidate = _npubench_transition_flags(workspace)
+    transition_engine_infra, transition_candidate = _npubench_transition_flags(
+        workspace
+    )
     engine_infra = engine_infra or transition_engine_infra
     candidate = candidate or transition_candidate
 
@@ -282,7 +294,9 @@ def _npubench_load_repair_manifest(archive: Path) -> dict | None:
 
 
 def _npubench_repair_manifest_shape_valid(
-    entries: object, files: object, symlinks: object,
+    entries: object,
+    files: object,
+    symlinks: object,
 ) -> bool:
     """Validate the manifest container types before path-level checks."""
     return (
@@ -339,7 +353,8 @@ def _npubench_find_restorable_archive(workspace: Path) -> tuple[Path, dict] | No
 
 
 def _npubench_archived_repair_result(
-    archive: Path | None, moved: list[str],
+    archive: Path | None,
+    moved: list[str],
 ) -> dict | None:
     """Return the legacy archived outcome when a new archive was created."""
     if archive is None:
@@ -394,7 +409,9 @@ def _npubench_undo_restore(workspace: Path, restored: list[str]) -> None:
 
 
 def _npubench_restore_verified_archive(
-    workspace: Path, archive: Path, payload: dict,
+    workspace: Path,
+    archive: Path,
+    payload: dict,
 ) -> list[str] | None:
     """Restore and verify one archive, returning restored names or ``None``."""
     import shutil
@@ -405,8 +422,7 @@ def _npubench_restore_verified_archive(
         source = archive / name
         if not source.exists() or source.is_symlink():
             log.warning(
-                "NPUBench repair restore aborted: manifest entry %s missing "
-                "from %s",
+                "NPUBench repair restore aborted: manifest entry %s missing from %s",
                 name,
                 archive,
             )
@@ -546,7 +562,9 @@ def _prepare_npubench_candidate_repair(
     workspace = Path(workspace)
     metadata = workspace.lstat()
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-        raise RuntimeError(f"NPUBench repair workspace must be a real directory: {workspace}")
+        raise RuntimeError(
+            f"NPUBench repair workspace must be a real directory: {workspace}"
+        )
 
     failure_class = _npubench_repair_failure_class(workspace)
     if (
@@ -634,6 +652,7 @@ def _cold_start_reset_workspace(workspace: Path) -> None:
     KB / brief / iteration that may differ from current.
     """
     import shutil
+
     ts = int(_dt.datetime.now(_dt.timezone.utc).timestamp())
     # P0aav-followup (2026-05-16): backup dir MUST be OUTSIDE workspace
     # so worker (which reads workspace/) cannot find + read the backed-up
@@ -671,9 +690,11 @@ def _cold_start_reset_workspace(workspace: Path) -> None:
     # restore-target; migrate ALL of them out, not just `.pre-cold-start-*`.
     _BACKUP_DIR_GLOBS = (
         ".pre-cold-start-*",
-        ".empirical_backup*",     # manual/empirical kernel snapshots (restore-target)
-        ".pre_kw*_restore_*",     # pre-restore snapshots
-        ".pre_iter*", ".iter*_attempt", ".pattern_a*",  # per-iter attempt snapshots
+        ".empirical_backup*",  # manual/empirical kernel snapshots (restore-target)
+        ".pre_kw*_restore_*",  # pre-restore snapshots
+        ".pre_iter*",
+        ".iter*_attempt",
+        ".pattern_a*",  # per-iter attempt snapshots
     )
     _seen_legacy: set = set()
     for _glob in _BACKUP_DIR_GLOBS:
@@ -681,7 +702,9 @@ def _cold_start_reset_workspace(workspace: Path) -> None:
             if not legacy.is_dir() or legacy in _seen_legacy:
                 continue
             _seen_legacy.add(legacy)
-            legacy_new_name = legacy.name.lstrip(".")  # ".empirical_backup-X" → "empirical_backup-X"
+            legacy_new_name = legacy.name.lstrip(
+                "."
+            )  # ".empirical_backup-X" → "empirical_backup-X"
             target = backup_root / f"{legacy_new_name}-migrated-{ts}"
             try:
                 shutil.move(str(legacy), str(target))
@@ -792,11 +815,35 @@ def _cold_start_reset_workspace(workspace: Path) -> None:
     # A target-archive branch base is valid within a run, but must not leak
     # into a later cold start where its lineage and matching decision may be
     # stale.
-    for subdir_name in ("kernel", "op_kernel", "probes", "branched_from_kernel"):
-        sub = workspace / subdir_name
-        if sub.exists() and sub.is_dir():
-            shutil.move(str(sub), str(backup_dir / subdir_name))
-            moved.append(f"{subdir_name}/")
+    # Multirank build trees are restore sources too (kernel-source copies + compiled
+    # artifacts): `.install/` carries a COPY of the prior kernel source
+    # (.install/.../dynamic/<op>.h) + the compiled .so; `.build/` + `.build_ext/`
+    # carry another copy + binary. A cold-start worker Read the stale kernel
+    # from .install/ and emitted it byte-for-byte; after .install/ was wiped it
+    # migrated to .build/ — "the cheat migrates to whichever build tree
+    # survives". Wipe ALL build trees.
+    # Multirank NEST layout: these dirs live under workspace/prj-<op>/, not the op
+    # root — iterate every base (op root + each prj-*) so a nest op's worker
+    # output + build trees are cleared too.
+    for subdir_name in (
+        "kernel",
+        "op_kernel",
+        "probes",
+        "branched_from_kernel",
+        ".install",
+        ".build",
+        ".build_ext",
+    ):
+        for base in (workspace, *workspace.glob("prj-*")):
+            sub = base / subdir_name
+            if sub.exists() and sub.is_dir():
+                dst_name = (
+                    subdir_name if base == workspace else f"{base.name}/{subdir_name}"
+                )
+                dst = backup_dir / dst_name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(sub), str(dst))
+                moved.append(f"{dst_name}/")
 
     # DEBT-078: physically remove KERNEL-SNAPSHOT / BUILT-ARTIFACT restore sources
     # at workspace root so a cold-start worker MUST regenerate, not restore.
@@ -804,9 +851,12 @@ def _cold_start_reset_workspace(workspace: Path) -> None:
     # build's compiled kernel; `*.tgz` catches any other snapshot tarball. These
     # are the local restore vectors the kw_brief anti-restore guard names — making
     # the clean-slate STRUCTURAL (file removal) instead of a skippable instruction.
+    # `prj-*/py_ext/_C*.so` catches the multirank NEST built py_ext .so, which lives
+    # outside the root `*.so` glob's reach.
     for snap in (
         list(workspace.glob("kernel_snapshot.tgz"))
         + list(workspace.glob("*.so"))
+        + list(workspace.glob("prj-*/py_ext/_C*.so"))
         + list(workspace.glob("*.tgz"))
     ):
         if snap.is_file():
@@ -814,7 +864,9 @@ def _cold_start_reset_workspace(workspace: Path) -> None:
                 shutil.move(str(snap), str(backup_dir / snap.name))
                 moved.append(snap.name)
             except Exception as e:
-                log.warning(f"cold-start: failed to migrate restore source {snap.name}: {e}")
+                log.warning(
+                    f"cold-start: failed to migrate restore source {snap.name}: {e}"
+                )
     # NOTE (DEBT-078, remote): the prior build's `.so` on the remote A5
     # `current_task/` is ALSO a restore vector, but current_task is SHARED across
     # concurrent agents on the live host — do NOT blind-wipe it here.

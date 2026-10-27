@@ -67,9 +67,11 @@ Usage:
   python3 src/scripts/architecture_lint.py --baseline src/scripts/.arch_lint_baseline.json
   python3 src/scripts/architecture_lint.py --regenerate-baseline src/scripts/.arch_lint_baseline.json
 """
+
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import ast
 import json
 import os
@@ -80,7 +82,10 @@ import sys
 # `optimize` is the --optimize re-entry mode (DEBT-161/PR#11). The staleness-guard test
 # (test_architecture_lint) asserts this allowlist ⊇ every registered plugin's mode name,
 # so it cannot silently lag a new backend/mode plugin (OL-160).
-OPGEN_MODES = ("port_a3_to_a5", "backward", "optimize")
+# `multirank` is the EXTENSION plugin name (its detect() is always False; it owns no
+# standalone mode but its name is registered — kept here so core branches on it stay
+# flagged as leaks).
+OPGEN_MODES = ("port_a3_to_a5", "backward", "multirank", "optimize")
 # DEBT-161 Batch-2 precision narrowing: a `<ident> == "<lit>"` branch in core is only an
 # op-gen leak when <lit> is a REAL op-gen mode / backend / arch-target. The identifiers
 # `mode`/`target` are OVERLOADED for non-op-gen meanings that are NOT leaks:
@@ -274,6 +279,7 @@ REQUIRED_PLUGIN_METHODS = (
     "kb_subdirs",
     "kw_brief_phase_a",
     "kw_brief_phase_d",
+    "finalize_perf_capture",  # plugin-owned perf capture override (None = engine default)
 )
 
 
@@ -282,12 +288,14 @@ def _import_plugin_registry():
     try:
         from plugins import all_plugins  # type: ignore
     except Exception as error:  # noqa: BLE001 — surface import failure as a finding
-        return None, [{
-            "check": "PLUGIN_REGISTRY_INCOMPLETE",
-            "file": "src/scripts/orchestrator/plugins/__init__.py",
-            "plugin": "<import>",
-            "detail": f"could not import plugin registry: {type(error).__name__}: {error}",
-        }]
+        return None, [
+            {
+                "check": "PLUGIN_REGISTRY_INCOMPLETE",
+                "file": "src/scripts/orchestrator/plugins/__init__.py",
+                "plugin": "<import>",
+                "detail": f"could not import plugin registry: {type(error).__name__}: {error}",
+            }
+        ]
     return all_plugins, []
 
 
@@ -298,13 +306,15 @@ def _plugin_missing_method_findings(plugin):
     for method_name in REQUIRED_PLUGIN_METHODS:
         method = getattr(plugin, method_name, None)
         if not callable(method):
-            findings.append({
-                "check": "PLUGIN_REGISTRY_INCOMPLETE",
-                "file": "src/scripts/orchestrator/plugins/",
-                "plugin": plugin_name,
-                "method": method_name,
-                "detail": f"plugin {plugin_name!r} missing required method {method_name!r}",
-            })
+            findings.append(
+                {
+                    "check": "PLUGIN_REGISTRY_INCOMPLETE",
+                    "file": "src/scripts/orchestrator/plugins/",
+                    "plugin": plugin_name,
+                    "method": method_name,
+                    "detail": f"plugin {plugin_name!r} missing required method {method_name!r}",
+                }
+            )
     return findings
 
 
@@ -384,14 +394,16 @@ def check_fsm_hardcoded_transition():
         for t in targets:
             name = getattr(t, "id", None) or getattr(t, "attr", None)
             if name in _FSM_TARGET_NAMES:
-                findings.append({
-                    "check": "FSM_HARDCODED_TRANSITION",
-                    "file": rel,
-                    "line": node.lineno,
-                    "target": name,
-                    "literal": value.value,
-                    "detail": f"{name} = {value.value!r} bypasses data-driven transition table",
-                })
+                findings.append(
+                    {
+                        "check": "FSM_HARDCODED_TRANSITION",
+                        "file": rel,
+                        "line": node.lineno,
+                        "target": name,
+                        "literal": value.value,
+                        "detail": f"{name} = {value.value!r} bypasses data-driven transition table",
+                    }
+                )
     return findings
 
 
@@ -465,33 +477,57 @@ def partition_by_changed(new_findings, changed_files):
 def _argument_parser():
     """Build the stable command-line interface for this lint."""
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--strict", action="store_true", help="exit 1 if any non-baselined finding")
+    parser.add_argument(
+        "--strict", action="store_true", help="exit 1 if any non-baselined finding"
+    )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
-    parser.add_argument("--max-func-lines", type=int, default=200, help="god-function threshold (default 200)")
-    parser.add_argument("--baseline", help="JSON file of grandfathered findings to ignore")
-    parser.add_argument("--regenerate-baseline", metavar="PATH",
-                        help="write ALL current findings to PATH as the new baseline (ratchet reset) and exit 0")
-    parser.add_argument("--changed-only", nargs="*", metavar="FILE",
-                        help="ratchet scope (DEBT-164): with --strict, block ONLY on new findings whose "
-                             "file is in this set (e.g. `git diff --cached --name-only`). New findings in "
-                             "files NOT in the set are warned-but-allowed — the non-bricking pre-commit gate.")
+    parser.add_argument(
+        "--max-func-lines",
+        type=int,
+        default=200,
+        help="god-function threshold (default 200)",
+    )
+    parser.add_argument(
+        "--baseline", help="JSON file of grandfathered findings to ignore"
+    )
+    parser.add_argument(
+        "--regenerate-baseline",
+        metavar="PATH",
+        help="write ALL current findings to PATH as the new baseline (ratchet reset) and exit 0",
+    )
+    parser.add_argument(
+        "--changed-only",
+        nargs="*",
+        metavar="FILE",
+        help="ratchet scope (DEBT-164): with --strict, block ONLY on new findings whose "
+        "file is in this set (e.g. `git diff --cached --name-only`). New findings in "
+        "files NOT in the set are warned-but-allowed — the non-bricking pre-commit gate.",
+    )
     return parser
 
 
 def _baseline_sort_key(record):
     """Return the deterministic ordering key for regenerated baseline records."""
     return (
-        record["check"], record.get("file") or "", record.get("plugin") or "",
-        record.get("func") or "", record.get("method") or "", record.get("mode") or "",
-        record.get("target") or "", record.get("literal") or "",
+        record["check"],
+        record.get("file") or "",
+        record.get("plugin") or "",
+        record.get("func") or "",
+        record.get("method") or "",
+        record.get("mode") or "",
+        record.get("target") or "",
+        record.get("literal") or "",
     )
 
 
 def _regenerate_baseline(path, findings):
     """Write the current findings as a stable baseline and report success."""
-    records = sorted((_baseline_record(finding) for finding in findings), key=_baseline_sort_key)
+    records = sorted(
+        (_baseline_record(finding) for finding in findings), key=_baseline_sort_key
+    )
     with open(path, "w") as baseline_file:
         json.dump(records, baseline_file, indent=2)
         baseline_file.write("\n")
@@ -524,8 +560,10 @@ def _print_mode_leaks(findings, baseline):
     """Print CORE_MODE_LEAK records in the existing human report format."""
     for finding in findings:
         tag = _baseline_tag(finding, baseline)
-        print(f"  CORE_MODE_LEAK       {finding['file']}:{finding['line']}  "
-              f"{finding.get('ident','?')}=={finding['mode']!r}{tag}")
+        print(
+            f"  CORE_MODE_LEAK       {finding['file']}:{finding['line']}  "
+            f"{finding.get('ident', '?')}=={finding['mode']!r}{tag}"
+        )
         print(f"      {finding['detail']}")
 
 
@@ -533,8 +571,10 @@ def _print_plugin_name_branches(findings, baseline):
     """Print PLUGIN_NAME_BRANCH records in the existing human report format."""
     for finding in findings:
         tag = _baseline_tag(finding, baseline)
-        print(f"  PLUGIN_NAME_BRANCH   {finding['file']}:{finding['line']}  "
-              f"plugin.name=={finding['mode']!r}{tag}")
+        print(
+            f"  PLUGIN_NAME_BRANCH   {finding['file']}:{finding['line']}  "
+            f"plugin.name=={finding['mode']!r}{tag}"
+        )
         print(f"      {finding['detail']}")
 
 
@@ -542,60 +582,83 @@ def _print_god_functions(findings, baseline):
     """Print GOD_FUNCTION records ordered by descending source span."""
     for finding in sorted(findings, key=lambda item: -item["lines"]):
         tag = _baseline_tag(finding, baseline)
-        print(f"  GOD_FUNCTION         {finding['file']}:{finding['line']}  "
-              f"{finding['func']}() = {finding['lines']} lines{tag}")
+        print(
+            f"  GOD_FUNCTION         {finding['file']}:{finding['line']}  "
+            f"{finding['func']}() = {finding['lines']} lines{tag}"
+        )
 
 
 def _print_registry_gaps(findings, baseline):
     """Print PLUGIN_REGISTRY_INCOMPLETE records in the human report format."""
     for finding in findings:
         tag = _baseline_tag(finding, baseline)
-        print(f"  PLUGIN_REGISTRY_INCOMPLETE  {finding.get('plugin')}  {finding['detail']}{tag}")
+        print(
+            f"  PLUGIN_REGISTRY_INCOMPLETE  {finding.get('plugin')}  {finding['detail']}{tag}"
+        )
 
 
 def _print_fsm_hardcodes(findings, baseline):
     """Print FSM_HARDCODED_TRANSITION records in the human report format."""
     for finding in findings:
         tag = _baseline_tag(finding, baseline)
-        print(f"  FSM_HARDCODED_TRANSITION  {finding['file']}:{finding['line']}  "
-              f"{finding['detail']}{tag}")
+        print(
+            f"  FSM_HARDCODED_TRANSITION  {finding['file']}:{finding['line']}  "
+            f"{finding['detail']}{tag}"
+        )
 
 
 def _finding_location(finding):
     """Return the display location used by changed-only warnings and blocks."""
     if not finding.get("file"):
         return "?"
-    return f"{finding['file']}:{finding.get('line','?')}"
+    return f"{finding['file']}:{finding.get('line', '?')}"
 
 
 def _print_changed_only(blocking, warn_only):
     """Print changed-only warnings and blocking findings in their established order."""
     for finding in warn_only:
-        print(f"  [warn, not blocking — pre-existing, file not in this commit] "
-              f"{finding['check']} {_finding_location(finding)}")
+        print(
+            f"  [warn, not blocking — pre-existing, file not in this commit] "
+            f"{finding['check']} {_finding_location(finding)}"
+        )
     for finding in blocking:
-        print(f"  [BLOCK — new violation in a file this commit changes] "
-              f"{finding['check']} {_finding_location(finding)}")
-    print(f"  changed-only ratchet: {len(blocking)} blocking, {len(warn_only)} warn-only")
+        print(
+            f"  [BLOCK — new violation in a file this commit changes] "
+            f"{finding['check']} {_finding_location(finding)}"
+        )
+    print(
+        f"  changed-only ratchet: {len(blocking)} blocking, {len(warn_only)} warn-only"
+    )
 
 
-def _print_text_report(findings, baseline, new_findings, max_func_lines, blocking, warn_only,
-                       changed_only):
+@dataclass
+class LintReportOptions:
+    """Text-report switches (threshold + the three mode flags)."""
+
+    max_func_lines: int
+    blocking: bool
+    warn_only: bool
+    changed_only: bool
+
+
+def _print_text_report(findings, baseline, new_findings, options):
     """Print the report-only output without changing its command-line contract."""
     groups = _group_findings(findings)
-    print(f"architecture_lint: {len(groups['CORE_MODE_LEAK'])} core mode-leak(s), "
-          f"{len(groups['PLUGIN_NAME_BRANCH'])} plugin.name-branch(es), "
-          f"{len(groups['GOD_FUNCTION'])} god-function(s) (threshold {max_func_lines}), "
-          f"{len(groups['PLUGIN_REGISTRY_INCOMPLETE'])} registry-gap(s), "
-          f"{len(groups['FSM_HARDCODED_TRANSITION'])} fsm-hardcode(s)")
+    print(
+        f"architecture_lint: {len(groups['CORE_MODE_LEAK'])} core mode-leak(s), "
+        f"{len(groups['PLUGIN_NAME_BRANCH'])} plugin.name-branch(es), "
+        f"{len(groups['GOD_FUNCTION'])} god-function(s) (threshold {options.max_func_lines}), "
+        f"{len(groups['PLUGIN_REGISTRY_INCOMPLETE'])} registry-gap(s), "
+        f"{len(groups['FSM_HARDCODED_TRANSITION'])} fsm-hardcode(s)"
+    )
     _print_mode_leaks(groups["CORE_MODE_LEAK"], baseline)
     _print_plugin_name_branches(groups["PLUGIN_NAME_BRANCH"], baseline)
     _print_god_functions(groups["GOD_FUNCTION"], baseline)
     _print_registry_gaps(groups["PLUGIN_REGISTRY_INCOMPLETE"], baseline)
     _print_fsm_hardcodes(groups["FSM_HARDCODED_TRANSITION"], baseline)
     print(f"\n  new (non-baselined): {len(new_findings)}")
-    if changed_only is not None:
-        _print_changed_only(blocking, warn_only)
+    if options.changed_only is not None:
+        _print_changed_only(options.blocking, options.warn_only)
     print("  ref: docs/design/HARNESS_DESIGN_PHILOSOPHY.md §5 (mechanized invariants)")
 
 
@@ -615,10 +678,21 @@ def _print_json_report(findings, new_findings, blocking, warn_only, changed_only
 def _print_report(args, findings, new_findings, baseline, blocking, warn_only):
     """Select the requested JSON or human-readable report renderer."""
     if args.json:
-        _print_json_report(findings, new_findings, blocking, warn_only, args.changed_only)
+        _print_json_report(
+            findings, new_findings, blocking, warn_only, args.changed_only
+        )
         return
-    _print_text_report(findings, baseline, new_findings, args.max_func_lines, blocking, warn_only,
-                       args.changed_only)
+    _print_text_report(
+        findings,
+        baseline,
+        new_findings,
+        LintReportOptions(
+            max_func_lines=args.max_func_lines,
+            blocking=blocking,
+            warn_only=warn_only,
+            changed_only=args.changed_only,
+        ),
+    )
 
 
 def main(argv=None):
@@ -629,8 +703,11 @@ def main(argv=None):
         return _regenerate_baseline(args.regenerate_baseline, findings)
     baseline = _load_baseline(args.baseline)
     new_findings = [finding for finding in findings if _key(finding) not in baseline]
-    blocking, warn_only = partition_by_changed(new_findings, args.changed_only) \
-        if args.changed_only is not None else (new_findings, [])
+    blocking, warn_only = (
+        partition_by_changed(new_findings, args.changed_only)
+        if args.changed_only is not None
+        else (new_findings, [])
+    )
     _print_report(args, findings, new_findings, baseline, blocking, warn_only)
     # With --changed-only, only violations in changed files block (DEBT-164).
     return 1 if args.strict and blocking else 0

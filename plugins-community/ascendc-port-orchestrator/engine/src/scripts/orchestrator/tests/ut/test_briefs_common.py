@@ -8,12 +8,13 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 """Unit tests for briefs/_common.py + agent_dispatch.py."""
+
 from __future__ import annotations
 
 import json
 import sys
 import textwrap
-from dataclasses import replace
+from dataclasses import replace  # noqa: F401
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,130 @@ def test_load_env_missing_file_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Generation blocks: EXEC modes (local/local-container/remote/remote-container),
+# open generation set (A2 today, A6/A7 later), SOURCE selector, retired
+# CONTAINER local magic string, A3_HOST_MODE compat.
+# ---------------------------------------------------------------------------
+def test_exec_modes_normalize_transport_view(tmp_path):
+    """Each EXEC mode folds into the legacy (host, container) pair so every
+
+    existing `container == "local"` consumer keeps its semantics.
+    """
+    cases = {
+        "local": ("", "local"),
+        "local-container": ("", "cjm_cann"),
+        "remote": ("a5.test", ""),
+        "remote-container": ("a5.test", "cjm_cann"),
+    }
+    for mode, (want_host, want_container) in cases.items():
+        env_file = tmp_path / ".ascendc_env"
+        env_file.write_text(
+            f"TARGET=a5\nA5_HOST=a5.test\nA5_CONTAINER=cjm_cann\nA5_EXEC={mode}\n"
+        )
+        env = bc.load_env(env_file)
+        assert env.exec_mode() == mode
+        assert (env.host, env.container) == (want_host, want_container), mode
+
+
+def test_exec_default_is_remote_container(tmp_path):
+    """No EXEC declared — the legacy ssh+docker path is the default."""
+    env_file = tmp_path / ".ascendc_env"
+    env_file.write_text("TARGET=a5\nA5_HOST=a5.test\nA5_CONTAINER=cjm_cann\n")
+    env = bc.load_env(env_file)
+    assert env.exec_mode() == "remote-container"
+    assert env.host == "a5.test" and env.container == "cjm_cann"
+
+
+@pytest.mark.parametrize("bad", ["ssh", "docker", "LOCAL", "remote_container"])
+def test_exec_invalid_value_rejected(tmp_path, bad):
+    env_file = tmp_path / ".ascendc_env"
+    env_file.write_text(f"TARGET=a5\nA5_HOST=h\nA5_EXEC={bad}\n")
+    with pytest.raises(ValueError, match="A5_EXEC must be one of"):
+        bc.load_env(env_file)
+
+
+def test_container_local_maps_to_exec_local(tmp_path, capsys):
+    """A5_CONTAINER=local is the legacy local shorthand — it maps onto
+
+    EXEC=local (with a migration warning) so master-era templates/scripts
+    keep working; EXEC remains the authoritative declaration.
+    """
+    env_file = tmp_path / ".ascendc_env"
+    env_file.write_text("TARGET=a5\nA5_HOST=h\nA5_CONTAINER=local\n")
+    env = bc.load_env(env_file)
+    assert env.targets["a5"].exec_mode == "local"
+    assert "A5_EXEC=local" in capsys.readouterr().err
+
+
+def test_generation_blocks_discovered_generically(tmp_path):
+    """A2 works today; any A<n>_* block is discovered with no code change."""
+    env_file = tmp_path / ".ascendc_env"
+    env_file.write_text(
+        "TARGET=a5\nSOURCE=a2\n"
+        "A5_HOST=a5.test\nA5_CONTAINER=cjm\n"
+        "A2_HOST=a2.test\nA2_USER=opus\nA2_CONTAINER=npu-a2\n"
+        "A2_CANN_PATH=/cann/a2\nA2_SOC_VERSION=Ascend910\n"
+    )
+    env = bc.load_env(env_file)
+    assert set(env.targets) >= {"a5", "a2"}
+    a2 = env.target_config("a2")
+    assert (a2.host, a2.user, a2.container) == ("a2.test", "opus", "npu-a2")
+    assert a2.cann_path == "/cann/a2"
+    # SOURCE selector: the reference-side view IS the a2 block (default a3).
+    assert env.source_arch == "a2"
+    assert env.source_view().host == "a2.test"
+
+
+def test_source_defaults_to_a3(tmp_path):
+    env_file = tmp_path / ".ascendc_env"
+    env_file.write_text("TARGET=a5\nA5_HOST=h\nA3_HOST=a3.test\n")
+    env = bc.load_env(env_file)
+    assert env.source_arch == "a3"
+    assert env.source_view().host == "a3.test"
+
+
+def test_source_invalid_value_rejected(tmp_path):
+    env_file = tmp_path / ".ascendc_env"
+    env_file.write_text("TARGET=a5\nSOURCE=cannbench\n")
+    with pytest.raises(ValueError, match="SOURCE must be a generation"):
+        bc.load_env(env_file)
+
+
+def test_a3_host_mode_env_var_maps_to_exec_remote(tmp_path, monkeypatch, capsys):
+    """A3_HOST_MODE set to 1 in the process env, host-direct ≡ A3_EXEC remote, warning follows."""
+    monkeypatch.setenv("A3_HOST_MODE", "1")
+    env_file = tmp_path / ".ascendc_env"
+    env_file.write_text("TARGET=a5\nA5_HOST=h\nA3_HOST=a3.test\nA3_CONTAINER=npu\n")
+    env = bc.load_env(env_file)
+    assert env.exec_mode("a3") == "remote"
+    assert env.a3_host == "a3.test" and env.a3_container == ""
+    assert "A3_HOST_MODE=1 is deprecated; set A3_EXEC=remote" in capsys.readouterr().err
+
+
+def test_legacy_constructor_folds_into_blocks():
+    """Direct AscendCEnv(...) construction keeps the legacy kwargs working."""
+    env = bc.AscendCEnv(
+        target="a5",
+        host="h",
+        user="u",
+        container="c",
+        cann_path="/cp",
+        soc_version="s",
+        benchmark_root="/b",
+        local_benchmark="/lb",
+        local_project="/lp",
+        archive_project="ap",
+        a3_host="a3h",
+    )
+    assert (env.host, env.container, env.cann_path) == ("h", "c", "/cp")
+    assert env.a3_host == "a3h"
+    assert env.source_view().host == "a3h"
+    # a specific per-generation key wins over the active-view kwarg
+    env2 = bc.AscendCEnv(target="a5", host="h", a5_host="h5")
+    assert env2.host == "h5"
+
+
+# ---------------------------------------------------------------------------
 # DEBT-227: target-specific SOC_VERSION / CANN_PATH must WIN over a generic
 # one (regression for the customer-repro config bug where a stale generic
 # SOC_VERSION silently overrode A3_SOC_VERSION → wrong SoC used for the build).
@@ -77,7 +202,8 @@ def test_a3_soc_version_wins_over_conflicting_generic(tmp_path, capsys):
     A3_SOC_VERSION must win, and a loud WARNING must be emitted (never silent).
     """
     env_file = tmp_path / ".ascendc_env"
-    env_file.write_text(textwrap.dedent("""\
+    env_file.write_text(
+        textwrap.dedent("""\
         TARGET=a3
         A3_HOST=198.51.100.92
         A3_CONTAINER=npu-a3
@@ -85,7 +211,8 @@ def test_a3_soc_version_wins_over_conflicting_generic(tmp_path, capsys):
         A3_CANN_PATH=/usr/local/Ascend/cann
         SOC_VERSION=Ascend950PR_9579
         CANN_PATH=/data/cann_b103/cann-9.0.0
-    """))
+    """)
+    )
     env = bc.load_env(env_file)
     # Target-specific wins (was: generic silently overrode → Ascend950PR_9579).
     assert env.soc_version == "Ascend910_9392"
@@ -99,34 +226,41 @@ def test_a3_soc_version_wins_over_conflicting_generic(tmp_path, capsys):
 def test_no_warning_when_generic_matches_target_specific(tmp_path, capsys):
     """No conflict warning when the generic key equals the target-specific one."""
     env_file = tmp_path / ".ascendc_env"
-    env_file.write_text(textwrap.dedent("""\
+    env_file.write_text(
+        textwrap.dedent("""\
         TARGET=a3
         A3_HOST=198.51.100.92
         A3_CONTAINER=npu-a3
         A3_SOC_VERSION=Ascend910_9392
         SOC_VERSION=Ascend910_9392
-    """))
+    """)
+    )
     env = bc.load_env(env_file)
     assert env.soc_version == "Ascend910_9392"
     assert "WARNING" not in capsys.readouterr().err
 
 
 def test_generic_soc_version_still_used_as_fallback(tmp_path, capsys):
-    """Backward-compat: when NO target-specific key is set, the generic key is
-    still honored (and no warning fires).
+    """Backward-compat: when NO block key is set, the deprecated generic key
+    still fills the EMPTY active-block field — loudly (migration warning
+    names the block key to write instead), never silently.
     """
     env_file = tmp_path / ".ascendc_env"
-    env_file.write_text(textwrap.dedent("""\
+    env_file.write_text(
+        textwrap.dedent("""\
         TARGET=a3
         A3_HOST=198.51.100.92
         A3_CONTAINER=npu-a3
         SOC_VERSION=Ascend910_9392
         CANN_PATH=/usr/local/Ascend/cann
-    """))
+    """)
+    )
     env = bc.load_env(env_file)
     assert env.soc_version == "Ascend910_9392"
     assert env.cann_path == "/usr/local/Ascend/cann"
-    assert "WARNING" not in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "SOC_VERSION is deprecated — write A3_SOC_VERSION" in err
+    assert "CANN_PATH is deprecated — write A3_CANN_PATH" in err
 
 
 # ---------------------------------------------------------------------------
@@ -135,12 +269,17 @@ def test_generic_soc_version_still_used_as_fallback(tmp_path, capsys):
 def test_g7_slug_strips_numeric_prefix():
     assert bc.g7_slug("22_Nonzero", "aog-kernel-worker", 1) == "nonzero-kw-1"
     assert bc.g7_slug("9_TopKTopP", "aog-precision-probe", 3) == "topktopp-pp-3"
-    assert bc.g7_slug("14_AdaptiveInstanceNormalization2DBackward",
-                       "aog-kernel-worker", 2) == "adaptiveinstancenormalization2dbackward-kw-2"
+    assert (
+        bc.g7_slug("14_AdaptiveInstanceNormalization2DBackward", "aog-kernel-worker", 2)
+        == "adaptiveinstancenormalization2dbackward-kw-2"
+    )
 
 
 def test_g7_slug_lowercases():
-    assert bc.g7_slug("12_KvRmsnormRopeCache", "aog-kernel-optimizer", 1) == "kvrmsnormropecache-ko-1"
+    assert (
+        bc.g7_slug("12_KvRmsnormRopeCache", "aog-kernel-optimizer", 1)
+        == "kvrmsnormropecache-ko-1"
+    )
 
 
 def test_g7_slug_each_agent_code():
@@ -181,13 +320,16 @@ def test_env_block_includes_lane_and_npu_constraint(fake_env, tmp_path):
     assert "PLATFORM_SIMT: true" in block
     assert "Ascend950PR_9579" in block
     assert "ARCHIVE_PROJECT: generated_ops" in block
-    line = next(line for line in block.splitlines() if line.startswith("DEPLOY_STAGE_DIR:"))
+    line = next(
+        line for line in block.splitlines() if line.startswith("DEPLOY_STAGE_DIR:")
+    )
     assert not line.split(":", 1)[1].strip().startswith("/tmp/")
 
 
 def test_load_env_and_env_block_surface_a3_stage_roots(tmp_path):
     env_file = tmp_path / ".ascendc_env"
-    env_file.write_text(textwrap.dedent("""\
+    env_file.write_text(
+        textwrap.dedent("""\
         TARGET=a3
         A3_HOST=198.51.100.92
         A3_USER=root
@@ -200,7 +342,8 @@ def test_load_env_and_env_block_surface_a3_stage_roots(tmp_path):
         A3_HOST_BACKUP=/data2/npu_user
         A3_DEPLOY_STAGE_HOST=/home/npu_user
         A3_DEPLOY_STAGE_CONTAINER=/home/npu_user
-    """))
+    """)
+    )
     env = bc.load_env(env_file)
     workspace = tmp_path / "codex_e2e_add_a3"
     workspace.mkdir()
@@ -211,7 +354,9 @@ def test_load_env_and_env_block_surface_a3_stage_roots(tmp_path):
     assert "A3_HOST_HOME: /home/npu_user" in block
     assert "A3_DEPLOY_STAGE_HOST: /home/npu_user" in block
     assert "A3_DEPLOY_STAGE_CONTAINER: /home/npu_user" in block
-    line = next(line for line in block.splitlines() if line.startswith("DEPLOY_STAGE_DIR:"))
+    line = next(
+        line for line in block.splitlines() if line.startswith("DEPLOY_STAGE_DIR:")
+    )
     assert line.split(":", 1)[1].strip().startswith("op_codex_e2e_add_a3_lane0_")
 
 
@@ -226,13 +371,23 @@ def test_hard_floors_cold_start_emits_goal(tmp_path):
 def test_hard_floors_with_baseline_reads_verification(tmp_path):
     workspace = tmp_path / "op_with_baseline"
     workspace.mkdir()
-    (workspace / "verification.json").write_text(json.dumps({
-        "precision": {"status": "PASS",
-                      "pass_a": {"status": "PASS", "n_pass": 50, "n_total": 50},
-                      "pass_b": {"status": "PASS", "n_pass": 10, "n_total": 10}},
-        "performance": {"status": "PASS", "ratio": 1.15},
-        "determinism": {"policy_satisfied": True, "n_identical": 50, "n_total": 50},
-    }))
+    (workspace / "verification.json").write_text(
+        json.dumps(
+            {
+                "precision": {
+                    "status": "PASS",
+                    "pass_a": {"status": "PASS", "n_pass": 50, "n_total": 50},
+                    "pass_b": {"status": "PASS", "n_pass": 10, "n_total": 10},
+                },
+                "performance": {"status": "PASS", "ratio": 1.15},
+                "determinism": {
+                    "policy_satisfied": True,
+                    "n_identical": 50,
+                    "n_total": 50,
+                },
+            }
+        )
+    )
     block = bc.hard_floors_block(workspace)
     assert "50/50 PASS" in block
     assert "10/10 PASS" in block
@@ -252,7 +407,9 @@ def _capture_okf_query(monkeypatch):
         return []
 
     monkeypatch.setattr(_ext, "search_external_cards", _search)
-    monkeypatch.setattr(_ext, "external_kb_root", lambda: Path("/fake/cannbot-knowledge"))
+    monkeypatch.setattr(
+        _ext, "external_kb_root", lambda: Path("/fake/cannbot-knowledge")
+    )
     return captured
 
 
@@ -262,15 +419,20 @@ def test_kb_manifest_block_classification_tags_reach_okf_query(tmp_path, monkeyp
     OKF-only 迁移退役（2026-08），tags 的消费点只剩 OKF 检索。
     """
     import json as _json
+
     workspace = tmp_path / "22_Nonzero"
     workspace.mkdir()
-    (workspace / "op_classification.json").write_text(_json.dumps({
-        "op_class_tags": ["scatter-gather", "reduction"],
-        "kb_recommendations": [
-            {"path": "OPERATIONAL_KNOWLEDGE.md#OL-110"},
-            {"path": "OPERATIONAL_KNOWLEDGE.md#OL-67"},
-        ],
-    }))
+    (workspace / "op_classification.json").write_text(
+        _json.dumps(
+            {
+                "op_class_tags": ["scatter-gather", "reduction"],
+                "kb_recommendations": [
+                    {"path": "OPERATIONAL_KNOWLEDGE.md#OL-110"},
+                    {"path": "OPERATIONAL_KNOWLEDGE.md#OL-67"},
+                ],
+            }
+        )
+    )
     captured = _capture_okf_query(monkeypatch)
     block = bc.kb_manifest_block("22_Nonzero", workspace=workspace)
     query = captured.get("query") or ""
@@ -282,6 +444,28 @@ def test_kb_manifest_block_classification_tags_reach_okf_query(tmp_path, monkeyp
     assert "OKF 检索无返回" in block
     assert "# KB MANIFEST" not in block
     assert "ascend950pr.md" in block
+
+
+def test_kb_manifest_block_all_tags_reach_okf_query(tmp_path, monkeypatch):
+    """分类产出的每个 tag 都必须进入 OKF 检索词。"""
+    import json as _json
+
+    tags = [f"tag{i}" for i in range(1, 21)]
+    workspace = tmp_path / "22_Nonzero"
+    workspace.mkdir()
+    (workspace / "op_classification.json").write_text(
+        _json.dumps(
+            {
+                "op_class_tags": tags,
+            }
+        )
+    )
+    captured = _capture_okf_query(monkeypatch)
+    bc.kb_manifest_block("22_Nonzero", workspace=workspace)
+    query = captured.get("query") or ""
+    assert query, "external knowledge adapter was not reached"
+    for tag in tags:
+        assert tag in query, f"tag {tag} missing from OKF query"
 
 
 def test_kb_manifest_untagged_op_fails_loud_without_kb(tmp_path, monkeypatch):
@@ -320,30 +504,39 @@ def test_kw_brief_cold_start_has_all_sections(tmp_path, fake_env, monkeypatch):
     read-path (唯一 b-tier) into the brief.
     """
     import json as _json
+
     workspace = tmp_path / "22_Nonzero"
     workspace.mkdir()
     (workspace / "PROGRESS.md").write_text("")
-    (workspace / "op_classification.json").write_text(_json.dumps({
-        "op_class_tags": ["scatter-gather", "reduction"],
-        "kb_recommendations": [
-            {"path": "OPERATIONAL_KNOWLEDGE.md#OL-67"},
-        ],
-    }))
+    (workspace / "op_classification.json").write_text(
+        _json.dumps(
+            {
+                "op_class_tags": ["scatter-gather", "reduction"],
+                "kb_recommendations": [
+                    {"path": "OPERATIONAL_KNOWLEDGE.md#OL-67"},
+                ],
+            }
+        )
+    )
     # OKF-only: force the read-path to the mocked subprocess (empty hits →
     # loud marker), keeping the assembly test independent of the real index.
     _capture_okf_query(monkeypatch)
-    scoped_env = replace(
-        fake_env,
-        opgen_mode="port_a3_to_a5",
-        port_a3_source="/fixture/arch22/22_Nonzero",
-        archive_project="a3_to_a5_port",
-    )
+    # AscendCEnv is a plain class on this branch (generation-block model with
+    # a legacy property surface) — mutate the fixture instance directly.
+    scoped_env = fake_env
+    scoped_env.opgen_mode = "port_a3_to_a5"
+    scoped_env.port_a3_source = "/fixture/arch22/22_Nonzero"
+    scoped_env.archive_project = "a3_to_a5_port"
 
     from briefs.kw_brief import build_worker_brief
+
     brief = build_worker_brief(
-        op="22_Nonzero", workspace=workspace,
-        lane=0, spawn_index=1,
-        iter_cap_remaining=9, env=scoped_env,
+        op="22_Nonzero",
+        workspace=workspace,
+        lane=0,
+        spawn_index=1,
+        iter_cap_remaining=9,
+        env=scoped_env,
     )
     # G7 slug at top
     assert brief.startswith("nonzero-kw-1")
@@ -364,16 +557,20 @@ def test_kw_brief_with_directive_includes_it(tmp_path, fake_env):
     workspace = tmp_path / "fresh"
     workspace.mkdir()
     from briefs.kw_brief import build_worker_brief
-    scoped_env = replace(
-        fake_env,
+
+    scoped_env = fake_env.replace(
         opgen_mode="backward",
         archive_project="backward_ops",
     )
 
     directive = "Apply Direction 4: emit grad_weight in fp32, cast in pybind."
     brief = build_worker_brief(
-        op="14_AdaptiveInstanceNormalization2DBackward", workspace=workspace,
-        lane=1, spawn_index=2, iter_cap_remaining=8, env=scoped_env,
+        op="14_AdaptiveInstanceNormalization2DBackward",
+        workspace=workspace,
+        lane=1,
+        spawn_index=2,
+        iter_cap_remaining=8,
+        env=scoped_env,
         directive_text=directive,
     )
     assert directive in brief
@@ -398,6 +595,7 @@ def test_load_env_honors_monkeypatched_default(tmp_path, monkeypatch):
         "A5_CONTAINER=patched-c\nA5_CANN_PATH=/x\nA5_SOC_VERSION=Y\n"
     )
     from briefs import _common as _bc
+
     monkeypatch.setattr(_bc, "DEFAULT_ASCENDC_ENV", env_file)
     env = _bc.load_env()  # no-arg — must use monkeypatched default
     assert env.host == "patched-host", (
@@ -414,6 +612,7 @@ def test_resolve_backend_from_env():
         def __init__(self, backend=None):
             if backend is not None:
                 self.backend = backend
+
     # The engine supports one kernel-authoring backend.
     assert bc.resolve_backend_from_env("ascendc", _E("ascendc")) == "ascendc"
     with pytest.raises(ValueError, match="only the AscendC backend"):

@@ -29,6 +29,7 @@ backend-requiring integration tests live in ``it/`` where a real backend is expe
 want a specific O17 classification still monkeypatch ``_invoke_claude_skill`` themselves — the
 per-test patch is applied after this fixture and wins.
 """
+
 from __future__ import annotations
 
 import logging
@@ -59,10 +60,11 @@ def _hermetic_o17_backend(monkeypatch):
     monkeypatch.setattr(
         o17,
         "_invoke_claude_skill",
-        lambda workspace, timeout=300: (
+        lambda workspace, timeout=900: (
             False,
             "",
             "hermetic ut: O17 classify skill disabled (no live claude in the ut gate)",
+            False,
         ),
         raising=True,
     )
@@ -95,7 +97,9 @@ def _hermetic_harness_pristine(monkeypatch):
     monkeypatch.setattr(
         hp,
         "harness_state",
-        lambda *a, **k: hp.HarnessState(hp.CLEAN, reason="hermetic ut: probe pinned CLEAN"),
+        lambda *a, **k: hp.HarnessState(
+            hp.CLEAN, reason="hermetic ut: probe pinned CLEAN"
+        ),
         raising=True,
     )
 
@@ -173,22 +177,30 @@ def _v02_card(*, entry_id=None, applies_to=None, body=""):
 # (external-repo) locations. Scopes mirror the real cards: PB-34/OL-275/PB-55
 # are V220-only, OL-220/OL-223/PB-45/EC-68 are V351-only, PB-35 names both.
 _EXTERNAL_FIXTURE_CARDS = {
-    "ops/ascendc/runbooks/compilation/pb_34_matmulimpl_with_manual_crosscoresetflag_waitflag_m.md":
-        _v02_card(entry_id="PB-34", applies_to="soc=Ascend910_9382 (V220 A2/A3 single-die)"),
-    "ops/ascendc/runbooks/compilation/pb_35_event_t_0_for_cube_internal_pipe_sync_mte1_m_m_fix.md":
-        _v02_card(entry_id="PB-35", applies_to="soc=Ascend910_9382,Ascend950PR_9579"),
-    "ops/ascendc/runbooks/compilation/pb_55_mix_reverse_handshake_counted.md":
-        _v02_card(entry_id="PB-55", applies_to="soc=Ascend910_9382"),
-    "ops/ascendc/runbooks/compilation/ec_68_507015_setsysworkspaceforce_on_aclrt_launch_mix.md":
-        _v02_card(entry_id="EC-68", applies_to="soc=Ascend950PR"),
-    "ops/ascendc/optimizations/pb_45_tpipe_reset_frees_global_event_pool.md":
-        _v02_card(entry_id="PB-45", applies_to="soc=Ascend950PR"),
-    "ops/ascendc/optimizations/ol_220_cube_vec_mix_ascendc_library_build_recipe.md":
-        _v02_card(entry_id="OL-220", applies_to="soc=Ascend950PR"),
-    "ops/ascendc/optimizations/ol_223_reset_safe_cube_internal_l0_fences.md":
-        _v02_card(entry_id="OL-223", applies_to="soc=Ascend950PR"),
-    "ops/ascendc/optimizations/ol_275_managed_cube_kfc_lifecycle.md":
-        _v02_card(entry_id="OL-275", applies_to="soc=Ascend910_V220"),
+    "ops/ascendc/runbooks/compilation/pb_34_matmulimpl_with_manual_crosscoresetflag_waitflag_m.md": _v02_card(
+        entry_id="PB-34", applies_to="soc=Ascend910_9382 (V220 A2/A3 single-die)"
+    ),
+    "ops/ascendc/runbooks/compilation/pb_35_event_t_0_for_cube_internal_pipe_sync_mte1_m_m_fix.md": _v02_card(
+        entry_id="PB-35", applies_to="soc=Ascend910_9382,Ascend950PR_9579"
+    ),
+    "ops/ascendc/runbooks/compilation/pb_55_mix_reverse_handshake_counted.md": _v02_card(
+        entry_id="PB-55", applies_to="soc=Ascend910_9382"
+    ),
+    "ops/ascendc/runbooks/compilation/ec_68_507015_setsysworkspaceforce_on_aclrt_launch_mix.md": _v02_card(
+        entry_id="EC-68", applies_to="soc=Ascend950PR"
+    ),
+    "ops/ascendc/optimizations/pb_45_tpipe_reset_frees_global_event_pool.md": _v02_card(
+        entry_id="PB-45", applies_to="soc=Ascend950PR"
+    ),
+    "ops/ascendc/optimizations/ol_220_cube_vec_mix_ascendc_library_build_recipe.md": _v02_card(
+        entry_id="OL-220", applies_to="soc=Ascend950PR"
+    ),
+    "ops/ascendc/optimizations/ol_223_reset_safe_cube_internal_l0_fences.md": _v02_card(
+        entry_id="OL-223", applies_to="soc=Ascend950PR"
+    ),
+    "ops/ascendc/optimizations/ol_275_managed_cube_kfc_lifecycle.md": _v02_card(
+        entry_id="OL-275", applies_to="soc=Ascend910_V220"
+    ),
     # §4 section-scope anchor for `kb_section_soc_families(..., "4")`: the
     # applies_to line must be a PLAIN line (the section scanner does not see
     # through a blockquote `>`).
@@ -213,9 +225,7 @@ _EXTERNAL_FIXTURE_CARDS = {
         "> applies_to: soc=Ascend950PR/V351 (arch35 only)\n"
     ),
     "ops/ascendc/examples/hkv_patterns.md": (
-        "# HKV patterns\n"
-        "\n"
-        "No applies_to header — neutral template.\n"
+        "# HKV patterns\n\nNo applies_to header — neutral template.\n"
     ),
     # fa_class_template.md: 12 frontmatter lines push `applies_to` past a naive
     # lines[:20] window — the DEBT window regression fixture (see
@@ -255,7 +265,14 @@ def external_kb_fixture(monkeypatch, tmp_path):
     registry = root / "governance" / "schemas" / "registries.yaml"
     registry.parent.mkdir(parents=True)
     registry.write_text("domains: {}\n")
-    kq = root / ".agents" / "skills" / "knowledge-query" / "scripts" / "knowledge_query.py"
+    kq = (
+        root
+        / ".agents"
+        / "skills"
+        / "knowledge-query"
+        / "scripts"
+        / "knowledge_query.py"
+    )
     kq.parent.mkdir(parents=True)
     kq.write_text("# fixture placeholder\n")
     for rel, content in _EXTERNAL_FIXTURE_CARDS.items():
@@ -288,14 +305,16 @@ def external_kb_fixture(monkeypatch, tmp_path):
             except OSError:
                 continue
             if q in text:
-                hits.append({
-                    "local_path": str(path),
-                    "path": str(path.relative_to(root / "knowledge")),
-                    "title": path.stem,
-                    "type": "runbook",
-                    "status": "stable",
-                    "score": 1.0,
-                })
+                hits.append(
+                    {
+                        "local_path": str(path),
+                        "path": str(path.relative_to(root / "knowledge")),
+                        "title": path.stem,
+                        "type": "runbook",
+                        "status": "stable",
+                        "score": 1.0,
+                    }
+                )
         return hits[: max(int(per_platform_k or 10), 10)]
 
     # Patch through the SAME import statement the code under test uses. A

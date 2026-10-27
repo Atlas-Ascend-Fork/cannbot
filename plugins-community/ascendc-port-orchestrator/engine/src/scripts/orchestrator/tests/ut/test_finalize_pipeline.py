@@ -15,6 +15,7 @@ ref_runnable.json, run_*.py scripts, state logs). Caught when user asked
 why op#5_Cumsum's archive was missing edge data after finalize ran.
 v2 promotes everything except clear scratch/internal patterns.
 """
+
 from __future__ import annotations
 
 import json
@@ -38,6 +39,7 @@ def _isolate_kb_root(monkeypatch, tmp_path):
     relocated to <plugin_root>/kb/; finalize reads candidates.md via _kb_root()).
     Tests seed their fake KB under project_root/kb/ and read it back through the
     same resolver."""
+
     def _tmp_kb_root():
         return tmp_path / "project_root" / "kb"
 
@@ -46,6 +48,7 @@ def _isolate_kb_root(monkeypatch, tmp_path):
     # finalize_candidates; redirect that module's resolver too so verified_on
     # reads the per-test tmp KB.
     import finalize_candidates as _fc  # top-level, matches `import finalize_pipeline as fp`
+
     monkeypatch.setattr(_fc, "_kb_root", _tmp_kb_root)
 
 
@@ -62,7 +65,9 @@ def _seed_workspace(ws: Path):
     (ws / "ref_runnable.json").write_text(json.dumps({"verdict": "RUNNABLE"}))
     (ws / "run_pass_b.py").write_text("# verifier\n")
     (ws / "self_critic_report.md").write_text("# critic\n")
-    (ws / "state_transitions.jsonl").write_text(json.dumps({"to_state": "finalize"}) + "\n")
+    (ws / "state_transitions.jsonl").write_text(
+        json.dumps({"to_state": "finalize"}) + "\n"
+    )
     (ws / "manifest.json").write_text(json.dumps({"op": "x"}))
     (ws / "kernel").mkdir()
     (ws / "kernel" / "k.h").write_text("// kernel")
@@ -91,10 +96,17 @@ def test_promotes_all_real_artifacts(tmp_path):
     rep = fp.finalize_op("test_op", ws, archive_root=archive_root)
 
     expected_files = {
-        "verification.json", "PROGRESS.md", "model.py", "model_new_ascendc.py",
-        "input_gen.py", "compute_reference.py", "edge_dataset.pt",
-        "ref_runnable.json", "run_pass_b.py", "self_critic_report.md",
-        "state_transitions.jsonl", "manifest.json",
+        "verification.json",
+        "PROGRESS.md",
+        "model.py",
+        "model_new_ascendc.py",
+        "input_gen.py",
+        "compute_reference.py",
+        "ref_runnable.json",
+        "run_pass_b.py",
+        "self_critic_report.md",
+        "state_transitions.jsonl",
+        "manifest.json",
     }
     expected_dirs = {"kernel", "probes"}
 
@@ -102,7 +114,48 @@ def test_promotes_all_real_artifacts(tmp_path):
     promoted_dirs = set(rep.dirs_promoted)
     missing = expected_files - promoted_files
     assert not missing, f"missing critical files: {missing}"
-    assert promoted_dirs == expected_dirs, f"dirs: got {promoted_dirs}, want {expected_dirs}"
+    assert promoted_dirs == expected_dirs, (
+        f"dirs: got {promoted_dirs}, want {expected_dirs}"
+    )
+
+
+def test_excludes_regenerable_derived_data(tmp_path):
+    """Multirank regenerable derived data stays out of the archive: the provisioned
+
+    golden tree (regenerable from spec.py + seed), the O2.5 edge truth
+    artifacts (regenerable via input_gen.py — EXACT names, not a blanket
+    *.pt), the CANN runtime dump dir, and the py_ext build artifact. Small
+    legitimate .pt members stay archivable.
+    """
+    ws = tmp_path / "test_op"
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir()
+    _seed_workspace(ws)
+    (ws / "edge_inputs.pt").write_bytes(b"\x80\x02tensor")
+    (ws / "captured_out.pt").write_bytes(b"\x80\x02small")  # legit small .pt
+    (ws / "golden").mkdir()
+    (ws / "golden" / "case0_ws1_randn.pt").write_bytes(b"\x80\x02golden")
+    (ws / "golden" / "manifest.json").write_text("{}")
+    (ws / "extra-info").mkdir()
+    (ws / "extra-info" / "dump.bin").write_bytes(b"dump")
+    (ws / "prj-test_op" / "py_ext").mkdir(parents=True)
+    (ws / "prj-test_op" / "py_ext" / "_C.cpython-311-aarch64-linux-gnu.so").write_bytes(
+        b"so"
+    )
+
+    rep = fp.finalize_op("test_op", ws, archive_root=archive_root)
+
+    promoted = set(rep.files_promoted) | set(rep.dirs_promoted)
+    skipped = set(rep.skipped_names)
+    forbidden = {"edge_dataset.pt", "edge_inputs.pt", "golden", "extra-info"}
+    leaked = forbidden & promoted
+    assert not leaked, f"regenerable derived data leaked into archive: {leaked}"
+    not_recorded = forbidden - skipped
+    assert not not_recorded, f"excluded names not recorded as skipped: {not_recorded}"
+    # the py_ext build artifact is skipped by its own name component
+    assert not any(n.endswith(".so") for n in rep.files_promoted), "build .so leaked"
+    # exact-name rule: a legitimate small .pt member still promotes
+    assert "captured_out.pt" in rep.files_promoted, "blanket .pt rule overreach"
 
 
 def test_excludes_scratch_and_backups(tmp_path):
@@ -117,8 +170,11 @@ def test_excludes_scratch_and_backups(tmp_path):
     skipped = set(rep.skipped_names)
 
     forbidden = {
-        ".agent_died_at_await_worker", ".cc_envelope_log.jsonl",
-        ".kernel_worker_active", ".opgen_state.json", ".finalized-old",
+        ".agent_died_at_await_worker",
+        ".cc_envelope_log.jsonl",
+        ".kernel_worker_active",
+        ".opgen_state.json",
+        ".finalized-old",
         "PROGRESS.md.day4-bak-20260504T062624Z",
         "verification.json.batch6-bak-20260504T215432Z",
         "kernel.h.opt0_bak",
@@ -153,7 +209,9 @@ def test_re_finalize_after_verification_change(tmp_path):
 
     fp.finalize_op("test_op", ws, archive_root=archive_root)
     # Change verification.json — should re-finalize
-    (ws / "verification.json").write_text(json.dumps({"precision": {"status": "PARTIAL"}}))
+    (ws / "verification.json").write_text(
+        json.dumps({"precision": {"status": "PARTIAL"}})
+    )
     r = fp.finalize_op("test_op", ws, archive_root=archive_root)
     assert not r.skipped
 
@@ -326,7 +384,9 @@ def test_p0acw_round2_patches_promote_when_line(tmp_path):
     text = candidates_md.read_text()
     assert "**Promote when**: an a5_ops fused" not in text
     assert "**Promote when**: a5_ops evidence recorded" in text
-    assert "remaining criteria — with a measured improvement vs SyncAll baseline." in text
+    assert (
+        "remaining criteria — with a measured improvement vs SyncAll baseline." in text
+    )
 
 
 def test_p0acw_round2_idempotent_on_already_patched_prose(tmp_path):
@@ -375,12 +435,16 @@ def test_p0acw_verified_on_hook_accepts_partial_with_positive_tier1(tmp_path):
     ws.mkdir()
     # PARTIAL but with pass_a.tier1_pass=1 — kernel correctly implements pattern
     # on its 1 in-scope case; other 60 are _OutOfScope structural skips.
-    (ws / "verification.json").write_text(json.dumps({
-        "precision": {
-            "status": "PARTIAL",
-            "pass_a": {"tier1_pass": 1, "total": 61},
-        }
-    }))
+    (ws / "verification.json").write_text(
+        json.dumps(
+            {
+                "precision": {
+                    "status": "PARTIAL",
+                    "pass_a": {"tier1_pass": 1, "total": 61},
+                }
+            }
+        )
+    )
     (ws / "probe_report.md").write_text("CAND-FOO1 cited\n")
 
     result = fp.update_verified_on_for_consumed_candidates(ws, "test_op", project_root)
@@ -396,15 +460,20 @@ def test_p0acw_verified_on_hook_rejects_partial_with_zero_tier1(tmp_path):
     kb = project_root / "kb" / "reference" / "patterns" / "unverified"
     kb.mkdir(parents=True)
     candidates_md = kb / "candidates.md"
-    candidates_md.write_text(
-        "## CAND-X: Test\n`applies_to: op_class=test`\n\nBody.\n"
-    )
+    candidates_md.write_text("## CAND-X: Test\n`applies_to: op_class=test`\n\nBody.\n")
 
     ws = tmp_path / "test_op"
     ws.mkdir()
-    (ws / "verification.json").write_text(json.dumps({
-        "precision": {"status": "PARTIAL", "pass_a": {"tier1_pass": 0, "total": 50}}
-    }))
+    (ws / "verification.json").write_text(
+        json.dumps(
+            {
+                "precision": {
+                    "status": "PARTIAL",
+                    "pass_a": {"tier1_pass": 0, "total": 50},
+                }
+            }
+        )
+    )
     (ws / "analysis.md").write_text("CAND-X cited\n")
 
     result = fp.update_verified_on_for_consumed_candidates(ws, "test_op", project_root)
@@ -443,9 +512,7 @@ def test_p0acw_verified_on_hook_idempotent(tmp_path):
     kb = project_root / "kb" / "reference" / "patterns" / "unverified"
     kb.mkdir(parents=True)
     candidates_md = kb / "candidates.md"
-    candidates_md.write_text(
-        "## CAND-X: title\n`applies_to: op_class=test`\n\nBody.\n"
-    )
+    candidates_md.write_text("## CAND-X: title\n`applies_to: op_class=test`\n\nBody.\n")
 
     ws = tmp_path / "test_op"
     ws.mkdir()
@@ -530,7 +597,10 @@ def test_resolver_abbreviation_match(tmp_path):
     ar = tmp_path / "archives"
     ar.mkdir()
     (ar / "12_KvRmsnormRopeCache").mkdir()
-    assert getattr(fp, "_resolve_archive_op_name")("12_kvrms", ar) == "12_KvRmsnormRopeCache"
+    assert (
+        getattr(fp, "_resolve_archive_op_name")("12_kvrms", ar)
+        == "12_KvRmsnormRopeCache"
+    )
 
 
 def test_resolver_refuses_prefix_only_collision(tmp_path):
@@ -556,9 +626,10 @@ def test_resolver_picks_correct_among_siblings(tmp_path):
     (ar / "19_FusedResidualRmsNormBackward").mkdir()
     (ar / "19_IndexPut").mkdir()
     assert getattr(fp, "_resolve_archive_op_name")("19_IndexPut", ar) == "19_IndexPut"
-    assert getattr(fp, "_resolve_archive_op_name")(
-        "19_FusedResidualRmsNormBackward", ar
-    ) == "19_FusedResidualRmsNormBackward"
+    assert (
+        getattr(fp, "_resolve_archive_op_name")("19_FusedResidualRmsNormBackward", ar)
+        == "19_FusedResidualRmsNormBackward"
+    )
     # Workspace lowercase variant
     assert getattr(fp, "_resolve_archive_op_name")("19_indexput", ar) == "19_IndexPut"
 
@@ -588,8 +659,12 @@ def test_dir_promotion_preserves_archive_only_files(tmp_path):
 
     archive_files = sorted([p.name for p in (archive_dir / "probes").iterdir()])
     assert "probe_pp1.py" in archive_files, "new file must be added"
-    assert "msprof_opt_0.json" in archive_files, "archive-only file must be preserved (REGRESSION)"
-    assert "msprof_opt_1.json" in archive_files, "archive-only file must be preserved (REGRESSION)"
+    assert "msprof_opt_0.json" in archive_files, (
+        "archive-only file must be preserved (REGRESSION)"
+    )
+    assert "msprof_opt_1.json" in archive_files, (
+        "archive-only file must be preserved (REGRESSION)"
+    )
 
 
 def test_dir_promotion_overwrites_workspace_versions(tmp_path):
@@ -616,12 +691,20 @@ def test_check_project_json_metadata_valid(tmp_path):
 
     proj = tmp_path / "output" / "testproj"
     proj.mkdir(parents=True)
-    (proj / "PROJECT.json").write_text(json.dumps({
-        "schema_version": 1, "project": "testproj", "opgen_mode": "backward",
-        "source": {"type": "forward_spec", "path": "testproj/"},
-        "reference_baseline": "cpu_fp64_autograd", "target_chip": "Ascend950PR",
-        "created": "2026-05-27T00:00:00Z", "owner_agent": "test-agent",
-    }))
+    (proj / "PROJECT.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project": "testproj",
+                "opgen_mode": "backward",
+                "source": {"type": "forward_spec", "path": "testproj/"},
+                "reference_baseline": "cpu_fp64_autograd",
+                "target_chip": "Ascend950PR",
+                "created": "2026-05-27T00:00:00Z",
+                "owner_agent": "test-agent",
+            }
+        )
+    )
     ws = proj / "src" / "kernels" / "some_op"
     ws.mkdir(parents=True)
 
@@ -635,11 +718,15 @@ def test_check_project_json_metadata_missing_fields(tmp_path):
 
     proj = tmp_path / "output" / "testproj2"
     proj.mkdir(parents=True)
-    (proj / "PROJECT.json").write_text(json.dumps({
-        "project": "testproj2",
-        # missing: schema_version, opgen_mode, source, reference_baseline,
-        # target_chip, created, owner_agent
-    }))
+    (proj / "PROJECT.json").write_text(
+        json.dumps(
+            {
+                "project": "testproj2",
+                # missing: schema_version, opgen_mode, source, reference_baseline,
+                # target_chip, created, owner_agent
+            }
+        )
+    )
     ws = proj / "src" / "kernels" / "some_op"
     ws.mkdir(parents=True)
 

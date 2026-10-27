@@ -10,8 +10,8 @@
 """orchestrator_cmds.py — CLI subcommand handlers (DEBT-201 god-function split).
 
 Extracted from orchestrator.py to shrink the orchestrator god-file below the
-<1000-line bar.  Only the two scoped start commands (`--port-a3-ops` and
-`--backward`) plus lifecycle handlers remain.
+<1000-line bar.  Only the three scoped start commands (`--port-a3-ops`,
+`--backward`, and `--multirank`) plus lifecycle handlers remain
 (`_parse_bump_caps`).
 
 MONKEYPATCH CONTRACT (OL-160-class latent-coupling guard): symbols tests patch
@@ -25,6 +25,7 @@ orchestrator.py re-imports every public name below so `orchestrator.<cmd>`
 external + test access is preserved. Handler BODIES are byte-identical to the
 original; only the two patched globals were qualified (in code, not comments).
 """
+
 from __future__ import annotations
 import logging
 
@@ -62,7 +63,7 @@ from source_arch import (
     stage_source_tree,
     verify_source_stage,
 )
-from validation import _spec_has_backward_contract, _validate_a3_host_home_mount
+from validation import _spec_has_backward_contract, _validate_a3_host_home_mount  # noqa: F401
 # a5_target_capability imports were folded into the destination-aware call
 # sites (is_limited_soc / limited_target_warning, imported call-time next to
 # the port-destination gate) — see a3_ref_common.PORT_DESTINATIONS.
@@ -111,7 +112,10 @@ def _is_tilelang2ascendc_source_state(state: dict) -> bool:
     if kind in (TILELANG2ASCENDC_SOURCE_KIND, TILELANG2ASCENDC_SOURCE_KIND_ALIAS):
         return True
     port_source = state.get("port_source")
-    return isinstance(port_source, dict) and port_source.get("kind") == TILELANG2ASCENDC_SOURCE_KIND
+    return (
+        isinstance(port_source, dict)
+        and port_source.get("kind") == TILELANG2ASCENDC_SOURCE_KIND
+    )
 
 
 def _tilelang2ascendc_stage_binding_ok(port_source: dict, state: dict) -> bool:
@@ -149,7 +153,10 @@ def _tilelang2ascendc_identity_error(state: dict) -> str | None:
     port_source = state.get("port_source")
     if state.get("source_kind") != TILELANG2ASCENDC_SOURCE_KIND:
         return "TileLang2AscendC source_kind is missing or mismatched"
-    if not isinstance(port_source, dict) or port_source.get("kind") != TILELANG2ASCENDC_SOURCE_KIND:
+    if (
+        not isinstance(port_source, dict)
+        or port_source.get("kind") != TILELANG2ASCENDC_SOURCE_KIND
+    ):
         return "TileLang2AscendC port_source.kind is missing or mismatched"
     if state.get("source_arch") != "arch35" or state.get("target_arch") != "arch35":
         return "TileLang2AscendC route must persist source_arch=target_arch=arch35"
@@ -170,7 +177,11 @@ def _verify_tilelang2ascendc_source_binding(workspace: Path, state: dict):
         _detect, _logical_op, _stage, verify = _tilelang2ascendc_source_api()
         return verify(workspace, state)
     except Exception as exc:
-        return False, f"TileLang2AscendC source-stage verifier unavailable or failed: {exc}", None
+        return (
+            False,
+            f"TileLang2AscendC source-stage verifier unavailable or failed: {exc}",
+            None,
+        )
 
 
 # Sentinel attribute that identifies the orchestrator MODULE among candidate
@@ -205,8 +216,12 @@ def _orch():
 
 
 _VALID_BUMP_COUNTERS = (
-    "worker", "probe", "optimizer", "fused_optimizer",
-    "researcher", "det_analyzer",
+    "worker",
+    "probe",
+    "optimizer",
+    "fused_optimizer",
+    "researcher",
+    "det_analyzer",
 )
 
 _SCOPED_MODES = frozenset({"port_a3_to_a5", "backward"})
@@ -232,7 +247,9 @@ def _workspace_mode(workspace: Path) -> Optional[str]:
         # read it.  In particular this check is driven only by durable state,
         # never by the one-shot CLI value that created the workspace.
         if _is_tilelang2ascendc_source_state(state):
-            valid, reason, _manifest = _verify_tilelang2ascendc_source_binding(workspace, state)
+            valid, reason, _manifest = _verify_tilelang2ascendc_source_binding(
+                workspace, state
+            )
         # The benchmark providers' source of truth is their frozen bundle, not
         # the legacy arch22 port-A3 source snapshot.  Keep the established
         # behaviour unchanged.
@@ -282,8 +299,6 @@ def _parse_bump_caps(raw: list[str]) -> dict[str, int]:
     return out
 
 
-
-
 def _cmd_resume(*, op: str | None, all_mode: bool, lane: int, dry_run: bool) -> int:
     """Resume only workspaces created by one of the two supported modes."""
     if all_mode:
@@ -291,18 +306,23 @@ def _cmd_resume(*, op: str | None, all_mode: bool, lane: int, dry_run: bool) -> 
         print(f"{'op':<40s} {'action':<25s} {'state':<25s} summary")
         print("-" * 120)
         for s in statuses:
-            print(f"{s.op:<40s} {s.action.value:<25s} {s.current_state:<25s} {s.summary[:60]}")
+            print(
+                f"{s.op:<40s} {s.action.value:<25s} {s.current_state:<25s} {s.summary[:60]}"
+            )
         # Resume each that's safe
         worst_rc = 0
         for s in statuses:
             if _workspace_mode(s.workspace) is None:
                 print(f"\n=== skip unscoped workspace {s.op} ===")
                 continue
-            if s.action in (resume_mod.ResumeAction.RESUMABLE,
-                            resume_mod.ResumeAction.USER_DECISION_READY):
+            if s.action in (
+                resume_mod.ResumeAction.RESUMABLE,
+                resume_mod.ResumeAction.USER_DECISION_READY,
+            ):
                 print(f"\n=== resume {s.op} ===")
-                rc = resume_mod.execute(s.op, workspace=s.workspace,
-                                         lane=lane, dry_run=dry_run)
+                rc = resume_mod.execute(
+                    s.op, workspace=s.workspace, lane=lane, dry_run=dry_run
+                )
                 if rc != 0:
                     worst_rc = max(worst_rc, rc)
         return worst_rc
@@ -313,18 +333,11 @@ def _cmd_resume(*, op: str | None, all_mode: bool, lane: int, dry_run: bool) -> 
     status = resume_mod.diagnose(op)
     if _workspace_mode(status.workspace) is None:
         print(
-            f"ERROR: workspace {status.workspace} is not an arch migration or "
-            "backward-generation run"
+            f"ERROR: workspace {status.workspace} is not an arch migration "
+            "or backward-generation run"
         )
         return 2
     return resume_mod.execute(op, lane=lane, dry_run=dry_run)
-
-
-
-
-
-
-
 
 
 def _cmd_backward(
@@ -373,6 +386,7 @@ def _cmd_backward(
     # missing env also exits non-zero (was exit 0).
     try:
         from briefs import _common as _bc
+
         _bc.load_env()
     except Exception as e:
         print(f"ERROR: failed to load .ascendc_env: {e!r}")
@@ -385,7 +399,9 @@ def _cmd_backward(
 
     # Derive op name: <basename>_grad (strip .py; avoid double _grad suffix).
     _stem = forward_spec.stem
-    op_name = _stem if _stem.endswith(("_grad", "_backward", "_bwd")) else f"{_stem}_grad"
+    op_name = (
+        _stem if _stem.endswith(("_grad", "_backward", "_bwd")) else f"{_stem}_grad"
+    )
 
     workspace_dir = _orch().WORKSPACE_ROOT / op_name
     if cold_start and workspace_dir.exists():
@@ -397,14 +413,19 @@ def _cmd_backward(
     # (briefs/kw_brief._backward_perf_c2_block) activates for the worker. The
     # CLI flag IS the classification (same shortcut as _cmd_port_a3 W12).
     classification_path = workspace_dir / "op_classification.json"
-    classification_path.write_text(json.dumps({
-        "op": op_name,
-        "op_class_tags": ["backward", "GRADIENT"],
-        "op_complexity": None,
-        "kb_recommendations": [],
-        "source": "cli_flag_backward",
-        "schema_version": 1,
-    }, indent=2))
+    classification_path.write_text(
+        json.dumps(
+            {
+                "op": op_name,
+                "op_class_tags": ["backward", "GRADIENT"],
+                "op_complexity": None,
+                "kb_recommendations": [],
+                "source": "cli_flag_backward",
+                "schema_version": 1,
+            },
+            indent=2,
+        )
+    )
 
     # Seed .opgen_state.json so plugins.detect_plugin resolves BackwardPlugin
     # (its detect keys on opgen_mode == "backward").
@@ -415,12 +436,14 @@ def _cmd_backward(
             _existing_state = json.loads(state_path.read_text())
         except Exception:
             _existing_state = {}
-    _existing_state.update({
-        "schema_version": 1,
-        "op": op_name,
-        "opgen_mode": "backward",
-        "backward_forward_source": str(forward_spec),
-    })
+    _existing_state.update(
+        {
+            "schema_version": 1,
+            "op": op_name,
+            "opgen_mode": "backward",
+            "backward_forward_source": str(forward_spec),
+        }
+    )
     state_path.write_text(json.dumps(_existing_state, indent=2))
 
     print("=" * 72)
@@ -436,7 +459,9 @@ def _cmd_backward(
     print(f"  workspace         : {workspace_dir}")
     print("  phases (planned)  :")
     print("    O2.5 reference  : self-contained autograd backward truth (B3.2, §5.5)")
-    print("    O4 kw spawn     : author backward AscendC kernel, verify vs autograd (B3.3)")
+    print(
+        "    O4 kw spawn     : author backward AscendC kernel, verify vs autograd (B3.3)"
+    )
     print("=" * 72)
     print("  op_classification.json + .opgen_state.json seeded (opgen_mode=backward).")
 
@@ -459,6 +484,445 @@ def _cmd_backward(
     )
 
 
+# Shared reference vocabulary (--reference-source) mapped onto the multirank
+# truth-tier names: npubench == "reference implementation as truth" (the
+# spec's expected, executed on the target A5), a3_live == "live source-side
+# capture" (the source-side real op on multi-rank source NPUs).
+def _resolve_multirank_truth_tier(
+    spec: Path, cli_reference: Optional[str] = None
+) -> str:
+    """Resolve the effective multirank truth tier:
+    SPEC['truth'] > --reference-source > a3_live default.
+
+    The spec stays the durable declaration point (same case-controlled
+    principle as world_size): a CLI value is accepted as the declaration
+    when the spec is silent and must AGREE with the spec when both are
+    present — a mismatch fails closed instead of silently overriding. The
+    CLI speaks the shared reference vocabulary (npubench/a3_live), mapped
+    onto the multirank tier names here. Reads the (already canonically
+    placed) spec module's SPEC dict WITHOUT importing worker-side runtime:
+    a light exec of the spec file is the same trust boundary _load_spec
+    uses at provision time. Unreadable spec, a bogus truth value, or a CLI/spec disagreement fails closed
+    (the value never reaches durable state).
+    """
+    from plugins.multirank import TIERS
+
+    cli_tier = cli_reference
+    declared = None
+    try:
+        from plugins.multirank import multirank_phase_o25 as _p25
+
+        mod = getattr(_p25, "_load_spec")(Path(spec))
+        declared = getattr(mod, "SPEC", {}).get("truth")
+    except Exception:
+        declared = None
+    if declared is not None:
+        if not (isinstance(declared, str) and declared in TIERS):
+            raise ValueError(
+                f"SPEC['truth']={declared!r} is not a multirank truth tier "
+                f"(one of {', '.join(TIERS)})"
+            )
+        if cli_tier is not None and cli_tier != declared:
+            raise ValueError(
+                f"--reference-source {cli_reference} maps to truth tier "
+                f"{cli_tier!r} but SPEC['truth'] declares {declared!r} — "
+                f"the spec is the durable declaration point; align the "
+                f"flag with the spec or drop it"
+            )
+        return declared
+    if cli_tier is not None:
+        return cli_tier
+    # Undeclared truth defaults to a3_live (the RFC-adopted single tier):
+    # a workspace without a source-side wrapper then fails closed at the
+    # endpoint/provider preflight below — the correct failure, guiding the
+    # user to provide the source reference instead of silently degrading.
+    return "a3_live"
+
+
+def _multirank_input_error(task: Path, port_a3_dir: Path) -> "str | None":
+    """Fail-fast input validation; the user-facing error, else None."""
+    if not task.is_file():
+        return f"ERROR: --npubench-task file does not exist: {task}"
+    if task.suffix != ".py":
+        return f"ERROR: --npubench-task expects a task .py, got: {task}"
+    if not port_a3_dir.exists():
+        return f"ERROR: --port-a3-ops path does not exist: {port_a3_dir}"
+    if not port_a3_dir.is_dir():
+        return f"ERROR: --port-a3-ops path is not a directory: {port_a3_dir}"
+    return None
+
+
+def _resolve_effective_tier(task: Path, reference_source) -> tuple:
+    """(effective_tier, rc): the SPEC['truth']-declared tier (npubench default
+    for task-form input; never exec's the task source)."""
+    from plugins.multirank.op_template_gen.task_to_spec import is_task_form
+
+    if is_task_form(task):
+        # A task form carries no SPEC['truth'] declaration (the converter
+        # stamps the CLI-chosen tier into the generated spec): resolve
+        # WITHOUT exec-ing the task source (its import graph is the task
+        # author's, not the orchestrator's).
+        # Task-form default: npubench is the only wired tier (a default
+        # that always fails closed would be a foot-gun).
+        return reference_source or "npubench", 0
+    try:
+        return _resolve_multirank_truth_tier(task, cli_reference=reference_source), 0
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return None, 2
+
+
+def _merge_prior_state(state_path: Path, state_payload: dict) -> None:
+    """Fold prior started_ts / invocation_count / reference binding in."""
+    if not state_path.exists():
+        return
+    try:
+        prior = json.loads(state_path.read_text())
+        state_payload["started_ts"] = prior.get(
+            "started_ts", state_payload["started_ts"]
+        )
+        state_payload["invocation_count"] = int(prior.get("invocation_count", 0)) + 1
+        if prior.get("reference") is not None:
+            # Carry the prior binding so the startup bind below is a
+            # comparison (re-binding a DIFFERENT task fails closed)
+            # instead of a silent overwrite.
+            state_payload["reference"] = prior["reference"]
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _print_multirank_plan(op_name, spec, effective_tier) -> None:
+    """The startup banner / plan summary."""
+    o25_provider = {
+        "npubench": "npubench task collector (per-rank subprocess + HCCL)",
+        "a3_live": "a3_live source-side capture (per-rank subprocess)",
+    }.get(effective_tier, "truth-tier collector")
+    print("=" * 72)
+    print(f"MULTIRANK EXTENSION (port_a3_to_a5 + multirank) — op: {op_name}")
+    print("=" * 72)
+    print(f"  spec              : {spec}")
+    print("  world_size        : case-declared (per-case field in spec.py)")
+    print(
+        "  lanes             : AUTO-ALLOCATED from the idle-NPU probe "
+        "(npu_probe; --lane lists are inert for multirank)"
+    )
+    print("  opgen_mode        : port_a3_to_a5 (multirank: true)")
+    print(
+        f"  truth tier        : {effective_tier}  (SPEC['truth'] field, "
+        f"default npubench)"
+    )
+    print("  phases (planned)  :")
+    print("    O0 preflight    : standard")
+    print(f"    O2.5 reference  : multirank extension ({o25_provider})")
+    print("    O4 worker      : kw_brief → kernel authoring → O5 verify")
+    print("=" * 72)
+
+
+def _seed_initial_classification(classification_path: Path, op_name: str) -> None:
+    """Seed the initial classification only when absent: overwriting on every
+    start would clobber a completed O1.7 classification (which carries
+    source_sha256), break the content-hash cache, and force a fresh 7-10min
+    LLM re-classification per engine restart. A leftover initial seed is
+    harmless — phase_o17's cache check finds no matching sha and runs the
+    real classification."""
+    if classification_path.exists():
+        return
+    classification_path.write_text(
+        json.dumps(
+            {
+                "op": op_name,
+                "op_class_tags": ["multirank_fusion"],
+                "op_complexity": None,
+                "kb_recommendations": [],
+                "source": "cli_flag_multirank",
+                "schema_version": 1,
+            },
+            indent=2,
+        )
+    )
+
+
+def _multirank_state_payload(
+    *, op_name, lane, env, target_arch, source_stage, spec, effective_tier
+) -> dict:
+    """The seeded .opgen_state.json payload (multirank extension).
+
+    opgen_mode port_a3_to_a5 and the multirank flag on, so the plugin
+    registry resolves PortA3Plugin (detect keys on the persisted mode) and
+    every multirank-aware dispatch point (O2.5 reference,
+    expected_truth_source, O5 runner) routes to the extension. Phase O0.5
+    preserves the seeded mode across init_durable_state refreshes. The
+    staged-source block mirrors the single-card arch22 fields verbatim so
+    the graybox source binding and provenance digest see one shape."""
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return {
+        "schema_version": 1,
+        "op": op_name,
+        "target": env.target,
+        "lane": lane,
+        "opgen_mode": "port_a3_to_a5",
+        "multirank": True,
+        "source_arch": "arch22",
+        "target_arch": target_arch,
+        "source_arch_detection": source_stage.detection.state_payload(),
+        "port_a3_source": str(source_stage.root),
+        "source_stage_manifest": str(source_stage.manifest),
+        "source_stage_digest": source_stage.digest,
+        "source_stage_file_count": source_stage.file_count,
+        "graybox_arch22_dir": str(source_stage.root),
+        "graybox_sandbox": True,
+        "spec": str(spec),
+        "multirank_truth_source": effective_tier,
+        "started_ts": now,
+        "last_seen_ts": now,
+        "invocation_count": 1,
+    }
+
+
+def _convert_task_input(
+    task: Path, workspace_dir: Path, op_name: str, tier: str
+) -> int:
+    """Statically convert a task-form input into the canonical spec (a task
+    already at the canonical location converts nothing); rc 2 on failure."""
+    canonical_spec = workspace_dir / "spec.py"
+    if task.resolve() == canonical_spec.resolve():
+        return 0
+    from plugins.multirank.op_template_gen.task_to_spec import (
+        TaskConversionError,
+        convert_task_to_spec,
+    )
+
+    try:
+        convert_task_to_spec(task, out_dir=workspace_dir, op=op_name, truth=tier)
+    except TaskConversionError as exc:
+        print(f"ERROR: task-form input cannot be converted: {exc}")
+        return 2
+    return 0
+
+
+def _stage_multirank_source(port_a3_dir: Path, workspace_dir: Path, env) -> tuple:
+    """Stage the migration source verbatim (source-only arch22 snapshot).
+
+    Same single-card primitive (stage_source_tree): deterministic snapshot +
+    manifest + tree digest, arch22 fail-closed. Returns (stage, rc)."""
+    from a5_target_capability import arch_for_target
+
+    try:
+        stage = stage_source_tree(
+            port_a3_dir,
+            workspace_dir,
+            target_arch=arch_for_target(env.target),
+        )
+    except Exception as exc:
+        print(f"ERROR: could not create source-only arch22 snapshot: {exc}")
+        return None, 2
+    print(
+        f"  source snapshot   : {stage.root} "
+        f"({stage.file_count} files, sha256={stage.digest[:12]})"
+    )
+    return stage, 0
+
+
+def _gate_tier_feasibility(effective_tier, env) -> int:
+    """Early fail-closed (the same checks provision re-runs): the declared
+    tier must bind to a resolvable endpoint + a wired provider BEFORE the
+    workspace state is seeded — never a silent degradation."""
+    from plugins.multirank import multirank_endpoint as _ep
+
+    tier_errors = _ep.tier_feasibility_errors(effective_tier, env)
+    if not tier_errors:
+        return 0
+    print(f"ERROR: truth tier {effective_tier!r} is not satisfiable:")
+    for e in tier_errors:
+        print(f"  - {e}")
+    return 2
+
+
+def _load_env_or_print():
+    """Fail-fast .ascendc_env preflight; (env, rc) — rc 2 on failure.
+
+    Mirror _cmd_port_a3 / _cmd_backward: the state seed records the active
+    target, so a missing env must fail here — not mid-pipeline after the
+    workspace was created."""
+    try:
+        from briefs import _common as _bc
+
+        return _bc.load_env(), 0
+    except Exception as e:
+        print(f"ERROR: failed to load .ascendc_env: {e!r}")
+        print(
+            "  Remediation: run this plugin's init.sh, then fill "
+            "workspace/.ascendc_env from workspace/.ascendc_env.template "
+            "for the selected target."
+        )
+        return None, 2
+
+
+def _prepare_multirank_workspace(
+    task: Path, port_a3_dir: Path, cold_start: bool, reference_source
+) -> tuple:
+    """Workspace dir + resolved tier + canonical spec; (ws, spec, task_form,
+    tier, rc). rc 2 on any refusal."""
+    from plugins.multirank.op_template_gen.task_to_spec import is_task_form
+
+    # Op name: the ops-nn dirname — the single-card rule. A canonical
+    # re-entry (workspace/<op>/spec.py) resolves to the same name because
+    # the workspace dir itself was named after the staged source.
+    op_name = port_a3_dir.name
+    workspace_dir = _orch().WORKSPACE_ROOT / op_name
+    if cold_start and workspace_dir.exists():
+        _cold_start_reset_workspace(workspace_dir)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    # Truth tier resolution (declaration production side): SPEC['truth'] >
+    # a3_live default — the spec is the single declaration point (no
+    # CLI override; same case-controlled principle as world_size). The
+    # RESOLVED tier is persisted to durable state (`multirank_truth_source`)
+    # so every reader (resolve_truth_source_tier, provisioning, gates) has
+    # ONE source without re-exec'ing the spec.
+    task_form_input = is_task_form(task)
+    effective_tier, tier_rc = _resolve_effective_tier(task, reference_source)
+    if tier_rc:
+        return None, None, task_form_input, None, tier_rc
+
+    # Canonical spec location workspace/<op>/spec.py — the cold-start
+    # reset is allowlist-delete so the spec survives in place; a CLI spec
+    # living elsewhere is copied in so every consumer sees one path. A
+    # task-form input (KernelBench task.py + sidecar) is statically
+    # CONVERTED into the generated-form spec here: the frozen task+sidecar
+    # land next to it (their bytes drive the golden cache key).
+    convert_rc = _convert_task_input(task, workspace_dir, op_name, effective_tier)
+    if convert_rc:
+        return None, None, task_form_input, None, convert_rc
+    return workspace_dir, workspace_dir / "spec.py", task_form_input, effective_tier, 0
+
+
+def _bind_npubench_inputs(
+    workspace_dir: Path, task: Path, state_payload: dict, task_form_input: bool, tier
+) -> int:
+    """Startup-time reference binding (black-box finding #3): the binding is
+    written when the run is created — BEFORE any phase can crash — so
+    --resume never hits a missing binding. Same primitives as the single-card
+    startup path (_bind_reference_source); the multirank O2.5 dispatch
+    resolves its own truth tier and never consumes this block. Task-form
+    input only: a bare spec-form input carries no NPUKernelBench
+    task/sidecar semantics, so there is nothing to freeze into a bundle."""
+    if not (task_form_input and tier == NPUBENCH):
+        return 0
+    try:
+        reference_stage = stage_npubench_inputs(workspace_dir, npubench_task=task)
+        bind_npubench_state(state_payload, reference_stage)
+    except NpubenchInputError as exc:
+        print(f"ERROR: could not bind NPUKernelBench task bundle: {exc}")
+        return 2
+    return 0
+
+
+def _write_multirank_state(
+    workspace_dir, state_payload, task, task_form_input, effective_tier
+) -> int:
+    """Merge + bind + write .opgen_state.json; rc 2 on bind failure."""
+    state_path = workspace_dir / ".opgen_state.json"
+    _merge_prior_state(state_path, state_payload)
+    bind_rc = _bind_npubench_inputs(
+        workspace_dir, task, state_payload, task_form_input, effective_tier
+    )
+    if bind_rc:
+        return bind_rc
+    state_path.write_text(json.dumps(state_payload, indent=2))
+    return 0
+
+
+def _cmd_multirank(
+    *,
+    task: Path,
+    lane: int,
+    plan_only: bool,
+    cold_start: bool,
+    cap_bumps: dict[str, int],
+    timing: bool = False,
+    reference_source: Optional[str] = None,
+    port_a3_dir: Path,
+) -> int:
+    """Multirank harness extension entry (port_a3_to_a5 mode).
+
+    Composed like the single-card entry: (1) the migration source = a
+    REQUIRED ops-nn directory (staged verbatim into the workspace for the
+    worker to read; the a3_live tier's source-side campaign additionally
+    executes that operator); (2) the reference = a KernelBench task .py +
+    same-stem sidecar (statically converted into the internal spec.py).
+    Op name: the ops-nn dirname (single-card rule).
+
+    Seeds op_classification.json + .opgen_state.json (opgen_mode=
+    port_a3_to_a5 + multirank + spec), then — without --plan — invokes
+    run_single_op so its Phase O2.5 multirank dispatch produces the
+    multi-rank reference truth. With --plan: print plan, exit 0.
+
+    Lanes: NOT taken from the CLI — the physical card set is auto-allocated
+    from the idle-NPU probe at verify time. `lane` remains only as the
+    bookkeeping primary in .opgen_state.json.
+    """
+    task = task.expanduser().resolve()
+    port_a3_dir = port_a3_dir.expanduser().resolve()
+    input_err = _multirank_input_error(task, port_a3_dir)
+    if input_err is not None:
+        print(input_err)
+        return 2
+    env, env_rc = _load_env_or_print()
+    if env_rc:
+        return env_rc
+
+    workspace_dir, spec, task_form_input, effective_tier, prep_rc = (
+        _prepare_multirank_workspace(task, port_a3_dir, cold_start, reference_source)
+    )
+    if prep_rc:
+        return prep_rc
+    # Op name: the ops-nn dirname (the single-card rule; _prepare used the
+    # same name for the workspace dir).
+    op_name = port_a3_dir.name
+    # (1) the migration source: staged verbatim into the workspace for the
+    # worker to read and (a3_live tier) the source-side campaign to execute.
+    source_stage, stage_rc = _stage_multirank_source(port_a3_dir, workspace_dir, env)
+    if stage_rc:
+        return stage_rc
+    if _gate_tier_feasibility(effective_tier, env):
+        return 2
+
+    classification_path = workspace_dir / "op_classification.json"
+    _seed_initial_classification(classification_path, op_name)
+    # .opgen_state.json: seeded via _multirank_state_payload (see its
+    # docstring for the persisted-mode contract).
+    from a5_target_capability import arch_for_target
+
+    state_payload = _multirank_state_payload(
+        op_name=op_name,
+        lane=lane,
+        env=env,
+        target_arch=arch_for_target(env.target),
+        source_stage=source_stage,
+        spec=spec,
+        effective_tier=effective_tier,
+    )
+    state_rc = _write_multirank_state(
+        workspace_dir, state_payload, task, task_form_input, effective_tier
+    )
+    if state_rc:
+        return state_rc
+
+    _print_multirank_plan(op_name, spec, effective_tier)
+
+    if plan_only:
+        return 0
+
+    print("\n=== entering run_single_op (full state-machine run) ===")
+    return _orch().run_single_op(
+        op_name,
+        workspace=workspace_dir,
+        lane=lane,
+        plan_only=False,
+        cap_bumps=cap_bumps,
+        timing=timing,
+    )
 
 
 def _bind_explicit_reference(state_payload: dict, expected_reference: dict) -> bool:
@@ -497,7 +961,9 @@ def _a3_container_mount_gate(env) -> int:
         # npu-a3 container entirely (torch_npu runs on the host python, see
         # phase_o25_a3_ref._default_run_remote).  The container mount is
         # irrelevant in this mode - skip the P129 container-mount gate.
-        print("INFO: A3_HOST_MODE=1 - P129 container-mount gate skipped (host-direct A3 ref).")
+        print(
+            "INFO: A3_HOST_MODE=1 - P129 container-mount gate skipped (host-direct A3 ref)."
+        )
         return 0
     if not env.a3_host_home:
         print(
@@ -513,8 +979,11 @@ def _a3_container_mount_gate(env) -> int:
     import phase_o25_a3_ref
 
     return _validate_a3_host_home_mount(
-        env.a3_host, env.a3_container, env.a3_host_home,
-        container_home=getattr(phase_o25_a3_ref, "_a3_container_home")())
+        env.a3_host,
+        env.a3_container,
+        env.a3_host_home,
+        container_home=getattr(phase_o25_a3_ref, "_a3_container_home")(),
+    )
 
 
 def _apply_prior_durable_state(
@@ -538,7 +1007,9 @@ def _apply_prior_durable_state(
         if cold_start:
             survivor_keys = set(prior)
             if not survivor_keys.issubset({"lifetime_spawn_count"}):
-                raise ValueError("cold-start reset left unexpected durable state fields")
+                raise ValueError(
+                    "cold-start reset left unexpected durable state fields"
+                )
             lifetime_spawn_count = prior["lifetime_spawn_count"]
             if (
                 isinstance(lifetime_spawn_count, bool)
@@ -551,13 +1022,17 @@ def _apply_prior_durable_state(
         if "reference" not in prior or prior.get("reference") is None:
             print(
                 "ERROR: existing workspace has no explicit reference binding; "
-                "run an explicit a3_live migration or use --cold-start"
+                "the workspace predates startup-time binding — re-create it "
+                "with --cold-start, or run the explicit a3_live migration for "
+                "a legacy a3_live workspace"
             )
             return {}, 2
         if not isinstance(prior.get("reference"), dict):
             print("ERROR: existing workspace reference binding is malformed")
             return {}, 2
-        state_payload["started_ts"] = prior.get("started_ts", state_payload["started_ts"])
+        state_payload["started_ts"] = prior.get(
+            "started_ts", state_payload["started_ts"]
+        )
         state_payload["invocation_count"] = int(prior.get("invocation_count", 0)) + 1
         return prior, 0
     except Exception as error:
@@ -578,9 +1053,17 @@ def _bind_reference_source(state_payload: dict, source: str, reference_stage) ->
             return 2
         return 0
     if source == A3_LIVE:
-        return 0 if _bind_explicit_reference(state_payload, explicit_a3_live_binding()) else 2
+        return (
+            0
+            if _bind_explicit_reference(state_payload, explicit_a3_live_binding())
+            else 2
+        )
     if source == CANNBENCH:
-        return 0 if _bind_explicit_reference(state_payload, explicit_cannbench_binding()) else 2
+        return (
+            0
+            if _bind_explicit_reference(state_payload, explicit_cannbench_binding())
+            else 2
+        )
     # Defensive: CLI source validation above is exhaustive.
     print(f"ERROR: unsupported reference source: {source!r}")
     return 2
@@ -616,9 +1099,7 @@ def _staged_reference_endpoint(env, reference_source: str) -> tuple[bool, str]:
     if reference_source == NPUBENCH:
         build_host = env.a5_host or (env.host if build_on_destination else "")
     else:
-        build_host = env.a5_host or (
-            env.host if env.host != env.a3_host else ""
-        )
+        build_host = env.a5_host or (env.host if env.host != env.a3_host else "")
     return bool(build_host or local_endpoint), build_host
 
 
@@ -740,7 +1221,9 @@ def _cmd_port_a3(
         return 2
     if tilelang_source:
         if source_arch not in (None, "arch35"):
-            print("ERROR: port-aclnn-tilelang2ascendc accepts source architecture arch35 only")
+            print(
+                "ERROR: port-aclnn-tilelang2ascendc accepts source architecture arch35 only"
+            )
             return 2
         if candidate_kind not in (None, TILELANG2ASCENDC_CANDIDATE_KIND):
             print(
@@ -810,6 +1293,7 @@ def _cmd_port_a3(
     # form so both fixes flow through.
     try:
         from briefs import _common as _bc
+
         env = _bc.load_env()
     except Exception as e:
         print(f"ERROR: failed to load .ascendc_env: {e!r}")
@@ -844,14 +1328,11 @@ def _cmd_port_a3(
         )
         return 2
     if configured_source == NPUBENCH and npubench_args is None:
-        print(
-            "ERROR: --reference-source npubench requires --npubench-task TASK_PY"
-        )
+        print("ERROR: --reference-source npubench requires --npubench-task TASK_PY")
         return 2
     if configured_source != NPUBENCH and npubench_args is not None:
         print(
-            "ERROR: --npubench-task/--npubench-root require "
-            "--reference-source npubench"
+            "ERROR: --npubench-task/--npubench-root require --reference-source npubench"
         )
         return 2
     resolved_reference_source = configured_source
@@ -933,9 +1414,7 @@ def _cmd_port_a3(
     archive_root = Path(env.local_project or ".") / "output" / env.archive_project
     print("=" * 72)
     route_label = (
-        "arch35 TileLang2AscendC"
-        if tilelang_source
-        else f"arch22→{dest_arch}"
+        "arch35 TileLang2AscendC" if tilelang_source else f"arch22→{dest_arch}"
     )
     print(f"{route_label} PORT MODE — op: {op_name}")
     print("=" * 72)
@@ -946,18 +1425,26 @@ def _cmd_port_a3(
             f"{source_detection.method}, confidence={source_detection.confidence})"
         )
     else:
-        print(f"  source architecture: arch22 ({source_detection.method}, "
-              f"confidence={source_detection.confidence})")
-    print(f"  active target     : {env.target} (host={env.host}, container={env.container})")
+        print(
+            f"  source architecture: arch22 ({source_detection.method}, "
+            f"confidence={source_detection.confidence})"
+        )
+    print(
+        f"  active target     : {env.target} (host={env.host}, container={env.container})"
+    )
     print(f"  reference source  : {resolved_reference_source}")
     if resolved_reference_source == A3_LIVE:
-        print(f"  A3 reference host : {env.a3_host} (container={env.a3_container}, SOC={env.a3_soc_version})")
+        print(
+            f"  A3 reference host : {env.a3_host} (container={env.a3_container}, SOC={env.a3_soc_version})"
+        )
     elif resolved_reference_source == NPUBENCH:
         print(f"  npubench task     : {npubench_args.task_path}")
         print(f"  npubench root     : {npubench_args.root_path}")
         print("  npubench format   : original .py + same-stem JSON/JSONL sidecar")
     else:
-        print("  CannBench         : provider interface reserved; evaluator unavailable")
+        print(
+            "  CannBench         : provider interface reserved; evaluator unavailable"
+        )
     print(f"  {env.target} build lane: NPU {lane}")
     if extra_lanes:
         print(f"  npubench perf lane: NPU {extra_lanes[0]} (leased if safe)")
@@ -965,10 +1452,13 @@ def _cmd_port_a3(
     print(f"  archive target    : {archive_root}/{op_name}/")
     print("  phases (planned)  :")
     print("    O0 preflight    : standard")
-    print("    O1 config       : opgen_mode=port_a3_to_a5 propagated via AscendCEnv (W2)")
+    print(
+        "    O1 config       : opgen_mode=port_a3_to_a5 propagated via AscendCEnv (W2)"
+    )
     print(
         "    O2 source sync  : fixed arch35 TileLang2AscendC source stage prepared"
-        if tilelang_source else "    O2 source sync  : fixed arch22 source stage prepared"
+        if tilelang_source
+        else "    O2 source sync  : fixed arch22 source stage prepared"
     )
     if resolved_reference_source == A3_LIVE:
         print("    O2.5 reference  : live arch22 reference capture")
@@ -978,15 +1468,19 @@ def _cmd_port_a3(
         print("    O5 verify       : truth = frozen NPUKernelBench task (no A3 truth)")
     else:
         print("    O2.5 reference  : persist UNSUPPORTED_REFERENCE_SOURCE")
-        print("    O5 verify       : unavailable until CannBench evaluator is implemented")
+        print(
+            "    O5 verify       : unavailable until CannBench evaluator is implemented"
+        )
     print("    O3 PROGRESS     : standard")
     print(
         "    O4 kw spawn     : independent TileLang2AscendC project candidate"
-        if tilelang_source else f"    O4 kw spawn     : independent {dest_arch} implementation from arch22 semantics"
+        if tilelang_source
+        else f"    O4 kw spawn     : independent {dest_arch} implementation from arch22 semantics"
     )
     print(
         "    O6 archive      : TileLang2AscendC kernel project layout writer"
-        if tilelang_source else "    O6 archive      : ops-nn mirror layout writer"
+        if tilelang_source
+        else "    O6 archive      : ops-nn mirror layout writer"
     )
     print("=" * 72)
 
@@ -1030,12 +1524,10 @@ def _cmd_port_a3(
             print(f"ERROR: existing workspace state is unreadable: {exc}")
             return 2
         existing_port_source = existing_pre_stage.get("port_source")
-        existing_kind = (
-            existing_pre_stage.get("source_kind")
-            or (
-                existing_port_source.get("kind")
-                if isinstance(existing_port_source, dict) else None
-            )
+        existing_kind = existing_pre_stage.get("source_kind") or (
+            existing_port_source.get("kind")
+            if isinstance(existing_port_source, dict)
+            else None
         )
         # A source kind is not a mutable option.  In particular a legacy
         # workspace cannot become TileLang2AscendC merely by repeating the
@@ -1044,7 +1536,8 @@ def _cmd_port_a3(
         # state before this point and is the sole explicit reset mechanism.
         if not cold_start and (
             tilelang_source
-            or existing_kind in {
+            or existing_kind
+            in {
                 TILELANG2ASCENDC_SOURCE_KIND,
                 TILELANG2ASCENDC_SOURCE_KIND_ALIAS,
             }
@@ -1068,15 +1561,12 @@ def _cmd_port_a3(
             from a5_target_capability import arch_for_target
 
             source_stage = stage_source_tree(
-                port_a3_dir, workspace_dir,
+                port_a3_dir,
+                workspace_dir,
                 target_arch=arch_for_target(env.target),
             )
     except Exception as exc:
-        source_label = (
-            "arch35 TileLang2AscendC"
-            if tilelang_source
-            else "arch22"
-        )
+        source_label = "arch35 TileLang2AscendC" if tilelang_source else "arch22"
         print(f"ERROR: could not create source-only {source_label} snapshot: {exc}")
         return 2
     reference_stage = None
@@ -1106,7 +1596,11 @@ def _cmd_port_a3(
     op_class_tags = ["a3_to_a5_port"]
     op_complexity: Optional[str] = None
     op_lower = op_name.lower()
-    if "flash_attention" in op_lower or "fused_attention" in op_lower or "fusion_attention" in op_lower:
+    if (
+        "flash_attention" in op_lower
+        or "fused_attention" in op_lower
+        or "fusion_attention" in op_lower
+    ):
         op_class_tags.extend(["FUSED_SOFTMAX", "fa_class"])
         op_complexity = "L4"
     # P0hh (2026-06-01): tag cube-class (matmul-bearing) ops CUBE_MIX so the
@@ -1126,10 +1620,12 @@ def _cmd_port_a3(
             op_complexity = None
             raise StopIteration
         import sys as _sys
+
         _checks_dir = str(Path(__file__).resolve().parent / "checks")
         if _checks_dir not in _sys.path:
             _sys.path.insert(0, _checks_dir)
         from architecture_class_check import _classify_reference_arch  # type: ignore
+
         _reference_arch = _classify_reference_arch(source_stage.root)
         if _reference_arch == "unknown":
             raise RuntimeError("arch22 architecture class could not be verified")
@@ -1150,7 +1646,9 @@ def _cmd_port_a3(
         "schema_version": 1,
     }
     classification_path.write_text(json.dumps(classification_payload, indent=2))
-    print(f"  op_classification.json seeded with tags={op_class_tags} complexity={op_complexity} (W12 / P0gg)")
+    print(
+        f"  op_classification.json seeded with tags={op_class_tags} complexity={op_complexity} (W12 / P0gg)"
+    )
 
     # W15 follow-up (2026-05-12): seed workspace/.opgen_state.json with
     # opgen_mode=port_a3_to_a5 + port_a3_source BEFORE invoking run_single_op.
@@ -1171,35 +1669,43 @@ def _cmd_port_a3(
         # durable state and, via _inject_migration_metadata, verification.json.
         "target_arch": "arch35" if tilelang_source else arch_for_target(env.target),
         "source_arch_detection": source_detection.state_payload(),
-        "started_ts": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-        "last_seen_ts": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "started_ts": _dt.datetime.now(_dt.timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "last_seen_ts": _dt.datetime.now(_dt.timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "invocation_count": 1,
     }
     if tilelang_source:
         from tilelang2ascendc_source import tilelang2ascendc_state_block
 
-        state_payload.update({
-            "source_kind": TILELANG2ASCENDC_SOURCE_KIND,
-            "port_source": tilelang2ascendc_state_block(source_stage),
-            "source_format": "tilelang2ascendc_task",
-            "candidate": {
-                "kind": TILELANG2ASCENDC_CANDIDATE_KIND,
-                "target_arch": "arch35",
-            },
-            "port_a3_source": str(source_stage.root),
-            "source_stage_manifest": str(source_stage.manifest),
-            "source_stage_digest": source_stage.digest,
-            "source_stage_file_count": source_stage.file_count,
-            "graybox_source_dir": str(source_stage.root),
-        })
+        state_payload.update(
+            {
+                "source_kind": TILELANG2ASCENDC_SOURCE_KIND,
+                "port_source": tilelang2ascendc_state_block(source_stage),
+                "source_format": "tilelang2ascendc_task",
+                "candidate": {
+                    "kind": TILELANG2ASCENDC_CANDIDATE_KIND,
+                    "target_arch": "arch35",
+                },
+                "port_a3_source": str(source_stage.root),
+                "source_stage_manifest": str(source_stage.manifest),
+                "source_stage_digest": source_stage.digest,
+                "source_stage_file_count": source_stage.file_count,
+                "graybox_source_dir": str(source_stage.root),
+            }
+        )
     else:
-        state_payload.update({
-            "port_a3_source": str(source_stage.root),
-            "source_stage_manifest": str(source_stage.manifest),
-            "source_stage_digest": source_stage.digest,
-            "source_stage_file_count": source_stage.file_count,
-            "graybox_arch22_dir": str(source_stage.root),
-        })
+        state_payload.update(
+            {
+                "port_a3_source": str(source_stage.root),
+                "source_stage_manifest": str(source_stage.manifest),
+                "source_stage_digest": source_stage.digest,
+                "source_stage_file_count": source_stage.file_count,
+                "graybox_arch22_dir": str(source_stage.root),
+            }
+        )
     # If state file exists, preserve started_ts + invocation_count.  A
     # cold-start is deliberately different: `_cold_start_reset_workspace()`
     # archives the complete durable state, then may leave a minimal survivor
@@ -1215,7 +1721,9 @@ def _cmd_port_a3(
     prior_reference = prior_state.get("reference")
     if isinstance(prior_reference, dict):
         state_payload["reference"] = prior_reference
-    rc = _bind_reference_source(state_payload, resolved_reference_source, reference_stage)
+    rc = _bind_reference_source(
+        state_payload, resolved_reference_source, reference_stage
+    )
     if rc != 0:
         return rc
     try:
@@ -1225,16 +1733,22 @@ def _cmd_port_a3(
         return 2
     stage_reason = "not required for frozen benchmark provider"
     if tilelang_source:
-        valid_stage, stage_reason, _stage_manifest = _verify_tilelang2ascendc_source_binding(
+        valid_stage, stage_reason, _stage_manifest = (
+            _verify_tilelang2ascendc_source_binding(workspace_dir, state_payload)
+        )
+        if not valid_stage:
+            print(
+                f"ERROR: source-only snapshot state validation failed: {stage_reason}"
+            )
+            return 2
+    elif resolved_reference_source in {A3_LIVE}:
+        valid_stage, stage_reason, _stage_manifest = verify_source_stage(
             workspace_dir, state_payload
         )
         if not valid_stage:
-            print(f"ERROR: source-only snapshot state validation failed: {stage_reason}")
-            return 2
-    elif resolved_reference_source in {A3_LIVE}:
-        valid_stage, stage_reason, _stage_manifest = verify_source_stage(workspace_dir, state_payload)
-        if not valid_stage:
-            print(f"ERROR: source-only snapshot state validation failed: {stage_reason}")
+            print(
+                f"ERROR: source-only snapshot state validation failed: {stage_reason}"
+            )
             return 2
     if resolved_reference_source == A3_LIVE:
         try:
@@ -1294,8 +1808,6 @@ def _cmd_port_a3(
             os.environ[build_source_env] = prior_build_source
 
 
-
-
 def _cmd_status() -> int:
     """Show all op workspaces' current state."""
     if not _orch().WORKSPACE_ROOT.exists():
@@ -1321,4 +1833,18 @@ def _cmd_status() -> int:
     print("-" * 105)
     for name, state, agent in rows:
         print(f"{name:<50s} {state:<25s} {agent:<25s}")
+    return 0
+
+
+def _cmd_classify_sha(workspace: Path) -> int:
+    """Print phase_o17_classify's source SHA256 for <workspace> and exit.
+
+    Single source of truth for the O1.7 cache-key contract — the headless
+    aog-op-classify agent is instructed (SKILL.md Step 1) to call this
+    instead of assembling its own hash. Exits 0 without entering the FSM
+    or writing state (a lightweight exit-0 command).
+    """
+    from phase_o17_classify import _compute_source_sha256
+
+    print(_compute_source_sha256(Path(workspace)))
     return 0

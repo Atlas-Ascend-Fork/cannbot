@@ -31,6 +31,7 @@ Default runner is pure-Python: subprocess to run verifier locally
 (if verifier produces structured output) OR SSH-tunnel to A5 if
 needed. No LLM call in the default path.
 """
+
 from __future__ import annotations
 import logging
 
@@ -54,7 +55,9 @@ def _mfu_op_kind(workspace: Path, op: str) -> Optional[str]:
         return "matmul"
     try:
         oc = json.loads((workspace / "op_classification.json").read_text())
-        cls = str(oc.get("class") or oc.get("op_class") or oc.get("category") or "").lower()
+        cls = str(
+            oc.get("class") or oc.get("op_class") or oc.get("category") or ""
+        ).lower()
         if "matmul" in cls or "gemm" in cls or "cube" in cls:
             return "matmul"
     except Exception as error:
@@ -73,6 +76,7 @@ def _inject_mfu_ceiling_safe(vp: Path, workspace: Path, op: str, v: dict) -> Non
         if mfu_dir not in _sys.path:
             _sys.path.insert(0, mfu_dir)
         from verification_hook import inject_mfu_ceiling
+
         tgt = str(v.get("target") or "").lower()
         soc = str(v.get("soc_version") or "").lower()
         if "950" in tgt or "950" in soc or tgt == "a5":
@@ -132,7 +136,9 @@ _DET_TOLERANCE_FIELD = "tier1_pass"
 _BEST_EFFORT_POLICY = "best_effort"
 
 
-def _read_det_policy_and_floor(workspace: Path, v: dict) -> tuple[Optional[str], Optional[int]]:
+def _read_det_policy_and_floor(
+    workspace: Path, v: dict
+) -> tuple[Optional[str], Optional[int]]:
     """Return (det_policy, det_floor) for the count-reconciliation tolerance.
 
     Both are DECLARED INPUTS, read (never derived from this run's measurement):
@@ -159,9 +165,12 @@ def _read_stored_det_policy_and_floor(workspace: Path) -> tuple[Optional[str], o
     """Read the optional Phase O1.5 determinism declaration without failing O5."""
     try:
         import phase_o05
+
         state = json.loads((workspace / phase_o05.STATE_FILE).read_text())
     except Exception as error:
-        logging.getLogger(__name__).debug("Recoverable operation failed.", exc_info=error)
+        logging.getLogger(__name__).debug(
+            "Recoverable operation failed.", exc_info=error
+        )
         return None, None
     if not isinstance(state, dict):
         return None, None
@@ -174,7 +183,9 @@ def _normalize_det_floor(floor: object) -> Optional[int]:
         normalized_floor = int(floor) if floor is not None else None
     except (TypeError, ValueError):
         return None
-    return normalized_floor if normalized_floor is None or normalized_floor >= 0 else None
+    return (
+        normalized_floor if normalized_floor is None or normalized_floor >= 0 else None
+    )
 
 
 @dataclass
@@ -182,6 +193,7 @@ class MeasuredResult:
     """A runner produces this — concrete pass counts re-measured against
     the same edge_dataset that produced the claim.
     """
+
     pass_a: Optional[dict] = None  # {tier1_pass, total, ...}
     pass_b: Optional[dict] = None
     determinism: Optional[dict] = None  # {n_identical_cases, n_cases_checked}
@@ -216,6 +228,23 @@ class MeasuredResult:
     # is None — call sites can stay terse (`MeasuredResult(runner_error=msg)`)
     # and still get the right tag downstream.
     rollback_kind: Optional[str] = None  # None / "infra" / "algorithm"
+    # UNVERIFIED escape hatch (multirank): when a declared world_size group
+    # could not launch because the probe found fewer idle cards than the group
+    # needs, the ws is recorded here instead of failing the whole campaign —
+    # the remaining groups still run. Key = str(ws), value = the objective
+    # probe evidence (a worker cannot fabricate "cards were busy": the probe
+    # is harness-owned). An empty dict means full coverage. The declared
+    # multirank O5 wiring fields: multirank_runner._measured keeps constructing them explicitly, and
+    # every core read stays a defensive getattr so a runner-built result from
+    # before this field existed degrades to {} / None.
+    unverified_world_sizes: dict = None  # type: ignore[assignment]
+    # Coverage-aware reconcile (multirank): per-case verdict map of the cases
+    # THIS campaign actually launched ({name: {world_size, ranks, failed_cases,
+    # tier1_pass, tier2_pass, total}}). The reconcile compares these per-cell
+    # identities against the claim's rank_verdicts — count-level comparison
+    # cannot tell "measured fewer cases (card weather)" from "measured and
+    # counts differ (claim fraud)"; the per-case map can.
+    multirank_case_verdicts: Optional[dict] = None
     # Provider-specific failure taxonomy. NPUKernelBench sets this from the
     # controlled-build receipt so finalize can distinguish a worker-repairable
     # candidate contract defect from a target/evaluator failure without parsing
@@ -225,6 +254,8 @@ class MeasuredResult:
     def __post_init__(self) -> None:
         if self.runner_error and self.rollback_kind is None:
             self.rollback_kind = classify_runner_error(self.runner_error)
+        if self.unverified_world_sizes is None:
+            self.unverified_world_sizes = {}
 
 
 # NODE-5 (2026-05-28): infrastructure-class runner_error fragments. When a
@@ -269,6 +300,20 @@ _INFRA_ERROR_PATTERNS: tuple = (
     "missing A5_HOST",
     "missing A3_HOST",
     "CANN env",
+    # Multirank lane auto-allocation (probe down / insufficient idle cards at this
+    # moment / post-run card check) — transient occupancy, NOT a kernel
+    # problem; the worker can do nothing about it. Tokens are emitted only by
+    # the npu_probe-backed multirank allocation path, so no kernel-error collision.
+    "lane auto-allocation",
+    "NPU probe failed",
+    "post-run card check failed",
+    # HCCL host-port bind conflict (EJ0003): the collective library could not
+    # bind its service port because a prior campaign's sockets (or another
+    # tenant's job on the shared box) still hold it — transient host-resource
+    # contention, the kernel artifact is intact. Tokens are the vendor error
+    # code + its exact message; a kernel algorithm error never produces them.
+    "Communication_Error_Bind_IP_Port",
+    "Failed to bind the IP port",
 )
 
 
@@ -342,7 +387,10 @@ def classify_runner_error(msg: str) -> str:
 @dataclass
 class O5Report:
     """Result of Phase O5 re-verification."""
-    verdict: str  # "VERIFIED" | "PROVISIONAL" | "MISMATCH" | "RUNNER_FAILED" | "SKIPPED"
+
+    verdict: (
+        str  # "VERIFIED" | "PROVISIONAL" | "MISMATCH" | "RUNNER_FAILED" | "SKIPPED"
+    )
     claimed: dict = field(default_factory=dict)
     measured: dict = field(default_factory=dict)
     mismatches: list[str] = field(default_factory=list)
@@ -397,6 +445,13 @@ class O5Report:
     # main.
     harness_git_state: str = "UNKNOWN"
     harness_dirty: list[str] = field(default_factory=list)
+    # UNVERIFIED escape hatch (multirank): world_size groups that could not
+    # run because the probe found fewer idle cards than needed — forwarded
+    # from the runner's MeasuredResult.unverified_world_sizes. Empty = full
+    # coverage. The finalize FSM's VERIFIED arm (fsm_finalize_coverage) pauses
+    # on a non-empty, non-accepted set instead of minting a full-coverage
+    # VERIFIED silently.
+    unverified_world_sizes: dict = field(default_factory=dict)
 
 
 def _apply_harness_pristine(rep: O5Report) -> O5Report:
@@ -413,6 +468,7 @@ def _apply_harness_pristine(rep: O5Report) -> O5Report:
     """
     try:
         import harness_pristine
+
         state = harness_pristine.harness_state()
     except Exception:  # defensive: never let the audit break finalize
         rep.harness_git_state = "UNKNOWN"
@@ -451,12 +507,20 @@ def expected_truth_source(workspace: Path) -> str:
         if not isinstance(state, dict):
             raise ValueError("durable state is not a JSON object")
         if state.get("opgen_mode") == "port_a3_to_a5":
+            # Multirank extension: a port_a3_to_a5 workspace flagged
+            # `multirank: true` declares the umbrella "multirank" truth
+            # source; the concrete tier (npubench task collector /
+            # a3_live source-side capture) is resolved by the extension
+            # plugin.
+            if state.get("multirank") is True:
+                return "multirank"
             from reference_source import A3_LIVE, resolve_reference_source
 
             provider = resolve_reference_source(state)
             if provider != A3_LIVE:
                 return provider
         from plugins import detect_plugin as _detect_plugin
+
         _active_plugin = _detect_plugin(workspace)
         if _active_plugin is not None:
             _ts = _active_plugin.truth_source()
@@ -486,7 +550,10 @@ class _PerfReMeasureContext:
 
 def _build_independent_re_measure(perf: dict, worker_ratio: object) -> dict:
     """Build the honest independent-measurement block for a runner result."""
-    if perf.get("status") == "MEASUREMENT_FAILED" or perf.get("outcome") == "INCOMPLETE_PERFORMANCE":
+    if (
+        perf.get("status") == "MEASUREMENT_FAILED"
+        or perf.get("outcome") == "INCOMPLETE_PERFORMANCE"
+    ):
         return {
             "ran": False,
             "status": "MEASUREMENT_FAILED",
@@ -603,7 +670,9 @@ def _load_verification(workspace: Path) -> tuple[Path, dict] | O5Report:
         )
 
 
-def _build_claim_report(workspace: Path, verification: dict) -> tuple[O5Report, dict[str, str]]:
+def _build_claim_report(
+    workspace: Path, verification: dict
+) -> tuple[O5Report, dict[str, str]]:
     """Build the claimed-count subset and statuses used for reconciliation."""
     report = O5Report(verdict="VERIFIED", truth_source=expected_truth_source(workspace))
     precision = verification.get("precision", {}) or {}
@@ -794,7 +863,9 @@ def _npubench_o5_report(
     return _apply_harness_pristine(report)
 
 
-def _npubench_binding_violations(precision: dict, performance: dict, evaluate: dict) -> list[str]:
+def _npubench_binding_violations(
+    precision: dict, performance: dict, evaluate: dict
+) -> list[str]:
     """Require one well-formed candidate binding shared by all three reports."""
     errors: list[str] = []
     bindings = [
@@ -825,7 +896,9 @@ def _npubench_precision_violations(precision: dict, pass_a: dict) -> list[str]:
     return errors
 
 
-def _npubench_deferred_performance_violations(performance: dict, precision: dict) -> list[str]:
+def _npubench_deferred_performance_violations(
+    performance: dict, precision: dict
+) -> list[str]:
     """Accept a marked perf placeholder only when it is bound like precision."""
     errors: list[str] = []
     if performance.get("perf_deferred") is not True:
@@ -971,11 +1044,15 @@ def _persist_npubench_verification(
     existing["truth_source"] = _NPUBENCH_TRUTH_SOURCE
     existing["precision"] = _npubench_precision_record(precision)
     existing["performance"] = dict(performance)
-    existing["npubench_evidence"] = _npubench_evidence_record(evaluate, evidence, report)
+    existing["npubench_evidence"] = _npubench_evidence_record(
+        evaluate, evidence, report
+    )
     try:
         _atomic_publish_npubench_verification(path, existing)
     except (OSError, ValueError) as exc:
-        report.mismatches.append(f"could not persist npubench verification evidence: {exc}")
+        report.mismatches.append(
+            f"could not persist npubench verification evidence: {exc}"
+        )
         report.verdict = "RUNNER_FAILED"
         report.rollback_kind = "infra"
         report.summary = "NPUKernelBench evidence could not be persisted"
@@ -1142,11 +1219,36 @@ def post_verify_for_finalize(
         return measured
 
     _persist_measured_perf(
-        _PerfReMeasureContext(verification, verification_path, measured, workspace, op, rep)
+        _PerfReMeasureContext(
+            verification, verification_path, measured, workspace, op, rep
+        )
     )
     _record_measured_passes(rep, measured)
     det_policy, det_floor = _read_det_policy_and_floor(workspace, verification)
-    _reconcile_counts(rep, pass_statuses, det_policy, det_floor)
+    if rep.truth_source == "multirank" and getattr(
+        measured, "multirank_case_verdicts", None
+    ):
+        # Coverage-aware reconcile (multirank extension): the per-case verdict
+        # map distinguishes "card weather shrank the measurable set" from
+        # "claim disagrees with measurement" — the count-level compare treats
+        # both as MISMATCH and spawns a worker for pure bookkeeping.
+        # This truth_source comparison is the ONE sanctioned mode-literal in
+        # the phase_o5 core; the capability itself lives in the multirank
+        # extension plugin. Runners without the per-case map fall through to
+        # the count-level reconcile.
+        from plugins.multirank import multirank_o5_reconcile
+
+        multirank_o5_reconcile.reconcile_multirank_coverage(
+            workspace, rep, measured, verification
+        )
+    else:
+        _reconcile_counts(rep, pass_statuses, det_policy, det_floor)
+    # UNVERIFIED escape hatch (multirank): forward the runner's card-shortage
+    # coverage gap so the finalize FSM can pause with the full picture (which
+    # world_sizes verified, which are unverified, and why).
+    rep.unverified_world_sizes = dict(
+        getattr(measured, "unverified_world_sizes", None) or {}
+    )
     return _apply_harness_pristine(rep)
 
 
@@ -1174,7 +1276,10 @@ def _record_count_comparison(report: O5Report, comparison: _CountComparison) -> 
     """Record one exact or declared-best-effort count comparison."""
     if comparison.claimed_value is None or comparison.measured_value is None:
         return
-    if comparison.det_floor is not None and comparison.field_name == _DET_TOLERANCE_FIELD:
+    if (
+        comparison.det_floor is not None
+        and comparison.field_name == _DET_TOLERANCE_FIELD
+    ):
         if comparison.measured_value < comparison.det_floor:
             report.mismatches.append(
                 f"{comparison.pass_name}.{comparison.field_name}: "
@@ -1246,7 +1351,9 @@ def _reconcile_counts(
     op still finalizes as a PARTIAL_PERSIST recording the determinism failure.
     """
     active_floor = (
-        det_floor if det_policy == _BEST_EFFORT_POLICY and det_floor is not None else None
+        det_floor
+        if det_policy == _BEST_EFFORT_POLICY and det_floor is not None
+        else None
     )
     for pass_name in rep.claimed:
         _reconcile_claimed_pass(
@@ -1278,8 +1385,7 @@ def _reconcile_counts(
         )
     else:
         rep.summary = (
-            f"O5 VERIFIED: claim matches measurement for "
-            f"{len(rep.claimed)} pass(es)."
+            f"O5 VERIFIED: claim matches measurement for {len(rep.claimed)} pass(es)."
         )
 
 

@@ -2,7 +2,7 @@
 
 本文介绍完整编排器的两项能力：
 
-1. `ascendc-cross-gen-port`：将 arch22 AscendC 源算子移植到 arch35 / A5。
+1. `ascendc-cross-gen-port`：将 arch22 AscendC 源算子移植到 arch35 / A5；加 `--multirank` 参数启动多卡版本迁移，详见 §7。
 2. `ascendc-backward-gen`：从可微 PyTorch 正向规格生成反向 AscendC 算子。
 
 两个入口都能在 Claude Code 与 OpenCode 中使用，且都通过同一个启动器进入 `engine/` 中的确定性编排器。
@@ -95,6 +95,17 @@ OpenCode `1.18.18` 是已验证的建议版本，不是硬版本门：更低、�
 `opencode`、`node`/`bun` 或安全网行为探针失败才会阻断运行。
 
 ### 1.2 Claude Code 安装
+
+算子不会在控制端“就地”构建；控制端只生成/编排候选代码并收集结果。引擎通过
+`engine/workspace/.ascendc_env` 连接实际的目标主机/容器，并使用 SSH/SCP 与
+`docker exec` / `docker cp` 把工作交给相应环境。请在这些环境准备可用的 NPU、CANN、Python
+和容器执行权限：
+
+- **A3 参考环境（跨代移植）**：运行来源 arch22 算子的实时 A3-CANN 参考，产出本次任务的真值证据。
+- **A5 验证环境（跨代移植）**：接收候选实现，完成 arch35/A5 构建、精度验证和性能测量。
+- **跨代移植**当前仅支持 arch22 源算子 → arch35/A5：源目录必须包含 `op_host/` 与 `op_kernel/`，且检测结果必须是 arch22。流程强制使用上述实时 A3-CANN 参考并在独立 A5 上构建/验证，因此 **A3 与 A5 都是硬前置**。
+- **反向生成**需要一个定义 `forward(...)` 与 `BACKWARD_SPEC` 的可微 PyTorch 规格，以及所选目标 NPU；不需要 A3 参考环境。运行该规格的环境需要具备 PyTorch。
+- **multirank 扩展**：输入 = KernelBench 风格 task `.py` + 同 stem sidecar（`Model` 参考实现 + 接受 `rank`/`world_size` 的 `get_input_groups`/`get_init_inputs`，case 级 `world_size`、模块级 `NEEDS_EP_COMM` 可选），入口静态转换为内部 spec（派生式 `spec.py` 形态已退役）。当前执行档 = `npubench`（task 的 `Model` 作参考实现在目标 A5 上多 rank 执行，仅需目标侧多张 NPU）；`a3_live`（(1) 源目录源算子经预交接 wrapper 在 SOURCE 端多 rank 实采——需 `--port-a3-ops` 与 SOURCE 块）。
 
 若尚无仓库 checkout，先 `git clone https://gitcode.com/cann/cannbot-skills.git`。
 
@@ -195,6 +206,9 @@ source <A5_CANN_PATH>/set_env.sh                       # 或 /usr/local/Ascend/a
 export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH     # 部分驱动栈（如 950DT）的 liburma.so.0 在 /usr/lib64
 ```
 
+- 调用入口后，引擎在生成前先跑 **Phase O0 就绪门**（hook 完整性 + KB + deploy 脚本存在 + 安全网重新证明）+ `.ascendc_env` 解析。跨代移植还会执行 **P129 A3 容器 mount 门**（核对你配置的 `A3_CONTAINER_HOME`）。
+- 缺 `.ascendc_env` → 干净报错（不会白跑到 build 才崩）。真正的 NPU 就绪（精度/性能）在实际运行时按阶段判（见 §9 FAQ）。
+
 漏掉第二条时，`npu-smi` 和 `import torch_npu` 都会报 `liburma.so.0: cannot open shared object file`。
 
 可选运行期调优：npubench 精度/性能子进程的单任务超时默认 300s（两阶段共用），可用环境变量
@@ -274,6 +288,12 @@ A3_CANN_PATH=/usr/local/Ascend/cann-9.0.0
 A3_SOC_VERSION=<完整 SoC 名称>
 A3_CONTAINER_HOME=<A3 容器内 canonical home>
 ```
+
+- **`opgen_mode` 不在这里配**——由 CLI flag 决定（`--port-a3` / `--multirank` → `port_a3_to_a5`，后者另写 `multirank: true` 标志；`--backward` → `backward`）。
+- 跨代移植会使用 `A3_*` 与 `A3_CONTAINER_HOME` 采集当次实时 A3-CANN 真值；A5 字段用于构建和验证目标算子。
+- `A3_CONTAINER_HOME` 是**你部署的 A3 容器内 canonical home**（引擎按它拼容器内路径 + 核 P129 mount 门）；不同部署设自己的值。
+- 可选 `NPU_INFO_CMD` / `{TARGET}_NPU_INFO_CMD`：自定义空闲卡探测命令（multirank 多 rank 选卡时 `npu_probe` 消费；优先序 `{TARGET}_NPU_INFO_CMD` > `NPU_INFO_CMD` > `A5_NPU_INFO_CMD`，缺省回落本地 `npu-smi`）。
+- `.ascendc_env` 是 **gitignored**（含凭证）——**永不提交**。
 
 `--reference-source` 仅覆盖本次命令，不会改写配置。若选择 `a3_live`，引擎还会执行 A3 容器 mount 检查。
 
@@ -363,6 +383,7 @@ timeout --foreground --kill-after=30s 5400s   bash "$PLUGIN_DIR/scripts/launch_o
 
 ## 4. 可选：获取实时 A3 CANN 真值（仅常规 ops-nn 来源）
 
+
 只有需要本次来源机的 fresh A3 CANN truth 时才使用此路径；它不是 npubench golden 的前置步骤。
 TileLang2AscendC 工程来源不支持该路径（引擎拒绝该组合），只使用 npubench golden：
 
@@ -444,7 +465,31 @@ bash "$PLUGIN_DIR/scripts/launch_orchestrator.sh" \
   --mode backward --source /path/to/forward_spec.py --lane 0
 ```
 
-## 7. 常见问题
+## 7. 如何做 multirank 多卡融合算子迁移
+
+**唯一对外接口 = 入口 skill `ascendc-cross-gen-port` 的 multirank 分支**（用户描述或源算子目录出现通信、通算融合语义时触发）。该路径没有可移植的单卡源实现，输入是**预交接**的两个产物（缺任一引擎拒绝启动），由主会话先拉设计指南、与用户讨论后撰写：
+
+> 把这个融合算子迁移到 A5（多卡）：<spec.py>
+
+1. **预交接**：撰写 task `.py` + 同 stem sidecar（a3_live 档另围绕源目录撰写 `workspace/<op>/wrapper.py`，契约见入口 skill），经用户批准后交接。
+2. **启动**：skill 内部以流式后台经统一启动器调引擎的 multirank 模式 —— **不需要、也不应直接跑引擎命令**：
+
+   ```bash
+   bash scripts/launch_orchestrator.sh \
+     --skill-base /path/to/ascendc-port-orchestrator/skills/ascendc-cross-gen-port \
+     --mode port-a3-ops --multirank --source <ops-nn-dir> --npubench-task <task.py>
+   ```
+
+   （多卡模式禁 `--lane`：卡组由引擎按 world_size 组自动分配。）
+3. **结果判读**：`engine/workspace/<op>/verification.json` —— precision 状态 + `multirank` rank-verdict 块的逐 case/world_size 计数；campaign 中途卡短缺的 case 记 **UNVERIFIED**（带 probe 证据），由用户决定等卡重测或持 ACCEPT-UNVERIFIED 令牌接受降级覆盖。
+
+引擎自动：按 spec 声明采集真值（a3_live：源端真实算子多 rank 执行；npubench：spec 参考实现在 A5 上执行；spec 内容哈希幂等）→ 生成融合 AscendC kernel（msopgen nest 工程）→ 三段构建 → **逐 case 多 rank 验证**（每 case 一次 HCCL 进程组，ALL-rank PASS 才算 PASS；单进程自验被禁止）→ [性能轮] → 报告。设计细节见 [`design/multirank.md`](./design/multirank.md)。
+
+## 8. 如何维护本地用户知识库（双层 KB）
+
+写入约束、resolver 与分层契约见 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §5（§5.2 读取、§5.3 写回、§5.4 统一分层契约）。
+
+## 9. 常见问题
 
 | 症状 | 处理 |
 |---|---|
@@ -461,4 +506,15 @@ bash "$PLUGIN_DIR/scripts/launch_orchestrator.sh" \
 | tilelang2ascendc 工程手动验证时 CMake 增量重建报 unknown file type | device obj 二次链接会报 unknown file type。插件的构建路径默认 clean 构建；**手动验证时必须 clean 重建或先删掉 `kernel/build`**，不要在残留的增量 build 目录上排查候选问题。 |
 | 大 case 数算子性能阶段报 `isolated task timed out after 300s` | npubench 精度/性能子进程单任务超时默认 300s（`CANNBOT_NPUBENCH_TASK_TIMEOUT_SEC`）。61 个 case 的注意力算子跑 W3/R5 + msprof 超过 300s 属正常：运行前 `export CANNBOT_NPUBENCH_TASK_TIMEOUT_SEC=1200`（或更大）；精度与性能阶段共用该变量，非法值 fail-fast 报错。 |
 
-更多实现边界见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)；最短上手见 [`quickstart.md`](../quickstart.md)。
+## 10. 详细设计参考
+
+本使用说明是操作向导；系统的**详细架构设计**（为什么这么设计、约束、不变量）见：
+
+- **[`ARCHITECTURE.md`](./ARCHITECTURE.md)** — 架构设计（cannbot 插件）：总体结构 / 确定性流水线 FSM（§2）/ Agent 角色（§4）/ **双层 KB + 社区 skills 知识源（§5，含 §5.4 统一分层契约 + §5.5 实现状态）** / 安全网 gates（§6）/ 跨代际可扩展（§7）/ Harness 抽象与 opencode 安装面细节（§8）/ multirank 扩展（§13.1 模式 A 内）/ 集成装配（§10）。
+- **[参考输入设计](./design/reference-inputs/design.md)** — 真值来源与测试来源的边界设计。
+- **[multirank 扩展设计](./design/multirank.md)** — port_a3_to_a5 多卡融合算子路径的完整设计（真值模型 / UNVERIFIED 逃生舱 / perf 范式 / 归档）。
+- **[`README.md`](../README.md)** — 一页概览 + 底座依赖与适配路线。
+- **[`quickstart.md`](../quickstart.md)** — 最短上手。
+- **KB 分层统一设计**：KB 分层契约的 canonical 设计文档（`ARCHITECTURE.md §5.4` 引用）。
+
+> 遇到本说明未覆盖的问题，先查 `ARCHITECTURE.md` 对应节，再看 `engine/workspace/<op>/` 的 `PROGRESS.md` + 日志。

@@ -102,6 +102,7 @@ Glob and Read these (in priority order):
 3. `<workspace>/model.py` — PyTorch reference (signature + call graph)
 4. `<workspace>/model_new_ascendc.py` — AscendC ref if Python-driven path
 5. `<workspace>/analysis.md` — prior worker's analysis (secondary, may bias — read last)
+6. `<workspace>/spec.py` — multirank op spec (port_a3_to_a5 multirank extension). The workspace's model.py EXISTS but is an O2.5-generated thin shell importing the spec's `expected` — the algorithm semantics (inputs, shard, expected, cases) live in the spec; read it for classification signal.
 
 #### Migration / backward workspace layout (P0aak v3)
 
@@ -120,7 +121,20 @@ If the workspace fits neither migration nor backward-generation shape (for examp
 
 Workspaces sometimes contain multiple kernel implementation strategies for the SAME op (e.g. sparse_gather has SIMT-scalar + SIMT-vec4 + SIMT-persistent + SIMD-pingpong + SIMD-expert-major + SIMD/SIMT-hybrid in one workspace). Treat them as ONE op for classification — the op-class character is union-of-all-implementations, not per-file. The `source_signatures_observed` field can cite per-file evidence; tags are aggregated.
 
-Compute SHA256 of concatenated text → store as `source_sha256` in output (cache key).
+**`source_sha256` (the output cache key) MUST come from the engine — never
+compute it yourself.** Run:
+
+```bash
+PYTHONPATH=src/scripts python3 -m orchestrator --classify-sha <workspace_path>
+```
+
+(Your cwd IS the engine root; if it is not, cd to the engine root first and
+use `PYTHONPATH=<engine_root>/src/scripts`.) The reading list above (which
+includes `architecture.md`, `spec.py`, etc.) is NOT the hash manifest —
+the hash contract (file set, per-file 200KB truncation, `b"\n".join`) is
+defined solely by that command's output. A self-computed sha inevitably
+disagrees with the engine's `_read_cached` check, and your classification
+is then clobbered as "not produced" (observed on moe_fused_a8w8, 2026-08-21).
 
 ### Step 2 — Identify op-class tags
 
@@ -130,15 +144,15 @@ Apply op-class knowledge to source content. Tags are descriptive — multiple ma
 
 | Tag | Apply when source contains | KB sections to recommend |
 |---|---|---|
-| `transcendental` | `AscendC::(Tanh\|Sigmoid\|Erf\|Exp\|Log\|Sin\|Cos)` calls, OR `Tanh(`/`Sigmoid(`/`Erf(`/`Exp(`/`Log(` calls in .h/.cpp, OR `torch.(tanh\|sigmoid\|erf\|exp\|log\|sin\|cos)` in .py, OR `torch_npu.npu_(gelu\|swiglu\|silu\|softmax)` | OL-103, PB-24, PB-27, P-P88 |
+| `transcendental` | `AscendC::(Tanh\|Sigmoid\|Erf\|Exp\|Log\|Sin\|Cos)` calls, OR `Tanh(`/`Sigmoid(`/`Erf(`/`Exp(`/`Log(` calls in .h/.cpp, OR `torch.(tanh\|sigmoid\|erf\|exp\|log\|sin\|cos)` in .py, OR `torch_npu.npu_(gelu\|swiglu\|silu\|softmax)` | query `transcendental tanh sigmoid erf exp log sin cos precision` |
 | `elementwise` | Pure pointwise op, single-pass, no reduction/scatter/gather | (default-only) |
 | `broadcast` | `expand`/`reshape`/`permute`/`transpose` on shape mismatch, `cat`/`split`/`pad` | query `memory access DataCopy MTE2` |
 | `reduction` | `ReduceSum/ReduceMax/ReduceMin/ReduceMean`, `torch.(sum\|mean\|max\|min\|prod\|cumsum\|cumprod)` | query `reduction quant` |
-| `softmax` | `AscendC::Softmax`, `torch.softmax`, `nn.functional.softmax`, stable-max + exp + normalize chain | OL-110, reduction_quant 域卡（同上 grep） |
+| `softmax` | `AscendC::Softmax`, `torch.softmax`, `nn.functional.softmax`, stable-max + exp + normalize chain | query `softmax stable-max exp normalize reduction quant` |
 | `sort-select` | `Sort/TopK/GatherMask`, `torch.(sort\|topk\|argsort\|argmax\|argmin)` | EC-33, OL-83, CAND-PP79 (bf16 mantissa-collision tie cluster) and CAND-PP80, sort 域卡（域文件已卡片化：P-P107 tiled softmax over V>UB; **P-P108 iterative nucleus selection = ANTI-PATTERN O(V²)**; **P-P109 hardware Sort+cumsum nucleus = the correct O(V log²V) replacement** — 均有同名 p_p*/cand-* 卡） |
-| `scatter-gather` | `Gather/Scatter/AtomicAdd`, `torch.(gather\|scatter\|index_select\|index_put)` AS DOMINANT op character (NOT plumbing — see anti-pattern §below) | OL-67, OL-90, P-P67 (atomic-add 卡) |
-| `fft` | `AscendC::FFT`, `torch.fft.*` | OL-83, OL-103 |
-| `normalization` | `AscendC::(Normalize\|LayerNorm\|RmsNorm\|GroupNorm)`, `torch_npu.npu_(rms_norm\|layer_norm\|group_norm)`, `nn.functional.layer_norm`, mean-of-squares + rsqrt + scale chain | OL-110, OL-111, OL-120, candidates#CAND-PP82 |
+| `scatter-gather` | `Gather/Scatter/AtomicAdd`, `torch.(gather\|scatter\|index_select\|index_put)` AS DOMINANT op character (NOT plumbing — see anti-pattern §below) | query `scatter gather atomic-add index_select index_put` |
+| `fft` | `AscendC::FFT`, `torch.fft.*` | query `fft precision boundary transcendental` |
+| `normalization` | `AscendC::(Normalize\|LayerNorm\|RmsNorm\|GroupNorm)`, `torch_npu.npu_(rms_norm\|layer_norm\|group_norm)`, `nn.functional.layer_norm`, mean-of-squares + rsqrt + scale chain | query `normalization layer norm rms norm mean-of-squares rsqrt scale` |
 | `quantization` | int8/int4/fp8 path: `round + clamp(-128, 127)`, `npu_quantize`, `dynamic_quant`, `antiquant_scale` | query `quantization reduction quant`, OL-118 |
 | `matmul` | matrix-multiply compute: `AscendC::Mmad` / `MatmulImpl` / `REGIST_MATMUL_OBJ` / BMM, OR `torch.(matmul\|bmm\|einsum)` where the einsum subscripts express a contraction (e.g. `"bij,bjk->bik"`), OR the `@` operator on 2D+ tensors. Apply whenever a Cube/MAC contraction is part of the op's compute character — make this RELIABLE (it is the discriminator for `attention`), not sporadic. | `$CANNBOT_KNOWLEDGE_ROOT/knowledge/ops/ascendc/examples/cube_vector_fusion.md` (原 P-P102 cube_vector_fusion), matmul KB |
 
@@ -148,9 +162,9 @@ Apply op-class knowledge to source content. Tags are descriptive — multiple ma
 |---|---|---|
 | `fused` | Source combines **≥3 distinct compute-structure tags** above, OR explicit fused-op API (`npu_fused_*`, multi-primitive kernel chain) | 用 `knowledge-query` 查询 P-P51 / P-P66 及具体子结构。 **If the fused op is cube+vector (has `matmul`/`MatmulImpl` AND a vector epilogue → MIX_AIC_1_2 candidate)**, recommend **by TARGET SoC — each card is scoped by its own `applies_to: soc=`, do NOT hand a card to a SoC it excludes** (DEBT-208): **V220 (a3/a2)** → PB-34 (`soc=Ascend910_9382` — MatmulImpl+manual-CrossCore MIX_AIC_1_2 FFTS-slot deadlock: 507014/507015 silent hang; root cause + Pattern-A **XOR** Pattern-B fix; 其 Pattern B 同时覆盖 managed-cube/KFC-implicit-sync 生命周期要点). **V351/A5** → **NOT PB-34** — it declares `soc=Ascend910_9382` and carries two `verified_does_not_reproduce_on: Ascend950PR` witnesses (GDN full-op light-port, 122/122 T1 PASS), and its Consequence line makes that light-port the **DEFAULT A5 route**; injecting it on A5 inverts the card's own advice. Recommend instead OL-220 (`soc=Ascend950PR` — cube+vec MIX `ascendc_library` build recipe = the light-port), EC-68 (`soc=Ascend950PR` — 507015 SetSysWorkspaceForce on ACLRT_LAUNCH MIX), PB-45 + OL-223 (arch35 TPipe::Reset frees the global event pool → use a library cube). **BOTH SoCs** → PB-35 (`applies_to: soc=Ascend910_9382,Ascend950PR_9579`, `op_class=mixed_aic_aiv_pattern_a_tile_mmad` — attacks Pattern A itself; `confirmed_on` V351/A5, so it is the mode that bites on A5) |
 | `attention` | the op exhibits the **attention compute structure**: a score matmul (Q·Kᵀ, often scaled by `1/√d`) → **row-wise softmax** → a second matmul (·V). i.e. `matmul` AND `softmax` **co-occur in the QK^T·V dataflow** (the softmax sits BETWEEN two matmuls, normalizing the score matrix that feeds the value matmul). Covers flash-attention, fused-attention, GQA/MQA, MLA, paged/KV-cache attention, fused-attention-grad. **NOT** "merely has a softmax". See structural-detection guidance below. | FA-class 卡（fa_class 三文档已卡片化到外部知识仓 `$CANNBOT_KNOWLEDGE_ROOT/knowledge/ops/ascendc/optimizations/`：`fa_cross_core_sync_workspacequeue`、`fa_cv_fused_init_process_lowering`、`fa_concrete_lowering_params_507015`）+ 模板 `templates/fa_class/{op_kernel,op_host}/` + `$CANNBOT_KNOWLEDGE_ROOT/knowledge/ops/ascendc/examples/fa_class_template.md`、`$CANNBOT_KNOWLEDGE_ROOT/knowledge/ops/ascendc/examples/cube_vector_fusion.md` (原 P-P102). **MIX cube+vec deadlock cards (MANDATORY for FA-class — the cube↔vec sync is where FA-class ops hang on V220)**: PB-34 (MatmulImpl + manual CrossCore + MIX_AIC_1_2 = FFTS sync-slot deadlock, 507014/507015 silent hang at torch.npu.synchronize(); root cause + Pattern A/B fix), OL-220 (cube+vec MIX ascendc_library build recipe), EC-68 (507015 SetSysWorkspaceForce on ACLRT_LAUNCH MIX). V220-only; BENIGN on V351/arch35 |
-| `stateful-cache` | KV cache / paged attention / RoPE position state, indexed cache write-by-slot | OL-88 |
-| `loss-bwd` | Backward / gradient computation (op name has `Backward` / `_bwd`, computes `grad_*`) | OL-89, OL-110 |
-| `optimizer-update` | Adam / AdamW / SGD update step | OL-68, OL-118 |
+| `stateful-cache` | KV cache / paged attention / RoPE position state, indexed cache write-by-slot | query `kv cache paged attention rope indexed cache write-by-slot` |
+| `loss-bwd` | Backward / gradient computation (op name has `Backward` / `_bwd`, computes `grad_*`) | query `backward gradient cpu fp64 autograd truth` |
+| `optimizer-update` | Adam / AdamW / SGD update step | query `optimizer adam update quantization reduction quant` |
 | `sampling` | nucleus / top-P / top-K-top-P / categorical sampling: source contains `top_p`/`topp`/`top_k_top_p`/`nucleus`/`sampled_softmax`/`torch.multinomial`, OR a softmax→sort/cumsum→select nucleus dataflow, OR op name matches `*(top_p\|topk_topp\|nucleus\|multinomial\|sample)*`. **Defining risk**: the nucleus count is unbounded (≈ p·V), so naive iterative max-selection is O(V²) — the exact P-P108 anti-pattern trap. | sort 域卡（域文件已卡片化：**P-P109** hardware Sort+cumsum nucleus, O(V log²V) — USE THIS; **P-P108** iterative O(V²) selection — ANTI-PATTERN, do NOT replicate its peaked-distribution dodge；同名 p_p* 卡位于外部知识仓 `$CANNBOT_KNOWLEDGE_ROOT/knowledge/ops/ascendc/optimizations/`） |
 
 #### `matmul` + `attention` structural detection (task#31 — the FA-vs-Sinkhorn discriminator)
@@ -178,11 +192,17 @@ When the QK^T·V structure is present, emit BOTH `matmul` AND `attention` (and u
 
 | Tag | Apply when | KB |
 |---|---|---|
-| `reference-ub` | Reference is upper-bounded — kernel CANNOT bit-match the reference because reference output is one of many valid implementations. **Positive examples**: any libm-vs-NPU comparison (gelu/silu/softmax/tanh — all transcendental ops), sort tiebreak, argmax tiebreak, nonzero ordering, FMA grouping order. **Negative examples**: integer ops, exact-arithmetic add/mul, deterministic gather, stable-sort with unique keys. | OL-85, OL-104 |
-| `path-a-cpu-truth` | Reference is computable on CPU+fp64 only (Path A pattern; torch_npu.* is deprecated for this op) | OL-68, OL-89, OL-118 |
-| `t3-required` | Reference structurally undefined on CPU (CANN-on-NPU only) | OL-118 |
+| `reference-ub` | Reference is upper-bounded — kernel CANNOT bit-match the reference because reference output is one of many valid implementations. **Positive examples**: any libm-vs-NPU comparison (gelu/silu/softmax/tanh — all transcendental ops), sort tiebreak, argmax tiebreak, nonzero ordering, FMA grouping order. **Negative examples**: integer ops, exact-arithmetic add/mul, deterministic gather, stable-sort with unique keys. | query `upper-bounded reference libm npu precision tolerance` |
+| `path-a-cpu-truth` | Reference is computable on CPU+fp64 only (Path A pattern; torch_npu.* is deprecated for this op) | query `path a cpu fp64 truth quantization optimizer adam` |
+| `t3-required` | Reference structurally undefined on CPU (CANN-on-NPU only) | query `reference structurally undefined cpu cann npu only` |
 
 **Reference-ub default for transcendentals**: any op tagged `transcendental` should ALSO be tagged `reference-ub` unless the kernel is bit-canonical to its reference (rare).
+
+#### Framework tags
+
+| Tag | Apply when | KB |
+|---|---|---|
+| `catlass` | An input source EXPLICITLY declares the kernel builds on the catlass library: architecture.md §Reference Implementation naming catlass（设计时结构规划文档，若存在）, or kernel source including `catlass/` headers / `Catlass::` symbols. The framework choice is a design decision recorded in the architecture doc — do NOT infer it from a matmul compute structure alone (a matmul op authored with hand-rolled cube is NOT catlass). | query `catlass resource memory model event id tpipe lifecycle` |
 
 #### Source-language tags (DROPPED in v2)
 
@@ -202,7 +222,7 @@ If a tag is plumbing (e.g. shape-1 broadcast inside a fused op, indexed write th
 - **KV cache index-write**: tag as `stateful-cache`, NOT additionally `scatter-gather`. The index-write is a side-effect of cache update, not the op's compute character.
 - **cos/sin shape-1 expand inside a fused norm/rope op**: NOT `broadcast`. Plumbing inside the fused chain.
 - **Pre-sorted indices consumed as input** (e.g. `sorted_edges`, `expert_offsets` from upstream counting-sort): NOT `sort-select`. The kernel reads pre-sorted data; sorting happened elsewhere.
-- **Atomic-accumulation non-determinism in backward kernels**: route to `loss-bwd` + OL-89 (Path-A CPU-truth methodology), NOT `reference-ub`. atomic-add order non-determinism is handled by Path-A reference, not by upper-bound matching tolerance.
+- **Atomic-accumulation non-determinism in backward kernels**: route to `loss-bwd` + query `path a cpu truth atomic-add non-determinism` (Path-A CPU-truth methodology), NOT `reference-ub`. atomic-add order non-determinism is handled by Path-A reference, not by upper-bound matching tolerance.
 - **Reshape / transpose / permute as part of layout setup before main compute**: NOT `broadcast`. Only tag `broadcast` when the broadcast/permute IS the op (e.g. `permute` op, `cat` op).
 
 ### Step 4 — Recommend KB sections

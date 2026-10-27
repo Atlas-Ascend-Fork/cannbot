@@ -52,15 +52,19 @@ def _ws(tags):
 # **未配置外部仓**的确定性形态。测试经 `no_external_kb` fixture 显式隔离，保证在配置了
 # CANNBOT_KNOWLEDGE_ROOT 的机器上也复现同一形态。配置模式的解析行为由
 # test_kw_brief_decomposition_modules.py 的 external-repo 模式测试覆盖。
+# Re-pinned 2026-10-26 (port 契约表述对齐): A5 kernel 方法论句从「designed via math +
+# hardware adaptation」改为「re-emits the A3 source's algorithm and structure with
+# arch35 hardware adaptation (Phase A.1-1 authoring contract)」——与 port 契约的
+# preserve-structure 语义对齐；diff 审查确认全文本仅此一处差异（abs 用例逐字节 diff）。
 _GOLDEN = [
     ("mat_mul_v3", ["a3_to_a5_port", "CUBE_MIX"], 3,
-     "75bfb8342af0d8b9ed282068acb5946f96d2a0d28c978e82e9772bac3ec8ad59"),
+     "20b2d92ef40304ae214a8a20d6c3fc7addb097178586fc51726bb44f751804bc"),
     ("some_vec_op", ["a3_to_a5_port"], 3,
-     "0af777d076ac20745ff4a9fbdb14833e9b759c0f327571d10db46ec3e119e26d"),
+     "56549d29e9b07274526595fc80cdb96ca14e8096ded7531d02a9d930fe08dc70"),
     ("flash_attention_score", ["a3_to_a5_port", "FA_CLASS"], 2,
-     "83bb26244def7d9468e6ab7c569132cabd4d53a6f63aebad188b5af0f7da14dc"),
+     "2f66d83c5bdc6267bee82365a6cc6c70ddc0a3e467ac5f010f0469bc54ae2a4c"),
     ("abs", ["a3_to_a5_port"], 1,
-     "a6d5b07f15651774f5018fd56e9ca1c018b69c31c0aa6dc491dc31705d3afeb3"),
+     "fdb2759bd9f566aefa5e694bf0bdfb69dc962ea79602fae248d66236d156bb73"),
 ]
 
 

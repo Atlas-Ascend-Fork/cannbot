@@ -29,6 +29,7 @@ route-config schema (JSON list):
   [{"topic": str, "skill": str, "reference_hint": str (optional),
     "applies_to": ["all"] | [op-class tag, ...]}]
 """
+
 from __future__ import annotations
 
 import json
@@ -72,12 +73,30 @@ def select_routes(entries, op_class_tags) -> list:
         if not isinstance(applies, list):
             continue
         if "all" in applies or (tags & set(applies)):
-            out.append({
-                "topic": e.get("topic", "?"),
-                "skill": e.get("skill", "?"),
-                "reference_hint": e.get("reference_hint", ""),
-            })
+            out.append(
+                {
+                    "topic": e.get("topic", "?"),
+                    "skill": e.get("skill", "?"),
+                    "reference_hint": e.get("reference_hint", ""),
+                }
+            )
     return out
+
+
+def _union_multirank_fallback(
+    selected: list, entries: list, op_class_tags, workspace
+) -> None:
+    """Classification-unavailable fallback (O1.7 error/fallback path): with
+    empty class tags the selector yields only the "all" baseline, and
+    mode-relevant a-tier knowledge never reaches the worker. A workspace
+    holding spec.py is a multirank workspace — union the mode-tagged default
+    routes on top of the baseline. Normal (tags non-empty) paths are
+    unaffected."""
+    if op_class_tags or not (Path(workspace) / "spec.py").is_file():
+        return
+    for r in select_routes(entries, ["multirank"]):
+        if r not in selected:
+            selected.append(r)
 
 
 def populate_cba_routes(op, workspace, op_class_tags, *, config_path=None) -> list:
@@ -93,9 +112,11 @@ def populate_cba_routes(op, workspace, op_class_tags, *, config_path=None) -> li
         if not isinstance(entries, list):
             return []
         selected = select_routes(entries, op_class_tags)
+        _union_multirank_fallback(selected, entries, op_class_tags, workspace)
         if selected:
             (Path(workspace) / ".cba_required_routes.json").write_text(
-                json.dumps(selected, indent=2))
+                json.dumps(selected, indent=2)
+            )
         return selected
     except Exception:
         return []

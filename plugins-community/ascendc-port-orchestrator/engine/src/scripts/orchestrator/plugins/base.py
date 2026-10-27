@@ -25,8 +25,10 @@ historical import path (`from plugins.base import PluginProtocol`,
 `from plugins.base import is_fa_class`, `from plugins import BasePlugin`,
 etc.) keeps working byte-for-byte, including runtime `isinstance`.
 """
+
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +59,7 @@ class BasePlugin:
 
     Subclasses must set `name` (and optionally `cli_flag`) at class level.
     """
+
     name: str = ""
     cli_flag: Optional[str] = None
 
@@ -125,14 +128,16 @@ class BasePlugin:
         """Whether finalize must compare generated architecture to arch22 source."""
         return False
 
-    def check_binary_provenance(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
+    def check_binary_provenance(self, workspace: Path, vj: dict) -> Optional[str]:
+        logging.getLogger(__name__).debug(
+            "%s: no binary provenance gate; neutral default", type(self).__name__
+        )
         return None
 
-    def check_verify_path_provenance(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
+    def check_verify_path_provenance(self, workspace: Path, vj: dict) -> Optional[str]:
+        logging.getLogger(__name__).debug(
+            "%s: no verify-path provenance gate; neutral default", type(self).__name__
+        )
         return None
 
     def archive_layout_mapping(self, workspace: Path) -> dict[str, str]:
@@ -141,9 +146,10 @@ class BasePlugin:
     def archive_project_subdir(self) -> Optional[str]:
         return None
 
-    def resolve_archive_target(
-        self, workspace_rel_path: str, op: str
-    ) -> str:
+    def resolve_archive_target(self, workspace_rel_path: str, op: str) -> str:
+        logging.getLogger(__name__).debug(
+            "%s: no archive target remap; path passes through", type(self).__name__
+        )
         return workspace_rel_path
 
     def check_op_host_completeness(self, workspace: Path) -> Optional[str]:
@@ -212,9 +218,10 @@ class BasePlugin:
     def forbidden_workspace_files(self) -> tuple[str, ...]:
         return ()
 
-    def check_verifier_uses_modelnew(
-        self, workspace: Path, vj: dict
-    ) -> Optional[str]:
+    def check_verifier_uses_modelnew(self, workspace: Path, vj: dict) -> Optional[str]:
+        logging.getLogger(__name__).debug(
+            "%s: no modelnew-verifier gate; neutral default", type(self).__name__
+        )
         return None  # neutral default — no enforcement
 
     # ── Docs subdir contribution (2026-05-16, universal output format) ──
@@ -232,17 +239,76 @@ class BasePlugin:
         return []
 
     def kw_brief_phase_block(
-        self, *, op: str = "", workspace=None,
+        self,
+        *,
+        env=None,
+        op: str = "",
+        workspace=None,
         iter_cap_remaining: int = 0,
         directive_text: Optional[str] = None,
         handoff_from_prior_agent: Optional[str] = None,
-        env=None,
     ) -> Optional[str]:
+        """Kernel-worker phase-block override (the kw mirror of pp/ko hooks).
+
+        Called by briefs.kw_brief before the generic worker phases are
+        emitted. Returning a non-None string replaces the generic block
+        entirely (mode-specific phase protocol + KB load list). Plugins that
+        don't need a worker override keep the None default — the generic
+        kernel-worker brief is used unchanged.
+        """
+        logging.getLogger(__name__).debug(
+            "%s: no kernel-worker brief override; generic phases run",
+            type(self).__name__,
+        )
+        return None
+
+    def pp_brief_phase_block(
+        self,
+        *,
+        handoff_str: str = "",
+        iter_cap: int = 0,
+    ) -> Optional[str]:
+        """Precision-probe phase-block override (mirror of kw_brief_phase_block).
+
+        Called by briefs.pp_brief._probe_phase_block before the generic probe
+        phases are emitted. Returning a non-None string replaces the generic
+        block entirely (mode-specific probe protocol + KB load list). Plugins
+        that don't need a probe override keep the None default — the generic
+        single-rank probe brief is used unchanged.
+        """
+        logging.getLogger(__name__).debug(
+            "%s: no precision-probe brief override; generic probe phases run",
+            type(self).__name__,
+        )
+        return None
+
+    def ko_brief_phase_block(
+        self,
+        *,
+        handoff_str: str = "",
+        directive_str: str = "",
+    ) -> Optional[str]:
+        """Kernel-optimizer phase-block override (mirror of pp_brief_phase_block).
+
+        Called by briefs.ko_brief._optimizer_phase_block before the generic
+        optimizer phases are emitted. Returning a non-None string replaces the
+        generic block entirely (mode-specific tuning protocol + KB load list).
+        Plugins that don't need an optimizer override keep the None default —
+        the generic single-card optimizer brief is used unchanged.
+        """
+        logging.getLogger(__name__).debug(
+            "%s: no kernel-optimizer brief override; generic phases run",
+            type(self).__name__,
+        )
         return None
 
     def should_auto_cann_learn_on_gap(
-        self, op_class: str, op_complexity: str, worker_signal: str,
-        *, workspace=None,
+        self,
+        op_class: str,
+        op_complexity: str,
+        worker_signal: str,
+        *,
+        workspace=None,
     ) -> bool:
         """Neutral default: unsupported workflows never enter research recovery."""
         return False
@@ -275,5 +341,28 @@ class BasePlugin:
         already known to dominate orchestrator-side re-measurement).
         """
         return True
+
+    def finalize_perf_capture(self, workspace: Path, op: str) -> Optional[dict]:
+        """Plugin-owned finalize perf measurement (the capture-call override).
+
+        Default None → the core `measure_op_perf` symmetric path runs.
+        Override to take over the finalize perf measurement entirely (the
+        plugin then owns candidate-vs-baseline measurement + the returned
+        verification.json `performance` fragment). Capabilities this hook
+        replaces at the capture call point:
+          * custom measurement engine (any runner/profiler the paradigm needs)
+          * custom status mapping (PASS / PASS_WITHIN_TOLERANCE / N/A / ...)
+          * honest non-measurement (na_kind = MEASUREMENT_FAILED /
+            UNMEASURABLE_BY_DESIGN) when the op cannot be measured this run
+          * resource-shortage pause: status == "PAUSE_RESOURCE" + reason makes
+            the finalize FSM pause for the user (free the resource / accept a
+            degraded campaign) instead of bouncing a worker on a problem it
+            cannot fix.
+        """
+        logging.getLogger(__name__).debug(
+            "%s: no finalize perf override; measure_op_perf generic path runs",
+            type(self).__name__,
+        )
+        return None
 
     # ────────────────────── Stream-silence timeout (per-paradigm) ──────────────────────

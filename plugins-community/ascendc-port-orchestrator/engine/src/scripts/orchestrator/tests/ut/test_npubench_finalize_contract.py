@@ -268,6 +268,29 @@ def _make_workspace(tmp_path: Path, monkeypatch, *, current_binding=None) -> tup
     return workspace, _verification_record(precision, performance)
 
 
+def test_resolve_multirank_workspace_is_not_npubench_finalize_contract(tmp_path):
+    """A multirank-flagged workspace never routes into the npubench finalize
+    contract, even when the truth tier is npubench-bound: its O5 evidence is
+    the multirank marker (.o5_verified.json + unverified_world_sizes), not
+    npubench_evidence.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state = {"opgen_mode": "port_a3_to_a5", "reference": _reference()}
+    (workspace / ".opgen_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+    is_npubench, _ = contract.resolve_npubench_workspace(workspace)
+    assert is_npubench is True  # single-card npubench stays contract-owned
+
+    state["multirank"] = True
+    (workspace / ".opgen_state.json").write_text(
+        json.dumps(state), encoding="utf-8"
+    )
+    is_npubench, _ = contract.resolve_npubench_workspace(workspace)
+    assert is_npubench is False
+
+
 def test_finalize_accepts_one_complete_parent_published_evidence_unit(tmp_path, monkeypatch):
     workspace, verification = _make_workspace(tmp_path, monkeypatch)
 

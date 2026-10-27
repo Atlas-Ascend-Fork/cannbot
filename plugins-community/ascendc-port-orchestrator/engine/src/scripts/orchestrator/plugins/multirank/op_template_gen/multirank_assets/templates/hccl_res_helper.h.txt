@@ -1,0 +1,341 @@
+/*
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the License).
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
+
+#ifndef HCCL_RES_HELPER_H
+#define HCCL_RES_HELPER_H
+
+// ============================================================================
+// HCCL resource helper — P-P110 (HCCL context lifecycle + rank/window topology)
+// Path 2 ONLY: HCCL comm domain + reuse of its internal cross-card
+// shared-memory resources.
+// ----------------------------------------------------------------------------
+// MODIFIABILITY: ❌ DO NOT MODIFY. Copy this file verbatim into your kernel.
+//
+//   • HcclResource lives in its OWN header — keep it separate from kernel logic.
+//   • Kernel code calls the INTERFACE ONLY (instance naming convention:
+//     `hcclRes_` — never a bare `hccl_`, which reads like the underlying
+//     HCCL API):
+//         hcclRes_.Init(mc2InitTiling); hcclRes_.GetRankId(); hcclRes_.GetRankSize();
+//         hcclRes_.GetWindowsInAddr(r); hcclRes_.GetWindowsOutAddr(r);
+//         hcclRes_.GetWindowsExp(r); hcclRes_.GetWorkspaceAddr(); ...
+//   • NEVER read hcclContext_ or the hccl_res_detail structs directly from
+//     kernel logic — the layout is chip-dependent (A2 / A3 / A5) and the class
+//     abstracts it.
+//
+// HCCL window reuse precondition (Path 2): before reusing the HCCL window
+// memory, the host MUST disable AI CPU dispatch and set MTE mode BEFORE the
+// aclnn call — NnopbaseSetHcclServerType(executor, NNOPBASE_HCCL_SERVER_TYPE_MTE);
+// otherwise the windows are occupied by AICPU and kernel reads/writes misbehave.
+// Path-1 high-level HCCL collective APIs conflict with this MTE setting.
+//
+// Three HCCL window resources (allocated by the framework at init; the op only
+// reads/writes them, never allocates/frees):
+//   windowsIn  — symmetric memory slab 1 (In/Out naming carries NO direction;
+//                per-slab size via GetWindowsSize())
+//   windowsOut — symmetric memory slab 2
+//   windowsExp — 1 MB sync flag region, A2 single-node / A3 ONLY. A5 and A2
+//                multi-node have NO exp region: carve your own flag area out of
+//                a window slab (e.g. the first 1 MB, disjoint from the RDMA data
+//                traffic in that slab). Either way NEVER assume the flag memory
+//                is zeroed — treat it as random unless the host explicitly
+//                clears it before dispatch (no external framework guarantee).
+//
+// No using-directives against the AscendC namespace — explicit qualification only.
+// Source: owner-authorized reference implementation (design §3.1).
+// ============================================================================
+
+#include <stdint.h>
+#include "kernel_operator.h"
+
+namespace hccl_res_detail {
+
+constexpr uint32_t HCCL_MAX_RANK_NUM = 32U;
+constexpr uint32_t MAX_CC_TILING_NUM = 8U;
+
+struct MemDetails {
+    uint64_t size;
+    uint64_t addr;
+    uint32_t key;
+};
+
+struct IbVerbsData {
+    MemDetails remoteInput;
+    MemDetails remoteOutput;
+    MemDetails localInput;
+    MemDetails localOutput;
+    uint8_t res[24];
+};
+
+// A2 layout
+struct HcclCombineOpParam {
+    uint64_t workSpace;
+    uint64_t workSpaceSize;
+    uint32_t rankId;
+    uint32_t rankNum;
+    uint64_t winSize;
+    uint64_t windowsIn[HCCL_MAX_RANK_NUM];
+    uint64_t windowsOut[HCCL_MAX_RANK_NUM];
+    uint8_t  res[8064];
+    uint64_t winExpSize;
+    uint64_t windowsExp[HCCL_MAX_RANK_NUM];
+    uint8_t  multiFlag;
+    __gm__ IbVerbsData *data;
+};
+
+// A3 layout
+struct HcclA3OpResParam {
+    uint64_t workSpace;
+    uint64_t workSpaceSize;
+    uint32_t rankId;
+    uint32_t rankNum;
+    uint64_t winSize;
+    uint64_t localWindowsIn;
+    uint64_t localWindowsOut;
+    char     hcomId[128];
+    uint64_t winExpSize;
+    uint64_t localWindowsExp;
+    uint32_t rWinStart;
+};
+
+constexpr uint32_t HCCL_MTE_MAX_RANK_NUM = 64;
+
+// A5 layout
+struct HcclA5OpResParam {
+    uint64_t workSpace;
+    uint64_t workSpaceSize;
+    uint32_t rankId;
+    uint32_t rankDim;
+    uint64_t winSize;
+    uint64_t windowsIn[HCCL_MTE_MAX_RANK_NUM];
+    uint64_t windowsOut[HCCL_MTE_MAX_RANK_NUM];
+    uint64_t xnAddr;
+    uint64_t ckeAddr;
+    uint64_t msAddr;
+    uint64_t msSize;
+};
+
+struct HcclCommContext {
+    uint64_t workSpace;
+    uint64_t workSpaceSize;
+    uint32_t rankId;
+    uint32_t rankDim;
+    uint64_t winSize;
+};
+
+struct HcclRankRelationResV2 {
+    uint32_t remoteUsrRankId;
+    uint32_t remoteWorldRank;
+    uint64_t windowsIn;
+    uint64_t windowsOut;
+    uint64_t windowsExp;
+};
+
+struct RemoteResPtr {
+    HcclRankRelationResV2 *nextHostPtr;
+    HcclRankRelationResV2 *nextDevicePtr;
+};
+
+// Shape of the mc2InitTiling GM payload the host passes in.
+struct Mc2InitTilingInner {
+    uint32_t version;
+    uint32_t mc2HcommCnt;
+    uint32_t offset[MAX_CC_TILING_NUM];
+    uint8_t  debugMode;
+    uint8_t  preparePosition;
+    uint16_t queueNum;
+    uint16_t commBlockNum;
+    uint8_t  devType;
+    char     reserved[17];
+};
+
+} // namespace hccl_res_detail
+
+
+class HcclResource {
+public:
+    constexpr uint8_t HCCL_ASCEND910B = 1;
+    constexpr bool IS_A5 =
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+        true;
+#else
+        false;
+#endif
+
+public:
+    __aicore__ inline
+    void Init(__gm__ void *mc2InitTiling,
+              __gm__ void *mc2Context = AscendC::GetHcclContext<AscendC::HCCL_GROUP_ID_0>()) {
+        auto p = reinterpret_cast<__gm__ hccl_res_detail::Mc2InitTilingInner *>(mc2InitTiling);
+        devType_ = p->devType;
+        hcclContext_ = reinterpret_cast<__gm__ hccl_res_detail::HcclCommContext *>(mc2Context);
+    }
+
+    __aicore__ inline
+    uint32_t IsA2MultiNode() {
+        if constexpr (IS_A5) {
+            return false;
+        } else {
+            return devType_ == HCCL_ASCEND910B &&
+                reinterpret_cast<__gm__ hccl_res_detail::HcclCombineOpParam *>(hcclContext_)->multiFlag == 1U;
+        }
+    }
+
+    __aicore__ inline
+    uint32_t GetRankId() { return hcclContext_->rankId; }
+
+    __aicore__ inline
+    uint32_t GetRankSize() { return hcclContext_->rankDim; }
+
+    __aicore__ inline
+    uint64_t GetWorkspaceSize() { return hcclContext_->workSpaceSize; }
+
+    __aicore__ inline
+    GM_ADDR GetWorkspaceAddr() {
+        uint64_t addr = hcclContext_->workSpace;
+        ascendc_assert(addr != 0UL, "GetWorkspaceAddr failed, addr is nullptr");
+        return reinterpret_cast<GM_ADDR>(addr);
+    }
+
+    __aicore__ inline
+    uint64_t GetWindowsExpSize() {
+        if constexpr (IS_A5) {
+            return 0;
+        } else {
+            if (devType_ != HCCL_ASCEND910B) {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclA3OpResParam *>(hcclContext_);
+                return p->winExpSize;
+            } else {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclCombineOpParam *>(hcclContext_);
+                return !IsA2MultiNode() ? p->winExpSize : 0; // No Exp region in A2 multinode
+            }
+        }
+    }
+
+    __aicore__ inline
+    GM_ADDR GetWindowsExp(uint32_t rankId) {
+        ascendc_assert(rankId < GetRankSize(),
+            "GetWindowsExp failed, rankId[%u], expected less than[%u]", rankId, GetRankSize());
+        uint64_t addr = 0UL;
+        if constexpr (IS_A5) {
+            ascendc_assert(false, "The exp memory space does not exist in A5");
+        } else {
+            if (devType_ != HCCL_ASCEND910B) {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclA3OpResParam *>(hcclContext_);
+                if (rankId == p->rankId) {
+                    addr = p->localWindowsExp;
+                } else {
+                    auto r = GetRemoteRankAddrs(p, rankId);
+                    addr = (r != nullptr ? r->windowsExp : 0UL);
+                }
+            } else {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclCombineOpParam *>(hcclContext_);
+                if (p->multiFlag == 0U) {
+                    addr = p->windowsExp[rankId];
+                }
+            }
+        }
+        ascendc_assert(addr != 0UL, "GetWindowsExp failed, addr of rankId[%u] is nullptr", rankId);
+        return reinterpret_cast<GM_ADDR>(addr);
+    }
+
+    __aicore__ inline
+    uint64_t GetWindowsSize() {
+        if constexpr (IS_A5) {
+            return hcclContext_->winSize / 2; // In A5, winSize = windowsIn's size + windowsOut's size
+        } else {
+            return hcclContext_->winSize;
+        }
+    }
+
+    // windowsIn addr for rankId. NOTE: "In"/"Out" are just two symmetric memory
+    // slabs — naming carries NO send/recv direction (see P-P112). Either slab works
+    // as long as sender and receiver use the same one.
+    __aicore__ inline
+    GM_ADDR GetWindowsInAddr(uint32_t rankId) {
+        ascendc_assert(rankId < GetRankSize(),
+            "GetWindowsInAddr failed, rankId[%u], expected less than[%u]", rankId, GetRankSize());
+        uint64_t addr = 0UL;
+        if constexpr (IS_A5) {
+            auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclA5OpResParam *>(hcclContext_);
+            addr = p->windowsIn[rankId];
+        } else {
+            if (devType_ != HCCL_ASCEND910B) {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclA3OpResParam *>(hcclContext_);
+                if (rankId == p->rankId) {
+                    addr = p->localWindowsIn;
+                } else {
+                    auto r = GetRemoteRankAddrs(p, rankId);
+                    addr = (r != nullptr ? r->windowsIn : 0UL);
+                }
+            } else {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclCombineOpParam *>(hcclContext_);
+                if (p->multiFlag == 0U) {
+                    addr = p->windowsIn[rankId];
+                } else if (rankId == p->rankId) {
+                    addr = p->data[rankId].localInput.addr;
+                } else {
+                    addr = p->data[rankId].remoteInput.addr;
+                }
+            }
+        }
+        ascendc_assert(addr != 0UL, "GetWindowsInAddr failed, addr of rankId[%u] is nullptr", rankId);
+        return reinterpret_cast<GM_ADDR>(addr);
+    }
+
+    // windowsOut addr for rankId — the other symmetric slab (see P-P112); equivalent
+    // to windowsIn for direction purposes (both are direction-agnostic).
+    __aicore__ inline
+    GM_ADDR GetWindowsOutAddr(uint32_t rankId) {
+        ascendc_assert(rankId < GetRankSize(),
+            "GetWindowsOutAddr failed, rankId[%u], expected less than[%u]", rankId, GetRankSize());
+        uint64_t addr = 0UL;
+        if constexpr (IS_A5) {
+            auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclA5OpResParam *>(hcclContext_);
+            addr = p->windowsOut[rankId];
+        } else {
+            if (devType_ != HCCL_ASCEND910B) {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclA3OpResParam *>(hcclContext_);
+                if (rankId == p->rankId) {
+                    addr = p->localWindowsOut;
+                } else {
+                    auto r = GetRemoteRankAddrs(p, rankId);
+                    addr = (r != nullptr ? r->windowsOut : 0UL);
+                }
+            } else {
+                auto p = reinterpret_cast<__gm__ hccl_res_detail::HcclCombineOpParam *>(hcclContext_);
+                if (p->multiFlag == 0U) {
+                    addr = p->windowsOut[rankId];
+                } else if (rankId == p->rankId) {
+                    addr = p->data[rankId].localOutput.addr;
+                } else {
+                    addr = p->data[rankId].remoteOutput.addr;
+                }
+            }
+        }
+        ascendc_assert(addr != 0UL, "GetWindowsOutAddr failed, addr of rankId[%u] is nullptr", rankId);
+        return reinterpret_cast<GM_ADDR>(addr);
+    }
+
+    // 910C only: remote-rank addr array at ctx + rWinStart.
+    __aicore__ inline
+    const hccl_res_detail::HcclRankRelationResV2* GetRemoteRankAddrs(
+        __gm__ hccl_res_detail::HcclA3OpResParam *ctx, uint32_t rankId)
+    {
+        auto remoteRes = reinterpret_cast<const hccl_res_detail::RemoteResPtr *>(
+            reinterpret_cast<uintptr_t>(ctx) + ctx->rWinStart);
+        return remoteRes[rankId].nextDevicePtr;
+    }
+
+public:
+    __gm__ hccl_res_detail::HcclCommContext *hcclContext_;
+    uint8_t devType_;
+};
+
+#endif // HCCL_RES_HELPER_H

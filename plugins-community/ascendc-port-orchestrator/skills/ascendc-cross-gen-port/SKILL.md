@@ -26,6 +26,30 @@ argument-hint: >
 （npubench 或 a3_live，见下），裸调用 fail-closed。两个 `--mode` 名称按来源格式分类：
 `port-a3-ops`（CANN ops 仓通用格式）/ `port-a3-tilelang2ascendc`（TileLang2AscendC 插件输出格式）：
 
+## 多 rank / 通算融合算子分支
+
+当用户描述或源算子目录出现**通信、通算融合**语义时（跨 rank 集合通信、HCCL、world_size、融合算子等），本 skill 启用 **multirank harness 扩展**：
+
+- 入口仍是 `/ascendc-cross-gen-port`，不新增独立 skill。
+- 输入与单卡同构、约束相同：**`--port-a3-ops` 待移植 ops-nn 源算子目录必选**（与单卡同款 staging 至 `workspace/<op>/.source_arch22/`，worker 读它作迁移参考）+ `--npubench-task` 的 KernelBench 风格 task `.py` + 同 stem sidecar
+- a3_live 档的预交接 wrapper 契约（`--reference-source a3_live` 时主会话围绕 staging 后的 `.source_arch22/` 树撰写 `workspace/<op>/wrapper.py`）：
+  ```python
+  def run(rank_inputs: dict, rank: int, world_size: int, comm=None) -> dict:
+      """执行源算子本 rank 份额；返回输出张量。comm.hcomm_info 为 HCCL 句柄。"""
+  ```
+  wrapper 可在首次调用时构建源算子、把任意源码形态（ops-nn 工程/独立 C++ 构建/预装库绑定）适配到该入口。task 形态：`Model` 参考实现 + 接受 `rank`/`world_size` 的 `get_input_groups`/`get_init_inputs`；case 声明 `world_size`；参考需真实 HCCL 组时模块级 `NEEDS_EP_COMM = True`，`forward` 收到尾随 `comm` 关键字——入口静态转换为内部 `workspace/<op>/spec.py`。
+- 启动命令（`--reference-source` 可选声明参考真值来源，npubench / a3_live）：
+  ```python
+  Bash(
+      command="bash \"$(realpath \"<skill-base>\")/../../scripts/launch_orchestrator.sh\" --skill-base \"<skill-base>\" --mode port-a3-ops --multirank --source <ops-nn-dir> --npubench-task <task.py>",
+      run_in_background=True,
+  )
+  ```
+- 多卡模式**禁 `--lane`**：物理卡组由引擎按 spec 声明的 world_size 组自动分配（npu_probe）。
+- workspace 层面该模式落在 `port_a3_to_a5` mode + `multirank: true` 标志上（multirank 是 port_a3 的扩展，不是并列的独立模式）。O2.5 由 multirank 扩展插件采集真值：`npubench` 用 task 的 `Model` 参考实现在目标 A5 上多 rank 执行；`a3_live` 用源端真实算子在源架构 NPU 上多 rank 执行。O5 用 `multirank_runner.py` 做逐 case 多 rank 验证（ALL-rank PASS 才算 PASS）。
+
+**禁止场景**：纯单卡算子不要走 multirank 分支；host 侧 HCCL 集合通信实现会被 `MULTIRANK_FORBIDDEN` 扫描拒绝。
+
 1. **必选：待移植的算子实现目录**
    - 常规移植：arch22 `ops-nn` 源算子目录（来源架构自动识别）。
    - TileLang2AscendC 工程：`model_new_ascendc.py + kernel/` 目录（`--mode port-a3-tilelang2ascendc`）。

@@ -23,6 +23,7 @@ change re-triggers a fresh classify.
 
 Run: python3 -m pytest src/scripts/orchestrator/tests/ut/test_o17_exit0_nofile_fallback.py -v
 """
+
 from __future__ import annotations
 
 import json
@@ -41,19 +42,28 @@ def test_exit0_no_file_writes_sha_matched_fallback(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_invoke(ws_, timeout=120):
+    def fake_invoke(ws_, timeout=900):
         # exit 0 (success=True), classifier NARRATED instead of writing a file,
         # stdout has NO "Unknown command" (the genuine no-source glitch).
         calls["n"] += 1
-        return (True, "I need more context — which op variant do you want to classify?", "")
+        return (
+            True,
+            "I need more context — which op variant do you want to classify?",
+            "",
+            False,
+        )
 
     monkeypatch.setattr(o17, "_invoke_claude_skill", fake_invoke)
 
     result = o17.classify(ws, force=True)
 
     # (a) graceful fallback, NOT a hard error; empty tags → downstream default KB
-    assert result.op_class_tags == [], f"expected empty tags, got {result.op_class_tags}"
-    assert result.error is None, f"fallback must be graceful (no error), got {result.error!r}"
+    assert result.op_class_tags == [], (
+        f"expected empty tags, got {result.op_class_tags}"
+    )
+    assert result.error is None, (
+        f"fallback must be graceful (no error), got {result.error!r}"
+    )
 
     # (b) deterministic fallback file written + sha-matched
     cls_path = ws / "op_classification.json"
@@ -61,13 +71,17 @@ def test_exit0_no_file_writes_sha_matched_fallback(tmp_path, monkeypatch):
     data = json.loads(cls_path.read_text())
     assert data["source"] == "o17_fallback_unclassified"
     assert data["op_class_tags"] == []
-    cur_sha = getattr(o17, '_compute_source_sha256')(ws)
-    assert data["source_sha256"] == cur_sha, "fallback must be sha-matched so re-runs read it cached"
+    cur_sha = getattr(o17, "_compute_source_sha256")(ws)
+    assert data["source_sha256"] == cur_sha, (
+        "fallback must be sha-matched so re-runs read it cached"
+    )
 
     # (c) re-run on the SAME source reads the cached fallback → NO re-invoke
     n_after_first = calls["n"]
     result2 = o17.classify(ws)  # no force → cache short-circuit
-    assert calls["n"] == n_after_first, "re-run must NOT re-invoke the flaky skill (fallback cached)"
+    assert calls["n"] == n_after_first, (
+        "re-run must NOT re-invoke the flaky skill (fallback cached)"
+    )
     assert result2.op_class_tags == []
 
 
@@ -81,14 +95,73 @@ def test_source_change_retriggers_classify_after_fallback(tmp_path, monkeypatch)
 
     calls = {"n": 0}
 
-    def fake_invoke(ws_, timeout=120):
+    def fake_invoke(ws_, timeout=900):
         calls["n"] += 1
-        return (True, "clarifying question, no file written", "")
+        return (True, "clarifying question, no file written", "", False)
 
     monkeypatch.setattr(o17, "_invoke_claude_skill", fake_invoke)
 
-    o17.classify(ws, force=True)          # writes fallback for source v1
+    o17.classify(ws, force=True)  # writes fallback for source v1
     first_calls = calls["n"]
-    (ws / "model.py").write_text("class Model:\n    y = 1\n")  # source changes → sha changes
-    o17.classify(ws)                      # no force: sha mismatch → must re-invoke
-    assert calls["n"] == first_calls + 1, "source change must re-trigger classify, not stay cached"
+    (ws / "model.py").write_text(
+        "class Model:\n    y = 1\n"
+    )  # source changes → sha changes
+    o17.classify(ws)  # no force: sha mismatch → must re-invoke
+    assert calls["n"] == first_calls + 1, (
+        "source change must re-trigger classify, not stay cached"
+    )
+
+
+def test_exit0_no_file_preserves_existing_nonempty_classification(
+    tmp_path, monkeypatch
+):
+    """Sha-contract fix (2026-08-21, moe_fused_a8w8): the agent ran and wrote a
+    valid classification, but under a sha scheme that disagrees with the
+    engine's `_compute_source_sha256` (pre-`--classify-sha` contract) — the
+    engine then misread the run as "exit 0 without a (sha-matching) file" and
+    clobbered the valid classification with the empty-tags fallback.
+
+    Post-fix: exit-0-without-(sha-matching)-file first respects an existing
+    NON-EMPTY classification (op_class is intrinsic to the op — same reasoning
+    as the P135.O17c / DEBT-134 stale paths); the empty fallback is written
+    only when no usable prior classification exists.
+    """
+    ws = tmp_path / "moe_fused_a8w8"
+    ws.mkdir()
+    (ws / "model.py").write_text("class Model:\n    pass\n")  # source for sha
+    prior = {
+        "op": "moe_fused_a8w8",
+        "op_class_tags": ["mc2_fusion", "quantization", "matmul"],
+        "kb_recommendations": [
+            {
+                "path": "patterns/domains/multirank_communication.md",
+                "reason": "multirank fusion",
+            }
+        ],
+        "rationale": "prior valid agent classification (pre-contract sha scheme)",
+        "source_signatures_observed": [],
+        "source_sha256": "0" * 64,  # stale sha — mismatch vs current source
+        "schema_version": 3,
+    }
+    cls_path = ws / "op_classification.json"
+    cls_path.write_text(json.dumps(prior, indent=2))
+
+    def fake_invoke(ws_, timeout=900):
+        # exit 0, but no sha-matching file appears this run (agent's own sha
+        # scheme disagrees with the engine, or it wrote nothing at all)
+        return (True, "classification complete", "", False)
+
+    monkeypatch.setattr(o17, "_invoke_claude_skill", fake_invoke)
+
+    result = o17.classify(ws, force=True)
+
+    # (a) the existing non-empty classification is REUSED, not clobbered
+    assert result.op_class_tags == prior["op_class_tags"], (
+        f"existing non-empty tags must survive, got {result.op_class_tags}"
+    )
+    assert result.error is not None and "reused intrinsic taxonomy" in result.error
+
+    # (b) the file on disk is untouched — NOT overwritten by the empty fallback
+    data = json.loads(cls_path.read_text())
+    assert data["op_class_tags"] == prior["op_class_tags"]
+    assert data.get("source") != "o17_fallback_unclassified"

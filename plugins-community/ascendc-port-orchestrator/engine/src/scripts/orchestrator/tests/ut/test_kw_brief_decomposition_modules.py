@@ -24,6 +24,7 @@ surface external callers use), and (b) sha256-locks each builder's output so any
 future drift fails here. Fills the direct-UT gap for builders that previously
 only had transitive golden coverage via `_port_a3_phase_instructions_block`.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -64,6 +65,7 @@ def _sha(s: str) -> str:
 # ---------------------------------------------------------------------------
 # 1. The split modules are independently importable + the public surface is stable
 # ---------------------------------------------------------------------------
+
 
 def test_new_sibling_modules_are_importable():
     from briefs import kw_brief_fa  # noqa: F401
@@ -222,7 +224,7 @@ def test_fa_builders_external_repo_mode(external_kb_fixture):
 
     且 scope 谓词恢复（a5 组合里 PB-34 缺席、§4 卡以 snake 名绝对路径出现）。
     """
-    from briefs import kw_brief_fa as fa
+    from briefs import kw_brief_fa as fa  # noqa: F401
     from briefs.kw_brief_fa import (
         _fa_assembly_deadlock_warning_block,
         _fa_assembly_intro_block,
@@ -233,15 +235,23 @@ def test_fa_builders_external_repo_mode(external_kb_fixture):
     assert ext + "/knowledge/ops/ascendc/examples/fa_class_template.md" in intro
 
     block = _fa_assembly_deadlock_warning_block("a5")
-    assert "### PB-34 — MIX cube+vec SILENT-HANG" not in block        # scope restored
-    assert ext + "/knowledge/ops/ascendc/optimizations/fa_cross_core_sync_workspacequeue.md" in block
-    assert "⚠️ 未找到" not in block                                    # every reference resolved
+    assert "### PB-34 — MIX cube+vec SILENT-HANG" not in block  # scope restored
+    assert (
+        ext
+        + "/knowledge/ops/ascendc/optimizations/fa_cross_core_sync_workspacequeue.md"
+        in block
+    )
+    assert "⚠️ 未找到" not in block  # every reference resolved
 
 
 def test_fa_assembly_intro_byte_identical(no_external_kb):
     from briefs import kw_brief_fa as fa
 
-    got = _sha(getattr(fa, '_fa_assembly_intro_block')("flash_attention_score", "FA_CLASS ATTENTION"))
+    got = _sha(
+        getattr(fa, "_fa_assembly_intro_block")(
+            "flash_attention_score", "FA_CLASS ATTENTION"
+        )
+    )
     # Re-pinned 2026-09-17 (去双轨模式, bb167473): marker text changed to
     # 「cannbot-knowledge 未安装、配置无效或未收录」; bb0bec32-vs-HEAD diff = 1 line
     # (the P-P103 pointer's ⚠️ marker), non-marker lines 0.
@@ -258,19 +268,30 @@ def test_fa_predicates():
     bw_ws = Path(tempfile.mkdtemp()) / "ws"
     bw_ws.mkdir(parents=True)
     (bw_ws / ".opgen_state.json").write_text(json.dumps({"opgen_mode": "backward"}))
-    assert getattr(fa, '_is_fa_class_backward')("flash_attention_score_grad", "FA_CLASS BACKWARD", bw_ws) is True
-    assert getattr(fa, '_is_fa_class_backward')("abs", "ELEMENTWISE", _ws(["ELEMENTWISE"])) is False
+    assert (
+        getattr(fa, "_is_fa_class_backward")(
+            "flash_attention_score_grad", "FA_CLASS BACKWARD", bw_ws
+        )
+        is True
+    )
+    assert (
+        getattr(fa, "_is_fa_class_backward")("abs", "ELEMENTWISE", _ws(["ELEMENTWISE"]))
+        is False
+    )
 
     fused_ws = Path(tempfile.mkdtemp()) / "ws"
     fused_ws.mkdir(parents=True)
-    (fused_ws / ".opgen_state.json").write_text(json.dumps({"fa_backward_arch": "fused"}))
-    assert getattr(fa, '_fused_fa_backward_requested')("x", fused_ws) is True
-    assert getattr(fa, '_fused_fa_backward_requested')("x", None) is False
+    (fused_ws / ".opgen_state.json").write_text(
+        json.dumps({"fa_backward_arch": "fused"})
+    )
+    assert getattr(fa, "_fused_fa_backward_requested")("x", fused_ws) is True
+    assert getattr(fa, "_fused_fa_backward_requested")("x", None) is False
 
 
 # ---------------------------------------------------------------------------
 # 3. Shared leaf: forced-architecture block
 # ---------------------------------------------------------------------------
+
 
 def test_forced_architecture_block():
     from briefs import kw_brief_shared as sh
@@ -281,9 +302,9 @@ def test_forced_architecture_block():
     (forced_ws / "op_classification.json").write_text(
         json.dumps({"force_simt": True, "op_class_tags": ["a3_to_a5_port"]})
     )
-    forced = getattr(sh, '_forced_architecture_block')(forced_ws)
+    forced = getattr(sh, "_forced_architecture_block")(forced_ws)
     assert "ARCHITECTURE IS FIXED" in forced and "SIMT" in forced
-    assert getattr(sh, '_forced_architecture_block')(_ws(["ELEMENTWISE"])) == ""
+    assert getattr(sh, "_forced_architecture_block")(_ws(["ELEMENTWISE"])) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -303,9 +324,12 @@ _PA3_PHASE_GOLDENS = {
     # Re-pinned 2026-09-02: `_pa3_phase_a_2` pin stale again on the 1358ec68
     # baseline (baseline drift — baseline and HEAD emit byte-identical output,
     # verified by diff); re-pinned to current content.
+    # Re-pinned 2026-10-16 (black-box finding F15): the opgen-inherited
+    # "designed via math + hardware adaptation" sentence replaced by the port
+    # contract wording ("re-emits the A3 source's algorithm and structure").
     "_pa3_context": "4537c979a98825f20ee4401fa2c25f3cf596dfedad287c42453cf045ec0ad97f",
     "_pa3_phase_a_1": "7a882d3c4b5b78080aa59f4f6e7193cbf8ee87f81984e8f7146d21e51c510e65",
-    "_pa3_phase_a_2": "b039e18ed322c08515f682efc96a476d5e2f3df62d1dd28715d4badb8740fddd",
+    "_pa3_phase_a_2": "29452bd71604f2e39d1180b4e8e33c9b3dff0037901554fffb9d5dc22145a4b4",
     "_pa3_phase_a_3": "c5903dd6e58f8bac3f6dcee3c9dd0c2db3fcb4febdfd702a87992e68ac1f0d27",
     "_pa3_phase_b": "4d7022f4f05432c2db701d1a2eb62b3c7cc07ea010c2939f6c421313b6b3d2c5",
     "_pa3_phase_c": "40b46bd439f246e52b581c251ee55b3ec113c8a3d9e6a1db669a16d2196a7d25",
@@ -358,17 +382,23 @@ def test_pa3_helper_blocks_byte_identical(no_external_kb):
     # 指引改经 `kb_ref_display` 输出；本 pin 为未配置外部仓的确定性形态
     # （⚠️ 未找到 标记）。
     ws = _ws(["a3_to_a5_port", "CUBE_MIX"])
-    assert _sha(getattr(ph, '_migration_level_block')("mat_mul_v3", ws)) == \
-        "2efd53f64ff389235df515706da450d9615bc081deca865d804fe9e44101ea6e"
-    assert _sha(getattr(ph, '_port_a3_cube_class_mix_block')(ws)) == \
-        "6e49e7136c256935a143dd1c3fcdf1ad728f3fbe099200e85893c9507103bcbf"
-    assert _sha(getattr(ph, '_port_a3_complete_deliverable_block')()) == \
-        "caa6ba76a1250f6e8365576e9181da972dd5b962871de5617070229509ff2425"
+    assert (
+        _sha(getattr(ph, "_migration_level_block")("mat_mul_v3", ws))
+        == "2efd53f64ff389235df515706da450d9615bc081deca865d804fe9e44101ea6e"
+    )
+    assert (
+        _sha(getattr(ph, "_port_a3_cube_class_mix_block")(ws))
+        == "6e49e7136c256935a143dd1c3fcdf1ad728f3fbe099200e85893c9507103bcbf"
+    )
+    assert (
+        _sha(getattr(ph, "_port_a3_complete_deliverable_block")())
+        == "caa6ba76a1250f6e8365576e9181da972dd5b962871de5617070229509ff2425"
+    )
 
 
 def test_pa3_blocks_external_repo_mode(external_kb_fixture):
     """配置外部知识仓后，playbook guides 与模板解析为外部仓绝对路径。"""
-    from briefs import kw_brief_pa3_phases as ph
+    from briefs import kw_brief_pa3_phases as ph  # noqa: F401
     from briefs.kw_brief_pa3_phases import (
         _migration_level_block,
         _port_a3_cube_class_mix_block,
@@ -377,7 +407,11 @@ def test_pa3_blocks_external_repo_mode(external_kb_fixture):
     ext = str(external_kb_fixture)
     ws = _ws(["a3_to_a5_port", "CUBE_MIX"])
     ml = _migration_level_block("mat_mul_v3", ws)
-    assert ext + "/knowledge/ops/ascendc/guides/cross_gen_migration_guide/l1_implementation.md" in ml
+    assert (
+        ext
+        + "/knowledge/ops/ascendc/guides/cross_gen_migration_guide/l1_implementation.md"
+        in ml
+    )
     assert "asc-devkit-vendored" not in ml
     mix = _port_a3_cube_class_mix_block(ws)
     assert ext + "/knowledge/ops/ascendc/examples/cube_vector_fusion.md" in mix

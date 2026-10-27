@@ -15,14 +15,15 @@ Behavior-neutral extraction from finalize_checks.py (DEBT-201 god-file
 sub-split, 2026-07-06). Byte-identical function bodies; only relocated.
 finalize_checks re-imports these (bottom import) so call sites + import
 paths (`from finalize_checks import ...`) are unaffected."""
+
 from __future__ import annotations
 import logging
-import ast as _ast
+import ast as _ast  # noqa: F401
 import hashlib
 import json
 import re
-import shutil
-from datetime import datetime as _datetime, timezone as _timezone
+import shutil  # noqa: F401
+from datetime import datetime as _datetime, timezone as _timezone  # noqa: F401
 from pathlib import Path
 from typing import Optional
 
@@ -80,7 +81,7 @@ _GE_OPHOST_RECIPE_REFERENCE = (
     "`templates/fa_class/op_host/GE_HOST_TRANSFORM_RECIPE.md` — CARRY "
     "def/infershape "
     "from the A3 (arch22) input, REPLACE-HOOK tiling.cpp onto the KB shared "
-    "layer (`#include \"wp_fa_host_tiling.h\"` + call `wfh::Calc*` /\n"
+    'layer (`#include "wp_fa_host_tiling.h"` + call `wfh::Calc*` /\n'
     "`wp_fa_host::Calc*`). Prior target implementations may be consulted "
     "for research, but every retained upstream file must be declared with "
     "its SHA256 in `.upstream_prestaged.json`."
@@ -139,7 +140,7 @@ def _structural_ge_ophost_offenders(
             )
             continue
         has_include = bool(re.search(r'#include\s+"[^"]*wp_fa_host_tiling\.h"', text))
-        has_call = bool(re.search(r'\b(?:wfh|wp_fa_host)::', text))
+        has_call = bool(re.search(r"\b(?:wfh|wp_fa_host)::", text))
         if has_include and has_call:
             continue
         relative_path = (
@@ -157,9 +158,12 @@ def _structural_ge_ophost_offenders(
 
 
 def _md5(path: Path) -> Optional[str]:
-    """Return a file MD5 digest, or None when the source cannot be read."""
+    """Return a file MD5 digest, or None when the source cannot be read.
+
+    The digest is a change-detection fingerprint only (never a security
+    primitive), hence usedforsecurity=False."""
     try:
-        return hashlib.md5(path.read_bytes()).hexdigest()
+        return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
     except OSError:
         return None
 
@@ -196,7 +200,11 @@ def _verified_prestaged_sources(workspace: Path) -> set[str]:
                 continue
             staged_path = workspace / relative_path
             staged = staged_path.resolve()
-            if root not in staged.parents or staged_path.is_symlink() or not staged.is_file():
+            if (
+                root not in staged.parents
+                or staged_path.is_symlink()
+                or not staged.is_file()
+            ):
                 continue
             actual_sha = hashlib.sha256(staged.read_bytes()).hexdigest()
             if actual_sha == recorded_sha.lower():
@@ -322,10 +330,7 @@ def _check_verifier_uses_modelnew(workspace: Path, vj: dict) -> Optional[str]:
     try:
         return plugin.check_verifier_uses_modelnew(workspace, vj)
     except Exception as exc:
-        return (
-            "verifier_uses_modelnew gate failed to inspect the verifier: "
-            f"{exc!r}"
-        )
+        return f"verifier_uses_modelnew gate failed to inspect the verifier: {exc!r}"
 
 
 def _delegation_source_directory_names(workspace: Path) -> list[str]:
@@ -341,33 +346,72 @@ def _delegation_source_directory_names(workspace: Path) -> list[str]:
         return ["kernel", "op_host", "op_kernel"]
 
 
+def _is_delegation_source(
+    source_file: Path, workspace: Path, source_suffixes, runtime_suffixes
+) -> bool:
+    """A candidate delegation source file (not a build product / hidden /
+    runtime log).
+
+    Align with npubench_runner._candidate_excluded: harness build products
+    (kernel/build, hidden dirs, caches, log files) are NOT candidate
+    sources. The O5 controlled build rewrites kernel/build every round;
+    counting its generated .cpp files as "kernel source" made the marker
+    STALE on each evaluation round (audit H2 — two different definitions of
+    the same fact)."""
+    relative_parts = source_file.relative_to(workspace).parts
+    if "build" in relative_parts or "__pycache__" in relative_parts:
+        return False
+    if any(part.startswith(".") for part in relative_parts):
+        return False
+    if source_file.suffix in runtime_suffixes:
+        return False
+    return source_file.suffix in source_suffixes
+
+
+def _newest_delegation_file_in(
+    kernel_dir: Path, workspace: Path, source_suffixes, runtime_suffixes
+) -> float:
+    """The newest delegation-source mtime under one candidate dir (0.0 when
+    none)."""
+    newest = 0.0
+    for source_file in kernel_dir.rglob("*"):
+        if not source_file.is_file():
+            continue
+        if _is_delegation_source(
+            source_file, workspace, source_suffixes, runtime_suffixes
+        ):
+            newest = max(newest, source_file.stat().st_mtime)
+    return newest
+
+
 def _newest_delegation_source_mtime(workspace: Path) -> float:
-    """Return the newest mtime used by the delegation-marker producer."""
+    """Return the newest mtime used by the delegation-marker producer.
+
+    Mirrors handoff_audit._newest_delegation_input_mtime: each declared dir
+    resolves through `_candidate_subdirs` so the multirank NEST
+    (`workspace/<op>/prj-<op>/op_kernel/`) counts exactly like the legacy
+    single-layer layout. Producer and gate MUST resolve the same directory
+    set, else the marker freshness verdicts disagree → rollback loop.
+    """
+    from plugins.multirank.multirank_finalize_check_rank_verdicts import (
+        _candidate_subdirs,
+    )
+
     newest_mtime = 0.0
     source_suffixes = (".h", ".hpp", ".cpp", ".cc", ".cxx", ".py")
     runtime_suffixes = (".log", ".stdout", ".stderr")
     for directory_name in _delegation_source_directory_names(workspace):
-        kernel_dir = workspace / directory_name
-        if not kernel_dir.is_dir():
-            continue
-        for source_file in kernel_dir.rglob("*"):
-            if not source_file.is_file():
-                continue
-            relative_parts = source_file.relative_to(workspace).parts
-            # Align with npubench_runner._candidate_excluded: harness build
-            # products (kernel/build, hidden dirs, caches, log files) are NOT
-            # candidate sources.  The O5 controlled build rewrites kernel/build
-            # every round; counting its generated .cpp files as "kernel
-            # source" made the marker STALE on each evaluation round (audit
-            # H2 — two different definitions of the same fact).
-            if "build" in relative_parts or "__pycache__" in relative_parts:
-                continue
-            if any(part.startswith(".") for part in relative_parts):
-                continue
-            if source_file.suffix in runtime_suffixes:
-                continue
-            if source_file.suffix in source_suffixes:
-                newest_mtime = max(newest_mtime, source_file.stat().st_mtime)
+        # Combined traversal: multirank NEST resolution via _candidate_subdirs
+        # (legacy single-layer + prj-<op>/<dir>) plus npubench exclusion
+        # rules for build products, hidden dirs, and runtime logs.
+        for kernel_dir in _candidate_subdirs(workspace, directory_name):
+            if kernel_dir.is_dir():
+                newest_mtime = max(
+                    newest_mtime,
+                    _newest_delegation_file_in(
+                        kernel_dir, workspace, source_suffixes, runtime_suffixes
+                    ),
+                )
     for workspace_file in (
         workspace / "model_new_ascendc.py",
         workspace / "pybind11.cpp",
@@ -459,7 +503,10 @@ def _post_worker_audit_verdict(audit_body: str) -> Optional[str]:
                 next_line = lines[following_index].strip()
                 if not next_line:
                     continue
-                if re.search(r"\b(fail|block|reject)\b", next_line) or "❌" in next_line:
+                if (
+                    re.search(r"\b(fail|block|reject)\b", next_line)
+                    or "❌" in next_line
+                ):
                     verdict_line_status = "FAIL"
                     break
                 if re.search(r"\bpartial\b", next_line):
@@ -558,11 +605,15 @@ def _requires_independent_perf_measure(performance: dict) -> bool:
         return False
     ratio_baseline = performance.get("ratio_baseline", "") or ""
     normalized_baseline = ratio_baseline.lower()
-    return "cpu-truth" not in normalized_baseline and "path a" not in normalized_baseline
+    return (
+        "cpu-truth" not in normalized_baseline and "path a" not in normalized_baseline
+    )
 
 
 def _validate_independent_perf_measure(
-    independent_measure: object, precision_status: Optional[str], performance_status: object
+    independent_measure: object,
+    precision_status: Optional[str],
+    performance_status: object,
 ) -> Optional[str]:
     """Validate the existing independent-measure shape and truthfulness fields."""
     if not isinstance(independent_measure, dict) or not independent_measure:
@@ -584,7 +635,9 @@ def _validate_independent_perf_measure(
             "independent re-measure must be RAN "
             "(with ratio number) OR explicit N/A/SKIPPED with reason."
         )
-    if independent_status in ("N/A", "SKIPPED") and not independent_measure.get("reason"):
+    if independent_status in ("N/A", "SKIPPED") and not independent_measure.get(
+        "reason"
+    ):
         return (
             f"performance.independent_re_measure.status="
             f"{independent_status} but no reason — "
