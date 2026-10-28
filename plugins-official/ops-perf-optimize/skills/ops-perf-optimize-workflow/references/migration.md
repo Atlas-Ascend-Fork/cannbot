@@ -11,3 +11,5 @@
 升级到 v10 逐轮性能报告版时，迁移审计记录新增报告字段；已有采集和门禁不因报告格式变化失效。按原轮次顺序用已有性能 CSV 生成或复用 effect 摘要，重新登记轮次完成保存点；旧保存点缺摘要时报告明确显示待补齐，不推测性能数值，也不为刷新报告重新 profiling。
 
 v11 的入口调整不改变 request、manifest 和阶段键：原来因入口要求而完整读取主流程的 subagent 改为加载对应阶段 Skill；身份未变的证据不因文件迁移重新采集。旧引用通过阶段 Skill 的当前入口恢复，禁止恢复旧版整份工作流上下文。
+
+仅旧 state writer 漏存 request/manifest 已冻结的 schedule_policy 且尚未开始 analysis 等受约束活动时，可显式 `migrate-workflow --adopt-schedule-policy`；必须非空审计、原 manifest SHA 不变和冻结 request 匹配。具体命令、前置条件与拒绝范围见 [调度策略补登记](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md#显式补登记已冻结策略)。普通新任务无需此迁移，历史本无策略或已进入后续阶段不能借此升级或补验。

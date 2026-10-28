@@ -7,11 +7,15 @@ description: 性能优化阶段共用的验收判据：性能采集协议、精�
 
 本 Skill 提供跨阶段一致的判定与取证口径，不负责编排阶段或制定优化方案。原始用例、golden、阈值和源码身份来自冻结 manifest；SDK、API 与设备事实必须取自可信文档或当前安装。
 
+`backend=cannbot_dsl` 先读 [DSL 共享验证与领域边界](references/cannbot-dsl.md)，功能入口与编译门禁按该契约执行，编译与执行边界、文档与样例检索按节按需查阅；按需继续复用下表的隔离、性能和抖动参考。AscendC 专用 TTK/API 要求仅用于实际相关调用路径。
+
 | 当前动作 | 只读取所需参考 |
 |---|---|
 | 采集/复用基线、小算子、候选或原工程性能 | [performance-collection.md](references/performance-collection.md)，实际采集加载 `ops-profiling`；MC² 加载 `ascendc-mc2-best-practice` |
 | 基线/候选/原工程功能判定、定位新增失败 | [precision-policy.md](references/precision-policy.md)，TTK 操作加载 TTK 标准 skill（`ttk-how-run-test`/`ttk-how-diagnose`） |
 | 比较性能、生成 effect 摘要、防止退化 | [performance-jitter-policy.md](references/performance-jitter-policy.md) |
+| 用户指定 msprof op 单 launch 协议，稳定最终候选后做独立十样本确认 | [msprof-op-effect-evidence.md](references/msprof-op-effect-evidence.md) |
+| schedule_policy 下的调度模型交接、生成代码与运行证据核验 | [async-schedule-contract.md](references/async-schedule-contract.md) |
 | 泛化 ratio 计算与覆盖核验 | [ratio.md](references/ratio.md) |
 
 修改范围安全契约与剥离/隔离验证用例不属于本 Skill，统一读取 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 与 `validation-cases.md`。

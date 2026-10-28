@@ -31,32 +31,42 @@ STATE="$TEST_ROOT/run/workflow-state.json"
 MANIFEST="$TEST_ROOT/run/run-manifest.json"
 REQUEST="$TEST_ROOT/optimization-request.json"
 
-python3 "$PREPARE" create-request --request "$REQUEST" --operator-name test_op \
+timeout 60s python3 "$PREPARE" create-request --request "$REQUEST" --operator-name test_op \
     --target-soc Ascend950 \
     --code-dir "$TEST_ROOT/code" --performance-cases "$TEST_ROOT/cases.csv" \
     --functional-mode reuse_performance --optimization-mode fixed_rounds --rounds 3 \
     --python-executable "$(command -v python3)" --cann-env-command inherit >/dev/null
-python3 "$PREPARE" freeze --output-dir "$TEST_ROOT/run" --request "$REQUEST" >/dev/null
-python3 "$TOOL" start --state "$STATE" --manifest "$MANIFEST" | grep -q '"status": "new"'
+# This suite exercises legacy event/report behavior. New-policy schedule gates
+# have dedicated positive/negative tests in test_schedule_contract.py.
+timeout 60s python3 - "$REQUEST" <<'PY_LEGACY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+value = json.loads(p.read_text())
+value.pop("schedule_policy")
+p.write_text(json.dumps(value))
+PY_LEGACY
+timeout 60s python3 "$PREPARE" freeze --output-dir "$TEST_ROOT/run" --request "$REQUEST" >/dev/null
+timeout 60s python3 "$TOOL" start --state "$STATE" --manifest "$MANIFEST" | grep -q '"status": "new"'
 test -f "$TEST_ROOT/run/性能调优报告.md"
 test ! -e "$TEST_ROOT/run/lessons"
 test ! -e "$TEST_ROOT/run/report-progress.json"
 test ! -e "$TEST_ROOT/run/multi-round-summary.json"
 
-python3 "$TOOL" mark --state "$STATE" --stage prepare.acceptance --status in_progress \
+timeout 60s python3 "$TOOL" mark --state "$STATE" --stage prepare.acceptance --status in_progress \
     --message '开始功能验收' >/dev/null
-python3 "$TOOL" progress --state "$STATE" --kind diagnosis --stage prepare.acceptance \
+timeout 60s python3 "$TOOL" progress --state "$STATE" --kind diagnosis --stage prepare.acceptance \
     --message '原始实现同条件复现，候选误差未恶化' --case-id b \
     --classification known_baseline_failure --evidence baseline-repro.json \
     --hypothesis 'baseline defect' --excluded-hypothesis 'candidate regression' \
     --next-action '以 conditional_pass 继续 round1' >/dev/null
 printf '%s\n' '# acceptance' 'gate: conditional_pass' > "$TEST_ROOT/run/acceptance.md"
-python3 "$TOOL" mark --state "$STATE" --stage prepare.acceptance --status complete \
+timeout 60s python3 "$TOOL" mark --state "$STATE" --stage prepare.acceptance --status complete \
     --message "功能验收 conditional_pass" --next-action "进入 round1" \
     --artifact "$TEST_ROOT/run/acceptance.md" >/dev/null
-python3 "$TOOL" verify --state "$STATE" | grep -q '"status": "valid"'
+timeout 60s python3 "$TOOL" verify --state "$STATE" | grep -q '"status": "valid"'
 
-python3 - "$STATE" <<'PY'
+timeout 60s python3 - "$STATE" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -82,14 +92,14 @@ grep -q 'conditional_pass' "$TEST_ROOT/run/性能调优报告.md"
 # Parallel candidates must not overwrite each other's stage records.
 printf '%s\n' '# impl a' > "$TEST_ROOT/run/round1/impl-a.md"
 printf '%s\n' '# impl b' > "$TEST_ROOT/run/round1/impl-b.md"
-python3 "$TOOL" mark --state "$STATE" --stage round1.impl.a --status complete \
+timeout 60s python3 "$TOOL" mark --state "$STATE" --stage round1.impl.a --status complete \
     --artifact "$TEST_ROOT/run/round1/impl-a.md" &
 PID_A=$!
-python3 "$TOOL" mark --state "$STATE" --stage round1.impl.b --status complete \
+timeout 60s python3 "$TOOL" mark --state "$STATE" --stage round1.impl.b --status complete \
     --artifact "$TEST_ROOT/run/round1/impl-b.md" &
 PID_B=$!
 wait "$PID_A" "$PID_B"
-python3 - "$STATE" <<'PY'
+timeout 60s python3 - "$STATE" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -107,22 +117,22 @@ grep -q '当前阶段：`阶段间歇`' "$TEST_ROOT/run/性能调优报告.md"
 grep -q '| `round1.impl.a` | complete | - | .* | - | 1 |' "$TEST_ROOT/run/性能调优报告.md"
 
 # Interactive waits are explicit, report-visible, and resolvable.
-python3 "$TOOL" decision --state "$STATE" --awaiting --question '继续修复还是淘汰 candidate-a？' \
+timeout 60s python3 "$TOOL" decision --state "$STATE" --awaiting --question '继续修复还是淘汰 candidate-a？' \
     --safe-restore-point round1.impl.a >/dev/null
 grep -q '状态：等待人工' "$TEST_ROOT/run/性能调优报告.md"
-python3 "$TOOL" decision --state "$STATE" --decision '淘汰 candidate-a，继续 candidate-b' >/dev/null
+timeout 60s python3 "$TOOL" decision --state "$STATE" --decision '淘汰 candidate-a，继续 candidate-b' >/dev/null
 grep -q '淘汰 candidate-a' "$TEST_ROOT/run/性能调优报告.md"
 
 # Intentional manifest updates must be synchronized; silent changes are stale.
-python3 "$PREPARE" confirm-performance --manifest "$MANIFEST" --note 'operator reaffirmed set' >/dev/null
+timeout 60s python3 "$PREPARE" confirm-performance --manifest "$MANIFEST" --note 'operator reaffirmed set' >/dev/null
 set +e
 RESULT=$(python3 "$TOOL" start --state "$STATE" --manifest "$MANIFEST")
 STATUS=$?
 set -e
 test "$STATUS" -eq 3
 grep -q 'stale_inputs' <<< "$RESULT"
-python3 "$TOOL" sync-manifest --state "$STATE" --message 'performance set confirmed' >/dev/null
-python3 "$TOOL" start --state "$STATE" --manifest "$MANIFEST" | grep -q '"status": "resume"'
+timeout 60s python3 "$TOOL" sync-manifest --state "$STATE" --message 'performance set confirmed' >/dev/null
+timeout 60s python3 "$TOOL" start --state "$STATE" --manifest "$MANIFEST" | grep -q '"status": "resume"'
 
 # Workflow changes require an impact audit and invalidate only declared stages.
 set +e
@@ -132,7 +142,7 @@ set -e
 test "$STATUS" -eq 5
 grep -q 'resume_with_workflow_change' <<< "$RESULT"
 printf '%s\n' '# migration audit' 'Only round1.impl.a is affected.' > "$TEST_ROOT/run/migration.md"
-python3 "$TOOL" migrate-workflow --state "$STATE" --audit "$TEST_ROOT/run/migration.md" \
+timeout 60s python3 "$TOOL" migrate-workflow --state "$STATE" --audit "$TEST_ROOT/run/migration.md" \
     --workflow-version workflow-v4 --invalidate-stage round1.impl.a >/dev/null
 set +e
 RESULT=$(python3 "$TOOL" start --state "$STATE" --manifest "$MANIFEST" --workflow-version workflow-v4)
@@ -154,7 +164,7 @@ if python3 "$TOOL" finish --state "$STATE" --status failed --reason-code known_b
     echo "Known baseline failure must not terminate the workflow" >&2
     exit 1
 fi
-python3 "$TOOL" finish --state "$STATE" --status blocked --reason-code external_blocker \
+timeout 60s python3 "$TOOL" finish --state "$STATE" --status blocked --reason-code external_blocker \
     --message '测试终态：保留安全恢复点，等待外部资源' >/dev/null
 grep -q '终态：`blocked`' "$TEST_ROOT/run/性能调优报告.md"
 

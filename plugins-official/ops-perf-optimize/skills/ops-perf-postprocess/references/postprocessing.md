@@ -41,7 +41,7 @@ python3 "$WORKFLOW_SCRIPTS/validate_postprocess_performance.py" \
 
 无法精确表达单例条件时保守扩大 legacy 范围，必要时保留整个分支或全部原代码。不能把优化实现叫作 fallback，也不能仅修改对比 CSV。无论收益多少，新增路由都是新源码身份：冻结新的回路由 scope（记录旧 scope 和变更原因），重新做公开契约/源码隔离、真实构建、TTK 完整功能门禁与序列压测，然后复测两套全集。边界用例覆盖守卫两侧、别名/in-place、尾块和未涉及模板；附加边界不替代冻结集合。对同一最终身份仍有退化则继续收窄优化范围。
 
-直至两个全集在每个目标 SoC 都无有效性能回退，且无新增/恶化精度失败，后处理才可完成。抖动阈值仍用既有统一策略；不通过重采择优消除回退。精度失败先正向定位集成/候选问题，不以未经验证的 fallback 隐瞒；已知原始失败按 strict/conditional 保留。
+直至两个全集在每个目标 SoC 都无有效性能回退，且无新增/恶化精度失败，后处理才可完成。使用manifest冻结的版本化效果策略；legacy保留四档阈值，confidence由合法配对proof确认小收益/对称小回退，不通过重采择优消除回退。精度失败先正向定位集成/候选问题，不以未经验证的 fallback 隐瞒；已知原始失败按 strict/conditional 保留。
 
 ## 交付与恢复
 
@@ -61,3 +61,9 @@ generalization 保留涉及/不涉及用例的映射与抽检扩样（5% → 20%
 - 对不涉及用例做代码 diff → TilingKey/执行路径映射，再按稳定 case ID 确定性抽检 5%，至少 10 条、不足 10 条时全选；
 - 抽检失败扩大到 20%，仍失败则回归全部不涉及用例；
 - 产出 `uninvolved-cases-verification.md`，记录映射、抽检 ID、结果和升级动作。
+
+## confidence全集门禁
+
+`validate_postprocess_performance.py` 自动读取manifest策略。schema2 gate接收可重复的 `--functional-effect-evidence/--performance-effect-evidence`（每case一个proof）；同源码、同构建、同加载的真实no-op使用 `--functional-same-implementation/--performance-same-implementation`。规格与proof schema见 `ops-perf-acceptance-criteria/references/performance-jitter-policy.md`。两类全集分别按相同版本重算，proof必须绑定此次原工程before/after收据及当前SoC，demo或候选间proof不能直接挪用。header-only非计时行仍按原语义门禁检查。
+
+稳定小回退为 `route_required`，需要真实谓词回原代码并完整复验；无有效回退但有 `inconclusive` 为 `confirmation_required`，不能写PASS。最终两个全集全部已确认或有同身份byte-identical依据才为 `pass`。旧gate schema1按legacy原算法重放；新gate、报告与state登记proof全部依赖SHA，任一改变失效。原精度、泛化ratio、非目标芯片族保护和路由审阅不变。

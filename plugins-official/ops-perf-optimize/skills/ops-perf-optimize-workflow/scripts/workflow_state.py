@@ -28,7 +28,8 @@ from typing import Any, Iterator
 from urllib.parse import quote
 
 from cli_output import emit, run_cli
-from summarize_performance_effects import summarize
+from summarize_performance_effects import summarize, recompute_summary, summary_dependency_paths
+from performance_effect_evidence import policy
 from validate_execution_identity import dependency_paths, validate_execution_identity
 
 
@@ -75,12 +76,29 @@ def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+_SHA_CACHE: dict[tuple[str, int, int], str] = {}
+
+
 def file_sha(path: Path) -> str:
+    """SHA256 with a stat-keyed per-process memo.
+
+    Stage commands re-verify large dependency closures (schedule reports,
+    DSL compile evidence, phase artifacts) and hash the same files many
+    times in one invocation; the stat signature keeps the cache coherent
+    within the command while removing repeated full reads.
+    """
+    stat = path.stat()
+    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    cached = _SHA_CACHE.get(key)
+    if cached is not None:
+        return cached
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
-    return digest.hexdigest()
+    value = digest.hexdigest()
+    _SHA_CACHE[key] = value
+    return value
 
 
 def tree_sha(path: Path) -> str:
@@ -128,9 +146,14 @@ def read_manifest(path: Path) -> dict[str, Any]:
     payload = read_json(path)
     if "configuration" not in payload or "collections" not in payload or "inputs" not in payload:
         raise ValueError(f"invalid run manifest: {path}")
-    policy = payload["configuration"].get("precision_diagnosis_policy")
-    if policy != "persistent":
-        raise ValueError(f"invalid precision diagnosis policy: {policy}")
+    from workflow_backend import validate_backend
+    validate_backend(payload["configuration"], validate_live=False)
+    precision_policy = payload["configuration"].get("precision_diagnosis_policy")
+    if precision_policy != "persistent":
+        raise ValueError(f"invalid precision diagnosis policy: {precision_policy}")
+    policy(payload["configuration"].get("performance_effect_policy"))
+    from validate_schedule_contract import policy_enabled
+    policy_enabled(payload)
     tuning_mode = payload["configuration"].get("tuning_mode", "standard")
     if tuning_mode not in TUNING_MODES:
         raise ValueError(f"invalid tuning mode: {tuning_mode}")
@@ -210,7 +233,7 @@ def manifest_summary(manifest: dict[str, Any]) -> list[str]:
 
 
 def performance_checkpoint(stage: str) -> bool:
-    return stage == "final.performance" or bool(
+    return stage == "final.performance" or stage.startswith("integration.performance.") or bool(
         re.fullmatch(r"(?:gen\.)?round[1-9]\d*\.complete|gen\.outer[1-9]\d*\.exit", stage)
     )
 
@@ -245,10 +268,10 @@ def prepare_performance(args: argparse.Namespace) -> tuple[dict[str, str], list[
         candidate = Path(summary["candidate_path"])
         if not baseline.is_absolute() or not candidate.is_absolute():
             raise ValueError(f"{path}: performance source paths must be absolute")
-        expected = summarize(baseline, candidate)
+        expected = recompute_summary(summary)
         if any(field not in summary or summary[field] != value for field, value in expected.items()):
             raise ValueError(f"{path}: effect summary differs from source performance or jitter policy")
-        artifacts.extend([str(path), str(baseline), str(candidate)])
+        artifacts.extend([str(path), str(baseline), str(candidate)] + summary_dependency_paths(summary))
         summaries.append(summary)
     current, cumulative = summaries
     if current["candidate_path"] != cumulative["candidate_path"]:
@@ -267,7 +290,10 @@ def recorded_performance(record: dict[str, Any]) -> tuple[dict[str, Any], dict[s
         if artifact_identity(path) != artifacts.get(path):
             raise ValueError(f"performance artifact changed or not registered: {path}")
         summary = read_json(Path(path))
-        for source in (summary["baseline_path"], summary["candidate_path"]):
+        expected = recompute_summary(summary)
+        if any(summary.get(k) != v for k, v in expected.items()):
+            raise ValueError("recorded effect summary differs from recomputed policy/evidence")
+        for source in [summary["baseline_path"], summary["candidate_path"]] + summary_dependency_paths(summary):
             if artifact_identity(source) != artifacts.get(source):
                 raise ValueError(f"performance source changed or not registered: {source}")
         summaries.append(summary)
@@ -332,6 +358,47 @@ def _performance_availability(completed: list[tuple[str, dict]]) -> tuple[dict, 
     return available, errors
 
 
+def _summary_metric_row(label: str, summary: dict) -> str:
+    return (
+        f"| {label} | {summary['total_case_count']} | {summary['jitter_case_count']} | "
+        f"{summary['effective_case_count']} | {summary['effective_improvement_count']} | "
+        f"{summary['effective_regression_count']} | {speedup_text(summary['effective_geomean_speedup'])} |"
+    )
+
+
+def _policy_evidence_lines(label: str, summary: dict) -> list[str]:
+    lines = [
+        f"- {label}规则：{summary.get('policy_id', 'legacy_jitter_v1')} "
+        f"v{summary.get('policy_version', 1)}；待确认 {summary.get('inconclusive_case_count', 0)}。"
+    ]
+    for case in summary["cases"]:
+        stats = case.get("statistical_evidence")
+        if stats:
+            estimator = "配对估计" if "paired_estimate_us" in stats else "独立样本估计"
+            estimate = stats.get("paired_estimate_us", stats.get("estimate_us"))
+            interval = stats.get("paired_ci_us", stats.get("ci_us"))
+            lines.append(
+                f"- {label} `{report_cell(case['case_id'])}`：依据 {case['classification_basis']}；"
+                f"{estimator} {estimate:+.6f}us；95% CI {interval}；"
+                f"方法 {stats['method']['id']}。"
+            )
+    return lines
+
+
+def _case_table_rows(current: dict, cumulative: dict) -> list[str]:
+    rows = []
+    for case, total in zip(current["cases"], cumulative["cases"]):
+        rows.append(
+            f"| {report_cell(case['case_id'])} | {total['baseline_total_us']:.6f} | "
+            f"{case['baseline_total_us']:.6f} | {case['candidate_total_us']:.6f} | "
+            f"{case['delta_us']:+.6f} | {case['delta_percent']:+.6f} | "
+            f"{speedup_text(case['speedup'])} | {case['classification']} | "
+            f"{total['delta_us']:+.6f} | {total['delta_percent']:+.6f} | "
+            f"{speedup_text(total['speedup'])} | {total['classification']} |"
+        )
+    return rows
+
+
 def _latest_performance_lines(latest_name: str, latest: dict, errors: dict, available: dict) -> list[str]:
     lines = [f"- 最近性能保存点：`{report_cell(latest_name)}`（{latest.get('completed_at')}）"]
     if latest_name in errors:
@@ -346,17 +413,15 @@ def _latest_performance_lines(latest_name: str, latest: dict, errors: dict, avai
         f"- 当前保留实现：`{report_cell(performance['selected_candidate'])}`",
         f"- 统计范围：{scope}，{current['total_case_count']} 个 case；子集结果不代表未测全集。",
         "- 本轮变化相对轮初基线；累计变化相对原始基线，均只统计同一组已实测 case。",
-        "- 有效几何加速比只统计超出抖动阈值的 case。",
+        "- 有效几何加速比只统计冻结规则判为有效的 case；confidence规则的待确认项不计入有效指标。",
         "",
         "| 比较 | 总 case | 抖动 | 有效 | 有效提升 | 有效回退 | 有效几何加速比 |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ])
     for label, summary in (("本轮", current), ("累计", cumulative)):
-        lines.append(
-            f"| {label} | {summary['total_case_count']} | {summary['jitter_case_count']} | "
-            f"{summary['effective_case_count']} | {summary['effective_improvement_count']} | "
-            f"{summary['effective_regression_count']} | {speedup_text(summary['effective_geomean_speedup'])} |"
-        )
+        lines.append(_summary_metric_row(label, summary))
+    for label, summary in (("本轮", current), ("累计", cumulative)):
+        lines.extend(_policy_evidence_lines(label, summary))
     lines.extend([
         "", "### 逐 case 当前性能", "",
         "差值 = 当前耗时 − 对应基线耗时，负值表示提升；抖动 case 保留展示但不计入有效指标。",
@@ -365,15 +430,7 @@ def _latest_performance_lines(latest_name: str, latest: dict, errors: dict, avai
         "累计差值(us) | 累计变化(%) | 累计加速比 | 累计分类 |",
         "|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|",
     ])
-    for case, total in zip(current["cases"], cumulative["cases"]):
-        lines.append(
-            f"| {report_cell(case['case_id'])} | {total['baseline_total_us']:.6f} | "
-            f"{case['baseline_total_us']:.6f} | {case['candidate_total_us']:.6f} | "
-            f"{case['delta_us']:+.6f} | {case['delta_percent']:+.6f} | "
-            f"{speedup_text(case['speedup'])} | {case['classification']} | "
-            f"{total['delta_us']:+.6f} | {total['delta_percent']:+.6f} | "
-            f"{speedup_text(total['speedup'])} | {total['classification']} |"
-        )
+    lines.extend(_case_table_rows(current, cumulative))
     lines.extend([
         "",
         f"- 本轮证据：`{report_cell(performance['round_summary'])}`",
@@ -515,6 +572,8 @@ def _summary_lines(state: dict, configuration: dict, tuning_mode: str, objective
         f"- 调优模式：`{tuning_mode}`",
         f"- 优化意图：`{state.get('optimization_intent', configuration.get('optimization_intent', 'safe_incremental'))}`",
         f"- 性能参考锚点：`{state.get('reference_perf') or configuration.get('reference_perf') or '未设置'}`",
+        f"- 语言后端：`{configuration.get('backend', 'ascendc')}`",
+        f"- DSL 配置：`{json.dumps(configuration.get('dsl'), ensure_ascii=False)}`",
         f"- 已验证目标 SoC：`{', '.join(configuration.get('target_socs', []))}`",
         f"- 优化目标：{objective_text}",
         f"- Python：`{python_environment.get('executable', '-')}` ({python_environment.get('version', '-')})",
@@ -753,6 +812,12 @@ def _new_state(manifest: dict, manifest_id: dict, version: str) -> dict:
         "created_at": utc_now(),
         "updated_at": utc_now(),
         "manifest": manifest_id,
+        "backend": manifest["configuration"].get("backend", "ascendc"),
+        "dsl": manifest["configuration"].get("dsl"),
+        **({"schedule_policy": manifest["configuration"]["schedule_policy"]}
+           if "schedule_policy" in manifest["configuration"] else {}),
+        **({"performance_effect_policy": policy(manifest["configuration"]["performance_effect_policy"])}
+           if "performance_effect_policy" in manifest["configuration"] else {}),
         "tuning_mode": manifest["configuration"].get("tuning_mode", "standard"),
         "optimization_intent": manifest["configuration"].get("optimization_intent", "safe_incremental"),
         "reference_perf": manifest["configuration"].get("reference_perf"),
@@ -797,13 +862,25 @@ def command_start(args: argparse.Namespace) -> int:
     return 0
 
 
+def validate_frozen_effect_policy(state, manifest):
+    if state.get("schedule_policy") != manifest["configuration"].get("schedule_policy"):
+        raise ValueError("schedule policy changed; start a new run")
+    if policy(state.get("performance_effect_policy")) != policy(
+            manifest["configuration"].get("performance_effect_policy")):
+        raise ValueError("performance effect policy changed; start a new run")
+
+
 def command_sync_manifest(args: argparse.Namespace) -> int:
     state_path = args.state.resolve()
     with state_lock(state_path):
         state = read_json(state_path)
         manifest_path = Path(state["manifest"]["path"])
         manifest = read_manifest(manifest_path)
+        validate_frozen_effect_policy(state, manifest)
         state["manifest"] = artifact_identity(manifest_path)
+        if (state.get("backend", "ascendc") != manifest["configuration"].get("backend", "ascendc")
+                or state.get("dsl") != manifest["configuration"].get("dsl")):
+            raise ValueError("backend/DSL configuration changed; start a new run instead of switching language")
         state["tuning_mode"] = manifest["configuration"].get("tuning_mode", "standard")
         state["optimization_intent"] = manifest["configuration"].get(
             "optimization_intent", state.get("optimization_intent", "safe_incremental")
@@ -816,12 +893,153 @@ def command_sync_manifest(args: argparse.Namespace) -> int:
     return 0
 
 
+def schedule_stage_kind(stage):
+    if stage == "phase.integration":
+        return "integration"
+    if stage == "phase.analysis" or re.fullmatch(r"(?:gen\.)?round[1-9]\d*\.analysis", stage):
+        return "model"
+    if stage == "phase.implementation" or re.fullmatch(r"(?:gen\.)?round[1-9]\d*\.(?:impl\.[^.]+|complete)", stage):
+        return "runtime"
+    return None
+
+
+def _check_model_schedule(value, manifest_path, extra):
+    """Verify an analysis schedule report and append its bound artifacts."""
+    from validate_implementation_conformance import required_feature_ids, validate_manifest_scope
+    from validate_schedule_contract import ref, require, verify_ref, verify_report
+
+    required_feature_ids(value)
+    validate_manifest_scope(value, read_manifest(manifest_path))
+    schedule = value.get("schedule", {})
+    deps = {}
+    contract = verify_ref(schedule.get("contract"), deps)
+    gate = verify_ref(schedule.get("check"), deps)
+    checked = verify_report(gate, manifest_path, "model")
+    require(checked["contract"] == ref(contract) and checked["scheme_id"] == value["scheme_id"],
+            "analysis schedule scheme mismatch")
+    extra.extend([str(contract), str(gate), *checked["dependencies"]])
+
+
+def _check_implementation_schedule(value, level, manifest_path, selected_candidate, extra, path):
+    """Re-run implementation conformance and append its bound artifacts."""
+    import subprocess
+    import sys
+    from validate_schedule_contract import ref, require, verify_report
+
+    identity = value["evidence_identity"]
+    require(value.get("decision") == "pass" and value.get("schedule"),
+            "implementation requires schedule conformance gate")
+    require(identity["manifest"] == ref(manifest_path), "conformance manifest identity mismatch")
+    if selected_candidate is not None:
+        require(str(selected_candidate) == value.get("scheme_id")
+                or Path(identity["candidate"]["path"]).resolve() == Path(selected_candidate).resolve(),
+                "selected candidate differs from schedule conformance")
+    command = ["timeout", "60s", sys.executable,
+               str(Path(__file__).with_name("validate_implementation_conformance.py"))]
+    for key in ("contract", "result", "manifest", "isolation_scope", "baseline", "candidate"):
+        command.extend(["--" + key.replace("_", "-"), identity[key]["path"]])
+    result = subprocess.run(command + ["--verify-existing", str(path)],
+                            capture_output=True, text=True, timeout=65)
+    require(result.returncode == 0,
+            "implementation conformance is stale/invalid: " + result.stdout + result.stderr)
+    checked = verify_report(value["schedule"]["runtime"]["path"], manifest_path, "runtime",
+                            identity["candidate"]["path"])
+    if level == "integration":
+        require(checked.get("integration"),
+                "integration requires actual integrated source/build/load schedule evidence")
+    extra.extend(checked["dependencies"])
+    extra.extend(value["schedule"][name]["path"] for name in ("model", "runtime"))
+    # Source trees are re-snapshotted by conformance on recovery. Register
+    # evidence files individually so unrelated logs do not invalidate it.
+    extra.extend(identity[key]["path"] for key in ("contract", "result", "isolation_scope"))
+    extra.extend(identity.get("feature_evidence", {}))
+
+
+def check_schedule_artifacts(level, paths, manifest_path, selected_candidate=None):
+    """Recompute saved gates; filenames or a declared pass are insufficient."""
+    from validate_schedule_contract import policy_enabled
+    if not policy_enabled(read_manifest(manifest_path)):
+        return paths
+    extra, found = [], 0
+    for raw in paths:
+        path = Path(raw).resolve()
+        if path.suffix != ".json" or not path.is_file():
+            continue
+        value = read_json(path)
+        if not isinstance(value, dict):
+            continue
+        if level == "model" and value.get("schema_version") == 3 and "implementation_mode" in value:
+            _check_model_schedule(value, manifest_path, extra)
+            found += 1
+        elif level in ("runtime", "integration") and "evidence_identity" in value and "conformance_failures" in value:
+            _check_implementation_schedule(value, level, manifest_path, selected_candidate, extra, path)
+            found += 1
+    if not found:
+        raise ValueError(f"schedule policy requires {level} bound contract/conformance artifacts")
+    return list(dict.fromkeys(paths + extra))
+
+
+def check_schedule_handoff(stage, state, manifest_path):
+    from validate_schedule_contract import policy_enabled
+    if not policy_enabled(read_manifest(manifest_path)):
+        return
+    match = re.fullmatch(r"((?:gen\.)?round[1-9]\d*)\.impl\.([^.]+)", stage)
+    predecessor = match[1] + ".analysis" if match else "phase.analysis"
+    record = state.get("stages", {}).get(predecessor, {})
+    if record.get("status") != "complete":
+        raise ValueError(f"schedule analysis handoff incomplete: {predecessor}")
+    paths = [a["path"] for a in record.get("artifacts", [])]
+    for artifact in record.get("artifacts", []):
+        if artifact_identity(artifact["path"]) != artifact:
+            raise ValueError("schedule analysis artifact changed; re-analyze")
+    check_schedule_artifacts("model", paths, manifest_path)
+    if match:
+        values = [read_json(Path(p)) for p in paths if Path(p).suffix == ".json"]
+        schemes = {v.get("scheme_id") for v in values if isinstance(v, dict)}
+        if match[2] not in schemes:
+            raise ValueError("implementation scheme absent from this round's analysis")
+
+
+def check_runtime_handoff(stage, paths, state):
+    """The implemented scheme contract must be the one accepted at analysis."""
+    from validate_schedule_contract import require
+    match = re.match(r"((?:gen\.)?round[1-9]\d*)\.", stage)
+    allowed = [match[1] + ".analysis"] if match else [
+        name for name in state.get("stages", {}) if schedule_stage_kind(name) == "model"]
+    accepted = {}
+    for name in allowed:
+        record = state.get("stages", {}).get(name, {})
+        if record.get("status") != "complete":
+            continue
+        for artifact in record.get("artifacts", []):
+            accepted[artifact["path"]] = artifact["sha256"]
+    for raw in paths:
+        path = Path(raw)
+        if path.suffix != ".json" or not path.is_file():
+            continue
+        value = read_json(path)
+        if not isinstance(value, dict) or "conformance_failures" not in value:
+            continue
+        scheme_match = re.fullmatch(r"(?:gen\.)?round[1-9]\d*\.impl\.([^.]+)", stage)
+        if scheme_match:
+            require(value.get("scheme_id") == scheme_match[1], "conformance scheme differs from implementation stage")
+        contract = value.get("evidence_identity", {}).get("contract", {})
+        require(accepted.get(contract.get("path")) == contract.get("sha256"),
+                "implementation contract was not frozen by this round's analysis")
+
+
 def _baseline_artifacts(files: dict, manifest_path: Path) -> list[str]:
     from build_performance_targets import build
 
     preflight = read_json(files["preflight-report.json"])
     if preflight.get("status") not in ("pass", "warn") or preflight.get("fail_count") != 0:
         raise ValueError("baseline phase requires a passing preflight")
+    manifest = read_manifest(manifest_path)
+    if manifest["configuration"].get("backend", "ascendc") == "cannbot_dsl":
+        if preflight.get("backend") != "cannbot_dsl" or not preflight.get("dsl_environment"):
+            raise ValueError("DSL baseline requires its own backend/environment preflight")
+        from dsl_evidence import verify_file
+        _dsl_env_extra = verify_file(preflight["dsl_environment"])
     manifest = read_manifest(manifest_path)
     if preflight.get("request_sha256") != manifest["request"]["sha256"]:
         raise ValueError("preflight request identity mismatch")
@@ -842,9 +1060,48 @@ def _baseline_artifacts(files: dict, manifest_path: Path) -> list[str]:
     return extra
 
 
-def _integration_artifacts(files: dict, manifest_path: Path) -> list[str]:
+def _gate_evidence_pair(gate: dict, key: str) -> tuple[Path, Path] | None:
+    side = gate["collections"].get("functional", {}).get(key)
+    if not side:
+        return None
+    return (
+        Path(side["baseline"]["evidence"]["path"]),
+        Path(side["candidate"]["evidence"]["path"]),
+    )
+
+
+def _check_postprocess_gate(gate: dict, manifest_path: Path) -> list[str]:
     from validate_postprocess_performance import validate
 
+    paths_by_kind = {kind: (Path(item["baseline"]["path"]), Path(item["candidate"]["path"]))
+                     for kind, item in gate["collections"].items()}
+    functional_errors = _gate_evidence_pair(gate, "expected_errors")
+    functional_host_checks = _gate_evidence_pair(gate, "host_checks")
+    functional_baseline_failures = _gate_evidence_pair(gate, "baseline_failures")
+    host_gate = gate["collections"].get("functional", {}).get("host_checks") or {}
+    baseline_failure_gate = gate["collections"].get("functional", {}).get("baseline_failures") or {}
+    effect_evidence = {k: [Path(p) for p in v] for k, v in gate.get("effect_evidence", {}).items()}
+    same_implementation = {k: Path(p) for k, p in gate.get("same_implementation", {}).items()}
+    if validate(manifest_path, gate["target_soc"], paths_by_kind,
+                functional_errors=functional_errors,
+                functional_host_checks=functional_host_checks,
+                functional_baseline_failures=functional_baseline_failures,
+                effect_evidence=effect_evidence,
+                same_implementation=same_implementation) != gate or gate['decision'] != 'pass':
+        raise ValueError("postprocess gate is stale or has regressions")
+    extra = [str(p) for pair in paths_by_kind.values() for p in pair]
+    if functional_errors:
+        extra.extend(str(p) for p in functional_errors)
+    if functional_host_checks:
+        extra.extend(str(p) for p in functional_host_checks)
+        extra.extend(item["path"] for side in host_gate.values() for item in side["raw_evidence"])
+    if functional_baseline_failures:
+        extra.extend(str(p) for p in functional_baseline_failures)
+        extra.extend(item["path"] for side in baseline_failure_gate.values() for item in side["raw_evidence"])
+    return extra
+
+
+def _integration_artifacts(files: dict, manifest_path: Path) -> list[str]:
     manifest = read_manifest(manifest_path)
     gates = {}
     extra: list[str] = []
@@ -852,34 +1109,32 @@ def _integration_artifacts(files: dict, manifest_path: Path) -> list[str]:
         if path.suffix != ".json":
             continue
         gate = read_json(path)
-        if gate.get("schema_version") != 1 or "target_soc" not in gate or "collections" not in gate:
+        if not isinstance(gate, dict):
+            continue  # Raw execution records can be JSON arrays, not full gates.
+        if gate.get("schema_version") not in (1, 2) or "target_soc" not in gate or "collections" not in gate:
             continue
         if gate["target_soc"] in gates:
             raise ValueError("duplicate postprocess gate for target SoC")
-        paths_by_kind = {kind: (Path(item["baseline"]["path"]), Path(item["candidate"]["path"]))
-                         for kind, item in gate["collections"].items()}
-        expected_error_gate = gate["collections"].get("functional", {}).get("expected_errors")
-        functional_errors = None
-        if expected_error_gate:
-            functional_errors = (
-                Path(expected_error_gate["baseline"]["evidence"]["path"]),
-                Path(expected_error_gate["candidate"]["evidence"]["path"]),
-            )
-        if validate(manifest_path, gate["target_soc"], paths_by_kind,
-                    functional_errors=functional_errors) != gate or gate['decision'] != 'pass':
-            raise ValueError("postprocess gate is stale or has regressions")
+        extra.extend(_check_postprocess_gate(gate, manifest_path))
         gates[gate['target_soc']] = gate
-        extra.extend(str(p) for pair in paths_by_kind.values() for p in pair)
-        if functional_errors:
-            extra.extend(str(p) for p in functional_errors)
+        for item in gate["collections"].values():
+            extra.extend(summary_dependency_paths(item["summary"]))
     if set(gates) != set(manifest['configuration']['target_socs']):
         raise ValueError("postprocess requires both full inventories on every target SoC")
     return extra
 
 
-def check_phase_artifacts(phase: str, paths: list[str], manifest_path: Path) -> list[str]:
-    """Check new phase outputs; source/route semantics remain separate gates."""
-    files = {Path(path).name: Path(path).resolve() for path in paths}
+def check_phase_artifacts(phase: str, paths: list[str], manifest_path: Path,
+                          user_paths: list[str] | None = None) -> list[str]:
+    """Check new phase outputs; source/route semantics remain separate gates.
+
+    user_paths: artifacts explicitly registered by the operator for this phase,
+    before schedule-dependency extras were appended. Phase evidence lookups are
+    name-keyed, and schedule closures legitimately carry same-named evidence
+    from earlier rounds (e.g. dsl-compile-evidence.json); the operator's
+    explicit registration must win over closure extras.
+    """
+    files = {Path(path).name: Path(path).resolve() for path in (user_paths if user_paths is not None else paths)}
     required = {
         "baseline": ("环境检查报告.md", "性能目标.md", "performance-targets.json", "preflight-report.json"),
         "preparation": ("extraction-manifest.json", "source-compatibility.md", "functional-acceptance.md"),
@@ -891,14 +1146,33 @@ def check_phase_artifacts(phase: str, paths: list[str], manifest_path: Path) -> 
     if missing:
         raise ValueError(f"{phase} phase missing artifacts: {sorted(missing)}")
     extra: list[str] = []
+    manifest = read_manifest(manifest_path)
+    if phase in ("analysis", "implementation", "integration"):
+        level = {"analysis": "model", "implementation": "runtime", "integration": "integration"}[phase]
+        extra.extend(check_schedule_artifacts(level, paths, manifest_path))
+    if manifest["configuration"].get("backend", "ascendc") == "cannbot_dsl":
+        if phase in ("preparation", "implementation", "integration"):
+            from dsl_evidence import validate as validate_dsl_evidence
+            evidence_path = files.get("dsl-compile-evidence.json")
+            if evidence_path is None:
+                raise ValueError(f"DSL {phase} requires dsl-compile-evidence.json")
+            evidence = read_json(evidence_path)
+            expected_collection = ("functional_acceptance" if phase == "preparation"
+                                   else "generalization_full"
+                                   if manifest["configuration"].get("tuning_mode") == "generalization"
+                                   else "performance_full")
+            if evidence.get("collection") != expected_collection:
+                raise ValueError(f"DSL {phase} requires compiled coverage of {expected_collection}")
+            extra.extend(validate_dsl_evidence(evidence, manifest_path, phase))
     if phase == "baseline":
-        extra = _baseline_artifacts(files, manifest_path)
+        extra.extend(_baseline_artifacts(files, manifest_path))
     if phase == "integration":
-        extra = _integration_artifacts(files, manifest_path)
+        extra.extend(_integration_artifacts(files, manifest_path))
     return list(dict.fromkeys(paths + extra))
 
 
-def _phase_artifact_check(args: argparse.Namespace, state: dict, manifest_path: Path) -> list[str]:
+def _phase_artifact_check(args: argparse.Namespace, state: dict, manifest_path: Path,
+                          user_artifacts: list[str] | None = None) -> list[str]:
     manifest = read_manifest(manifest_path)
     if manifest["configuration"].get("workflow_layout") != "five-stage-v1" or not args.stage.startswith("phase."):
         return args.artifact or []
@@ -910,7 +1184,7 @@ def _phase_artifact_check(args: argparse.Namespace, state: dict, manifest_path: 
             if state.get("stages", {}).get(f"phase.{predecessor}", {}).get("status") != "complete":
                 raise ValueError(f"phase prerequisite incomplete: {predecessor}")
     if args.status == "complete":
-        return check_phase_artifacts(phase, args.artifact or [], manifest_path)
+        return check_phase_artifacts(phase, args.artifact or [], manifest_path, user_paths=user_artifacts)
     return args.artifact or []
 
 
@@ -927,6 +1201,19 @@ def _complete_record(record: dict, state: dict, args: argparse.Namespace,
     record["artifacts"] = [artifact_identity(path) for path in (args.artifact or [])]
     if has_performance or performance_checkpoint(args.stage):
         performance, paths = prepare_performance(args)
+        manifest = read_manifest(Path(state["manifest"]["path"]))
+        frozen_policy = policy(manifest["configuration"].get("performance_effect_policy"))
+        for key in ("round_summary", "cumulative_summary"):
+            saved = read_json(Path(performance[key]))
+            saved_policy = policy({"id": saved.get("policy_id", "legacy_jitter_v1"),
+                                   "version": saved.get("policy_version", 1)})
+            if saved_policy != frozen_policy:
+                raise ValueError("performance summary policy differs from frozen manifest")
+            if ((args.stage == "final.performance" or args.stage.startswith("integration.performance."))
+                    and saved.get("inconclusive_case_count", 0)):
+                raise ValueError("final performance has inconclusive cases requiring confirmation")
+            if args.stage.startswith("integration.performance.") and saved.get("effective_regression_count", 0):
+                raise ValueError("integrated performance has regressions requiring original-code routing")
         record["performance"] = performance
         paths = list(dict.fromkeys([item["path"] for item in record["artifacts"]] + paths))
         record["artifacts"] = [artifact_identity(path) for path in paths]
@@ -983,7 +1270,24 @@ def command_mark(args: argparse.Namespace) -> int:
     state_path = args.state.resolve()
     with state_lock(state_path):
         state = read_json(state_path)
-        args.artifact = _phase_artifact_check(args, state, Path(state["manifest"]["path"]))
+        manifest_path = Path(state["manifest"]["path"])
+        manifest = read_manifest(manifest_path)
+        validate_frozen_effect_policy(state, manifest)
+        from validate_schedule_contract import policy_enabled
+        schedule_kind = schedule_stage_kind(args.stage)
+        user_artifacts = list(args.artifact or [])
+        if schedule_kind and policy_enabled(manifest):
+            if args.status == "skipped":
+                raise ValueError("schedule handoff/acceptance cannot be skipped")
+            if (schedule_kind == "runtime" and args.status in ("in_progress", "complete")
+                    and not args.stage.endswith(".complete")):
+                check_schedule_handoff(args.stage, state, manifest_path)
+            if args.status == "complete":
+                selected = args.selected_candidate if schedule_kind == "runtime" else None
+                args.artifact = check_schedule_artifacts(schedule_kind, args.artifact or [], manifest_path, selected)
+            if schedule_kind == "runtime" and args.status == "complete":
+                check_runtime_handoff(args.stage, args.artifact, state)
+        args.artifact = _phase_artifact_check(args, state, manifest_path, user_artifacts=user_artifacts)
         previous = state.setdefault("stages", {}).get(args.stage, {})
         timestamp = utc_now()
         record = dict(previous)
@@ -1144,11 +1448,36 @@ def command_migrate(args: argparse.Namespace) -> int:
     audit = artifact_identity(args.audit)
     with state_lock(state_path):
         state = read_json(state_path)
+        adopted = False
+        if getattr(args, "adopt_schedule_policy", False):
+            from validate_schedule_contract import policy_enabled, require
+            require("schedule_policy" not in state, "schedule policy adoption requires an absent state field")
+            require(audit["kind"] == "file" and Path(audit["path"]).stat().st_size > 0,
+                    "schedule policy adoption requires a nonempty audit file")
+            manifest_path = Path(state["manifest"]["path"])
+            require(artifact_identity(manifest_path) == state["manifest"],
+                    "cannot adopt policy after manifest identity changed")
+            manifest = read_manifest(manifest_path)
+            require(manifest.get("request", {}).get("path") and policy_enabled(manifest),
+                    "policy adoption requires a matching frozen request and manifest policy")
+            occurred = set(state.get("stages", {}))
+            occurred.update(event.get("stage") for event in state.get("events", []) if event.get("stage"))
+            if state.get("current_stage"):
+                occurred.add(state["current_stage"])
+            require(not any(schedule_stage_kind(name) or ".acceptance." in name or ".selection" in name
+                            for name in occurred),
+                    "cannot adopt schedule policy after analysis/implementation/integration activity")
+            state["schedule_policy"] = manifest["configuration"]["schedule_policy"]
+            adopted = True
+            append_event(state, "schedule_policy_adopted", audit=audit, manifest=state["manifest"],
+                         policy=state["schedule_policy"],
+                         reason="explicit pre-analysis migration of an already frozen policy")
         for stage in args.invalidate_stage or []:
             record = state.setdefault("stages", {}).setdefault(stage, {})
             record.update({"status": "invalid", "invalidated_at": utc_now(), "reason": "workflow_migration"})
         state["workflow_version"] = args.workflow_version
-        append_event(state, "workflow_migration", audit=audit, invalidated=args.invalidate_stage or [])
+        append_event(state, "workflow_migration", audit=audit,
+                     invalidated=args.invalidate_stage or [], schedule_policy_adopted=adopted)
         commit(state_path, state)
     emit(json.dumps({"status": "workflow_migrated", "invalidated": args.invalidate_stage or []}, ensure_ascii=False))
     return 0
@@ -1166,14 +1495,39 @@ def _verify_artifact(stage: str, artifact: dict, invalid: list[dict[str, str]]) 
     return None
 
 
+def _verify_stage_artifacts(name: str, record: dict, invalid: list[dict[str, str]]) -> None:
+    for artifact in record.get("artifacts", []):
+        reason = _verify_artifact(name, artifact, invalid)
+        if reason:
+            record.update({"status": "invalid", "reason": reason, "invalidated_at": utc_now()})
+
+
+def _verify_stage_evidence(state: dict, name: str, record: dict, invalid: list[dict[str, str]]) -> None:
+    try:
+        kind = schedule_stage_kind(name)
+        if kind:
+            paths = [a["path"] for a in record.get("artifacts", [])]
+            check_schedule_artifacts(kind, paths, Path(state["manifest"]["path"]))
+            if kind == "runtime" and "schedule_policy" in state:
+                check_runtime_handoff(name, paths, state)
+        if record.get("performance"):
+            recorded_performance(record)
+        if name == "phase.integration" and (
+                "schedule_policy" in state
+                or policy(state.get("performance_effect_policy"))["id"] == "confidence_effect_v1"):
+            check_phase_artifacts("integration", [a["path"] for a in record.get("artifacts", [])],
+                                  Path(state["manifest"]["path"]))
+    except (ValueError, KeyError, TypeError, OSError) as error:
+        invalid.append({"kind": "effect_evidence", "stage": name, "reason": str(error)})
+        record.update({"status": "invalid", "reason": "effect_evidence_changed", "invalidated_at": utc_now()})
+
+
 def _verify_stage_records(state: dict, invalid: list[dict[str, str]]) -> None:
     for name, record in state.get("stages", {}).items():
         if record.get("status") != "complete":
             continue
-        for artifact in record.get("artifacts", []):
-            reason = _verify_artifact(name, artifact, invalid)
-            if reason:
-                record.update({"status": "invalid", "reason": reason, "invalidated_at": utc_now()})
+        _verify_stage_artifacts(name, record, invalid)
+        _verify_stage_evidence(state, name, record, invalid)
 
 
 def command_verify(args: argparse.Namespace) -> int:
@@ -1181,6 +1535,7 @@ def command_verify(args: argparse.Namespace) -> int:
     invalid: list[dict[str, str]] = []
     with state_lock(state_path):
         state = read_json(state_path)
+        validate_frozen_effect_policy(state, read_manifest(Path(state["manifest"]["path"])))
         current_manifest = artifact_identity(state["manifest"]["path"])
         if current_manifest["sha256"] != state["manifest"]["sha256"]:
             invalid.append({"kind": "manifest", "path": current_manifest["path"]})
@@ -1258,11 +1613,19 @@ def _check_structural_directions(state: dict, args: argparse.Namespace) -> None:
 def _check_phase_completion(state: dict, args: argparse.Namespace) -> None:
     if args.status != "success":
         return
-    manifest = read_manifest(Path(state["manifest"]["path"]))
+    manifest_path = Path(state["manifest"]["path"])
+    manifest = read_manifest(manifest_path)
+    validate_frozen_effect_policy(state, manifest)
     if manifest["configuration"].get("workflow_layout") != "five-stage-v1":
         return
-    if artifact_identity(state["manifest"]["path"]) != state["manifest"]:
+    if artifact_identity(manifest_path) != state["manifest"]:
         raise ValueError("run manifest changed; verify before finishing")
+    for stage, saved in state.get("stages", {}).items():
+        kind = schedule_stage_kind(stage)
+        if kind and saved.get("status") == "complete":
+            check_schedule_artifacts(kind, [a["path"] for a in saved.get("artifacts", [])], manifest_path)
+            if kind == "runtime" and "schedule_policy" in state:
+                check_runtime_handoff(stage, [a["path"] for a in saved.get("artifacts", [])], state)
     for phase in PHASES:
         record = state.get("stages", {}).get(f"phase.{phase}", {})
         if record.get("status") != "complete":
@@ -1371,6 +1734,8 @@ def parser() -> argparse.ArgumentParser:
     migrate.add_argument("--audit", type=Path, required=True)
     migrate.add_argument("--workflow-version", required=True)
     migrate.add_argument("--invalidate-stage", action="append")
+    migrate.add_argument("--adopt-schedule-policy", action="store_true",
+                         help="explicitly adopt an already frozen policy into a pre-analysis legacy state")
     _command(sub, "verify", "verify manifest and completed artifacts", command_verify)
     inspect = _command(sub, "inspect",
                        "read manifest identity and selected stage context without full history", command_inspect)

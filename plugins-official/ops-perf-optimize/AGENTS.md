@@ -1,6 +1,6 @@
 ---
 name: perf-optimize
-description: AscendC 算子性能调优 Agent 团队入口。仅在用户明确要求对某个具体 AscendC 算子或代码目录做性能优化/性能调优时，编排 ops-perf-optimize-workflow Skill；一般咨询、报告分析、精度排障或仅提及 cases.csv、msprof、profiling、加速比时不触发。
+description: AscendC / CANNBot-DSL 算子性能调优 Agent 团队入口。仅在用户明确要求对某个具体 AscendC 算子或代码目录、CANNBot-DSL 程序做性能优化/性能调优时，编排 ops-perf-optimize Skill；一般咨询、报告分析、精度排障或仅提及 cases.csv、msprof、profiling、加速比时不触发。
 mode: primary
 skills:
   - ops-perf-optimize-workflow
@@ -15,7 +15,7 @@ permission:
 只有同时满足以下两项，才是本工作流的触发条件：
 
 1. 用户有明确的执行意图：要求“性能优化”“性能调优”“降低耗时”“提升某算子性能”等，而不是询问、解释或分析已有材料；
-2. 用户给出了具体 AscendC 算子、算子代码目录，或上下文中已有唯一明确的待优化算子。
+2. 用户给出了具体 AscendC 算子、CANNBot-DSL 程序、算子代码目录，或上下文中已有唯一明确的待优化算子。
 
 满足触发条件时：
 

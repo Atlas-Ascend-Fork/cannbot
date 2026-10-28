@@ -172,7 +172,7 @@ def test_existing_inventory_freezes_full_set_and_selects_only_l0(tmp_path: Path)
     acceptance = manifest["collections"]["functional_acceptance"]
     assert acceptance["count"] == 40
     assert acceptance["selection"]["l0_count"] == 45
-    with (output / "functional-acceptance-cases.csv").open(encoding="utf-8") as stream:
+    with (output / "baseline" / "functional-acceptance-cases.csv").open(encoding="utf-8") as stream:
         assert {row["level"] for row in csv.DictReader(stream)} == {"L0"}
 
 
@@ -375,6 +375,8 @@ def test_generalization_generated_cases_and_external_competitor_are_attached(tmp
     code.mkdir()
     (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
     request = tmp_path / "generalization-request.json"
+    early_competitor = tmp_path / "early-competitor.csv"
+    write_competitor(early_competitor, 4)
     create_request(
         request,
         code,
@@ -383,6 +385,10 @@ def test_generalization_generated_cases_and_external_competitor_are_attached(tmp
         extra=(
             "--tuning-mode",
             "generalization",
+            "--competitor-source",
+            "file",
+            "--competitor-perf",
+            str(early_competitor),
         ),
     )
     output = tmp_path / "run"
@@ -391,23 +397,20 @@ def test_generalization_generated_cases_and_external_competitor_are_attached(tmp
     pending = load(manifest_path)
     assert pending["generalization_preparation"] == {
         "cases": {"status": "pending"},
-        "competitor": {"status": "pending"},
+        "competitor": {"status": "pending_cases"},
     }
     assert pending["configuration"]["generalization"]["target_case_count"] == 1000
     assert pending["configuration"]["functional_mode"] == "reuse_performance"
 
     generated = tmp_path / "generated.csv"
-    competitor_result = tmp_path / "competitor.csv"
     write_cases(generated, 4)
-    write_competitor(competitor_result, 4, alias_columns=True)
     run("attach-generalization", "--manifest", manifest_path, "--cases", generated)
-    run("attach-competitor", "--manifest", manifest_path, "--competitor-perf", competitor_result)
     manifest = load(manifest_path)
     assert manifest["collections"]["generalization_full"]["count"] == 4
     assert manifest["collections"]["competitor_performance"]["validation"]["status"] == "complete"
     assert manifest["generalization_preparation"]["cases"]["status"] == "complete"
     assert manifest["generalization_preparation"]["competitor"]["status"] == "complete"
-    with (output / "competitor-performance.csv").open(encoding="utf-8") as stream:
+    with (output / "baseline" / "competitor-performance.csv").open(encoding="utf-8") as stream:
         assert csv.DictReader(stream).fieldnames == ["case_id", "gpu_total_us"]
 
 
@@ -505,3 +508,24 @@ def test_reference_configuration_is_copied_into_request_and_frozen_manifest(tmp_
     assert load(output / "run-manifest.json")["configuration"]["performance_reference"] == {
         "kind": "unfused", "target_ratio": 2.0,
     }
+
+
+def test_new_effect_policy_default_override_and_legacy_missing_field(tmp_path: Path) -> None:
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / "kernel.cpp").write_text("// synthetic kernel\n")
+    cases = tmp_path / "cases.csv"
+    write_cases(cases, 2)
+    request = tmp_path / "request.json"
+    create_request(request, code, cases)
+    assert load(request)["performance_effect_policy"] == {"id": "confidence_effect_v1", "version": 1}
+    run("freeze", "--request", request, "--output-dir", tmp_path / "new")
+    frozen_manifest = load(tmp_path / "new/run-manifest.json")
+    assert frozen_manifest["configuration"]["performance_effect_policy"]["id"] == "confidence_effect_v1"
+    create_request(request, code, cases, extra=("--performance-effect-policy", "legacy_jitter_v1"))
+    assert load(request)["performance_effect_policy"]["id"] == "legacy_jitter_v1"
+    legacy = load(request)
+    legacy.pop("performance_effect_policy")
+    request.write_text(json.dumps(legacy))
+    run("freeze", "--request", request, "--output-dir", tmp_path / "legacy")
+    assert "performance_effect_policy" not in load(tmp_path / "legacy/run-manifest.json")["configuration"]

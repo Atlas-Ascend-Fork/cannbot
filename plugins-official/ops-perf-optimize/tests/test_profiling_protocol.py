@@ -69,7 +69,7 @@ def test_runtime_artifact_model_has_three_truth_layers_and_no_duplicate_summarie
         "每次状态提交" not in skill
     )  # wording stays operational, not implementation chatter
     assert "持续更新" in skill
-    assert "一份 `roundN/analysis.md`" in skill
+    assert "一份 `analysis/roundN/analysis.md`" in skill
     assert "同一事实只写一次" in contract
 
     prompts = read(ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md")
@@ -105,8 +105,8 @@ def test_precision_redlines_are_explicit_in_entry_contract_and_implementation_ro
 def test_analysis_is_one_atomic_reviewable_result() -> None:
     contract = read(CONTRACT)
     analysis = read(ANALYSIS)
-    assert "roundN/analysis.md" in contract
-    assert "roundN/analysis.md" in analysis
+    assert "analysis/roundN/analysis.md" in contract
+    assert "analysis/roundN/analysis.md" in analysis
     assert "每个冻结 case 必须恰好出现" in analysis
     assert "implementation-contract-<scheme_id>.json" in analysis
     assert '"implementation_mode": "exact"' in analysis

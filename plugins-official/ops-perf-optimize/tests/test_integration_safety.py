@@ -11,10 +11,13 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 SCRIPT = (
@@ -227,3 +230,69 @@ def test_integration_gate_rejects_interface_drift(tmp_path: Path) -> None:
     assert report["candidate_safety"]["changed_public_contract_files"] == [
         "op_host/op_api/aclnn_test.cpp"
     ]
+
+
+def external_scope(tmp_path: Path) -> tuple[dict, dict]:
+    declaration = tmp_path / "upstream-README.md"
+    declaration.write_text("Ascend910B and Ascend950 supported. ASCEND950 arch35 isolated route.\n")
+    receipt = {"kind": "external_dsl_declaration", "path": str(declaration),
+               "sha256": hashlib.sha256(declaration.read_bytes()).hexdigest()}
+    value = scope(routes=True)
+    for entry in value["supported_socs"]:
+        entry["evidence"] = [receipt]
+    value["project_isolation_style"]["evidence"] = [receipt]
+    return value, receipt
+
+
+def test_dsl_external_sha_declarations_preserve_route_gate(tmp_path: Path) -> None:
+    baseline, candidate = roots(tmp_path)
+    value, receipt = external_scope(tmp_path)
+    safety = SAFETY.validate_candidate_safety(baseline, candidate)
+    report = SAFETY.validate_scope(value, baseline, candidate, safety, backend="cannbot_dsl")
+    assert report["decision"] == "pass"
+    assert report["external_declaration_receipts"] == [{"path": receipt["path"], "sha256": receipt["sha256"]}]
+    value["shared_file_routes"] = {}
+    assert SAFETY.validate_scope(value, baseline, candidate, safety, backend="cannbot_dsl")["decision"] == "fail"
+
+
+def test_external_declarations_require_manifest_dsl_backend(tmp_path: Path) -> None:
+    baseline, candidate = roots(tmp_path)
+    value, _receipt = external_scope(tmp_path)
+    value["backend"] = "cannbot_dsl"  # Scope cannot override the caller/manifest.
+    safety = SAFETY.validate_candidate_safety(baseline, candidate)
+    with pytest.raises(SAFETY.ContractError, match="manifest backend cannbot_dsl"):
+        SAFETY.validate_scope(value, baseline, candidate, safety)
+
+
+@pytest.mark.parametrize("defect", ["modified", "missing", "relative", "digest", "kind", "unnamed"])
+def test_external_dsl_declaration_invalid_receipts_fail(tmp_path: Path, defect: str) -> None:
+    baseline, candidate = roots(tmp_path)
+    value, receipt = external_scope(tmp_path)
+    path = Path(receipt["path"])
+    if defect == "modified":
+        path.write_text(path.read_text() + "changed\n")
+    elif defect == "missing":
+        path.unlink()
+    elif defect == "relative":
+        receipt["path"] = "upstream-README.md"
+    elif defect == "digest":
+        receipt["sha256"] = ""
+    elif defect == "kind":
+        receipt["kind"] = "unbound"
+    elif defect == "unnamed":
+        path.write_text("Unrelated statement.\n")
+        receipt["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    safety = SAFETY.validate_candidate_safety(baseline, candidate)
+    with pytest.raises(SAFETY.ContractError):
+        SAFETY.validate_scope(value, baseline, candidate, safety, backend="cannbot_dsl")
+
+
+def test_external_file_name_cannot_prove_soc_support(tmp_path: Path) -> None:
+    baseline, candidate = roots(tmp_path)
+    value, receipt = external_scope(tmp_path)
+    path = tmp_path / "Ascend910B-Ascend950-ARCH35.md"
+    path.write_text("No hardware support declarations.\n")
+    receipt.update(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    safety = SAFETY.validate_candidate_safety(baseline, candidate)
+    with pytest.raises(SAFETY.ContractError, match="does not name"):
+        SAFETY.validate_scope(value, baseline, candidate, safety, backend="cannbot_dsl")

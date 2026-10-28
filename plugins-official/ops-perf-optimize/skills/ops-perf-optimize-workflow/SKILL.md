@@ -1,9 +1,9 @@
 ---
 name: ops-perf-optimize-workflow
-description: AscendC 算子性能优化工作流的五阶段主编排入口（主工作流 Skill）。仅当用户明确要求对某个具体 AscendC 算子或代码目录执行性能优化/性能调优时使用；一般咨询、cases.csv 解读、msprof/profiling 报告、加速比分析、精度排障和普通检视不触发。负责请求接入、派发、门禁复核、循环、恢复和持续报告。
+description: AscendC / CANNBot-DSL 算子性能优化的五阶段主编排入口。仅当用户明确要求对某个具体 AscendC 算子或代码目录，以及 CANNBot-DSL 网络 case 执行性能优化/性能调优时使用；一般咨询、cases.csv 解读、msprof/profiling 报告、加速比分析、精度排障和普通检视不触发。负责请求接入、派发、门禁复核、循环、恢复和持续报告。
 ---
 
-# AscendC 性能优化主编排
+# 算子性能优化主编排
 
 你是主 Agent。基线评估、前处理、诊断分析、实施验证和后处理分别派发给当前环境的通用 subagent 执行（信封声明 ROLE 并要求加载对应阶段 Skill）；执行细节由各阶段 Skill 管理，是职责与验收的唯一真源。
 
@@ -25,7 +25,7 @@ description: AscendC 算子性能优化工作流的五阶段主编排入口（�
 | 循环控制 | 冻结轮数或可计算目标 | ratio 内外层门限与计数 |
 | 最终交付 | demo 验收及原工程两类全集防退化 | 同左，另有 ratio 和涉及/不涉及路由结论 |
 
-两种模式均执行：基线评估 → 前处理 → 诊断分析 ↔ 实施验证 → 后处理。模式创建后不静默切换，generalization 不得被删除或退化为 `standard`。每轮只有一份 `roundN/analysis.md` 和一个保留实现，主 Agent 根据证据决定下一轮或结束循环。
+两种模式均执行：基线评估 → 前处理 → 诊断分析 ↔ 实施验证 → 后处理。模式创建后不静默切换，generalization 不得被删除或退化为 `standard`。每轮只有一份 `analysis/roundN/analysis.md` 和一个保留实现，主 Agent 根据证据决定下一轮或结束循环。
 
 ## 全局底线
 

@@ -7,16 +7,16 @@
 | 日志连续 `Kernel xxx skipped`，没有 `Start profiling ... <目标>` | `--kernel-name` 前缀不对，或程序没 launch 到 AICore |
 | `Task Duration` 与预期 kernel/shape 不符 | 核对命中名称、输入和 tiling；不要仅凭时长判断是否采错 |
 | 图里只有 SCALAR / 没有 MTE2 | 看错了 `kernel_*`，或 launch 的不是计算核 |
-| 仿真超出诊断预算 | 停止后按下文裁剪负载，核对目标分支，再采一次 |
+| 仿真超出诊断预算 | 先区分用户明确的硬预算与成本估计。完整 case 请求不能因慢自动裁剪；预算确有限制时保留日志并按下文构造探针 |
 | import 自定义包失败 / profiler 报 driver 不兼容 | 确认只 source 了一套 CANN；conda `site-packages` 不要被 toolkit 自带包盖住 |
-| npusim 报只能 0 卡 | 程序里写死 `npu:0`，不要设 `ASCEND_VISIBLE_DEVICES` 到别的卡 |
+| npusim 报只能 0 卡 | 程序使用 `npu:0`；清理继承的物理卡映射，例如 `ASCEND_RT_VISIBLE_DEVICES`，以当前工具环境为准 |
 | `trace.json` 缺失、只有 CSV | 核对目标平台的指标与采集日志；`TimelineDetail` 还需确认上下文保存和仿真是否成功 |
-| HTML 报告空白 | 缺 plotly；读 `trace_core*.json` |
+| HTML 报告空白 | 检查依赖和真实 trace 路径；CANN 9.2 还可能是空 DB 分析失败、聚合页漏查 results 层级，见 [仿真经验](ascend950-dsl-simulation.md#报告失败与目标-db-选择) |
 
 ## 怎么拿到 `--kernel-name`
 
 1. 先**不加** `--kernel-name` 跑一次 `msprof op`（或看 `npusim.log`），抄日志里的 kernel 字符串。
-2. C++ 直调：`nm -D` 目标 `.so`，找 `T` 符号里带 `kernel` 的 mangled 名，填能唯一前缀匹配的一段。
+2. C++ 直调：`nm -D` 只检查 host 动态导出；嵌入式设备 kernel 要检查 outer device section 内实际 ELF 的 `.symtab/.dynsym` 精确符号和 binding。host 未导出设备名称不能判编译失败；结合 built/live SHA、正常 ASC、device `.text` 与真实 launch 命中取证。使用[只读 ELF 工具与身份契约](identity-and-replay-evidence.md#只读-elf-身份)，strings 近似命中不通过身份门禁。
 3. 注册算子 / torch.ops：用 OpType，如 `FlashMlaWithKvcache`。不要带 `Metadata` 伴生核。
 
 ## 单 launch 程序骨架
@@ -46,7 +46,7 @@ Chrome trace 常见字段为 `ts` / `dur` / `name`。先确认产物属于目标
 
 只看核 0 无法判断负载不均或跨核同步；需要这类结论时保留多核负载并补充相应核的证据。
 
-`npusim report -n all` 会放大 `instr.bin`，长 kernel 先核 0 定性，再按需加核。
+不同版本可能保存 DB 或二进制记录。CANN 9.2 的 `record -n` 控制记录核，`report -n` 只解析已有记录；先决定要保留哪些核，再采集。多核报告会增加解析与产物开销，但不会重新执行 kernel。
 
 ## A2/A3 仿真采集
 
@@ -58,7 +58,7 @@ Chrome trace 常见字段为 `ts` / `dur` / `name`。先确认产物属于目标
 
 1. 先确定要看的阶段或依赖，冻结影响路径的 dtype、布局、属性、可选输入状态及关键维度；从 Tiling 和 kernel 分工确认分支、有效核数、内层 tile/循环和索引范围。
 2. 对单核依赖，优先缩小外层并行维度到少量有效工作核，再缩短序列或选中块数；只保留能体现目标稳态、尾块或稀疏访问的最小规模。若诊断多核同步/负载，必须保留足以触发该机制的核数。索引分布与边界条件也按诊断问题保留。
-3. 在隔离探针上先独立运行，再采一次流水并量完整命令墙钟；超过分钟量级预算就停止，继续裁剪主导执行量的维度。`--core-id`、只减少输出核数、单纯延长 timeout 都不能证明仿真工作量下降。
+3. 在隔离探针上先独立运行，再采一次流水并量完整命令墙钟；只有明确预算或诊断目标允许时才继续裁剪。分钟量级不是硬上限，用户要求完整 case 时保留原输入并持续报告进度。`--core-id`、只减少输出核数、单纯延长 timeout 都不能证明仿真工作量下降。
 4. 比较原 case 与探针的 TilingKey/模板、有效核数、目标循环和输入语义；这些条件不对应时，不能将该图归因给原路径。报告列明裁剪范围与失去的行为覆盖；正式性能仍用完整 case 上板采集。
 
 ## 和稳态计时的关系

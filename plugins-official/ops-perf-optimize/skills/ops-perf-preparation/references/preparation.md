@@ -6,4 +6,4 @@
 
 准备阶段同时产出 `source-compatibility.md`：从原工程的 build config、`SocVersion` 路由、架构目录和 kernel 入口列出“工程支持 SoC / 本次 `TARGET_SOCS` / 证据 / 是否已验证”，定位公开契约面（`op_api/`、op def/proto、infer shape、接口适配头），盘点共享文件/传递依赖、TilingKey/模板分支及使用者。这份盘点只陈述源码事实，不把当前设备或 A5 专用工作基线推断为工程唯一支持代际。两类输入都保存原始算子源码快照（包含既有脏改动），供最终交付 diff 使用。
 
-前处理代理加载 TTK 标准 skill（`ttk-how-run-test`，排障用 `ttk-how-diagnose`），在实际工作基线上运行整个功能验收子集，并用相同原始 case/golden/阈值核对剥离前后语义与加载身份。精度结论严格按`ops-perf-acceptance-criteria` 的精度规则。准备通过后进入 round1；独立静态 review 阶段被取消，检查点只在分析专家阅读源码和 profiling 时按需核对，输出直接并入 `roundN/analysis.md`。
+前处理代理加载 TTK 标准 skill（`ttk-how-run-test`，排障用 `ttk-how-diagnose`），在实际工作基线上运行整个功能验收子集，并用相同原始 case/golden/阈值核对剥离前后语义与加载身份。精度结论严格按`ops-perf-acceptance-criteria` 的精度规则。准备通过后进入 round1；独立静态 review 阶段被取消，检查点只在分析专家阅读源码和 profiling 时按需核对，输出直接并入 `analysis/roundN/analysis.md`。

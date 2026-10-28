@@ -1,6 +1,6 @@
-# AscendC 性能调优快速入门
+# AscendC / CANNBot-DSL 性能调优快速入门
 
-`ops-perf-optimize-workflow` 通过工程剥离和恢复完成 AscendC 算子的端到端性能调优：冻结用例、建立可信基线、分析 profiling、隔离实施候选、执行精度与性能门禁，最后完成全量验收。
+`ops-perf-optimize-workflow` 用于完成 AscendC / CANNBot-DSL 算子的端到端性能调优：冻结用例、建立可信基线、分析 profiling、隔离实施候选、执行精度与性能门禁，最后完成全量验收和原工程回集成。
 
 本文面向使用者，说明如何安装、发起任务、查看进展和理解结果。精确的机器执行规则以 `skills/ops-perf-optimize-workflow/references/workflow-contract.md` 为准。
 
@@ -193,7 +193,7 @@ CANN：source /path/to/Ascend/cann/bin/setenv.bash；输出到 /path/to/output/�
 | 阶段 | 执行内容 | 主要交付 |
 |---|---|---|
 | 基线评估 | 依赖/NPU 检查、可选用例生成、逐 case 制定性能目标 | 环境检查报告.md、性能目标.md |
-| 前处理 | 剥离独立 demo，保持原调用方式，TTK 基线精度 | 剥离映射、构建/加载与精度证据 |
+| 前处理(DSL程序调优跳过) | 剥离独立 demo，保持原调用方式，TTK 基线精度 | 剥离映射、构建/加载与精度证据 |
 | 诊断分析 | 统一性能采集、逐 case 瓶颈、最多三套方案 | analysis.md、实施契约、冻结 scope |
 | 实施验证 | 隔离实施、符合性/功能/序列门禁、性能终选、demo 全集验收 | 候选证据、最终 demo、逐轮报告 |
 | 后处理 | 回集成原工程、芯片族保护、功能和性能两类全集检查、退化回原代码并复验 | 逐 case 性能 gate、路由证据、VERIFY_REPORT.md |

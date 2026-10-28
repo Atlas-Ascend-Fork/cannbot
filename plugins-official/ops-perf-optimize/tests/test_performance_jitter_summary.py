@@ -122,11 +122,32 @@ class PerformanceJitterSummaryTest(unittest.TestCase):
             self.assertEqual(result["effective_case_count"], 0)
             self.assertIsNone(result["effective_geomean_speedup"])
 
-    def test_improvements_bypass_jitter_thresholds(self) -> None:
+    def test_small_gains_within_jitter_band_are_screened_out(self) -> None:
+        # 提升与回退对称：带内小增益为 jitter_no_effect（已证实小收益不受此初筛过滤，
+        # 见 performance-jitter-policy.md confidence_effect_v1 一节）。
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             baseline, candidate = self.write_standard_pair(
                 root, [("a", 4.9), ("b", 19.5), ("c", 97.0), ("d", 197.0)]
+            )
+            result = MODULE.summarize(baseline, candidate)
+            self.assertEqual(result["effective_case_count"], 0)
+            self.assertEqual(result["effective_improvement_count"], 0)
+            self.assertEqual(result["effective_regression_count"], 0)
+            self.assertEqual(result["jitter_case_count"], 4)
+            self.assertIsNone(result["effective_geomean_speedup"])
+            self.assertTrue(
+                all(
+                    case["classification"] == "jitter_no_effect"
+                    for case in result["cases"]
+                )
+            )
+
+    def test_large_improvements_bypass_jitter_thresholds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline, candidate = self.write_standard_pair(
+                root, [("a", 4.0), ("b", 15.0), ("c", 80.0), ("d", 150.0)]
             )
             result = MODULE.summarize(baseline, candidate)
             self.assertEqual(result["effective_case_count"], 4)

@@ -51,12 +51,20 @@ def read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def validate_source(manifest: dict[str, Any]) -> dict[str, Any]:
+def validate_source(manifest: dict[str, Any], run_root: Path | None = None) -> dict[str, Any]:
     frozen = manifest.get("inputs", {}).get("code")
     if not isinstance(frozen, dict) or not frozen.get("path") or not frozen.get("sha256"):
         raise ValueError("run manifest has no frozen code identity")
     current = code_identity(Path(frozen["path"]))
     if current["sha256"] != frozen["sha256"]:
+        # Integration writeback legitimately rewrites the original project after the
+        # baseline freeze. The frozen content is preserved by the run's canonical
+        # snapshot (five-stage layout); accept it only on an exact frozen-SHA match.
+        snapshot = run_root / "preparation" / "original_snapshot" if run_root else None
+        if snapshot is not None and snapshot.is_dir():
+            snapshot_identity = code_identity(snapshot)
+            if snapshot_identity["sha256"] == frozen["sha256"]:
+                return frozen
         raise ValueError("frozen source identity changed")
     return frozen
 
@@ -74,8 +82,22 @@ def file_contains_any(path: Path, values: list[str]) -> bool:
     return False
 
 
+def _effective_source_identity(item: dict[str, Any], run_root: Path | None) -> dict[str, str]:
+    """Live path when intact; else the run-snapshot copy with the RECORDED sha."""
+    recorded_path = Path(item["path"])
+    actual = file_identity(recorded_path)
+    if actual["sha256"] == item["sha256"]:
+        return actual
+    if run_root is not None:
+        candidate = run_root / "preparation" / "original_snapshot" / recorded_path.name
+        if candidate.is_file() and sha256_file(candidate) == item["sha256"]:
+            return file_identity(candidate)
+    raise ValueError(f"runtime source artifact identity changed: {actual['path']}")
+
+
 def validate_runtime_evidence(
     path: Path,
+    run_root: Path | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, str]], list[dict[str, str]]]:
     evidence = read_json(path)
     if not str(evidence.get("method", "")).strip():
@@ -87,10 +109,7 @@ def validate_runtime_evidence(
     for item in raw_sources:
         if not isinstance(item, dict) or not item.get("path") or not item.get("sha256"):
             raise ValueError("runtime source_artifacts require path and sha256")
-        actual = file_identity(Path(item["path"]))
-        if actual["sha256"] != item["sha256"]:
-            raise ValueError(f"runtime source artifact identity changed: {actual['path']}")
-        sources.append(actual)
+        sources.append(_effective_source_identity(item, run_root))
     raw_artifacts = evidence.get("loaded_artifacts")
     if not isinstance(raw_artifacts, list) or not raw_artifacts:
         raise ValueError("runtime evidence requires loaded_artifacts")
@@ -113,10 +132,22 @@ def validate_runtime_evidence(
     return evidence, loaded, sources
 
 
-def validate_document(manifest: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+def _run_root(identity_path: Path) -> Path | None:
+    """Nearest ancestor directory holding the run manifest (five-stage run root)."""
+    for ancestor in identity_path.resolve().parents:
+        if (ancestor / "run-manifest.json").is_file():
+            return ancestor
+    return None
+
+
+def validate_document(
+    manifest: dict[str, Any],
+    document: dict[str, Any],
+    run_root: Path | None = None,
+) -> dict[str, Any]:
     if document.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(f"unsupported execution identity schema: {document.get('schema_version')}")
-    source = validate_source(manifest)
+    source = validate_source(manifest, run_root)
     if document.get("source") != source:
         raise ValueError("execution identity source does not match the run manifest")
 
@@ -132,45 +163,55 @@ def validate_document(manifest: dict[str, Any], document: dict[str, Any]) -> dic
         )
 
     for target in targets:
-        target_soc = target["target_soc"]
-        build = target.get("build", {})
-        runtime = target.get("runtime", {})
-        if not str(build.get("command", "")).strip():
-            raise ValueError(f"{target_soc}: build command is missing")
-        build_log = build.get("log", {})
-        if file_identity(Path(build_log.get("path", ""))) != build_log:
-            raise ValueError(f"{target_soc}: build log identity changed")
-        built = build.get("artifacts")
-        if not isinstance(built, list) or not built:
-            raise ValueError(f"{target_soc}: build artifacts are missing")
-        verified_built = [file_identity(Path(item.get("path", ""))) for item in built]
-        if verified_built != built:
-            raise ValueError(f"{target_soc}: build artifact identity changed")
-
-        evidence_identity = runtime.get("evidence", {})
-        evidence_path = Path(evidence_identity.get("path", ""))
-        if file_identity(evidence_path) != evidence_identity:
-            raise ValueError(f"{target_soc}: runtime evidence identity changed")
-        evidence, loaded, sources = validate_runtime_evidence(evidence_path)
-        if evidence.get("target_soc") not in (None, target_soc):
-            raise ValueError(f"{target_soc}: runtime evidence target SoC mismatch")
-        if loaded != runtime.get("loaded_artifacts"):
-            raise ValueError(f"{target_soc}: runtime loaded artifact identity changed")
-        if sources != runtime.get("source_artifacts"):
-            raise ValueError(f"{target_soc}: runtime source artifact identity changed")
-        built_hashes = {item["sha256"] for item in built}
-        missing = [item["path"] for item in loaded if item["sha256"] not in built_hashes]
-        if missing:
-            raise ValueError(
-                f"{target_soc}: loaded artifacts do not match the recorded build: {missing}"
-            )
+        _validate_target(target, run_root)
     return document
+
+
+def _validate_target(target: dict[str, Any], run_root: Path | None) -> None:
+    target_soc = target["target_soc"]
+    build = target.get("build", {})
+    runtime = target.get("runtime", {})
+    if not str(build.get("command", "")).strip():
+        raise ValueError(f"{target_soc}: build command is missing")
+    build_log = build.get("log", {})
+    if file_identity(Path(build_log.get("path", ""))) != build_log:
+        raise ValueError(f"{target_soc}: build log identity changed")
+    built = build.get("artifacts")
+    if not isinstance(built, list) or not built:
+        raise ValueError(f"{target_soc}: build artifacts are missing")
+    verified_built = [file_identity(Path(item.get("path", ""))) for item in built]
+    if verified_built != built:
+        raise ValueError(f"{target_soc}: build artifact identity changed")
+
+    evidence_identity = runtime.get("evidence", {})
+    evidence_path = Path(evidence_identity.get("path", ""))
+    if file_identity(evidence_path) != evidence_identity:
+        raise ValueError(f"{target_soc}: runtime evidence identity changed")
+    evidence, loaded, sources = validate_runtime_evidence(evidence_path, run_root)
+    if evidence.get("target_soc") not in (None, target_soc):
+        raise ValueError(f"{target_soc}: runtime evidence target SoC mismatch")
+    if loaded != runtime.get("loaded_artifacts"):
+        raise ValueError(f"{target_soc}: runtime loaded artifact identity changed")
+    recorded_sources = runtime.get("source_artifacts")
+    expected_sources = [
+        _effective_source_identity(item, run_root)
+        for item in recorded_sources
+        if isinstance(item, dict)
+    ] if isinstance(recorded_sources, list) else []
+    if sources != expected_sources:
+        raise ValueError(f"{target_soc}: runtime source artifact identity changed")
+    built_hashes = {item["sha256"] for item in built}
+    missing = [item["path"] for item in loaded if item["sha256"] not in built_hashes]
+    if missing:
+        raise ValueError(
+            f"{target_soc}: loaded artifacts do not match the recorded build: {missing}"
+        )
 
 
 def validate_execution_identity(manifest_path: Path, identity_path: Path) -> dict[str, Any]:
     manifest = load_manifest(manifest_path.resolve())
     document = read_json(identity_path.resolve())
-    return validate_document(manifest, document)
+    return validate_document(manifest, document, _run_root(identity_path))
 
 
 def dependency_paths(document: dict[str, Any]) -> list[str]:

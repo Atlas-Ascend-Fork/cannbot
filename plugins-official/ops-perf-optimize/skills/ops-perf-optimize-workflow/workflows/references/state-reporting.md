@@ -37,12 +37,22 @@
 
 五阶段必须按顺序首次交接；缺少前置阶段或必要产物会拒绝完成。`finish --status success` 还校验五阶段均完成且 artifacts SHA 未变。数值门禁只证明集合与性能，不代替真实硬件/二进制/路由审阅；主 Agent 必须复核这些证据。旧 manifest 没有 layout 时继续保留旧键可恢复性，迁移审计须补齐新门禁后才按新版完成定义交付。
 
+### 同轮未终选的诊断修订
+
+同一轮尚未终选且未注册正式确认计划时，可以用真实单次诊断定位下一方案；不得将其登记为有效改善、提升基线，或为进入下一轮伪造终选。保留当前规范 `roundN.analysis` 完成记录，以 `roundN.refinement.<id>` 的开始/结束和 `progress --kind diagnosis` 记录修订工作。该细粒度键只记录工作，不提供调度门禁。
+
+新修订的分析、model/check、implementation contract、source-isolation 与候选 root 使用新目录和 scheme_id。旧源码、报告、运行证据和绝对引用保持不变。新方案 ready 后，重新 `mark roundN.analysis --status complete` 消费实际新模型，同时传入原 analysis 保存点的全部 `--artifact` 路径，以及新修订文件；先按普通 artifact 归档旧 analysis 登记记录。`mark complete` **替换 artifact 列表，不自动追加**，遗漏已实施方案的历史合同会使同轮实施归属核验失败。`phase.analysis` 保持初次交接记录。
+
+随后使用规范 `roundN.impl.<new_scheme>` 派发并验收新候选，不能用 refinement 键冒充实施通过。每次至多三份当前活跃方案，历史方案只保留证据，不自动参与选择。最终稳定候选再注册并完成正式统计确认、selection、本轮/累计摘要及 `roundN.complete`，之后才开始下一轮或最终验收。正式计划一旦注册，仍按原采集与恢复规则处理，不得将已成功的慢样本改称探索后择优重采。
+
+`progress --evidence` 只记录路径；需要恢复时校验 SHA 的诊断原件，应通过 `mark --artifact` 或已有门禁消费的依赖链登记。不要修改旧路径内容或依靠一份自报索引替代实际依赖核验。
+
 ### 每轮结束刷新性能
 
 完成唯一终选后、进入下一轮或结束任务前，主 Agent 必须登记所保留实现的两种比较：
 
 - **本轮**：轮初基线 vs 本轮保留实现，复用该实现的 `effect-summary.json`。
-- **累计**：原始冻结基线 vs 同一保留实现，用 `$WORKFLOW_SCRIPTS/summarize_performance_effects.py` 从已有 CSV 生成 `cumulative-effect-details.csv` 与 `cumulative-effect-summary.json`，存于该轮保留实现的性能证据目录。第一轮两种基线相同时可复用同一摘要。
+- **累计**：原始冻结基线 vs 同一保留实现，用 `$WORKFLOW_SCRIPTS/summarize_performance_effects.py --manifest "$RUN_MANIFEST"` 从已有 CSV 生成 `cumulative-effect-details.csv` 与 `cumulative-effect-summary.json`，存于该轮保留实现的性能证据目录。第一轮两种基线相同时可复用同一摘要。
 
 两份摘要必须引用同一份所选实现的性能 CSV，case 集合与顺序一致。累计基线必须是原始实现，不能误用上一轮基线或连乘各轮加速比。保留 baseline 时，本轮用轮初基线与自身生成摘要（有效几何加速比为 `N/A`），累计仍展示此前已取得的收益；不得登记被淘汰候选的性能。
 
@@ -58,9 +68,9 @@ python3 "$WORKFLOW_SCRIPTS/workflow_state.py" mark \
   --performance-scope tuning_subset
 ```
 
-`SELECTED_IMPLEMENTATION` 应可从 `selection.json` 追溯到实际保留代码/二进制身份。`roundN.complete`、`gen.roundN.complete`、`gen.outerM.exit` 和 `final.performance` 缺少两份摘要或保留实现时，脚本拒绝标记完成。脚本校验摘要与源 CSV、抖动策略一致，自动登记摘要和源 CSV 的 SHA，并立即重绘同一份报告；不需要再手动调用 `render`。
+`SELECTED_IMPLEMENTATION` 应可从 `selection.json` 追溯到实际保留代码/二进制身份。`roundN.complete`、`gen.roundN.complete`、`gen.outerM.exit` 和 `final.performance` 缺少两份摘要或保留实现时，脚本拒绝标记完成。脚本按摘要schema及manifest冻结的效果版本复算，校验摘要与源CSV及proof一致，自动登记摘要、源CSV、plan/registration/原样本/完整mapping/输入/源码/构建/加载/精度/频率的全部依赖SHA，并立即重绘同一份报告；不需要再手动调用 `render`。
 
-报告展示全部实测 case 的原始/轮初/当前耗时、本轮与累计差值、变化百分比、加速比及分类；总体展示总 case 数、抖动数、有效数、有效提升/回退数及有效 case 几何加速比，不展示也不比较各 case 耗时之和。抖动 case 保留在逐 case 表，但不计入有效指标。
+报告展示全部实测 case 的原始/轮初/当前耗时、本轮与累计差值、变化百分比、加速比及分类；总体按冻结policy展示总case、legacy抖动数、新版待确认数、有效数、有效提升/回退数及有效case几何加速比，不展示也不比较各 case 耗时之和。legacy抖动case与confidence待确认case均保留逐case展示，不计入有效指标。
 
 每次刷新替换“当前性能结果”，保留各轮汇总与证据路径。调优子集只代表本轮实测范围，不拼接不同轮次/不同实现的 case 冒充全集性能。泛化模式累计比较也只覆盖本轮同一子集，必要时从原始全集基线按本轮 ID 和顺序提取已有数据，不重新采集。泛化外层 `gen.outerM.exit` 及 standard 最终性能保存点 `final.performance` 使用同一组参数、`--performance-scope full`，刷新为实测全集结果；外层的本轮比较使用上次全集基线，首次可用原始全集基线。
 

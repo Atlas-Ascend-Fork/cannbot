@@ -26,7 +26,7 @@ if [ ! -f "$AGENTS_MD" ]; then
 fi
 
 session_context="<CANNBOT_CONTEXT>
-Route to the \`perf-optimize\` agent only when the user explicitly asks to optimize or tune the performance of a specific AscendC operator or code directory. Do not route installation/help questions, report or log analysis, profiling inspection, precision debugging, code review, or requests that merely mention cases.csv, msprof, profiling, speedup, or a performance target without both explicit optimization intent and a concrete operator target. For a valid request, the agent must fully read the \`ops-perf-optimize\` Skill at \`${PLUGIN_ROOT}/skills/ops-perf-optimize-workflow/SKILL.md\`. Do not reconstruct the workflow from this hook text or \`${AGENTS_MD}\`.
+Route to the \`perf-optimize\` agent only when the user explicitly asks to optimize or tune the performance of a specific AscendC operator, CANNBot-DSL program, or code directory. Do not route installation/help questions, report or log analysis, profiling inspection, precision debugging, code review, or requests that merely mention cases.csv, msprof, profiling, speedup, or a performance target without both explicit optimization intent and a concrete operator target. For a valid request, the agent must fully read the \`ops-perf-optimize\` Skill at \`${PLUGIN_ROOT}/skills/ops-perf-optimize-workflow/SKILL.md\`. Do not reconstruct the workflow from this hook text or \`${AGENTS_MD}\`.
 </CANNBOT_CONTEXT>"
 
 # Escape for JSON

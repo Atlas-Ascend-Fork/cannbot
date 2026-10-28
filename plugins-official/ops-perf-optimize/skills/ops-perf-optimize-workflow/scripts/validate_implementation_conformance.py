@@ -14,8 +14,10 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
+import tempfile
 import os
 import re
 import sys
@@ -33,7 +35,7 @@ VALID_RESULT_STATUSES = {"complete", "partial", "blocked"}
 VALID_FEATURE_STATUSES = {"pass", "fail", "not_implemented", "blocked"}
 FEATURE_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
 SOURCE_LOCATION_PATTERN = re.compile(r"^(.*):(\d+)$")
-SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hh", ".hpp", ".cce", ".asc"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hh", ".hpp", ".cce", ".asc", ".py"}
 IGNORED_DIRS = {".git", ".pytest_cache", "__pycache__", "build", "build_out", "dist", "output", "outputs"}
 PUBLIC_CONTRACT_DIRS = {"op_api", "op_proto"}
 PUBLIC_CONTRACT_NAME = re.compile(
@@ -127,6 +129,11 @@ def validate_manifest_scope(contract: dict[str, Any], manifest: dict[str, Any]) 
     manifest_socs = manifest.get("configuration", {}).get("target_socs")
     if manifest_socs != contract.get("target_socs"):
         raise ContractError("contract target_socs must exactly match RUN_MANIFEST configuration.target_socs")
+    backend = manifest.get("configuration", {}).get("backend", "ascendc")
+    if contract.get("backend", "ascendc") != backend:
+        raise ContractError("contract backend must match the frozen language")
+    if backend == "cannbot_dsl" and contract.get("expectations", {}).get("casttrait"):
+        raise ContractError("DSL contracts describe cast/pack semantics as required features, not C++ CastTrait")
 
 
 def resolve_candidate_file(candidate: Path, raw_path: str) -> Path:
@@ -279,7 +286,67 @@ def file_bytes(path: Path | None) -> bytes | None:
     return path.read_bytes() if path and path.is_file() else None
 
 
-def validate_candidate_safety(baseline: Path, candidate: Path) -> dict[str, Any]:
+def python_public_signatures(path: Path) -> dict[str, str]:
+    """Conservative signature check; body/input/return semantics still need review."""
+    result = {}
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+            # Decorated device helpers are not public Python entry points.
+            decorators = [ast.unparse(item).split("(", 1)[0].rsplit(".", 1)[-1] for item in node.decorator_list]
+            if {"kernel", "jit", "aicpu_kernel"} & set(decorators):
+                continue
+            result[node.name] = ast.dump(node.args, include_attributes=False) + ":" + (
+                ast.dump(node.returns, include_attributes=False) if node.returns else "None"
+            )
+    return result
+
+
+def atomic_write(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _protected_contract_changes(baseline_files: dict[str, Path], candidate_files: dict[str, Path]) -> list[str]:
+    protected_changes = []
+    for relative in sorted(set(baseline_files) | set(candidate_files)):
+        if not is_public_contract_path(relative):
+            continue
+        if file_bytes(baseline_files.get(relative)) != file_bytes(candidate_files.get(relative)):
+            protected_changes.append(relative)
+    return protected_changes
+
+
+def _python_signature_changes(
+    baseline_files: dict[str, Path],
+    candidate_files: dict[str, Path],
+    protected_changes: list[str],
+    failures: list[str],
+) -> None:
+    for relative, path in baseline_files.items():
+        if path.suffix != ".py":
+            continue
+        try:
+            original = python_public_signatures(path)
+            current = python_public_signatures(candidate_files[relative]) if relative in candidate_files else {}
+            changed = [name for name, signature in original.items() if current.get(name) != signature]
+            if changed:
+                protected_changes.append(relative)
+                failures.append(f"public Python signature/default/annotation changed: {relative}: {changed}")
+        except SyntaxError as error:
+            failures.append(f"cannot parse Python public contract: {relative}: {error}")
+
+
+def validate_candidate_safety(baseline: Path, candidate: Path, backend: str = "ascendc") -> dict[str, Any]:
     baseline = baseline.resolve()
     candidate = candidate.resolve()
     if not baseline.is_dir():
@@ -288,13 +355,10 @@ def validate_candidate_safety(baseline: Path, candidate: Path) -> dict[str, Any]
         raise ContractError(f"candidate is not a directory: {candidate}")
     baseline_files = relative_files(baseline)
     candidate_files = relative_files(candidate)
-    protected_changes = []
-    for relative in sorted(set(baseline_files) | set(candidate_files)):
-        if not is_public_contract_path(relative):
-            continue
-        if file_bytes(baseline_files.get(relative)) != file_bytes(candidate_files.get(relative)):
-            protected_changes.append(relative)
+    protected_changes = _protected_contract_changes(baseline_files, candidate_files)
     failures = []
+    if backend == "cannbot_dsl":
+        _python_signature_changes(baseline_files, candidate_files, protected_changes, failures)
     if protected_changes:
         failures.append(
             "public interface/constraint/dtype contract changed: " + ", ".join(protected_changes)
@@ -366,6 +430,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _verify_saved_gate(
+    args: argparse.Namespace, report: dict[str, Any], malformed: list[str], candidate: Path
+) -> int:
+    saved = load_json(args.verify_existing.resolve())
+    if saved != report:
+        emit(json.dumps({
+            "decision": "fail", "reason": "stale_or_misattributed_gate",
+            "gate": str(args.verify_existing.resolve()),
+        }, ensure_ascii=False))
+        return 1
+    emit(json.dumps({
+        "decision": report["decision"], "scheme_id": report["scheme_id"],
+        "candidate": str(candidate), "gate": str(args.verify_existing.resolve()),
+    }, ensure_ascii=False))
+    return 2 if malformed else (0 if report["decision"] == "pass" else 1)
+
+
 def main() -> int:
     args = parse_args()
     candidate = args.candidate.resolve()
@@ -378,7 +459,14 @@ def main() -> int:
         manifest = load_json(args.manifest.resolve())
         validate_manifest_scope(contract, manifest)
         malformed, report = validate_result(contract, result, candidate)
-        safety = validate_candidate_safety(args.baseline.resolve(), candidate)
+        from validate_schedule_contract import validate_implementation_schedule
+        schedule = validate_implementation_schedule(contract, result, args.manifest.resolve(), candidate)
+        if schedule is not None:
+            report["schedule"] = schedule
+        safety = validate_candidate_safety(
+            args.baseline.resolve(), candidate,
+            manifest.get("configuration", {}).get("backend", "ascendc"),
+        )
         attach_candidate_safety(report, safety)
         isolation = validate_source_isolation(
             load_json(args.isolation_scope.resolve()), args.baseline, candidate,
@@ -393,18 +481,7 @@ def main() -> int:
         if not malformed:
             report["evidence_identity"] = evidence_identity(args, result)
         if args.verify_existing:
-            saved = load_json(args.verify_existing.resolve())
-            if saved != report:
-                emit(json.dumps({
-                    "decision": "fail", "reason": "stale_or_misattributed_gate",
-                    "gate": str(args.verify_existing.resolve()),
-                }, ensure_ascii=False))
-                return 1
-            emit(json.dumps({
-                "decision": report["decision"], "scheme_id": report["scheme_id"],
-                "candidate": str(candidate), "gate": str(args.verify_existing.resolve()),
-            }, ensure_ascii=False))
-            return 2 if malformed else (0 if report["decision"] == "pass" else 1)
+            return _verify_saved_gate(args, report, malformed, candidate)
     except (ValueError, OSError) as error:
         emit(f"[ERROR] {error}", file=sys.stderr)
         return 2

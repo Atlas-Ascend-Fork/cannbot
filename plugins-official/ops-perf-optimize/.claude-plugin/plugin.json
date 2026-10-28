@@ -1,6 +1,6 @@
 {
   "name": "ops-perf-optimize",
-  "description": "AscendC 五阶段性能调优 Team：基线评估、前处理、诊断分析、实施验证、后处理；保留泛化调优、精度门禁和恢复，回集成逐 case 防退化。",
+  "description": "AscendC / CANNBot-DSL 性能调优工作流",
   "version": "4.1.0",
   "author": {
     "name": "CANNBot"

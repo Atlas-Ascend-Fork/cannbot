@@ -66,3 +66,18 @@ def test_shared_collection_protocol_has_one_owner() -> None:
     ):
         template = (ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows/prompts" / f"{filename}.md").read_text()
         assert "WORKFLOW_ROOT:" in template
+
+
+def test_dsl_adaptation_preserves_existing_role_capabilities() -> None:
+    # Stage skills declare no `skills:` frontmatter. The surviving capability
+    # skills from the pre-DSL roles stay available through task-scoped language
+    # routing: each stage loads its own Skill plus the shared validation
+    # contract first, then invokes other skills only for the current task.
+    # Retired skills were folded into the stage skills themselves,
+    # ops-perf-acceptance-criteria and ascendc-performance-review;
+    # ascendc-perf-complex-functional-hunter was retired with its skill.
+    for skill in STAGE_SKILLS.values():
+        text = (ROOT / "skills" / skill / "SKILL.md").read_text()
+        assert "先加载本阶段 Skill 和 `ops-perf-acceptance-criteria` 的共享验证契约" in text
+        assert "其余技能按本阶段任务调用，使用前完整读取" in text
+        assert "skills:" not in text.split("---", 2)[1]

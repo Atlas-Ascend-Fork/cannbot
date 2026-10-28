@@ -29,7 +29,7 @@ python3 "$WORKFLOW_SCRIPTS/workflow_state.py" sync-manifest \
 | `generalization_full` | `generalization-full-cases.csv` | 默认 1000 条或用户完整库存；最终性能与功能全集 |
 | `competitor_performance` | `competitor-performance.csv` | 与泛化全集 ID 精确一一对应 |
 | `baseline_performance` | `baseline-performance-full.csv` | 相同硬件与协议下的 NPU 全集基线 |
-| `generalization_tuning` | `roundN/generalization-tuning-cases.csv` | 当前 `ratio < 1.0` 中最多 30 条 |
+| `generalization_tuning` | `analysis/roundN/generalization-tuning-cases.csv` | 当前 `ratio < 1.0` 中最多 30 条 |
 | `functional_acceptance` | `functional-acceptance-cases.csv` | 泛化全集中最多 40 条 L0 |
 | `optimized_involved` | `optimized-involved-cases.csv` | 所有轮次实际调优 case 的去重并集 |
 

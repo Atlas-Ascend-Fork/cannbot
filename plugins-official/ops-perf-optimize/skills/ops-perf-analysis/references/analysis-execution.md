@@ -14,7 +14,7 @@
 
 - `CODE_DIR`、`RUN_MANIFEST`、`WORKFLOW_STATE`、`ROUND`；
 - `performance-tuning-cases.csv`；
-- `roundN/perf/baseline/performance.csv`、`collection_manifest.json`、schema v3 `validation.json`；
+- `analysis/roundN/perf/baseline/performance.csv`、`collection_manifest.json`、schema v3 `validation.json`；
 - 上一轮 `analysis.md`、`selection.json`（round1 为 absent）；
 - `source-compatibility.md`：公开契约面、工程支持 SoC、目标工程代际隔离风格和证据；
 - `extraction-manifest.json`：原工程到独立工作工程的文件/依赖/调用入口映射；
@@ -93,9 +93,14 @@
 
 ## 输出与完成
 
-- `roundN/analysis.md`（《性能分析报告》）：一份自洽报告，依次包含输入身份、逐 case 证据（含 `MBU/MFU/mte2_util/cost_bound/ceiling_us/headroom_us/headroom_pct/verdict` 及所用峰值口径）、MC²/特殊算子路由、族/模板选路、检查点处置、知识卡引用（`kb_cards` 汇总或 `kb_unavailable`）、方案、覆盖表和风险；
-- `roundN/implementation-contract-<scheme_id>.json`：每方案一份。
-- `roundN/source-isolation-<scheme_id>.json`：每方案一份，完整 baseline 源码/构建 SHA、最小可修改行范围和新增/复制文件映射。主 Agent 审阅并登记 SHA 后派发实施。
+- `analysis/roundN/analysis.md`（《性能分析报告》，**由诊断分析阶段产出**）：一份自洽报告，报告头标注"诊断分析阶段（ops-perf-analysis）roundN"与当轮输入基线身份，依次包含：
+  - **分析流程**：基线复用/采集 → 逐 case bound/瓶颈分析 → 特殊算子路由 → 族/模板与 API 核验 → 方案和实施契约，每步引用实际使用的输入、工具与采集证据；
+  - 输入身份与逐 case 当前性能数据（含来源 CSV/采集批次的 `total_us` 等实测值）；
+  - 逐 case 瓶颈分析、该 case 采用的方案与优化手段、预期收益（收益区间或 unknown、目标差额贡献、证据可信度、处置）及 `MBU/MFU/mte2_util/cost_bound/ceiling_us/headroom_us/headroom_pct/verdict` 与所用峰值口径；
+  - 逐 case 前后对比：相对本轮开始前基线（round1 为冻结基线，roundN>1 为上一轮终选基线）的前后耗时、变化幅度和所用优化手段；无方案 case 显式标注 no-op 与原因；
+  - MC²/特殊算子路由、族/模板选路、检查点处置、知识卡引用（`kb_cards` 汇总或 `kb_unavailable`）、覆盖表和风险；
+- `analysis/roundN/implementation-contract-<scheme_id>.json`：每方案一份。
+- `analysis/roundN/source-isolation-<scheme_id>.json`：每方案一份，完整 baseline 源码/构建 SHA、最小可修改行范围和新增/复制文件映射。主 Agent 审阅并登记 SHA 后派发实施。
 
 分析报告只有这一份，不拆成三段保存点或重复的方案报告。
 

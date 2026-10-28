@@ -18,8 +18,37 @@
 
 前处理和后处理分别定义、使用独立实例，通过文件映射和证据交接。用例生成归 baseline；同一实施代理管理最多三份隔离方案，独立构建/静态检查可并行。主 Agent 负责请求接入、设备排他调度、scope 冻结、门禁复核、选择登记、恢复和报告，不制定优化算法或修改候选。
 
+### 运行目录布局与阶段总结
+
+阶段产物按阶段命名的文件夹归档，根目录只保留 run 级文件；阶段产物、探针和日志不得散落在根目录：
+
+```text
+$OUTPUT_DIR/
+├── optimization-request.json、run-manifest.json、workflow-state.json、性能调优报告.md   # run 级，脚本管理，固定在根目录
+├── baseline/        预检、冻结集合 CSV、环境报告、目标证据与逐 case 目标、原实现身份 + 阶段总结.md
+├── preparation/     demo 工程、剥离映射、兼容矩阵、功能基线证据 + 阶段总结.md
+├── analysis/        roundN/（分析报告、实施契约、隔离 scope、调度模型、调优选例）+ 阶段总结.md
+├── implementation/  roundN/（候选工程、采集与 effect、终选）、最终全集验收与 final_optimized/ + 阶段总结.md
+└── integration/     回集成、安全门禁、全集 gate、回路由与 VERIFY_REPORT + 阶段总结.md
+```
+
+`阶段总结.md` 由本阶段 subagent 在交付时写入自己的阶段文件夹，固定三部分：做了什么（关键决策与流程，含轮次）、获取了什么成果（结论、关键产物绝对路径清单、与目标的差距）、未决项与下一动作。主 Agent 验收阶段产物时核对阶段总结与实际文件一致；恢复轮无实质变化时更新同一份总结，不另建副本。
+
 ## 2. 请求接入
 
+### 语言后端
+
+`backend=ascendc|cannbot_dsl` 属于请求/manifest 输入身份，旧请求缺省为 ascendc，不从 .py 后缀猜测。DSL 还冻结 `dsl.repo_root`（领域文档/样例参考）、`dsl.entrypoint`（module:callable 原公开入口）、`dsl.execution_mode=jit|aot`、`dsl.workload_scope=network_cases`。repo_root 不是候选 import 的后备路径。
+
+DSL 默认 standard，围绕指定网络 case 优化，不自动生成 1000 条泛化库存。用户明确 generalization 才沿原模式执行；不静默切换。功能使用原 pytest/checker/golden 和必要修改边界，保持功能/性能全集与影响路径验收。网络性能 case 需冻结长度、索引/页表分布、mask、量化及 metadata 配置，不仅 shape。
+
+五个角色和阶段键保持不变，Agent 的原有技能依赖全部保留。先加载本阶段 Skill 和共享验证，再按 backend 选择执行步骤：AscendC 使用原阶段步骤；DSL 执行本阶段 Skill 的 references/dsl-<stage>.md（共享验证与领域边界见 ops-perf-acceptance-criteria 的 references/cannbot-dsl.md），使用原测试入口，并交付编译及实际加载证据。原测试使用 TTK 时保留 TTK；原工程包含 Native/AOT、C++ 扩展或注册入口时保留对应构建与集成检查。纯 Python/JIT 输入不要求改造成 C++ 注册工程。阶段依赖、exact/forbidden、身份、全集、抖动和恢复门禁均须满足；语言选择不允许跳过门禁。其他声明技能按本阶段实际任务使用，客户端自动预加载不改变其适用范围。
+
+主 Agent 将 DSL 仓库与领域原文件路径、原测试、dsl-environment.json、编译依据按职责放入 INPUT_ARTIFACTS；analysis/implementation 使用公共方法 ascendc-perf-optimize 和融合的族级 DSL 最佳实践。前处理、最终实施、后处理交接增加 dsl-compile-evidence.json，workflow_state.py 在 complete 时机械验证并登记编译/加载依赖。仅有源码与二进制 SHA、同名 kernel 或进程 exit 0 不能代替血缘证明。
+
+DSL 分析生成实施契约前必须执行本阶段 [方案净收益评估](../../ops-perf-analysis/references/dsl-benefit-assessment.md)。在同一 analysis.md 逐方向/方案、逐 case × SoC 记录关键路径、新增成本、完整调用收益区间或 unknown、目标贡献、证据可信度和处置；主 Agent 审阅后再冻结 scope。ready_for_implementation 才派发实施，needs_probe 按分析阶段采集路由补齐已登记诊断，deferred 保留证据和下一动作。字段完整不证明估计正确；理论空间、单核仿真跨度或局部加速不能直接作为完整调用收益。关键未知不允许作为不可行或收敛结论，正式终选仍按实测。
+
+原短程序可整体重排合法计算流，scope 按真实依赖和公开接口确定；不要求虚构 C++ 模板。性能收益以上板完整调用及同协议证据判定，编译/初始化成本单列。修改同文件 Python wrapper 时逐项审阅其公开契约。
 `TARGET_SOCS` 记录实际验证的 SoC。A2/A3 共用同一套 arch22（DAV_2201）实现，验证结果可互换；同时作为目标时，在冻结请求前选一个代表 SoC，兼容矩阵为另一型号引用同一份证据并保留实际测试型号。不同代际仍分别验证。
 
 已有 request：`$WORKFLOW_SCRIPTS/prepare_case_sets.py validate-request` 校验后复用。缺少或失效时按 [request-intake.md](request-intake.md) 收集代码、精确 TARGET_SOCS、模式、用例、对标来源、停止目标、优化意图、可选性能锚点、Python/CANN 环境，生成用户已确认的 request。无交互环境必须提供已确认 request，不猜测环境或目标。
@@ -35,12 +64,16 @@ baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_S
 | 阶段 | 必要输入 | 输出与放行条件 |
 |---|---|---|
 | baseline | 已确认 request、原代码/库存、对标配置 | `preflight-report.json`、`环境检查报告.md`、冻结集合、`performance-targets.json`、`性能目标.md`；原实现实测另有 `execution-identity.json`；环境无 fail，目标精确覆盖性能全集 × TARGET_SOCS，功能库存就绪 |
-| preparation | 基线评估产物与原工程 | 独立 demo、`extraction-manifest.json`、`source-compatibility.md`、原快照、构建/加载证据、`functional-acceptance.md`；原调用方式/算法不变，依赖闭包与 TTK 基线 strict/conditional 门禁通过 |
-| analysis | 当前可信基线、冻结目标/调优集合、已有性能证据 | 一份 `roundN/analysis.md`、最多三份 `implementation-contract-<scheme_id>.json` 和 source-isolation scope；每个 case 覆盖，方案收益与目标差额有证据对应，方案 exact/forbidden，主 Agent 冻结 scope |
+| preparation | 基线评估产物与原工程 | 独立 demo、`extraction-manifest.json`、`source-compatibility.md`、原快照、构建/加载证据、`functional-acceptance.md`；原调用方式/算法不变，依赖闭包与功能基线 strict/conditional 门禁通过（AscendC 用 TTK，DSL 用原测试入口） |
+| analysis | 当前可信基线、冻结目标/调优集合、已有性能证据 | 一份 `analysis/roundN/analysis.md`、最多三份 `implementation-contract-<scheme_id>.json` 和 source-isolation scope；每个 case 覆盖，方案收益与目标差额有证据对应，方案 exact/forbidden，主 Agent 冻结 scope |
 | implementation | 冻结方案/scope、当前与原始基线、用例/目标 | 每候选符合性/安全/构建/精度/序列门禁、eligible 性能、`selection.json`、本轮/累计 effect；退出循环时另交最终功能/性能全集报告和 `final_optimized/` |
 | integration | 最终 demo 与验收证据、原快照/映射、两个全集 | 集成计划/scope、安全与加载证据、两个全集精度/性能、每 SoC `postprocess-performance-<soc>.json`、回路由复验、`VERIFY_REPORT.md`；原入口保持、非目标族不变、无有效性能退化 |
 
-阶段返回 `status`、产物绝对路径、代码/二进制 SHA、门禁结论、未决证据与下一动作。主 Agent 检查实际文件和 gate，不能把文字“完成”当作验收。脚本 gate 证明数值/文件范围，不能替代真实构建、调用链和运行身份审阅。证据身份与覆盖完全相同时复用已有证据，不为确认重复采集。
+各阶段产物一律写入该阶段对应的文件夹（布局见「运行目录布局与阶段总结」），交付时同步更新该文件夹的 `阶段总结.md`。
+
+启用 `manifest.configuration.schedule_policy={"id":"schedule_contract_v1","version":1}` 时，analysis/implementation 按 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md) 交接候选模型与检查报告。analysis 在原阶段内完成 A1 独立程序/微任务恢复、A2 数据/资源/复用与事件约束检查、A3 最多三份候选；主 Agent 核验适用性、未知项与身份后冻结。implementation 先消费契约，再核对实际生成代码和运行/序列证据。模型可行不等于 eligible，更不等于更快。同步/所有权关键未知先 probe；纯性能收益 unknown 不阻止合法候选实测。integration 的路由、编译选路或输入分支改变时，对新身份重新核验，不能把满 tile 的证据外推到未覆盖路径。旧 request/manifest 缺字段保持原门禁；新策略不重写历史状态。
+
+阶段返回 `status`、产物绝对路径、代码/二进制 SHA、门禁结论、未决证据与下一动作。主 Agent 检查实际文件和 gate，不能把文字“完成”当作验收。脚本 gate 证明数值/文件范围，不能替代真实构建、调用链和运行身份审阅。证据身份与覆盖完全相同时复用已有证据，不重采择优。confidence待确认case允许在看到确认结果前冻结一次配对计划，按原canonical10及完整门禁采该新计划；不默认每case十轮、不事后加轮。
 
 原实现性能对标在正式功能或性能采集前先通过 execution identity 门禁：冻结源码、本次构建产物与实际加载产物必须形成可复核的同源链。为取得实际加载路径而执行的专用身份探针不产生功能、精度或性能结论。身份不成立时只修正构建或加载路由；不得把该运行的现象归因于冻结源码。身份成立后的基线失败只在本阶段完成故障归类所需的最小复现与对照，根因搜索留给诊断或实施阶段。
 
@@ -51,6 +84,8 @@ baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_S
 ## 4. 循环与退出
 
 standard：preparation → 每轮 analysis → implementation → 主 Agent 复核终选及报告 → 下一轮或 integration。最终 demo 全集验收由 implementation 完成。baseline 也参与候选选择，无有效收益时保留 baseline；未实测的拼接代码不参与选择。`expected_effect`、历史 `abandon_if` 和整体优化目标不是候选淘汰条件，有有效净收益的候选即使未达目标也可保留并进入下一轮。每轮按同协议逐 case 核对实测净收益与剩余目标差额。
+
+尚未终选且未注册正式确认计划时，允许在同一轮内根据真实诊断修订方案，不要求每次探索先完成最终统计采集。诊断不得提升当前基线、证明有效收益或替代终选。旧方案、模型、scope、生成物和采集记录按原身份保留；新修订使用独立目录、scheme_id 与候选 root，仍须通过规范 analysis 模型交接和 implementation 的符合性、安全、精度与 runtime 门禁。主 Agent 以细粒度 refinement 保存点记录工作，重新登记该轮 analysis 时保留已验收历史合同及全部旧 artifact 引用；普通诊断键不能替代规范门禁。每次至多三份当前活跃方案，稳定候选才按冻结效果策略进行正式确认。具体状态操作见 `$WORKFLOW_ROOT/workflows/references/state-reporting.md` 的“同轮未终选的诊断修订”。
 
 `fixed_rounds` 执行已确认轮数，默认 3 轮；`target` 使用冻结的 metric/comparison/value/unit，可选 max_rounds，无显式上限则不另设上限。`target` 的性能循环只在目标达成、显式轮数/用户停止条件到达，或证据证明所有仍可能填补目标差额的合法方向均不可实施后结束。某轮零实施契约、候选退化、连续数轮无改善、缺少物理 roofline，均不单独证明“没有可信方向”；一次候选退化须先区分机制、实现、正确性和证据问题。循环停止不截断未完成的精度诊断。
 
@@ -112,9 +147,16 @@ generalization 保留既有规则：
 ## 7. 完成定义
 
 - 五个阶段交接产物齐全，request/manifest/state 的模式、目标、环境（含 `optimization_intent`、`reference_perf`）与集合身份一致。
+- 每个阶段文件夹的 `阶段总结.md` 与实际产物一致；根目录只有 run 级文件，无散落的阶段产物、探针或日志。
 - 每个候选有符合性、隔离、构建与功能结论，合格候选有一次可比较性能证据，淘汰原因可追溯。
 - pursue_optimal 的结构空间判定以算子内在最小成本 roofline 为普适锚点，`REFERENCE_PERF` 仅在恰有可比实现时作机会性增强、缺参考不阻塞不降级；结构方向台账无 `not_attempted`/`blocked_by_scope` 残留（否则终态为 `awaiting_operator` + `structural_headroom_unrealized`，不得伪装 `success/completed`）。
 - 最终 demo 完成功能/性能全集验收，原工程沿原入口回集成，非目标芯片族与未涉及模板保持原实现。
 - 原工程两个全集在每个目标 SoC 都无新增/恶化精度失败和有效性能退化；必要回路由已对最终身份完整复验。no-op 也须有原始身份的全集证据。
 - `性能调优报告.md` 与机器状态一致，逐轮/最终性能、精度异常、是否达标、未决问题和安全恢复点完整。泛化内外层计数和最终 ratio 完整。
 - 正常成功、失败、等待用户或 blocker 返回前更新状态与报告；finish success 需五阶段完成且证据 SHA 未变，不能用对话替代落盘结果。
+
+## 冻结效果策略与确认门禁
+
+新请求默认 `performance_effect_policy={"id":"confidence_effect_v1","version":1}`，用户指定优先；旧request/manifest缺字段保持 `legacy_jitter_v1`。真源为 `ops-perf-acceptance-criteria/references/performance-jitter-policy.md`，不从固定3%阈值否决已证实小收益，不引入1us下限。schema2旧summary与schema1旧全集gate原算法复核；schema3新summary与schema2新gate记录版本、统计依据和完整proof依赖SHA。CLI提供manifest或显式policy，未知版本拒绝。
+
+主Agent复核当前comparison独立proof，A/base不能替代A/B或不同累计基线。confidence最终/原工程全集有待确认case时不是PASS：合法确认或同source/build/loaded no-op依据后才结束；稳定小回退回原代码并复验。采集完整性、原精度、身份、频率、spread与泛化ratio不放宽。配对原始证据变更时对应summary/report/gate失效，不重写旧历史。

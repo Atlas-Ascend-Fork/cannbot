@@ -28,12 +28,14 @@ def read(path: Path) -> str:
 def test_strategy_flow_skill_is_a_required_analysis_dependency() -> None:
     # 阶段走通用 subagent + 阶段 Skill：共享策略 Skill 在阶段正文路由，不再做 frontmatter 声明。
     analysis = read(ANALYSIS)
-    body = analysis.split("---", 2)[2]
-    assert "ascendc-perf-optimize" in body
-    assert "ascendc-performance-best-practices" in body
-    # The strategy skill stays analysis-only: no other role or entry point loads it.
-    for path in (IMPL, WRAPPER):
-        assert "ascendc-perf-optimize" not in read(path)
+    # Stage skills declare no `skills:` frontmatter; required capabilities are
+    # invoked task-scoped through the language routing prose instead.
+    assert "ascendc-perf-optimize" in analysis
+    assert "ascendc-performance-best-practices" in analysis
+    # 策略推导保留在 analysis；implementation 仅在 DSL 路由用其做候选诊断与流水/tiling 复核；
+    # 主编排入口不加载该策略 Skill。
+    assert "ascendc-perf-optimize" in read(IMPL)
+    assert "ascendc-perf-optimize" not in read(WRAPPER)
 
 
 def test_analysis_standards_execute_the_four_step_strategy_flow() -> None:

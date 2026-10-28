@@ -33,7 +33,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from cli_output import emit, run_cli
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from workflow_backend import BACKENDS, DSL_EXECUTION_MODES, validate_backend
+
+from cli_output import emit
 
 
 RUN_SCHEMA_VERSION = 2
@@ -46,13 +49,31 @@ DEFAULT_GENERALIZATION_CASE_COUNT = 1000
 TUNING_MODES = ("standard", "generalization")
 FUNCTIONAL_MODES = ("reuse_performance", "existing", "generate")
 GENERALIZATION_FUNCTIONAL_MODES = ("reuse_performance",)
-COMPETITOR_SOURCES = ("file",)
-PERFORMANCE_REFERENCE_KINDS = ("baseline", "xpu", "theoretical", "unfused")
+COMPETITOR_SOURCES = ("file", "xpu-perf-benchmark")
+PERFORMANCE_REFERENCE_KINDS = ("baseline", "xpu", "theoretical", "unfused", "same_npu_reference")
 PRECISION_DIAGNOSIS_POLICY = "persistent"
 ID_COLUMNS = ("case_id", "id", "case", "name")
 LEVEL_COLUMNS = ("level", "test_level", "case_level")
 IGNORED_CODE_DIRS = {".git", ".pytest_cache", "__pycache__", "build", "dist", "output", "outputs"}
 CODE_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hh", ".hpp", ".py", ".sh", ".cmake", ".json", ".yaml", ".yml", ".toml"}
+
+
+def _is_valid_schedule_policy(value: dict[str, Any]) -> bool:
+    return (
+        set(value) == {"id", "version"}
+        and value.get("id") == "schedule_contract_v1"
+        and type(value.get("version")) is int
+        and value["version"] == 1
+    )
+
+
+def validate_schedule_policy(value: Any) -> dict[str, Any] | None:
+    """Missing policy denotes a historical request; do not silently migrate it."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not _is_valid_schedule_policy(value):
+        raise ValueError("unsupported schedule_policy: expected schedule_contract_v1 version 1")
+    return dict(value)
 
 
 def now() -> str:
@@ -281,8 +302,12 @@ def inventory_validation(fields: list[str], rows: list[dict[str, str]]) -> dict[
     for key in ("interface_fields", "golden_fields", "threshold_fields"):
         if not groups.get(key):
             issues.append(f"missing_{key}")
-    status = "complete" if not issues else "needs_review"
-    return {"status": status, **groups, "issues": issues, "duplicate_case_ids": duplicates}
+    return {
+        "status": "complete" if not issues else "needs_review",
+        **groups,
+        "issues": issues,
+        "duplicate_case_ids": duplicates,
+    }
 
 
 def freeze_csv(source: Path, destination: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -291,7 +316,13 @@ def freeze_csv(source: Path, destination: Path) -> tuple[list[str], list[dict[st
     return fields, rows
 
 
-def _copy_functional_tree(source: Path, destination_dir: Path) -> None:
+def baseline_stage_dir(output_dir: Path) -> Path:
+    path = output_dir / "baseline"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _freeze_functional_directory(source: Path, destination_dir: Path) -> None:
     if source.resolve() == destination_dir.resolve():
         return
     if destination_dir.exists():
@@ -307,26 +338,33 @@ def _copy_functional_tree(source: Path, destination_dir: Path) -> None:
             shutil.rmtree(temporary)
 
 
-def _functional_full(source: Path, output_dir: Path, fields: list, rows: list) -> tuple[Path, dict]:
-    if source.is_dir():
-        destination_dir = output_dir / "functional-full"
-        _copy_functional_tree(source, destination_dir)
-        frozen_csv = inventory_csv(destination_dir)
-        full = {
-            **identity(destination_dir),
-            "count": len(rows),
-            "case_manifest": str(frozen_csv.resolve()),
-            "validation": inventory_validation(fields, rows),
-        }
-        return frozen_csv, full
+def _frozen_functional_directory(
+    source: Path, output_dir: Path, fields: list[str], rows: list[dict[str, str]]
+) -> dict[str, Any]:
+    destination_dir = output_dir / "functional-full"
+    _freeze_functional_directory(source, destination_dir)
+    frozen_csv = inventory_csv(destination_dir)
+    return {
+        **identity(destination_dir),
+        "count": len(rows),
+        "case_manifest": str(frozen_csv.resolve()),
+        "validation": inventory_validation(fields, rows),
+    }
+
+
+def _frozen_functional_file(
+    output_dir: Path, fields: list[str], rows: list[dict[str, str]]
+) -> dict[str, Any]:
     frozen_csv = output_dir / "functional-full-cases.csv"
     atomic_csv(frozen_csv, fields, rows)
     full = collection(frozen_csv, rows)
     full["validation"] = inventory_validation(fields, rows)
-    return frozen_csv, full
+    return full
 
 
-def _functional_acceptance(rows: list, output_dir: Path, fields: list) -> dict:
+def _functional_acceptance(
+    fields: list[str], rows: list[dict[str, str]], output_dir: Path
+) -> dict[str, Any]:
     l0_pairs = [(index, row) for index, row in enumerate(rows) if level(row) == "L0"]
     if not l0_pairs:
         raise ValueError("Functional inventory contains no L0 cases")
@@ -335,21 +373,24 @@ def _functional_acceptance(rows: list, output_dir: Path, fields: list) -> dict:
     selected_rows = [l0_rows[index] for index in selected_local]
     acceptance = output_dir / "functional-acceptance-cases.csv"
     atomic_csv(acceptance, fields, selected_rows)
-    selection = {
+    acceptance_selection = {
         "algorithm": SELECTION_ALGORITHM,
         "limit": ACCEPTANCE_LIMIT,
         "source_count": len(rows),
         "l0_count": len(l0_rows),
         "selected": details,
     }
-    return collection(acceptance, selected_rows, selection)
+    return collection(acceptance, selected_rows, acceptance_selection)
 
 
 def functional_payload(source: Path, output_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     source_csv = inventory_csv(source)
     fields, rows = read_csv(source_csv)
-    _, full = _functional_full(source, output_dir, fields, rows)
-    return full, _functional_acceptance(rows, output_dir, fields)
+    if source.is_dir():
+        full = _frozen_functional_directory(source, output_dir, fields, rows)
+    else:
+        full = _frozen_functional_file(output_dir, fields, rows)
+    return full, _functional_acceptance(fields, rows, output_dir)
 
 
 def generalization_payload(source: Path, output_dir: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -465,13 +506,20 @@ def cann_snapshot() -> dict[str, str | None]:
     }
 
 
+def _is_valid_target_ratio(ratio: Any) -> bool:
+    return (
+        not isinstance(ratio, bool)
+        and isinstance(ratio, (int, float))
+        and math.isfinite(ratio)
+        and ratio > 0
+    )
+
+
 def validate_reference(value: dict) -> dict:
     if not isinstance(value, dict) or value.get("kind") not in PERFORMANCE_REFERENCE_KINDS:
         raise ValueError(f'performance_reference.kind must be one of {PERFORMANCE_REFERENCE_KINDS}')
     ratio = value.get("target_ratio")
-    if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not math.isfinite(ratio):
-        raise ValueError('target_ratio must be finite and positive (reference_us / target_us)')
-    if ratio <= 0:
+    if not _is_valid_target_ratio(ratio):
         raise ValueError('target_ratio must be finite and positive (reference_us / target_us)')
     if value["kind"] == 'theoretical' and ratio > 1:
         raise ValueError('theoretical target_ratio is efficiency and cannot exceed 1')
@@ -507,6 +555,8 @@ def optimization_objective(args: argparse.Namespace) -> dict[str, Any]:
 
 def request_summary(request: dict[str, Any]) -> dict[str, Any]:
     return {
+        "backend": request.get("backend", "ascendc"),
+        "dsl": request.get("dsl"),
         "operator": request.get("operator"),
         "tuning_mode": request.get("tuning_mode", "standard"),
         "target_socs": request.get("target_socs"),
@@ -518,25 +568,41 @@ def request_summary(request: dict[str, Any]) -> dict[str, Any]:
         "optimization_intent": request.get("optimization_intent", "safe_incremental"),
         "reference_perf": request.get("reference_perf"),
         "performance_reference": request.get("performance_reference"),
+        "performance_effect_policy": request.get("performance_effect_policy"),
+        "schedule_policy": request.get("schedule_policy"),
         "python": request["environments"]["python"],
         "cann": request["environments"]["cann"],
         "confirmation": request["confirmation"],
     }
 
 
-def _validate_socs(request: dict) -> list[str]:
-    target_socs = request.get("target_socs")
-    message = "optimization request requires a non-empty, unique target_socs list"
+def _validate_request_policies(request: dict[str, Any]) -> None:
+    from performance_effect_evidence import policy
+    if "performance_effect_policy" in request:
+        request["performance_effect_policy"] = policy(request["performance_effect_policy"])
+    if "schedule_policy" in request:
+        if request["schedule_policy"] is None:
+            raise ValueError("explicit null schedule_policy is invalid; historical requests omit it")
+        validate_schedule_policy(request["schedule_policy"])
+
+
+def _has_unique_target_socs(target_socs: Any) -> bool:
     if not isinstance(target_socs, list) or not target_socs:
-        raise ValueError(message)
+        return False
     if not all(isinstance(soc, str) and soc.strip() for soc in target_socs):
-        raise ValueError(message)
-    if len(set(target_socs)) != len(target_socs):
-        raise ValueError(message)
-    return target_socs
+        return False
+    return len(set(target_socs)) == len(target_socs)
 
 
-def _validate_functional(request: dict, tuning_mode: str) -> dict:
+def _validate_tuning_mode(request: dict[str, Any]) -> str:
+    tuning_mode = request.get("tuning_mode", "standard")
+    if tuning_mode not in TUNING_MODES:
+        raise ValueError(f"invalid tuning mode: {tuning_mode}")
+    request["tuning_mode"] = tuning_mode
+    return tuning_mode
+
+
+def _validate_functional_mode(request: dict[str, Any], tuning_mode: str) -> dict[str, Any]:
     functional = request["functional"]
     valid_modes = GENERALIZATION_FUNCTIONAL_MODES if tuning_mode == "generalization" else FUNCTIONAL_MODES
     if functional["mode"] not in valid_modes:
@@ -548,7 +614,33 @@ def _validate_functional(request: dict, tuning_mode: str) -> dict:
     return functional
 
 
-def _validate_generalization(generalization: dict) -> None:
+def _validate_competitor(competitor: dict[str, Any]) -> None:
+    source = competitor.get("source")
+    if source not in COMPETITOR_SOURCES:
+        raise ValueError(f"invalid competitor source: {source}")
+    if source == "file":
+        if not competitor.get("performance"):
+            raise ValueError("file competitor source requires a performance path")
+        if competitor.get("gpu_environment") is not None:
+            raise ValueError("GPU environment is valid only for xpu-perf-benchmark source")
+        return
+    if competitor.get("performance") is not None:
+        raise ValueError("competitor performance path is valid only for file source")
+    gpu = competitor.get("gpu_environment")
+    required_gpu_fields = ("ssh_environment", "work_dir", "conda_environment", "implementation_mode")
+    if not isinstance(gpu, dict) or any(not gpu.get(key) for key in required_gpu_fields):
+        raise ValueError(
+            "xpu-perf-benchmark source requires GPU SSH environment, work directory, "
+            "conda environment, and implementation mode"
+        )
+    if gpu["implementation_mode"] not in ("torch.compile", "triton"):
+        raise ValueError("GPU implementation mode must be torch.compile or triton")
+
+
+def _validate_generalization(request: dict[str, Any]) -> None:
+    generalization = request.get("generalization")
+    if not isinstance(generalization, dict):
+        raise ValueError("generalization mode requires generalization configuration")
     target_case_count = generalization.get("target_case_count")
     if not isinstance(target_case_count, int) or target_case_count <= 0:
         raise ValueError("generalization target_case_count must be a positive integer")
@@ -558,35 +650,67 @@ def _validate_generalization(generalization: dict) -> None:
         raise ValueError("generalization loop limits must be inner=3 and outer=2")
     if generalization.get("ratio_thresholds") != {"geomean": 1.0, "minimum": 0.6}:
         raise ValueError("generalization ratio thresholds must be geomean=1.0 and minimum=0.6")
-    competitor = generalization.get("competitor", {})
-    source = competitor.get("source")
-    if source not in COMPETITOR_SOURCES:
-        raise ValueError(f"invalid competitor source: {source}")
-    if competitor.get("gpu_environment") is not None:
-        raise ValueError("competitor gpu_environment is not supported")
-    performance = competitor.get("performance")
-    if performance is not None and not Path(performance).is_file():
-        raise ValueError(f"competitor performance is not a file: {performance}")
+    _validate_competitor(generalization.get("competitor", {}))
 
 
-def _validate_objective(objective: dict) -> None:
+def _validate_performance_cases(request: dict[str, Any], tuning_mode: str) -> None:
+    performance_cases = request.get("performance_cases")
+    if tuning_mode == "standard":
+        if not performance_cases:
+            raise ValueError("standard mode requires performance cases")
+        if request.get("generalization") is not None:
+            raise ValueError("generalization configuration is valid only in generalization mode")
+    else:
+        _validate_generalization(request)
+
+
+def _validate_performance_reference(request: dict[str, Any], tuning_mode: str) -> None:
+    if request.get("performance_reference") is not None:
+        validate_reference(request["performance_reference"])
+        if tuning_mode == "generalization" and request["performance_reference"]["kind"] != "xpu":
+            raise ValueError("generalization requires xpu performance_reference")
+
+
+def _validate_objective(request: dict[str, Any]) -> None:
+    objective = request["optimization_objective"]
     if objective["mode"] == "fixed_rounds":
         if not isinstance(objective.get("rounds"), int) or objective["rounds"] <= 0:
             raise ValueError("fixed_rounds objective requires positive integer rounds")
-        return
-    if objective["mode"] != "target":
+    elif objective["mode"] == "target":
+        if not objective.get("metric") or objective.get("value") is None or not objective.get("unit"):
+            raise ValueError("target objective requires metric, value, and unit")
+        if objective.get("comparison") not in ("ge", "le", "eq"):
+            raise ValueError("target comparison must be ge, le, or eq")
+        if objective.get("max_rounds") is not None and (
+            not isinstance(objective["max_rounds"], int) or objective["max_rounds"] <= 0
+        ):
+            raise ValueError("target max_rounds must be a positive integer")
+    else:
         raise ValueError(f"invalid optimization objective mode: {objective['mode']}")
-    if not objective.get("metric") or objective.get("value") is None or not objective.get("unit"):
-        raise ValueError("target objective requires metric, value, and unit")
-    if objective.get("comparison") not in ("ge", "le", "eq"):
-        raise ValueError("target comparison must be ge, le, or eq")
-    max_rounds = objective.get("max_rounds")
-    if max_rounds is not None and (not isinstance(max_rounds, int) or max_rounds <= 0):
-        raise ValueError("target max_rounds must be a positive integer")
 
 
-def _validate_live_paths(request: dict, functional: dict, performance_cases,
-                         tuning_mode: str) -> None:
+def _validate_cann_environment(request: dict[str, Any], validate_live: bool) -> None:
+    cann_info = request["environments"]["cann"]
+    if not cann_info.get("setup_command"):
+        raise ValueError("CANN environment setup command is required")
+    if (
+        validate_live
+        and cann_info["setup_command"] == "inherit"
+        and cann_info.get("snapshot_at_confirmation") != cann_snapshot()
+    ):
+        raise ValueError("inherited CANN environment changed; reconfirm optimization request")
+
+
+def _validate_python_environment(request: dict[str, Any], validate_live: bool) -> None:
+    python_info = request["environments"]["python"]
+    executable = resolve_executable(python_info["executable"])
+    if validate_live and python_version(executable) != python_info["version"]:
+        raise ValueError("configured Python version changed; reconfirm optimization request")
+
+
+def _validate_live_paths(
+    request: dict[str, Any], tuning_mode: str, functional: dict[str, Any], performance_cases: Any
+) -> None:
     code_dir = Path(request["code_dir"])
     performance_cases_path = Path(performance_cases) if performance_cases else None
     if not code_dir.is_dir():
@@ -595,11 +719,10 @@ def _validate_live_paths(request: dict, functional: dict, performance_cases,
         raise ValueError(f"configured performance cases are unavailable: {performance_cases_path}")
     if functional["mode"] == "existing" and not Path(functional["cases"]).exists():
         raise ValueError(f"configured functional cases are unavailable: {functional['cases']}")
-    if tuning_mode != "generalization":
-        return
-    performance = request["generalization"]["competitor"].get("performance")
-    if performance is not None and not Path(performance).is_file():
-        raise ValueError(f"configured competitor performance is unavailable: {performance}")
+    if tuning_mode == "generalization":
+        competitor = request["generalization"]["competitor"]
+        if competitor["source"] == "file" and not Path(competitor["performance"]).is_file():
+            raise ValueError(f"configured competitor performance is unavailable: {competitor['performance']}")
 
 
 def load_request(path: Path, *, validate_live: bool = True) -> dict[str, Any]:
@@ -608,46 +731,27 @@ def load_request(path: Path, *, validate_live: bool = True) -> dict[str, Any]:
         raise ValueError(f"Unsupported optimization-request schema: {request.get('schema_version')}")
     if request.get("confirmation", {}).get("status") != "confirmed":
         raise ValueError("optimization request must be confirmed before use")
+    _validate_request_policies(request)
     request.pop("precision_diagnosis_policy", None)
-    _validate_socs(request)
-    tuning_mode = request.get("tuning_mode", "standard")
-    if tuning_mode not in TUNING_MODES:
-        raise ValueError(f"invalid tuning mode: {tuning_mode}")
-    request["tuning_mode"] = tuning_mode
-    functional = _validate_functional(request, tuning_mode)
+    validate_backend(request, validate_live=validate_live)
+    if not _has_unique_target_socs(request.get("target_socs")):
+        raise ValueError("optimization request requires a non-empty, unique target_socs list")
+    tuning_mode = _validate_tuning_mode(request)
+    functional = _validate_functional_mode(request, tuning_mode)
     performance_cases = request.get("performance_cases")
-    generalization = request.get("generalization")
-    if tuning_mode == "standard":
-        if not performance_cases:
-            raise ValueError("standard mode requires performance cases")
-        if generalization is not None:
-            raise ValueError("generalization configuration is valid only in generalization mode")
-    else:
-        if not isinstance(generalization, dict):
-            raise ValueError("generalization mode requires generalization configuration")
-        _validate_generalization(generalization)
-    if request.get("performance_reference") is not None:
-        validate_reference(request["performance_reference"])
-        if tuning_mode == "generalization" and request["performance_reference"]["kind"] != "xpu":
-            raise ValueError("generalization requires xpu performance_reference")
-    _validate_objective(request["optimization_objective"])
-    cann_info = request["environments"]["cann"]
-    if not cann_info.get("setup_command"):
-        raise ValueError("CANN environment setup command is required")
-    if validate_live and cann_info["setup_command"] == "inherit" and cann_info.get(
-        "snapshot_at_confirmation"
-    ) != cann_snapshot():
-        raise ValueError("inherited CANN environment changed; reconfirm optimization request")
-    python_info = request["environments"]["python"]
-    executable = resolve_executable(python_info["executable"])
-    if validate_live and python_version(executable) != python_info["version"]:
-        raise ValueError("configured Python version changed; reconfirm optimization request")
+    _validate_performance_cases(request, tuning_mode)
+    _validate_performance_reference(request, tuning_mode)
+    _validate_objective(request)
+    _validate_cann_environment(request, validate_live)
+    _validate_python_environment(request, validate_live)
     if validate_live:
-        _validate_live_paths(request, functional, performance_cases, tuning_mode)
+        _validate_live_paths(request, tuning_mode, functional, performance_cases)
     return request
 
 
-def _create_inputs(args: argparse.Namespace):
+def _validate_create_inputs(
+    args: argparse.Namespace,
+) -> tuple[Path, Path | None, Path | None, list[str]]:
     code_dir = args.code_dir.resolve()
     performance_cases = args.performance_cases.resolve() if args.performance_cases else None
     target_socs = list(dict.fromkeys(soc.strip() for soc in args.target_soc))
@@ -660,10 +764,10 @@ def _create_inputs(args: argparse.Namespace):
     reference_perf = args.reference_perf.resolve() if args.reference_perf else None
     if reference_perf is not None and not reference_perf.is_file():
         raise ValueError(f"REFERENCE_PERF is not a file: {reference_perf}")
-    return code_dir, performance_cases, target_socs, reference_perf
+    return code_dir, performance_cases, reference_perf, target_socs
 
 
-def _standard_config(args: argparse.Namespace, performance_cases) -> tuple[str, None]:
+def _validate_standard_create_args(args: argparse.Namespace, performance_cases: Path | None) -> str:
     if performance_cases is None:
         raise ValueError("standard mode requires --performance-cases")
     if args.functional_mode is None:
@@ -674,12 +778,41 @@ def _standard_config(args: argparse.Namespace, performance_cases) -> tuple[str, 
         raise ValueError("existing mode requires --functional-cases")
     if args.functional_mode != "existing" and args.functional_cases is not None:
         raise ValueError("--functional-cases is valid only for existing mode")
-    if args.competitor_perf is not None:
+    if args.competitor_source or args.competitor_perf or any(
+        (args.gpu_ssh_environment, args.gpu_work_dir, args.gpu_conda_environment, args.gpu_implementation_mode)
+    ):
         raise ValueError("competitor inputs are valid only in generalization mode")
-    return args.functional_mode, None
+    return args.functional_mode
 
 
-def _generalization_config(args: argparse.Namespace) -> tuple[str, dict]:
+def _resolve_create_competitor(args: argparse.Namespace) -> dict[str, Any]:
+    source = args.competitor_source or ("file" if args.competitor_perf else "xpu-perf-benchmark")
+    if source == "file":
+        if args.competitor_perf is None:
+            raise ValueError("--competitor-perf is required when --competitor-source=file")
+        competitor_path = args.competitor_perf.resolve()
+        if not competitor_path.is_file():
+            raise ValueError(f"COMPETITOR_PERF is not a file: {competitor_path}")
+        if any(
+            (args.gpu_ssh_environment, args.gpu_work_dir, args.gpu_conda_environment, args.gpu_implementation_mode)
+        ):
+            raise ValueError("GPU environment inputs are valid only for xpu-perf-benchmark source")
+        return {"source": "file", "performance": str(competitor_path), "gpu_environment": None}
+    gpu_values = {
+        "ssh_environment": args.gpu_ssh_environment,
+        "work_dir": args.gpu_work_dir,
+        "conda_environment": args.gpu_conda_environment,
+        "implementation_mode": args.gpu_implementation_mode,
+    }
+    if any(not value for value in gpu_values.values()):
+        raise ValueError(
+            "xpu-perf-benchmark source requires --gpu-ssh-environment, --gpu-work-dir, "
+            "--gpu-conda-environment, and --gpu-implementation-mode"
+        )
+    return {"source": "xpu-perf-benchmark", "performance": None, "gpu_environment": gpu_values}
+
+
+def _validate_generalization_create_args(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
     functional_mode = args.functional_mode or "reuse_performance"
     if functional_mode not in GENERALIZATION_FUNCTIONAL_MODES:
         raise ValueError("generalization mode fixes functional mode to reuse_performance")
@@ -687,39 +820,65 @@ def _generalization_config(args: argparse.Namespace) -> tuple[str, dict]:
         raise ValueError("generalization mode does not accept --functional-cases")
     if args.target_case_count <= 0:
         raise ValueError("--target-case-count must be positive")
-    competitor = {"source": "file", "performance": None}
-    if args.competitor_perf is not None:
-        competitor_path = args.competitor_perf.resolve()
-        if not competitor_path.is_file():
-            raise ValueError(f"COMPETITOR_PERF is not a file: {competitor_path}")
-        competitor["performance"] = str(competitor_path)
-    return functional_mode, {
+    generalization = {
         "target_case_count": args.target_case_count,
         "tuning_case_limit": GENERALIZATION_TUNING_LIMIT,
-        "competitor": competitor,
+        "competitor": _resolve_create_competitor(args),
         "ratio_thresholds": {"geomean": 1.0, "minimum": 0.6},
         "inner_max_rounds": 3,
         "outer_max_iterations": 2,
     }
+    return functional_mode, generalization
 
 
-def _build_request(args, inputs: dict, config: tuple) -> dict:
-    code_dir = inputs["code_dir"]
-    performance_cases = inputs["performance_cases"]
-    target_socs = inputs["target_socs"]
-    reference_perf = inputs["reference_perf"]
-    functional_mode, generalization = config
-    reference = (json.loads(args.performance_reference.read_text(encoding="utf-8"))
-                 if args.performance_reference else
-                 {"kind": "xpu" if args.tuning_mode == "generalization" else "baseline", "target_ratio": 1.0})
-    validate_reference(reference)
-    if args.tuning_mode == "generalization" and reference["kind"] != "xpu":
-        raise ValueError("generalization retains its xpu ratio contract; use standard for other reference kinds")
-    executable = resolve_executable(args.python_executable)
+def _load_create_reference(args: argparse.Namespace) -> dict[str, Any]:
+    if args.performance_reference:
+        return json.loads(args.performance_reference.read_text(encoding="utf-8"))
+    return {"kind": "xpu" if args.tuning_mode == "generalization" else "baseline", "target_ratio": 1.0}
+
+
+def _dsl_configuration(args: argparse.Namespace) -> dict[str, Any] | None:
+    if args.backend != "cannbot_dsl":
+        return None
+    return {
+        "repo_root": str(args.dsl_repo_root.resolve()) if args.dsl_repo_root else None,
+        "entrypoint": args.dsl_entrypoint,
+        "execution_mode": args.dsl_execution_mode or "jit",
+        "workload_scope": "network_cases",
+    }
+
+
+def _environment_configuration(args: argparse.Namespace, executable: Path) -> dict[str, Any]:
+    return {
+        "python": {
+            "executable": str(executable),
+            "version": python_version(executable),
+            "activation_command": args.python_activation_command,
+        },
+        "cann": {
+            "setup_command": args.cann_env_command,
+            "snapshot_at_confirmation": cann_snapshot(),
+        },
+    }
+
+
+def _build_create_request(
+    args: argparse.Namespace,
+    code_dir: Path,
+    performance_cases: Path | None,
+    reference_perf: Path | None,
+    target_socs: list[str],
+    functional_mode: str,
+    generalization: dict[str, Any] | None,
+    reference: dict[str, Any],
+    executable: Path,
+) -> dict[str, Any]:
     return {
         "schema_version": REQUEST_SCHEMA_VERSION,
         "created_at": now(),
         "operator": args.operator_name,
+        "backend": args.backend,
+        "dsl": _dsl_configuration(args),
         "tuning_mode": args.tuning_mode,
         "target_socs": target_socs,
         "code_dir": str(code_dir),
@@ -732,18 +891,12 @@ def _build_request(args, inputs: dict, config: tuple) -> dict:
         "optimization_intent": args.optimization_intent,
         "reference_perf": str(reference_perf) if reference_perf else None,
         "performance_reference": reference,
-        "generalization": generalization,
-        "environments": {
-            "python": {
-                "executable": str(executable),
-                "version": python_version(executable),
-                "activation_command": args.python_activation_command,
-            },
-            "cann": {
-                "setup_command": args.cann_env_command,
-                "snapshot_at_confirmation": cann_snapshot(),
-            },
+        "performance_effect_policy": {
+            "id": getattr(args, "performance_effect_policy", "confidence_effect_v1"), "version": 1,
         },
+        "schedule_policy": {"id": "schedule_contract_v1", "version": 1},
+        "generalization": generalization,
+        "environments": _environment_configuration(args, executable),
         "confirmation": {
             "status": "confirmed",
             "confirmed_at": now(),
@@ -753,21 +906,29 @@ def _build_request(args, inputs: dict, config: tuple) -> dict:
 
 
 def command_create_request(args: argparse.Namespace) -> int:
-    code_dir, performance_cases, target_socs, reference_perf = _create_inputs(args)
+    code_dir, performance_cases, reference_perf, target_socs = _validate_create_inputs(args)
     if args.tuning_mode == "standard":
-        functional_mode, generalization = _standard_config(args, performance_cases)
+        functional_mode = _validate_standard_create_args(args, performance_cases)
+        generalization = None
     else:
-        functional_mode, generalization = _generalization_config(args)
-    inputs = {"code_dir": code_dir, "performance_cases": performance_cases,
-              "target_socs": target_socs, "reference_perf": reference_perf}
-    request = _build_request(args, inputs, (functional_mode, generalization))
-    atomic_json(args.request.resolve(), request)
-    emit(
-        json.dumps(
-            {"status": "request_created", "request": str(args.request.resolve()), "summary": request_summary(request)},
-            ensure_ascii=False,
-        )
+        functional_mode, generalization = _validate_generalization_create_args(args)
+    reference = _load_create_reference(args)
+    validate_reference(reference)
+    if args.tuning_mode == "generalization" and reference["kind"] != "xpu":
+        raise ValueError("generalization retains its xpu ratio contract; use standard for other reference kinds")
+    executable = resolve_executable(args.python_executable)
+    request = _build_create_request(
+        args, code_dir, performance_cases, reference_perf, target_socs,
+        functional_mode, generalization, reference, executable,
     )
+    if args.backend == "ascendc" and any((args.dsl_repo_root, args.dsl_entrypoint, args.dsl_execution_mode)):
+        raise ValueError("--dsl-* options require --backend cannbot_dsl")
+    validate_backend(request)
+    atomic_json(args.request.resolve(), request)
+    emit(json.dumps(
+        {"status": "request_created", "request": str(args.request.resolve()), "summary": request_summary(request)},
+        ensure_ascii=False,
+    ))
     return 0
 
 
@@ -781,31 +942,111 @@ def load_manifest(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("schema_version") != RUN_SCHEMA_VERSION:
         raise ValueError(f"Unsupported run-manifest schema: {payload.get('schema_version')}")
+    validate_backend(payload.get("configuration", {}), validate_live=False)
+    from performance_effect_evidence import policy
+    policy(payload.get("configuration", {}).get("performance_effect_policy"))
+    configuration = payload.get("configuration", {})
+    if "schedule_policy" in configuration:
+        if configuration["schedule_policy"] is None:
+            raise ValueError("explicit null schedule_policy is invalid")
+        validate_schedule_policy(configuration["schedule_policy"])
     return payload
 
 
-def _frozen_manifest(request: dict, frozen_request: Path, tuning_mode: str, code_dir: Path,
-                     performance_source: Path | None) -> dict[str, Any]:
+def command_freeze(args: argparse.Namespace) -> int:
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    request_source = args.request.resolve()
+    request = load_request(request_source)
+    tuning_mode = request.get("tuning_mode", "standard")
+    code_dir = Path(request["code_dir"])
+    performance_source = Path(request["performance_cases"]) if request.get("performance_cases") else None
+    functional_mode = request["functional"]["mode"]
+    functional_cases = Path(request["functional"]["cases"]) if request["functional"].get("cases") else None
+
+    frozen_request = output_dir / "optimization-request.json"
+    atomic_json(frozen_request, request)
+
+    manifest = _freeze_manifest(
+        request, tuning_mode, functional_mode, code_dir, performance_source, frozen_request
+    )
+    _freeze_dsl_environment(args, request, request_source, output_dir, manifest)
+    if tuning_mode == "standard":
+        confirmation = _freeze_standard(
+            args, request, performance_source, functional_mode, functional_cases, manifest, output_dir
+        )
+    else:
+        _freeze_generalization(request, performance_source, functional_cases, manifest, output_dir)
+        confirmation = "not_applicable"
+
+    path = output_dir / "run-manifest.json"
+    atomic_json(path, manifest)
+    emit(json.dumps({"status": "frozen", "manifest": str(path), "confirmation": confirmation}, ensure_ascii=False))
+    return 0
+
+
+def _freeze_dsl_environment(
+    args: argparse.Namespace,
+    request: dict[str, Any],
+    request_source: Path,
+    output_dir: Path,
+    manifest: dict[str, Any],
+) -> None:
+    if request.get("backend") != "cannbot_dsl":
+        return
+    environment_path = (args.dsl_environment or request_source.parent / "dsl-environment.json").resolve()
+    environment = json.loads(environment_path.read_text(encoding="utf-8"))
+    if (environment.get("schema_version") != 1
+            or not environment.get("dsl_version")
+            or not environment.get("package_files")):
+        raise ValueError("DSL freeze requires the preflight package/environment snapshot")
+    for item in environment["package_files"]:
+        if {"path": str(Path(item["path"]).resolve()), "sha256": sha256_file(Path(item["path"]))} != item:
+            raise ValueError("DSL package changed since preflight")
+    frozen_environment = output_dir / "dsl-environment.json"
+    if frozen_environment != environment_path:
+        shutil.copyfile(environment_path, frozen_environment)
+    manifest["inputs"]["dsl_environment"] = {
+        "path": str(frozen_environment), "sha256": sha256_file(frozen_environment)
+    }
+
+
+def _freeze_manifest(
+    request: dict[str, Any],
+    tuning_mode: str,
+    functional_mode: str,
+    code_dir: Path,
+    performance_source: Path | None,
+    frozen_request: Path,
+) -> dict[str, Any]:
+    performance_reference = request.get("performance_reference") or {
+        "kind": "xpu" if tuning_mode == "generalization" else "baseline", "target_ratio": 1.0}
+    configuration = {
+        "operator": request.get("operator"),
+        "backend": request.get("backend", "ascendc"),
+        "dsl": request.get("dsl"),
+        "tuning_mode": tuning_mode,
+        "target_socs": request["target_socs"],
+        "functional_mode": functional_mode,
+        "optimization_objective": request["optimization_objective"],
+        "optimization_intent": request.get("optimization_intent", "safe_incremental"),
+        "reference_perf": request.get("reference_perf"),
+        "workflow_layout": "five-stage-v1",
+        "performance_reference": performance_reference,
+        "environments": request["environments"],
+        "precision_diagnosis_policy": PRECISION_DIAGNOSIS_POLICY,
+        "generalization": request.get("generalization"),
+    }
+    if "performance_effect_policy" in request:
+        configuration["performance_effect_policy"] = request["performance_effect_policy"]
+    if "schedule_policy" in request:
+        configuration["schedule_policy"] = request["schedule_policy"]
     return {
         "schema_version": RUN_SCHEMA_VERSION,
         "created_at": now(),
         "updated_at": now(),
         "request": identity(frozen_request),
-        "configuration": {
-            "operator": request.get("operator"),
-            "tuning_mode": tuning_mode,
-            "target_socs": request["target_socs"],
-            "functional_mode": request["functional"]["mode"],
-            "optimization_objective": request["optimization_objective"],
-            "optimization_intent": request.get("optimization_intent", "safe_incremental"),
-            "reference_perf": request.get("reference_perf"),
-            "workflow_layout": "five-stage-v1",
-            "performance_reference": request.get("performance_reference") or {
-                "kind": "xpu" if tuning_mode == "generalization" else "baseline", "target_ratio": 1.0},
-            "environments": request["environments"],
-            "precision_diagnosis_policy": PRECISION_DIAGNOSIS_POLICY,
-            "generalization": request.get("generalization"),
-        },
+        "configuration": configuration,
         "inputs": {
             "code": code_identity(code_dir),
             "performance_cases": identity(performance_source) if performance_source else None,
@@ -816,18 +1057,15 @@ def _frozen_manifest(request: dict, frozen_request: Path, tuning_mode: str, code
     }
 
 
-def _freeze_standard(manifest: dict, output_dir: Path, args: argparse.Namespace,
-                     request: dict) -> str:
-    performance_source = Path(request["performance_cases"]) if request.get("performance_cases") else None
-    functional_mode = request["functional"]["mode"]
-    functional_cases = Path(request["functional"]["cases"]) if request["functional"].get("cases") else None
-    if performance_source is None:
-        raise ValueError("standard tuning mode requires performance cases")
-    perf_full = output_dir / "performance-full-cases.csv"
-    fields, perf_rows = freeze_csv(performance_source, perf_full)
+def _performance_selection(
+    args: argparse.Namespace,
+    perf_rows: list[dict[str, str]],
+    fields: list[str],
+    output_dir: Path,
+) -> tuple[Path, list[dict[str, str]], dict[str, Any], str]:
     perf_indices, perf_details = select_rows(perf_rows, PERFORMANCE_LIMIT)
     perf_tuning_rows = [perf_rows[index] for index in perf_indices]
-    perf_tuning = output_dir / "performance-tuning-cases.csv"
+    perf_tuning = baseline_stage_dir(output_dir) / "performance-tuning-cases.csv"
     atomic_csv(perf_tuning, fields, perf_tuning_rows)
     needs_confirmation = len(perf_rows) > PERFORMANCE_LIMIT
     confirmation = "confirmed" if not needs_confirmation or args.confirm_performance else "pending"
@@ -838,20 +1076,49 @@ def _freeze_standard(manifest: dict, output_dir: Path, args: argparse.Namespace,
         "selected": perf_details,
         "confirmation": confirmation,
     }
-    manifest["collections"].update({
-        "performance_full": collection(perf_full, perf_rows),
-        "performance_tuning": collection(perf_tuning, perf_tuning_rows, perf_selection),
-    })
+    return perf_tuning, perf_tuning_rows, perf_selection, confirmation
+
+
+def _freeze_standard(
+    args: argparse.Namespace,
+    request: dict[str, Any],
+    performance_source: Path | None,
+    functional_mode: str,
+    functional_cases: Path | None,
+    manifest: dict[str, Any],
+    output_dir: Path,
+) -> str:
+    if performance_source is None:
+        raise ValueError("standard mode requires performance cases")
+    if request.get("backend") == "cannbot_dsl":
+        _, network_rows = read_csv(performance_source)
+        if any(row.get("expected_error") or row.get("execution_kind", "device") not in ("", "device")
+               for row in network_rows):
+            raise ValueError(
+                "DSL performance inventory must contain device cases; "
+                "keep host/error checks in functional inventory"
+            )
+    perf_full = baseline_stage_dir(output_dir) / "performance-full-cases.csv"
+    fields, perf_rows = freeze_csv(performance_source, perf_full)
+    perf_tuning, perf_tuning_rows, perf_selection, confirmation = _performance_selection(
+        args, perf_rows, fields, output_dir
+    )
+    manifest["collections"].update(
+        {
+            "performance_full": collection(perf_full, perf_rows),
+            "performance_tuning": collection(perf_tuning, perf_tuning_rows, perf_selection),
+        }
+    )
     manifest["functional_preparation"] = {
         "status": "pending" if functional_mode == "generate" else "complete"
     }
     if functional_mode == "reuse_performance":
-        full, acceptance = functional_payload(perf_full, output_dir)
+        full, acceptance = functional_payload(perf_full, baseline_stage_dir(output_dir))
         manifest["collections"].update({"functional_full": full, "functional_acceptance": acceptance})
     elif functional_mode == "existing":
         if functional_cases is None:
-            raise ValueError("existing functional mode requires functional cases")
-        full, acceptance = functional_payload(functional_cases, output_dir)
+            raise ValueError("existing functional mode requires a cases path")
+        full, acceptance = functional_payload(functional_cases, baseline_stage_dir(output_dir))
         manifest["collections"].update({"functional_full": full, "functional_acceptance": acceptance})
         manifest["inputs"]["functional_cases"] = {
             "path": str(functional_cases.resolve()),
@@ -862,10 +1129,33 @@ def _freeze_standard(manifest: dict, output_dir: Path, args: argparse.Namespace,
     return confirmation
 
 
-def _freeze_generalization(manifest: dict, output_dir: Path, request: dict,
-                           performance_source: Path | None, functional_cases: Path | None) -> str:
-    if request["generalization"] is None:
-        raise ValueError("generalization mode requires a generalization request")
+def _freeze_file_competitor(manifest: dict[str, Any], output_dir: Path) -> None:
+    competitor_source = Path(manifest["configuration"]["generalization"]["competitor"]["performance"])
+    expected = (
+        case_ids_from_collection(manifest["collections"]["generalization_full"])
+        if "generalization_full" in manifest["collections"]
+        else None
+    )
+    competitor_collection = competitor_payload(competitor_source, baseline_stage_dir(output_dir), expected)
+    manifest["collections"]["competitor_performance"] = competitor_collection
+    manifest["inputs"]["competitor_performance"] = identity(competitor_source)
+    competitor_status = (
+        "complete"
+        if competitor_collection["validation"]["status"] == "complete"
+        else "pending_cases"
+    )
+    manifest["generalization_preparation"]["competitor"] = {"status": competitor_status}
+
+
+def _freeze_generalization(
+    request: dict[str, Any],
+    performance_source: Path | None,
+    functional_cases: Path | None,
+    manifest: dict[str, Any],
+    output_dir: Path,
+) -> None:
+    if request.get("generalization") is None:
+        raise ValueError("generalization mode requires generalization configuration")
     if performance_source and functional_cases:
         performance_sha = sha256_file(performance_source)
         functional_sha = sha256_file(inventory_csv(functional_cases))
@@ -876,12 +1166,16 @@ def _freeze_generalization(manifest: dict, output_dir: Path, request: dict,
             )
     case_source = performance_source or functional_cases
     if case_source is not None:
-        generalization_full, functional_full, acceptance = generalization_payload(case_source, output_dir)
-        manifest["collections"].update({
-            "generalization_full": generalization_full,
-            "functional_full": functional_full,
-            "functional_acceptance": acceptance,
-        })
+        generalization_full, functional_full, acceptance = generalization_payload(
+            case_source, baseline_stage_dir(output_dir)
+        )
+        manifest["collections"].update(
+            {
+                "generalization_full": generalization_full,
+                "functional_full": functional_full,
+                "functional_acceptance": acceptance,
+            }
+        )
         source_identity = identity(case_source)
         source_identity["identity_method"] = "performance-functional-combined"
         if manifest["inputs"]["performance_cases"] is None:
@@ -895,45 +1189,8 @@ def _freeze_generalization(manifest: dict, output_dir: Path, request: dict,
         "cases": {"status": preparation_status},
         "competitor": {"status": "pending"},
     }
-    competitor = request["generalization"]["competitor"]
-    if competitor.get("performance") is None:
-        return "not_applicable"
-    competitor_source = Path(competitor["performance"])
-    expected = (
-        case_ids_from_collection(manifest["collections"]["generalization_full"])
-        if "generalization_full" in manifest["collections"]
-        else None
-    )
-    competitor_collection = competitor_payload(competitor_source, output_dir, expected)
-    manifest["collections"]["competitor_performance"] = competitor_collection
-    manifest["inputs"]["competitor_performance"] = identity(competitor_source)
-    status = "complete" if competitor_collection["validation"]["status"] == "complete" else "pending_cases"
-    manifest["generalization_preparation"]["competitor"] = {"status": status}
-    return "not_applicable"
-
-
-def command_freeze(args: argparse.Namespace) -> int:
-    output_dir = args.output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    request_source = args.request.resolve()
-    request = load_request(request_source)
-    tuning_mode = request.get("tuning_mode", "standard")
-    code_dir = Path(request["code_dir"])
-    performance_source = Path(request["performance_cases"]) if request.get("performance_cases") else None
-    functional_mode = request["functional"]["mode"]
-    functional_cases = Path(request["functional"]["cases"]) if request["functional"].get("cases") else None
-    frozen_request = output_dir / "optimization-request.json"
-    atomic_json(frozen_request, request)
-    manifest = _frozen_manifest(request, frozen_request, tuning_mode, code_dir, performance_source)
-    if tuning_mode == "standard":
-        confirmation = _freeze_standard(manifest, output_dir, args, request)
-    else:
-        confirmation = _freeze_generalization(manifest, output_dir, request,
-                                              performance_source, functional_cases)
-    path = output_dir / "run-manifest.json"
-    atomic_json(path, manifest)
-    emit(json.dumps({"status": "frozen", "manifest": str(path), "confirmation": confirmation}, ensure_ascii=False))
-    return 0
+    if request["generalization"]["competitor"]["source"] == "file":
+        _freeze_file_competitor(manifest, output_dir)
 
 
 def command_confirm(args: argparse.Namespace) -> int:
@@ -959,7 +1216,7 @@ def command_attach(args: argparse.Namespace) -> int:
     if manifest["configuration"]["functional_mode"] != "generate":
         raise ValueError("attach-functional is valid only for generate mode")
     output_dir = args.manifest.resolve().parent
-    full, acceptance = functional_payload(args.functional_cases.resolve(), output_dir)
+    full, acceptance = functional_payload(args.functional_cases.resolve(), baseline_stage_dir(output_dir))
     manifest["inputs"]["functional_cases"] = {
         "path": str(args.functional_cases.resolve()),
         "kind": "directory" if args.functional_cases.is_dir() else "file",
@@ -982,7 +1239,7 @@ def command_attach_generalization(args: argparse.Namespace) -> int:
         raise ValueError("generalization inventory is already frozen; create a new run to replace it")
     output_dir = args.manifest.resolve().parent
     source = args.cases.resolve()
-    generalization_full, functional_full, acceptance = generalization_payload(source, output_dir)
+    generalization_full, functional_full, acceptance = generalization_payload(source, baseline_stage_dir(output_dir))
     manifest["collections"].update(
         {
             "generalization_full": generalization_full,
@@ -1003,7 +1260,7 @@ def command_attach_generalization(args: argparse.Namespace) -> int:
     competitor = manifest["collections"].get("competitor_performance")
     if competitor:
         expected = case_ids_from_collection(generalization_full)
-        validated = competitor_payload(Path(competitor["path"]), output_dir, expected)
+        validated = competitor_payload(Path(competitor["path"]), baseline_stage_dir(output_dir), expected)
         manifest["collections"]["competitor_performance"] = validated
         manifest["generalization_preparation"]["competitor"] = {
             "status": "complete",
@@ -1020,10 +1277,8 @@ def command_attach_competitor(args: argparse.Namespace) -> int:
     if manifest["configuration"].get("tuning_mode", "standard") != "generalization":
         raise ValueError("attach-competitor is valid only in generalization mode")
     configured = manifest["configuration"]["generalization"]["competitor"]
-    if configured.get("source") != "file":
-        raise ValueError("attach-competitor requires a file competitor source")
-    if configured.get("performance") is not None:
-        raise ValueError("competitor performance is already configured; create a new run to replace it")
+    if configured["source"] != "xpu-perf-benchmark":
+        raise ValueError("attach-competitor is valid only for xpu-perf-benchmark source")
     if manifest["collections"].get("competitor_performance"):
         raise ValueError("competitor performance is already frozen; create a new run to replace it")
     generalization_full = manifest["collections"].get("generalization_full")
@@ -1031,7 +1286,7 @@ def command_attach_competitor(args: argparse.Namespace) -> int:
         raise ValueError("attach generalization cases before competitor performance")
     output_dir = args.manifest.resolve().parent
     expected = case_ids_from_collection(generalization_full)
-    competitor = competitor_payload(args.competitor_perf.resolve(), output_dir, expected)
+    competitor = competitor_payload(args.competitor_perf.resolve(), baseline_stage_dir(output_dir), expected)
     manifest["collections"]["competitor_performance"] = competitor
     manifest["inputs"]["competitor_performance"] = identity(args.competitor_perf.resolve())
     manifest.setdefault("generalization_preparation", {})["competitor"] = {
@@ -1044,26 +1299,47 @@ def command_attach_competitor(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sub(subparsers, name: str, help_text: str, func) -> argparse.ArgumentParser:
-    command = subparsers.add_parser(name, help=help_text)
-    command.set_defaults(func=func)
-    return command
-
-
-def _add_create_args(create: argparse.ArgumentParser) -> None:
+def _add_create_parser(subparsers: Any) -> None:
+    create = subparsers.add_parser("create-request", help="write a reusable, user-confirmed optimization request")
     create.add_argument("--request", type=Path, required=True)
     create.add_argument("--operator-name")
     create.add_argument("--code-dir", type=Path, required=True)
+    create.add_argument("--backend", choices=BACKENDS, default="ascendc")
+    create.add_argument("--dsl-repo-root", type=Path, help="DSL reference/sample repository; not an import fallback")
+    create.add_argument("--dsl-entrypoint", help="Original public Python module:callable")
+    create.add_argument("--dsl-execution-mode", choices=DSL_EXECUTION_MODES)
     create.add_argument("--tuning-mode", choices=TUNING_MODES, default="standard")
-    create.add_argument("--target-soc", action="append", required=True,
-                        help="verified optimization SoC; repeat only when every listed generation will be validated")
+    create.add_argument(
+        "--target-soc",
+        action="append",
+        required=True,
+        help="verified optimization SoC; repeat only when every listed generation will be validated",
+    )
     create.add_argument("--performance-cases", type=Path)
-    create.add_argument("--performance-reference", type=Path,
-                        help="JSON reference kind, target_ratio and source configuration")
+    create.add_argument(
+        "--performance-effect-policy",
+        choices=("legacy_jitter_v1", "confidence_effect_v1"),
+        default="confidence_effect_v1",
+    )
+    create.add_argument(
+        "--performance-reference",
+        type=Path,
+        help="JSON reference kind, target_ratio and source configuration",
+    )
     create.add_argument("--functional-mode", choices=FUNCTIONAL_MODES)
     create.add_argument("--functional-cases", type=Path)
     create.add_argument("--target-case-count", type=int, default=DEFAULT_GENERALIZATION_CASE_COUNT)
+    _add_create_objective_arguments(create)
+    create.set_defaults(func=command_create_request)
+
+
+def _add_create_objective_arguments(create: argparse.ArgumentParser) -> None:
+    create.add_argument("--competitor-source", choices=COMPETITOR_SOURCES)
     create.add_argument("--competitor-perf", type=Path)
+    create.add_argument("--gpu-ssh-environment")
+    create.add_argument("--gpu-work-dir")
+    create.add_argument("--gpu-conda-environment")
+    create.add_argument("--gpu-implementation-mode", choices=("torch.compile", "triton"))
     create.add_argument("--optimization-mode", choices=("fixed_rounds", "target"), default="fixed_rounds")
     create.add_argument("--rounds", type=int, default=3)
     create.add_argument("--target-metric")
@@ -1075,52 +1351,84 @@ def _add_create_args(create: argparse.ArgumentParser) -> None:
     create.add_argument("--python-activation-command")
     create.add_argument("--cann-env-command", required=True)
     create.add_argument("--confirmed-by", default="user")
-    create.add_argument("--optimization-intent", choices=("safe_incremental", "pursue_optimal"),
-                        default="safe_incremental",
-                        help="safe_incremental: isolated increments in the current kernel structure. "
-                        "pursue_optimal: structural rewrites (fusion / layout / precision scheme) are in scope and "
-                        "unrealized structural directions block a clean success finish.")
-    create.add_argument("--reference-perf", type=Path,
-                        help="optional performance anchor: a case_id,ref_total_us CSV "
-                        "(same-operator/competitor/ceiling reference implementation). "
-                        "Analysis anchors 'measured vs reference' gap.")
+    create.add_argument(
+        "--optimization-intent",
+        choices=("safe_incremental", "pursue_optimal"),
+        default="safe_incremental",
+        help="safe_incremental: isolated increments in the current kernel structure. "
+        "pursue_optimal: structural rewrites (fusion / layout / precision scheme) are in scope and "
+        "unrealized structural directions block a clean success finish.",
+    )
+    create.add_argument(
+        "--reference-perf",
+        type=Path,
+        help="optional performance anchor: a case_id,ref_total_us CSV (same-operator/competitor/ceiling "
+        "reference implementation). Analysis anchors 'measured vs reference' gap.",
+    )
+
+
+def _add_freeze_parser(subparsers: Any) -> None:
+    freeze = subparsers.add_parser("freeze", help="freeze inputs and deterministic case subsets")
+    freeze.add_argument("--output-dir", type=Path, required=True)
+    freeze.add_argument("--request", type=Path, required=True)
+    freeze.add_argument(
+        "--dsl-environment", type=Path, help="preflight DSL environment snapshot (default: beside request)"
+    )
+    freeze.add_argument("--confirm-performance", action="store_true")
+    freeze.set_defaults(func=command_freeze)
+
+
+def _add_attach_parsers(subparsers: Any) -> None:
+    attach = subparsers.add_parser("attach-functional", help="attach generated functional inventory")
+    attach.add_argument("--manifest", type=Path, required=True)
+    attach.add_argument("--functional-cases", type=Path, required=True)
+    attach.set_defaults(func=command_attach)
+
+    attach_generalization = subparsers.add_parser(
+        "attach-generalization", help="attach a generated performance/functional generalization inventory"
+    )
+    attach_generalization.add_argument("--manifest", type=Path, required=True)
+    attach_generalization.add_argument("--cases", type=Path, required=True)
+    attach_generalization.set_defaults(func=command_attach_generalization)
+
+    attach_competitor = subparsers.add_parser(
+        "attach-competitor", help="attach xpu-perf-benchmark output to a generalization run"
+    )
+    attach_competitor.add_argument("--manifest", type=Path, required=True)
+    attach_competitor.add_argument("--competitor-perf", type=Path, required=True)
+    attach_competitor.set_defaults(func=command_attach_competitor)
 
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    sub = result.add_subparsers(dest="command", required=True)
-    _add_create_args(_sub(sub, "create-request",
-                          "write a reusable, user-confirmed optimization request", command_create_request))
-    validate_request = _sub(sub, "validate-request",
-                            "validate a reusable request against current paths", command_validate_request)
+    subparsers = result.add_subparsers(dest="command", required=True)
+    _add_create_parser(subparsers)
+
+    validate_request = subparsers.add_parser(
+        "validate-request", help="validate a reusable request against current paths"
+    )
     validate_request.add_argument("--request", type=Path, required=True)
-    freeze = _sub(sub, "freeze", "freeze inputs and deterministic case subsets", command_freeze)
-    freeze.add_argument("--output-dir", type=Path, required=True)
-    freeze.add_argument("--request", type=Path, required=True)
-    freeze.add_argument("--confirm-performance", action="store_true")
-    confirm = _sub(sub, "confirm-performance",
-                   "record user confirmation of >50 performance subset", command_confirm)
+    validate_request.set_defaults(func=command_validate_request)
+
+    _add_freeze_parser(subparsers)
+
+    confirm = subparsers.add_parser("confirm-performance", help="record user confirmation of >50 performance subset")
     confirm.add_argument("--manifest", type=Path, required=True)
     confirm.add_argument("--by", default="user")
     confirm.add_argument("--note")
-    attach = _sub(sub, "attach-functional", "attach generated functional inventory", command_attach)
-    attach.add_argument("--manifest", type=Path, required=True)
-    attach.add_argument("--functional-cases", type=Path, required=True)
-    generalization = _sub(sub, "attach-generalization",
-                          "attach a generated performance/functional generalization inventory",
-                          command_attach_generalization)
-    generalization.add_argument("--manifest", type=Path, required=True)
-    generalization.add_argument("--cases", type=Path, required=True)
-    competitor = _sub(sub, "attach-competitor",
-                      "attach externally collected competitor performance to a generalization run",
-                      command_attach_competitor)
-    competitor.add_argument("--manifest", type=Path, required=True)
-    competitor.add_argument("--competitor-perf", type=Path, required=True)
+    confirm.set_defaults(func=command_confirm)
+
+    _add_attach_parsers(subparsers)
     return result
 
 
 def main() -> int:
-    return run_cli(parser)
+    args = parser().parse_args()
+    try:
+        return args.func(args)
+    except (FileNotFoundError, KeyError, ValueError) as error:
+        emit(json.dumps({"status": "error", "error": str(error)}, ensure_ascii=False))
+        return 2
 
 
 if __name__ == "__main__":

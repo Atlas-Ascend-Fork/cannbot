@@ -1,7 +1,7 @@
 {
   "name": "ops-perf-optimize",
   "version": "4.1.0",
-  "description": "AscendC 五阶段性能调优 Team。",
+  "description": "AscendC / CANNBot-DSL 性能调优工作流。",
   "author": {
     "name": "CANNBot"
   },
@@ -14,20 +14,23 @@
     "performance",
     "operator",
     "npu",
-    "workflow"
+    "workflow",
+    "dsl",
+    "cannbot-dsl"
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "AscendC 算子性能调优",
-    "shortDescription": "AscendC 算子五阶段性能调优工作流",
-    "longDescription": "AscendC 算子端到端性能调优 Team。按基线评估→前处理→诊断分析→实施验证→后处理的五阶段工作流执行：工程剥离和恢复，冻结用例、建立可信基线、profiling 分析、隔离实施候选、精度与性能门禁与全量验收。",
+    "displayName": "AscendC / CANNBot-DSL 算子性能调优",
+    "shortDescription": "AscendC / CANNBot-DSL 算子性能调优工作流",
+    "longDescription": "AscendC / CANNBot-DSL 算子端到端性能调优工作流。AscendC 按基线评估→前处理→诊断分析→实施验证→后处理的五阶段工作流执行；CANNBot-DSL 按基线评估→诊断分析→实施验证→后处理的四阶段工作流执行。",
     "developerName": "CANNBot",
     "category": "Productivity",
     "capabilities": [
       "Skills"
     ],
     "defaultPrompt": [
-      "请优化 /path/to/operator 算子的性能，目标 SoC 为 Ascend950"
+      "请优化 /path/to/operator下AscendC算子的性能，目标 SoC 为 Ascend950，测试用例在/path/cases下，CANN环境信息是source /path/to/cann/setenv.bash,python环境装在在xx下",
+      "请优化 /path/to/operator 中的Cannbot-DSL 算子，目标 SoC 为 Ascend950, 测试用例在/path/cases下，CANN环境信息是source /path/to/cann/setenv.bash, python环境装在在xx下"
     ]
   }
 }

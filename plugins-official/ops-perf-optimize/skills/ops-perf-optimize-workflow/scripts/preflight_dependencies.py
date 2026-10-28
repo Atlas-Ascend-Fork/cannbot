@@ -43,13 +43,16 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cli_output import emit
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_SCRIPTS = (
+    "dsl_evidence.py",
     "prepare_case_sets.py",
     "workflow_state.py",
     "summarize_performance_effects.py",
+    "performance_effect_evidence.py",
     "validate_implementation_conformance.py",
     "validate_integration_safety.py",
     "validate_source_isolation.py",
@@ -229,8 +232,8 @@ def _cann_version(ascend_home: Path) -> tuple[str, str]:
     return version, timestamp
 
 
-def _cann_tools(report: Report, cann_command: str) -> None:
-    for tool in ("msprof", "atc"):
+def _cann_tools(report: Report, cann_command: str, backend: str = "ascendc") -> None:
+    for tool in (("msprof", "bisheng") if backend == "cannbot_dsl" else ("msprof", "atc")):
         code, output = run_shell(f"{cann_command} && command -v {tool}")
         if code != 0:
             report.add(tool, "cann", "fail", f"{tool} not on PATH after sourcing CANN",
@@ -264,7 +267,7 @@ def _warmup_symbol_found(libraries: list[str]) -> bool:
     return False
 
 
-def check_cann(report: Report, cann_command: str) -> dict:
+def check_cann(report: Report, cann_command: str, backend: str = "ascendc") -> dict:
     code, home = run_shell(f"{cann_command} && printf '%s' \"$ASCEND_HOME_PATH\"")
     if code != 0 or not home:
         report.add("cann-env", "cann", "fail", f"sourcing failed or ASCEND_HOME_PATH unset (exit {code})",
@@ -277,10 +280,10 @@ def check_cann(report: Report, cann_command: str) -> dict:
         report.add("cann-version", "cann", "ok", f"{version} (build {timestamp or 'unknown'})")
     else:
         report.add("cann-version", "cann", "warn", "version.info not found under ASCEND_HOME_PATH")
-    _cann_tools(report, cann_command)
+    _cann_tools(report, cann_command, backend)
     present = _opapi_libraries(ascend_home)
     if not present:
-        report.add("opapi-libs", "cann", "fail",
+        report.add("opapi-libs", "cann", "warn" if backend == "cannbot_dsl" else "fail",
                    "no opapi libraries under ASCEND_HOME_PATH (incomplete CANN/ops install)",
                    "install the missing CANN ops packages")
         return {"home": home, "version": version, "opapi": present}
@@ -295,6 +298,43 @@ def check_cann(report: Report, cann_command: str) -> dict:
                    "install the ops packages providing libopapi.so")
     report.add("opapi-libs", "cann", "ok", ", ".join(sorted(present)))
     return {"home": home, "version": version, "opapi": present}
+
+
+def check_dsl(report: Report, request: dict, python_exe: str, cann_command: str,
+              environment_path: Path) -> None:
+    from workflow_backend import validate_backend
+    try:
+        validate_backend(request)
+    except ValueError as error:
+        report.add("dsl-config", "dsl", "fail", str(error), "fix the DSL request")
+        return
+    code_dir = Path(request["code_dir"])
+    if not code_dir.is_dir() or not any(code_dir.rglob("*.py")):
+        report.add("dsl-source", "dsl", "fail", "no Python source in code_dir")
+        return
+    report.add("dsl-source", "dsl", "ok", str(code_dir))
+    # Run in the confirmed environment, not in preflight's own interpreter.
+    command = (
+        f"{cann_command} && {shlex.quote(python_exe)} "
+        f"{shlex.quote(str(PLUGIN_DIR / 'dsl_evidence.py'))} environment "
+        f"--out {shlex.quote(str(environment_path))}"
+    )
+    code, output = run_shell(command, timeout=180)
+    if code != 0:
+        report.add("dsl-package", "dsl", "fail", output[-400:], "install/match cannbot-dsl and its toolchain")
+        return
+    snapshot = json.loads(environment_path.read_text())
+    report.add("dsl-package", "dsl", "ok", f"{snapshot['dsl_version']} at {snapshot['package_root']}")
+    probe = "import cannbotdsl, pytest; print('DSL and pytest importable')"
+    code, output = run_shell(
+        f"{cann_command} && {shlex.quote(python_exe)} -c {shlex.quote(probe)}", timeout=120
+    )
+    report.add("dsl-import", "dsl", "ok" if code == 0 else "fail", output[-400:])
+    report.add("ttk", "ttk", "skip", "DSL uses frozen original pytest/checker/golden; TTK is route-specific")
+    if request["dsl"]["execution_mode"] == "aot":
+        check_build(report, code_dir)
+    else:
+        report.add("build-entry", "build", "skip", "JIT builds from Python; CMake/build.sh not required")
 
 
 def check_ttk(report: Report, python_exe: str, cann_command: str, ttk_root: Path | None) -> Path | None:
@@ -500,7 +540,7 @@ def check_disk(report: Report, out_path: Path) -> None:
         report.add("disk", "disk", "ok", f"{free_gb} GB free")
 
 
-def main() -> int:
+def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ops-perf-optimize startup dependency preflight")
     parser.add_argument("--request", required=True, help="optimization-request.json path")
     parser.add_argument("--ttk-root", default=None, help="ops-test-kit root (default: $TTK_ROOT or common paths)")
@@ -508,29 +548,46 @@ def main() -> int:
     parser.add_argument("--out", default=None, help="JSON report output path")
     parser.add_argument("--skip-device", action="store_true")
     parser.add_argument("--skip-build", action="store_true")
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    started_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-    request_path = Path(args.request).resolve()
-    report = Report()
-    emit(f"== ops-perf-optimize dependency preflight ==\nrequest: {request_path}")
 
-    check_plugin_scripts(report)
-    request = load_request(report, request_path)
+def _run_preflight_checks(
+    args: argparse.Namespace, report: Report, request: dict, request_path: Path
+) -> tuple[str, str, Path, str, Path]:
     environments = request.get("environments", {})
     python_exe = environments.get("python", {}).get("executable", sys.executable)
     cann_command = environments.get("cann", {}).get("setup_command", "true")
     code_dir = Path(request.get("code_dir", ".")).resolve()
-
+    if cann_command == "inherit":
+        cann_command = "true"
     check_python_env(report, python_exe, cann_command)
-    check_cann(report, cann_command)
-    check_ttk(report, python_exe, cann_command, Path(args.ttk_root) if args.ttk_root else None)
-    if not args.skip_build:
-        check_build(report, code_dir)
+    backend = request.get("backend", "ascendc")
+    if backend not in ("ascendc", "cannbot_dsl"):
+        report.add("backend", "request", "fail", f"unknown backend: {backend}")
+    check_cann(report, cann_command, backend)
+    environment_path = request_path.parent / "dsl-environment.json"
+    if backend == "cannbot_dsl":
+        check_dsl(report, request, python_exe, cann_command, environment_path)
+    else:
+        check_ttk(report, python_exe, cann_command, Path(args.ttk_root) if args.ttk_root else None)
+        if not args.skip_build:
+            check_build(report, code_dir)
     if not args.skip_device:
         check_device(report, python_exe, cann_command, args.device)
     check_disk(report, request_path.parent)
+    return python_exe, cann_command, code_dir, backend, environment_path
 
+
+def _summary_report(
+    report: Report,
+    started_at: str,
+    request_path: Path,
+    python_exe: str,
+    cann_command: str,
+    code_dir: Path,
+    backend: str,
+    environment_path: Path,
+) -> dict:
     summary = report.summary()
     summary.update({
         "started_at": started_at,
@@ -539,9 +596,34 @@ def main() -> int:
         "python": python_exe,
         "cann_command": cann_command,
         "code_dir": str(code_dir),
+        "backend": backend,
+        "dsl_environment": {
+            "path": str(environment_path),
+            "sha256": hashlib.sha256(environment_path.read_bytes()).hexdigest(),
+        } if backend == "cannbot_dsl" and environment_path.is_file() else None,
         "request_sha256": hashlib.sha256(request_path.read_bytes()).hexdigest()
         if request_path.is_file() else "",
     })
+    return summary
+
+
+def main() -> int:
+    args = _parse_arguments()
+
+    started_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+    request_path = Path(args.request).resolve()
+    report = Report()
+    emit(f"== ops-perf-optimize dependency preflight ==\nrequest: {request_path}")
+
+    check_plugin_scripts(report)
+    request = load_request(report, request_path)
+    python_exe, cann_command, code_dir, backend, environment_path = _run_preflight_checks(
+        args, report, request, request_path
+    )
+    summary = _summary_report(
+        report, started_at, request_path, python_exe, cann_command, code_dir, backend, environment_path
+    )
+
     out_path = Path(args.out) if args.out else request_path.parent / "preflight-report.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

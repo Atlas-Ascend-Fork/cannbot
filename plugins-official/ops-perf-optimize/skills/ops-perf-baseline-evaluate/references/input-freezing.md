@@ -7,13 +7,13 @@ python3 "$WORKFLOW_SCRIPTS/preflight_dependencies.py" --request <optimization-re
     [--ttk-root <ops-test-kit>] [--device 0]
 ```
 
-预检一次性校验整条依赖链（插件脚本、Python/torch_npu/ml_dtypes、CANN 版本与 opapi 库族与 warmup 符号、msprof/atc、TTK 可导入与多副本漂移、构建工具链、设备可见/可初始化/忙闲、磁盘空间），报告写入 request 同目录 `preflight-report.json`。存在 **fail 项时禁止 freeze**——修复依赖或重新确认环境后重跑预检；仅 warn 项（如共享设备占用、不完整 CANN 但 compiled 回退可用、TTK 多副本漂移）登记原因后可继续。依赖问题必须在启动一步暴露，不允许留到某个脚本中途失败后再补救。该预检只证明环境具备执行能力；被测实现的源码、构建与加载同源性由 freeze 后的 execution identity 门禁证明，两者不能互相替代。
+预检一次性校验整条依赖链（插件脚本、Python/torch_npu/ml_dtypes、CANN 版本与 opapi 库族与 warmup 符号、msprof/atc、TTK 可导入与多副本漂移、构建工具链、设备可见/可初始化/忙闲、磁盘空间），报告写入 `$OUTPUT_DIR/baseline/preflight-report.json`，不落在运行目录根。存在 **fail 项时禁止 freeze**——修复依赖或重新确认环境后重跑预检；仅 warn 项（如共享设备占用、不完整 CANN 但 compiled 回退可用、TTK 多副本漂移）登记原因后可继续。依赖问题必须在启动一步暴露，不允许留到某个脚本中途失败后再补救。该预检只证明环境具备执行能力；被测实现的源码、构建与加载同源性由 freeze 后的 execution identity 门禁证明，两者不能互相替代。
 
 `code_dir` 可以是仓库内的算子子目录，不要求本层存在 `build.sh`。预检发现上层构建入口仅代表候选路径，需从真实脚本确认单算子 target、工作目录、参数与环境，并将成功命令记录为后续构建依据；不为满足目录检查扩大已确认源码范围。
 
 无交互运行必须提供已确认的 request JSON，不得自行猜测功能模式、目标或环境。`validate-request` 校验 schema、确认状态、路径和 Python 版本；CANN 选择 `inherit` 时还校验确认时的环境快照。失效时回到用户确认，不静默替换环境。
 
-使用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py freeze --request <optimization-request.json>` 把 request 复制到运行目录，原子生成 `run-manifest.json` 和模式对应集合。manifest 记录 request 路径/SHA、本次源码与用例身份、目标和环境。standard 使用以下四类集合：
+使用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py freeze --request <optimization-request.json>` 把 request 复制到运行目录，原子生成 `run-manifest.json`（run 级，根目录）和模式对应集合（写入 `baseline/` 阶段文件夹）。manifest 记录 request 路径/SHA、本次源码与用例身份、目标和环境。standard 使用以下四类集合：
 
 | 集合 | 文件 | 用途 |
 |---|---|---|

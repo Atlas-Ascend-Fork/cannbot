@@ -113,6 +113,47 @@ def normalize_soc(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
+def declaration_evidence(
+    value: Any, field: str, baseline: Path, backend: str,
+    external_receipts: list[dict[str, str]],
+) -> list[tuple[str, str, bool]]:
+    """Read source-local declarations or explicitly SHA-bound DSL documentation.
+
+    External declarations never authorize source edits or substitute for candidate
+    guard/fallback evidence, which must still reside in each changed source file.
+    """
+    if not isinstance(value, list) or not value:
+        raise ContractError(f"{field} must be a non-empty evidence array")
+    result = []
+    for entry in value:
+        if isinstance(entry, str) and entry.strip():
+            location = entry.strip()
+            result.append((location, evidence_text(baseline, location, require_line=False), False))
+            continue
+        if backend != "cannbot_dsl" or not isinstance(entry, dict):
+            raise ContractError(f"{field}: external declarations require manifest backend cannbot_dsl")
+        if entry.get("kind") != "external_dsl_declaration":
+            raise ContractError(f"{field}: invalid external declaration kind")
+        raw_path, digest = entry.get("path"), entry.get("sha256")
+        if not isinstance(raw_path, str) or not Path(raw_path).is_absolute():
+            raise ContractError(f"{field}: external declaration path must be absolute")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ContractError(f"{field}: external declaration requires SHA-256")
+        path = Path(raw_path).resolve()
+        try:
+            payload = path.read_bytes()
+        except OSError as error:
+            raise ContractError(f"{field}: cannot read external declaration {path}: {error}") from error
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise ContractError(f"{field}: external declaration SHA-256 mismatch: {path}")
+        external_receipts.append({"path": str(path), "sha256": digest})
+        # An external filename is not evidence of the declared architecture.
+        result.append((str(path), payload.decode("utf-8", errors="replace"), True))
+    if len({location for location, _text, _external in result}) != len(result):
+        raise ContractError(f"{field} must not contain duplicate evidence")
+    return result
+
+
 def discover_add_config_socs(root: Path) -> dict[str, list[str]]:
     """Discover explicit operator support declarations while ignoring commented examples."""
     discovered: dict[str, list[str]] = {}
@@ -171,7 +212,8 @@ def changed_source_files(baseline: Path, candidate: Path) -> list[str]:
     return changed
 
 
-def _supported_socs(scope: dict, baseline: Path) -> tuple[list[str], list[str], list[str]]:
+def _supported_socs(scope: dict, baseline: Path, backend: str = "ascendc",
+                    external_receipts: list[dict[str, str]] | None = None) -> tuple[list[str], list[str], list[str]]:
     entries = scope.get("supported_socs")
     if not isinstance(entries, list) or not entries:
         raise ContractError("supported_socs must be a non-empty evidence array")
@@ -184,10 +226,10 @@ def _supported_socs(scope: dict, baseline: Path) -> tuple[list[str], list[str], 
         key = normalize_soc(name)
         if key in supported_keys:
             raise ContractError(f"duplicate supported SoC: {name}")
-        evidence = string_list(entry.get("evidence"), f"supported_socs[{index}].evidence")
-        for location in evidence:
-            text = evidence_text(baseline, location, require_line=False)
-            if key not in normalize_soc(f"{location}\n{text}"):
+        evidence = declaration_evidence(entry.get("evidence"), f"supported_socs[{index}].evidence",
+                                        baseline, backend, external_receipts if external_receipts is not None else [])
+        for location, text, external in evidence:
+            if key not in normalize_soc(text if external else f"{location}\n{text}"):
                 raise ContractError(f"supported SoC evidence does not name {name}: {location}")
         supported_socs.append(name)
         supported_keys.append(key)
@@ -202,7 +244,8 @@ def _supported_socs(scope: dict, baseline: Path) -> tuple[list[str], list[str], 
     return supported_socs, supported_keys, discovered
 
 
-def _isolation_style(scope: dict, baseline: Path) -> tuple[list[str], list[str]]:
+def _isolation_style(scope: dict, baseline: Path, backend: str = "ascendc",
+                     external_receipts: list[dict[str, str]] | None = None) -> tuple[list[str], list[str]]:
     isolation = scope.get("project_isolation_style")
     if not isinstance(isolation, dict):
         raise ContractError("project_isolation_style is required when supported SoCs remain unverified")
@@ -211,10 +254,9 @@ def _isolation_style(scope: dict, baseline: Path) -> tuple[list[str], list[str]]
         raise ContractError("project_isolation_style.kind must be non-empty")
     markers = string_list(isolation.get("target_path_markers"), "target_path_markers")
     tokens = string_list(isolation.get("target_route_tokens"), "target_route_tokens")
-    style_evidence = string_list(isolation.get("evidence"), "project_isolation_style.evidence")
-    style_text = "\n".join(
-        evidence_text(baseline, location, require_line=False) for location in style_evidence
-    )
+    style_evidence = declaration_evidence(isolation.get("evidence"), "project_isolation_style.evidence",
+                                          baseline, backend, external_receipts if external_receipts is not None else [])
+    style_text = "\n".join(text for _location, text, _external in style_evidence)
     if not any(token.lower() in style_text.lower() for token in tokens):
         raise ContractError("project isolation style evidence contains none of target_route_tokens")
     return markers, tokens
@@ -224,7 +266,8 @@ def _shared_changes(source_changes: list[str], markers: list[str]) -> list[str]:
     shared: list[str] = []
     for relative in source_changes:
         lowered = relative.lower()
-        if not ({"op_host", "op_kernel"} & {part.lower() for part in Path(relative).parts}):
+        if (Path(relative).suffix != ".py"
+                and not ({"op_host", "op_kernel"} & {part.lower() for part in Path(relative).parts})):
             continue
         if is_public_contract_path(relative):
             continue
@@ -291,6 +334,7 @@ def validate_scope(
     candidate: Path,
     candidate_safety: dict[str, Any],
     expected_target_socs: list[str] | None = None,
+    backend: str = "ascendc",
 ) -> dict[str, Any]:
     if scope.get("schema_version") != SCHEMA_VERSION:
         raise ContractError(f"integration scope schema_version must be {SCHEMA_VERSION}")
@@ -300,7 +344,8 @@ def validate_scope(
     verified_socs = string_list(scope.get("verified_socs"), "verified_socs")
     if set(target_socs) != set(verified_socs):
         raise ContractError("verified_socs must exactly match the user-confirmed target_socs")
-    supported_socs, supported_keys, discovered = _supported_socs(scope, baseline)
+    external_receipts: list[dict[str, str]] = []
+    supported_socs, supported_keys, discovered = _supported_socs(scope, baseline, backend, external_receipts)
     target_keys = {normalize_soc(soc) for soc in target_socs}
     verified_keys = {normalize_soc(soc) for soc in verified_socs}
     missing_targets = sorted(target_keys - set(supported_keys))
@@ -311,10 +356,10 @@ def validate_scope(
     failures = list(candidate_safety["failures"])
     shared: list[str] = []
     if unverified:
-        markers, tokens = _isolation_style(scope, baseline)
+        markers, tokens = _isolation_style(scope, baseline, backend, external_receipts)
         shared = _shared_changes(source_changes, markers)
         failures.extend(_validate_routes(scope, (baseline, candidate), shared, tokens))
-    return {
+    report = {
         "schema_version": SCHEMA_VERSION,
         "decision": "pass" if not failures else "fail",
         "baseline": str(baseline),
@@ -330,6 +375,13 @@ def validate_scope(
         "candidate_safety": candidate_safety,
         "failures": failures,
     }
+    unique_receipts = {item["path"]: item for item in external_receipts}
+    for receipt in unique_receipts.values():
+        if hashlib.sha256(Path(receipt["path"]).read_bytes()).hexdigest() != receipt["sha256"]:
+            raise ContractError(f"external declaration changed during validation: {receipt['path']}")
+    if unique_receipts:
+        report["external_declaration_receipts"] = list(unique_receipts.values())
+    return report
 
 
 def parser() -> argparse.ArgumentParser:
@@ -348,8 +400,10 @@ def main() -> int:
     baseline = args.baseline.resolve()
     candidate = args.candidate.resolve()
     try:
-        candidate_safety = validate_candidate_safety(baseline, candidate)
         manifest = load_json(args.manifest.resolve())
+        candidate_safety = validate_candidate_safety(
+            baseline, candidate, manifest.get("configuration", {}).get("backend", "ascendc")
+        )
         expected_target_socs = string_list(
             manifest.get("configuration", {}).get("target_socs"),
             "RUN_MANIFEST configuration.target_socs",
@@ -360,6 +414,7 @@ def main() -> int:
             candidate,
             candidate_safety,
             expected_target_socs,
+            manifest.get("configuration", {}).get("backend", "ascendc"),
         )
         isolation = validate_source_isolation(
             load_json(args.isolation_scope.resolve()), baseline, candidate, expected_target_socs,

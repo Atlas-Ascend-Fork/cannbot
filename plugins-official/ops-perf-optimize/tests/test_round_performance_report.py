@@ -61,7 +61,7 @@ class Run:
     def effects(self, name, baseline, candidate):
         path = self.root / f"{name}.json"
         subprocess.run([
-            sys.executable, str(SCRIPTS / "summarize_performance_effects.py"),
+            sys.executable, str(SCRIPTS / "summarize_performance_effects.py"), "--policy", "legacy_jitter_v1",
             "--baseline", str(baseline), "--candidate", str(candidate),
             "--out-json", str(path), "--out-csv", str(path.with_suffix(".csv")),
         ], check=True, capture_output=True, text=True)
