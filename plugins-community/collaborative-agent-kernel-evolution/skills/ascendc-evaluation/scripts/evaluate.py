@@ -246,7 +246,7 @@ def load_test_cases(work_dir: Path) -> Tuple[Dict, Any]:
     if not hasattr(module, "TEST_CASES"):
         raise AttributeError(f"test_cases.py must define TEST_CASES dict")
 
-    return module.loaded_cases, module
+    return module.TEST_CASES, module
 
 
 def setup_environment(work_dir: Path):
@@ -370,6 +370,43 @@ def _compare_one_output(c_out, r_out, g_out, out_name: str, out_tolerances):
     )
 
 
+def normalize_output_triple(
+    custom_output: Any,
+    ref_output: Any,
+    golden_output: Any,
+) -> Tuple[List[Any], List[Any], List[Any], Optional[str]]:
+    """Normalize one case's three outputs to lists and check their counts agree.
+
+    Each output is normalized on its own: a tuple/list becomes a list of its
+    elements, anything else (a single tensor) becomes a one-element list.
+    Normalizing the three together off the custom output's type would turn a
+    single reference tensor into `list(tensor)`, i.e. a split along dim 0, and
+    report a count that never existed.
+
+    Returns (custom_outputs, ref_outputs, golden_outputs, mismatch_reason).
+    mismatch_reason is None when the three counts agree; otherwise it names the
+    three counts and the case must fail, because zip() would stop at the
+    shortest list and leave the surplus outputs unchecked.
+    """
+    def _to_list(output: Any) -> List[Any]:
+        if isinstance(output, (tuple, list)):
+            return list(output)
+        return [output]
+
+    custom_outputs = _to_list(custom_output)
+    ref_outputs = _to_list(ref_output)
+    golden_outputs = _to_list(golden_output)
+
+    if len(custom_outputs) == len(ref_outputs) == len(golden_outputs):
+        return custom_outputs, ref_outputs, golden_outputs, None
+
+    reason = (
+        f"Output count mismatch: custom={len(custom_outputs)}, "
+        f"ref={len(ref_outputs)}, golden={len(golden_outputs)}"
+    )
+    return custom_outputs, ref_outputs, golden_outputs, reason
+
+
 def _evaluate_case_precision(ctx: "_EvalCtx", ref_model, custom_model, inputs) -> tuple:
     """返回 (是否通过, 诊断串, 首个精度结果)。"""
     logging.info("  Running precision evaluation...")
@@ -377,15 +414,11 @@ def _evaluate_case_precision(ctx: "_EvalCtx", ref_model, custom_model, inputs) -
         ctx, ref_model, custom_model, inputs)
 
     # Move all outputs to CPU for comparison
-    # Normalize outputs to list for uniform handling (single tensor or tuple)
-    if isinstance(custom_output, (tuple, list)):
-        custom_outputs = list(custom_output)
-        ref_outputs = list(ref_output)
-        golden_outputs = list(golden_output)
-    else:
-        custom_outputs = [custom_output]
-        ref_outputs = [ref_output]
-        golden_outputs = [golden_output]
+    custom_outputs, ref_outputs, golden_outputs, count_mismatch = normalize_output_triple(
+        custom_output, ref_output, golden_output)
+    if count_mismatch is not None:
+        # 调用方据 passed=False 记 warning、quiet 模式打印并写出 FAIL 结果。
+        return False, count_mismatch, None
 
     precision_passed = True
     precision_diagnosis = []
@@ -607,7 +640,7 @@ def evaluate_multi_case(
     operator_type = loaded_cases.get("operator_type", "unary")
     cases = loaded_cases["cases"]
 
-    logging.info(f"Operator: {TEST_CASES['operator']}")
+    logging.info(f"Operator: {loaded_cases['operator']}")
     logging.info(f"Type: {operator_type}")
     logging.info(f"Test cases: {len(cases)}")
 

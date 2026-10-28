@@ -1,0 +1,48 @@
+[
+    {
+        "op": "RmsMatmulScaleCustom",
+        "language": "cpp",
+        "input_desc": [
+            {
+                "name": "x",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16"
+                ]
+            },
+            {
+                "name": "weight",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16"
+                ]
+            }
+        ],
+        "output_desc": [
+            {
+                "name": "y",
+                "param_type": "required",
+                "format": [
+                    "ND"
+                ],
+                "type": [
+                    "float16"
+                ]
+            }
+        ],
+        "attr": [
+            {
+                "name": "norm_eps",
+                "type": "float",
+                "paramType": "optional",
+                "defaultValue": "0.000001"
+            }
+        ]
+    }
+]
