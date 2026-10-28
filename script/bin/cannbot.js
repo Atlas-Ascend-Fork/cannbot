@@ -224,7 +224,7 @@ function installPluginAssets(pluginDir, plugin, target, sourceDefinition, skillR
   mkdirSync(destinationRoot, { recursive: true });
   const assets = { destinationRoot, relativeRoot };
   let installed = false;
-  for (const name of ["workflows", "scripts", "agents", "hooks", "quickstart.md", "LICENSE", "SKILLS_LICENSE"]) {
+  for (const name of ["workflows", "scripts", "agents", "hooks", "config.json", "quickstart.md", "LICENSE", "SKILLS_LICENSE"]) {
     let source = join(pluginDir, name);
     if (name === "SKILLS_LICENSE" && sharedSkills) {
       source = join(sharedSkills.root, "LICENSE");

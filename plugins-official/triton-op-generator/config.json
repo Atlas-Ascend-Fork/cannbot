@@ -4,5 +4,7 @@
   "npu_preflight": {
     "min_free_mb": 49152,
     "smi_timeout_seconds": 5
-  }
+  },
+  "metric_mode": "speedup",
+  "target_policy": "geometric_mean"
 }

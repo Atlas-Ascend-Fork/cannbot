@@ -1348,3 +1348,27 @@ test("symlinks inside a community plugin resolve within that plugin", () => {
     }
   }
 });
+
+
+for (const source of sources) {
+  test(`${source} retains triton runtime defaults and performance policy evaluator`, () => {
+    const { target, sandbox } = installPlugin("triton-op-generator", "claude", source);
+    const root = join(target, ".cannbot", "plugins", "triton-op-generator");
+    const expected = JSON.parse(readFileSync(join(repositoryRoot, "plugins-official", "triton-op-generator", "config.json"), "utf8"));
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "config.json"), "utf8")), expected);
+    assert.equal(existsSync(join(root, "workflows", "evaluate_performance.py")), true);
+    assert.match(readFileSync(join(target, "CLAUDE.md"), "utf8"), /\.cannbot\/plugins\/triton-op-generator\/config\.json/);
+    const override = join(target, "triton_op_generator.config.json");
+    const content = JSON.stringify({ target_speedup: 1, target_policy: "each_required_case" });
+    writeFileSync(override, content);
+    const args = [cli, "install", "triton-op-generator", "--tool", "claude", "--target", target];
+    if (source === "repository") args.push("--source", repositoryRoot, "--skills", join(repositoryRoot, "vendor", "cannbot-skills"));
+    const result = spawnSync(process.execPath, args, {
+      cwd: target, encoding: "utf8",
+      env: { ...process.env, HOME: join(sandbox, "home"), XDG_CACHE_HOME: join(sandbox, "cache") },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(readFileSync(override, "utf8"), content);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "config.json"), "utf8")), expected);
+  });
+}

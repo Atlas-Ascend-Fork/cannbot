@@ -31,13 +31,14 @@ permission:
 
 ## 固定配置
 
-固定配置的默认值以本插件仓内 `config.json` 为准；运行时若用户项目根存在 `triton_op_generator.config.json`（JSON，含同名字段），以其字段值覆盖默认值。除该覆盖文件外，禁止在流程文档、示例或生成的 `summary.json` 中写死与本节不一致的数值。
+固定配置的默认值在源码模式读取本文件同目录 `config.json`，安装模式读取项目内 `.cannbot/plugins/triton-op-generator/config.json`；运行时若用户项目根存在 `triton_op_generator.config.json`（JSON，含同名字段），以其字段值覆盖默认值。除该覆盖文件外，禁止在流程文档、示例或生成的 `summary.json` 中写死与本节不一致的数值。
 
 - **framework**: `torch`
 - **dsl**: `triton_ascend`
 - **backend**: `ascend`
 - **metric_mode**: Phase 4 优化指标模式（`speedup` / `mfu`），Phase 0 按用户提示词判定（见「优化指标模式判定」节），决定 Phase 4 走加速比流程还是 MFU 流程。默认 `speedup`，可被 `triton_op_generator.config.json` 的 `metric_mode` 字段覆盖。
-- **target_speedup**: 目标几何平均加速比（`metric_mode==speedup` 时生效），默认 `5`（同 config.json），可被 `triton_op_generator.config.json` 的 `target_speedup` 字段覆盖。
+- **target_policy**: `geometric_mean`（默认）或 `each_required_case`。用户要求每个指定用例持平/达标时必须使用后者；其验收与选优量为所有必测用例加速比的最小值，不能用几何平均掩盖回退。
+- **target_speedup**: 目标加速比（按 `target_policy` 解释）（`metric_mode==speedup` 时生效），默认 `5`（同 config.json），可被 `triton_op_generator.config.json` 的 `target_speedup` 字段覆盖。
 - **target_mfu**: 目标 MFU（%）（`metric_mode==mfu` 时生效），默认 `60`（同 config.json），可被 `triton_op_generator.config.json` 的 `target_mfu` 字段覆盖；口径为 **dtype 修正实测峰值**（`mfu_decompose.json` 的 `mfu_achievable_pct`）。
 - **npu_preflight**: `min_free_mb=49152`、`smi_timeout_seconds=5`（同 config.json，同规则覆盖）。
 
@@ -59,7 +60,9 @@ Phase 6: 会话导出          (session.jsonl + session.md)
 
 ## Phase 0: 参数确认
 
-从用户输入中提取硬件架构 `arch`。若用户未明确指定，通过 `npu-smi info` 自动检测。若检测失败，使用默认值 `ascend910b1`。
+从用户输入中提取硬件架构 `arch`；未指定时通过 `npu-smi info` 自动检测。检测失败时记录 unknown 并补充设备/运行时查询，禁止默认为其他架构。Phase 0 记录选定物理卡与逻辑映射、torch/torch_npu/Triton/CANN 实际版本及路径，并在该卡执行最小原语编译与需要的官方算子 API smoke；探测属于诊断，不能作为最终精度或性能结论。低精度格式必须验证实际前端/后端支持，不得把 HiF8 等格式静默替换为 IEEE FP8。历史知识卡的版本限制与当前实测不一致时，保存两者证据和适用范围，再据此设计。
+
+性能采集默认不锁频，调用 benchmark.py 显式传 `--no-lock-frequency`；需要锁频时须由用户或独占设备约定授权，并限定到选定设备，禁止修改共享机其他卡的频率。
 
 ### 输入模式检测
 
@@ -129,10 +132,12 @@ python3 -c "import datetime,random; ts=datetime.datetime.now().strftime('%Y%m%d_
 python3 skills/knowledge-query/scripts/knowledge_query.py discover
 ```
 
-解析成功后：
+解析成功后，记录实际 KB_ROOT。构建后确认索引文件可读并执行一次带显式 `--knowledge-root` 的 preflight；记录 exit code、索引路径和文档数。若索引构建失败，保存具体原因并使用显式卡片读取，后续阶段不要重复同一失败检索；环境或知识内容变化后可重试。卡片可读与检索可用分开记录。
+
+初始化命令：
 
 ```bash
-# 检索索引缺失时构建（秒级；仅影响 preflight/search，不影响卡片直读）
+# 检索索引缺失时在初始化构建一次；大知识库可能需要数十秒。保存构建日志，避免将全部警告输出到会话。
 [ -f "$KB_ROOT/search/okf.index.json" ] || \
   python3 skills/knowledge-query/scripts/knowledge_query.py --knowledge-root "$KB_ROOT" build || \
   echo "WARN: KB index build failed (non-fatal)"
@@ -148,53 +153,68 @@ python3 skills/knowledge-query/scripts/knowledge_query.py discover
 
 ### 基线冻结（强制，所有模式通用）
 
-**调用时机**：每个模式（A.1/A.2/B）在 `{工作目录}/{op_name}.py` 落盘完成后，**立即**调用：
+**调用时机**：任务与用例构造完成，`validate_task.py` 已遍历全部用例通过后冻结；适配器还须先完成与原始 oracle 的独立对拍。所有模式在进入 Phase 2 前调用：
 
 ```bash
 python3 skills/triton-op-verifier/scripts/freeze_baseline.py \
     --op_name {op_name} \
     --work_dir {工作目录} \
-    --mode {auto|user} \
-    [--source_path <用户源 .py 绝对路径>]   # mode=user 时必传
+    --mode {auto|user|oracle-adapter} \
+    [--source_path <用户源 .py 绝对路径>] \
+    [--dependency <codec 绝对路径>] \
+    [--dependency <case JSON 或 oracle 数据绝对路径>]
 ```
+
+`user` 与 `oracle-adapter` 都必须传 `--source_path`；每个实际读取依赖分别重复传一次 `--dependency`（不限上述两项）。
 
 `--mode` 取值：
 - `user`：用户提供 benchmark（模式 A 标杆文件、模式 A 优先级 1 的 torch 标杆）—— **必传 `--source_path`**，freeze 会校验工作目录副本 sha256 == 源 sha256，不等则 exit 5
 - `auto`：Agent 自动生成 benchmark（模式 B 兜底，从 `.pt` 翻译或手写 PyTorch 参考）—— 不传 `--source_path`
+- `oracle-adapter`：用户给出函数式 NumPy 等数学 oracle，或现有文件需要独立包装才能接入 Model；原文件只读，生成另一份适配任务，必传原始 `--source_path`，允许任务与原文件字节不同。通过重复 `--dependency <绝对路径>` 冻结 codec、输入规格、oracle 数据及其他实际读取依赖；记录适配前后语义与独立对拍证据。不能把缺少 Model 接口判为原始数学标杆有 bug。
 
 **强制约束**：
 
 1. **冻结后禁止修改** `{工作目录}/{op_name}.py`。后续 Phase 2/3/4 任何对该文件的 Edit/Write 会被 verify.py / benchmark.py 启动时的基线闸门检测到（exit 4）。
 2. **源 benchmark 路径只读**：`npu_benchmark/`、`ascendc-kernelgen-data*/` 等用户数据目录由 PreToolUse hook 强制拦截 Edit/Write（已通过 `bash init.sh project claude` 注册）。
-3. **场景 B 工作目录副本必须字节级等于源**：mode=user 时 freeze 会校验 `{工作目录}/{op_name}.py` 的 sha256 == `--source_path` 指向的源文件 sha256。**Agent 不得在 Phase 1 内重写 Model 类、改 forward 签名、补确定性常数权重等**——这些都会让 freeze 失败（exit 5）。源 benchmark 有 bug（如 `__init__` 参数与 `get_init_inputs()` 不匹配）时，正确做法是在 report.md 标注 `baseline_buggy: true` 后失败退出，**不要试图修复源 benchmark**。
+3. **user 模式的完整任务副本必须字节级等于源**：freeze 会校验 `{工作目录}/{op_name}.py` 的 sha256 == `--source_path` 指向的源文件 sha256。**Agent 不得在 Phase 1 内重写用户 Model 类、改 forward 签名、补确定性常数权重等**——这些都会让 freeze 失败（exit 5）。模式 A 的完整用户 Model 确有原始逻辑错误（如已提供的 `__init__` 参数与 `get_init_inputs()` 不匹配）时，在 report.md 标注 `baseline_buggy: true` 后失败退出，**不要修复源 benchmark 或用 adapter 绕过真实 bug**。函数式 NumPy oracle 或缺少 Model/输入协议接口属于独立 `oracle-adapter` 接入场景，不是此类原始逻辑错误；按下节包装、保持原文件只读并对拍，不得据此标记 `baseline_buggy`。
 4. **freeze 不可重入**：锚文件 `{工作目录}/output/.baseline_anchor.json` 一旦写入，重跑 freeze 会 exit 1 拒绝覆盖。若需重 freeze，需人工删除锚文件并审计原因。
-5. **下游依赖**：verify.py / benchmark.py 启动时会校验 `{工作目录}/{op_name}.py` 的 sha256 等于锚文件记录值（mode=user 时还会校验源文件 sha256 等于锚里记录的 source_sha256）——
+5. **下游依赖**：verify.py / benchmark.py 启动时会校验 `{工作目录}/{op_name}.py` 的 sha256 等于锚文件记录值；`user` 与 `oracle-adapter` 都校验只读源文件哈希，并核验已声明的各项依赖和实际执行参考副本——
    - 锚文件缺失 → exit 3（Phase 1 未执行 freeze）
    - sha256 不匹配 → exit 4（基线被篡改）
    - 两者都属于 C 类终止，**不退回 Phase 3 重试**。
 
 ### 模式 A：标准算子任务
 
-调用 `triton-task-extractor` skill。若为优先级 1 场景，需传入 `expand_shapes=true` 激活单 case → 多 case 自动扩展。skill 会先做模式判定（依据：源 `.py` 是否含 `get_input_groups` / 同目录是否存在同名 `.json`），再走对应分支：
+调用 `triton-task-extractor` skill，先按 `source_kind` 区分完整用户任务（user 原字节复制）、函数式 oracle/缺接口（oracle-adapter 独立包装）与自主构造（auto）；再独立判断 single/multi case。若为优先级 1 场景，需传入 `expand_shapes=true` 激活单 case → 多 case 自动扩展，但不得裁剪用户必测 cases。case 判定依据源 `.py` 是否含 `get_input_groups` / 同目录是否存在同名 `.json`，再走对应分支：
 
 #### A.1 单 case 子模式
 
 - 源 `.py` 仅含 `get_inputs()`，`forward` 单组输入
-- skill 在工作目录构造单一自包含任务文件 `{op_name}.py`
+- 完整用户任务原字节复制到工作目录 `{op_name}.py`；函数式 oracle/缺接口时另建独立 adapter；只有 auto 才自主构造任务
 - 包含 `Model` + `get_inputs()` + `get_init_inputs()`，不含测试驱动
 
 #### A.2 多 case 子模式
 
 - 源 `.py` 含 `get_input_groups()`，**同目录**配套 `{op_name}.json`（JSONL，每行一个 case 输入规格）
-- skill **原样透传两个文件**到工作目录：
-  - `{工作目录}/{op_name}.py`（源 `.py` 字节级副本，禁止改写）
-  - `{工作目录}/{op_name}.json`（源 JSON 字节级副本，必须与 `.py` 同名同目录）
+- 完整 user 任务由 skill **原样透传两个文件**到工作目录；oracle-adapter 独立任务保留全部必测 groups，并将原始输入规格列为只读依赖：
+  - user：`{工作目录}/{op_name}.py`（源 `.py` 字节级副本，禁止改写）
+  - user：`{工作目录}/{op_name}.json`（源 JSON 字节级副本，必须与 `.py` 同名同目录）
 - **严禁**将多 case 源裁剪为单 case 任务文件（会丢失 N-1 个 shape 的评测结果）
 
 **通用要求**：
 
 - 所有任务文件必须通过 `validate_task.py` 检查（多 case 模式下需遍历全部 groups 通过）
-- 下游 `verify.py` / `benchmark.py` 已内建分支判断（优先 `get_input_groups`、回落 `get_inputs`），无需在任务文件追加兼容层
+- 完整 Model 任务的下游 `verify.py` / `benchmark.py` 已内建 case 分支判断（优先 `get_input_groups`、回落 `get_inputs`），无需为 single/multi 另补兼容层；函数式 oracle 按下节独立适配
+
+### 函数式 oracle 与独立性能基线
+
+用户指定的必测 shape/参数必须逐项保留；额外的小尺寸、尾块用例可用于精度诊断，不能替换或混入用户要求的性能用例集合。
+
+对于函数式 oracle，保留原始文件与依赖，生成独立 Model 适配器并采用 `oracle-adapter` 冻结。大尺寸 oracle 可流式计算并缓存经过独立验证的结果；缓存返回必须逐项核验输入 dtype、shape、全部有效载荷和标量属性，绑定来源、适配器、数据哈希，拒绝未知输入，禁止仅按 shape 返回答案。
+
+`Model` 始终表示数学精度 oracle。用户另指定性能对手时，在同一冻结任务中定义 `PERFORMANCE_BASELINE_CLASS = "BenchmarkModel"`，由该类调用真实对手；benchmark 显式传 `--framework-class BenchmarkModel`。需要预备性能对手的输入时使用 `prepare_benchmark_inputs(inputs)`，仅允许对手已声明的调用范围之外的预备工作放在计时外；结果中注明输入、dtype、设备和计时边界。DUT 的完整 forward 必须全部计时，禁止把静态缩放所需全局归约、稀疏表构造等主计算移到计时外。不得计时缓存 oracle 或 NumPy 数学实现来代表用户指定的 torch_npu 基线。
+
+若固定绝对容差不足以辨别低幅值结果，Phase 1 在冻结任务中补充 `PRECISION_CONTRACT` 的 `relative_l2_max` / `cosine_min`（依据原始 oracle 指标），与默认精度标准同时满足。用全零/明显缩放错误输出做负向测试，确认真实判定路径能够拦截；不能只检查 fallback 或放宽生态阈值。
 
 ### 模式 B：GPU Kernel 输入模式
 
@@ -564,9 +584,9 @@ best_mfu = 0.0                         # mfu 模式历史最佳 MFU
 # ── 统一判定量（4.4/4.6 一律用别名，按 metric_mode 取义）──
 # speedup 模式:  optimized_metric = optimized_speedup；best_metric = best_speedup；target_metric = target_speedup
 # mfu 模式:      optimized_metric = optimized_mfu（mfu_decompose 的 mfu_achievable_pct）；best_metric = best_mfu；target_metric = target_mfu
-best_code = ""
-best_speedup = 0.0
 baseline_code = Phase 3 产出的 generated_code.py
+best_code = baseline_code     # 无后续候选更优时，Phase 3 基线本身就是 best_code
+best_speedup = 0.0
 phase3_last_iter = Phase 3 最后一次验证通过的 iter 编号 # 见 3.3 的记录
 improvement_made = false
 target_reached = false # 是否达到目标指标（speedup 模式 best_speedup>=target_speedup / mfu 模式 best_mfu>=target_mfu）
@@ -771,13 +791,19 @@ while opt_iteration < max_opt_iterations:
 - 运行 `benchmark.py --triton_impl_name triton_optimized [--skip_framework ...]`
 - 产物：`optimized_perf_result.json`
 
-**几何平均加速比判定**：
+**目标策略与加速比判定**：
+
+Phase 3 基线及每轮 Phase 4 性能结果都调用本插件 `workflows/evaluate_performance.py --perf-result <JSON> --target-speedup <项目目标> --target-policy <项目策略>`。缺失、失败、非有限或非正数的必测用例不能被几何平均丢弃后宣布达标。
+
+以下控制流中的 `baseline_speedup`、`optimized_speedup`、`best_speedup` 统一使用该脚本的 `decision_metric`；`geometric_mean` 时为几何平均，`each_required_case` 时为最小用例加速比。原始 benchmark 的 `speedup_vs_torch` 仍保持几何平均用于展示；summary 同时记录 `target_policy`、`minimum_case_speedup` 与全部逐例结果。所有 target_reached、选优和终止判断采用同一策略，禁止在其他阶段退回只读几何平均。
+
+**几何平均统计（仅默认策略用作决策）**：
 
 - 从 `perf_result.json` 读取 `speedup_vs_torch`（各通过 shape 加速比的几何平均，异常 shape 不计入）。
 - 直接对比 Phase 3 与 Phase 4 的几何平均：
   ```
-  baseline_speedup  = baseline_data["speedup_vs_torch"]   # Phase 3 几何平均
-  optimized_speedup = optimized_data["speedup_vs_torch"]  # Phase 4 几何平均
+  baseline_speedup  = baseline_decision["decision_metric"]
+  optimized_speedup = optimized_decision["decision_metric"]
   ```
 - 策略 A 下 4.2 已保证 optimized 侧 `passed == total`，baseline 同样 `passed == total`，集合相同可直接对比。
 - 若出现集合不一致（兼容路径），直接判优化失败，不写入比较数值。
@@ -800,7 +826,7 @@ while opt_iteration < max_opt_iterations:
 
   optimized_speedup > baseline_speedup:
   → 优化成功（几何平均加速比有提升）
-  → 更新 best_code / best_speedup
+  → 更新 best_code / best_speedup，并一起记录该代码哈希及对应的 best_verify_result / best_perf_result 路径
   → improvement_made = true
   → `no_improve_streak = 0`
   → **代码已变更**：`code_version += 1`；`excluded = []`；`cursor = 1`
@@ -867,13 +893,10 @@ while opt_iteration < max_opt_iterations:
   禁止进 4.6**：必须回到 **4.1**；若 latency-optimizer 已耗尽，强制转入 4.1 的 **simulator 采集驱动分支**
   （不得直接 4.6）。`improvement_made == true` 不构成退出条件。
 
-  通过退出前置门后，按 `improvement_made` 选择最终代码：
-
-  improvement_made == true:
-  → 优化成功，break，进入 Phase 5（最终代码 = optimized_code.py）
-
-  improvement_made == false:
-  → 优化失败（做完所有尝试 + simulator 采集后没有效果），break，进入 Phase 5（最终代码 = Phase 3 基线）
+  通过退出前置门后，break，进入 Phase 5；最终代码始终为按项目 target_policy
+  选取的 best_code，不能取最后一轮 optimized_code.py。
+  improvement_made 仅描述是否曾有提升，不重新选择文件；若没有候选优于 Phase 3，
+  best_code 保持为已验证的 Phase 3 baseline_code。
 
 ````
 
@@ -891,8 +914,8 @@ while opt_iteration < max_opt_iterations:
 
 ### Phase 4 终局处理
 
-- Phase 4 优化成功（`improvement_made == true`）→ 以 `optimized_code.py` 为最终结果
-- Phase 4 优化失败（`improvement_made == false`，做完所有尝试后没有效果）→ 以 Phase 3 的 `generated_code.py` 为最终结果
+- 从所有精度全过的候选中按项目 target_policy 选取 best_code（可能是 Phase 3 基线）；最终交付复制 best_code，不得默认取最后一轮 optimized_code.py。交付前对该精确文件重新跑完整精度门并绑定代码哈希，性能数据必须对应同一文件和用例集合。若尚未达到目标，报告实际差距并继续适用的优化分支，不能把某轮有所改善等同于任务达成。
+- 优化分支未改善或失败时仍保留此前已验证的 best_code；只有此前没有候选优于 Phase 3 时，best_code 才是 Phase 3 的 generated_code.py。
 - 两种情况都进入 Phase 5
 
 ---
@@ -901,10 +924,10 @@ while opt_iteration < max_opt_iterations:
 
 **选择最终代码**：
 
-- Phase 4 成功 → `optimized_code.py`
-- Phase 4 失败 → Phase 3 的 `generated_code.py`
+- Phase 4 完成、未改善或分支失败，都使用按项目 target_policy 选取的 `best_code`，保留该精确文件的代码哈希。
+- 对该精确文件重跑完整精度门，将结果记录为 `best_verify_result`；`best_perf_result` 必须绑定同一代码哈希与用例集合，不能改用最后一轮或仅 Phase 3 的结果。
 
-复制最终代码到 `{工作目录}/{op_name}_generated.py`。
+复制 `best_code` 到 `{工作目录}/{op_name}_generated.py`，核对复制前后 SHA256 一致。
 
 **写入 `{工作目录}/report.md`**：
 
@@ -913,7 +936,7 @@ while opt_iteration < max_opt_iterations:
 - **目标加速比**：target_speedup = <从 config.json 读取>，是否达到（target_reached）
 - **实际最佳加速比**：best_speedup（保留 4 位小数）
 - **Shape 通过率（以 verify 为准）**：`passed_cases / total_cases` 必须从
-  `output/iter_{phase3_last_iter}/verify/verify_result.json` 读取。
+  最终 `best_code` 精确哈希绑定的 `best_verify_result` 读取。
   ⚠️ **禁止**从 `perf_result.json` 取 passed_cases —— 后者是"benchmark exec 成功数"
   （进程未崩溃即算 pass），与"精度通过数"语义不同；精度错的 kernel 仍可能 benchmark 成功。
 - **GPU 参考性能**（仅在 GPU Kernel 模式下且找到 `gpu_perf_csv` 时显示）：
@@ -921,8 +944,8 @@ while opt_iteration < max_opt_iterations:
   - Ascend Triton 延迟
   - Ascend/GPU 倍数
 - 性能数据：**延时加权加速比**（保留 4 位小数）、总延时、平均延迟
-- 性能明细：以 verify_result.json 的逐 shape 结果为基准列出 **status**；通过的 shape 再
-  从 `output/perf_result.json`（Phase 4 成功时从 `optimized_perf_result.json`）的
+- 性能明细：以 `best_verify_result` 的逐 shape 结果为基准列出 **status**；通过的 shape 再
+  从同一 `best_code` 哈希和用例集合绑定的 `best_perf_result` 的
   `per_shape_results` 里取该 shape 的 framework / implementation / speedup（保留 4 位小数）；
   失败 shape 在表格中以 `status=fail` 行展示并附 `error_type`，不填延时。
 - 代码路径：`{op_name}_generated.py`
@@ -934,11 +957,11 @@ while opt_iteration < max_opt_iterations:
 **字段取值口径（强制）**：
 
 - `perf_data.passed_cases` / `failed_cases` / `total_cases` 必须从
-  **`output/iter_{phase3_last_iter}/verify/verify_result.json`** 读取（精度通过数）
+  **最终 `best_code` 精确哈希绑定的 `best_verify_result`** 读取（精度通过数）
 - 延时类字段（`avg_latency_ms` / `speedup_vs_torch` / `speedup_vs_baseline`）
-  从 perf_result.json 读取（Phase 4 成功时优先 `optimized_perf_result.json`）
+  从同一 `best_code` 哈希与用例集合绑定的 `best_perf_result` 读取
 - 异常索引字段（`nan_indices` / `inf_indices` / `zero_indices` / `negative_indices` / `none_indices`）
-  从 perf_result.json 同名字段透传
+  从该 `best_perf_result` 同名字段透传
 - `per_shape_results[].status` 以 verify 为准；`speedup_vs_torch` 等延时字段仅对 verify 通过的 shape 填充
 - ⚠️ **禁止**直接把 perf_result.json 顶层 passed_cases 复制到 summary —— perf 的 pass 仅代表 benchmark 进程未崩溃，与精度无关
 
@@ -995,9 +1018,9 @@ while opt_iteration < max_opt_iterations:
 **字段说明**：
 
 - `metric_mode`: 本任务的优化指标模式（`speedup` / `mfu`），透传自 `{工作目录}/metric_mode.txt`，决定 4.6/5 的目标与达标判据口径
-- `target_speedup`: 目标几何平均加速比，读取自 `config.json` 的 `target_speedup` 字段（`metric_mode==speedup` 时生效）
+- `target_speedup`: 按 `target_policy` 解释的目标加速比，读取自 `config.json` 的 `target_speedup` 字段（`metric_mode==speedup` 时生效）
 - `target_mfu`: 目标 MFU（%），读取自 `config.json` 的 `target_mfu` 字段；口径为 dtype 修正实测峰值（`mfu_decompose.json` 的 `mfu_achievable_pct`）(`metric_mode==mfu` 时生效)
-- `target_reached`: 是否达到目标指标（speedup 模式 optimized_speedup >= target_speedup / mfu 模式 optimized_mfu >= target_mfu）
+- `target_reached`: 是否达到目标指标（speedup 模式 evaluate_performance.py 的 target_reached / mfu 模式 optimized_mfu >= target_mfu）
 - `best_speedup`: Phase 4 历史最佳几何平均加速比（speedup 模式）
 - `best_mfu`: Phase 4 历史最佳 MFU（%）（mfu_decompose 的 `mfu_achievable_pct`，mfu 模式）
 - `baseline_mfu`: 4.0b 测定的基线 MFU（%）（mfu 模式，用于评估优化幅度）
@@ -1087,7 +1110,7 @@ Phase 4 有提升但未达目标时：
 }
 ```
 
-Phase 4 失败时（Phase 3 成功，优化无提升）：
+Phase 4 没有任何候选优于 Phase 3 时（best_code 仍为 Phase 3 已验证代码；若曾有更优候选，后续失败不能改选回 Phase 3）：
 
 ```json
 {
@@ -1109,11 +1132,13 @@ Phase 4 失败时（Phase 3 成功，优化无提升）：
 
 **必须在 Phase 5 完成后执行**，将当前 Claude Code 会话归档到工作目录，便于复盘。放在最后是为了最大化 jsonl 完整性——仍会缺失本步骤之后的极少量消息，可接受。
 
-并行批量执行（`run_benchmark_triton.sh --npu-list`）下，多个子进程共用同一个 `/root/.claude/projects/<hash>/` 目录，**必须用工作目录路径精确过滤**，禁止用时间排序（`ls -t | head -1` 会错拿到其它并发子进程的 jsonl）。
+会话导出依据实际宿主。Claude 可读取当前用户的 `$HOME/.claude/projects/`；Codex 等宿主无法取得原始会话时，保存真实工具输出与 `type: codex_phase_event` 的结构化阶段记录，并明确标注为执行追踪，禁止伪造 Claude 原始消息。
+
+并行批量执行（`run_benchmark_triton.sh --npu-list`）下，多个子进程可能共用同一个 Claude projects 目录，**必须用工作目录路径精确过滤**，禁止用时间排序（`ls -t | head -1` 会错拿到其它并发子进程的 jsonl）。
 
 ```bash
 # 用工作目录绝对路径作为唯一标记定位自己的 session jsonl
-MY_JSONL=$(grep -l "{工作目录}" /root/.claude/projects/*/*.jsonl 2>/dev/null | head -1)
+MY_JSONL=$(grep -l "{工作目录}" "$HOME"/.claude/projects/*/*.jsonl 2>/dev/null | head -1)
 if [ -n "$MY_JSONL" ]; then
   cp "$MY_JSONL" {工作目录}/session.jsonl
   python3 workflows/render_session.py \
@@ -1180,16 +1205,16 @@ ${pwd}/triton_ascend_output/op_{op_name}_{timestamp}_{rid}/
 | Phase 1 (模式 B) | `Model` 翻译验证失败      | 修复重试（最多 2 次）                                                                                    |
 | Phase 1          | freeze_baseline.py exit 1 | 锚文件已存在，拒绝重写。审计为何二次 freeze；若确需重 freeze，人工删除锚文件后重跑                        |
 | Phase 1          | freeze_baseline.py exit 2 | `{op_name}.py` 不存在，Phase 1 落盘步骤异常，回退修复                                                     |
-| Phase 1          | freeze_baseline.py exit 3 | mode=user 但未传 `--source_path`，或锚文件写入失败。补全参数或审计 IO 错误                                  |
-| Phase 1          | freeze_baseline.py exit 5 | **场景 B 工作目录副本 sha256 ≠ 源 sha256**——Agent 改写了 benchmark 而不是 cp。正确处理：在 report.md 标注 `baseline_buggy: true` 失败退出，**不要试图重写 baseline 绕过** |
+| Phase 1          | freeze_baseline.py exit 3 | user/oracle-adapter 未传 `--source_path`，或锚文件写入失败。补全参数或审计 IO 错误；不据此标记 baseline_buggy |
+| Phase 1          | freeze_baseline.py exit 5 | **user 副本 sha256 ≠ 源 sha256**，属于复制完整性失败，保持源只读并审计复制过程；不是原始 Model bug。函数式 oracle/缺接口应事先按 oracle-adapter 独立接入，不得重写源或把真实 Model bug 伪装成适配问题 |
 | Phase 3/4        | verify/benchmark exit 3   | **C 类终止任务**，`failure_phase: "phase1_freeze_missing"`。Phase 1 未执行 freeze，流程级 bug，不退回重试 |
 | Phase 3/4        | verify/benchmark exit 4   | **C 类终止任务**，`failure_phase: "baseline_tampered"`。基线被篡改，回滚到 freeze 时状态或人工审计       |
 | Phase 3          | 达到 max_iterations       | 输出失败报告，任务结束                                                                                   |
 | Phase 3          | B 类环境错误              | 立即终止，任务失败                                                                                       |
 | Phase 3          | C 类重复错误              | 立即终止，任务失败                                                                                       |
 | Phase 3/Phase 4  | benchmark.py 超时/被 kill | **严禁编造数据**。降低 --repeats 重试（50→20→10→5），任意值成功即采纳该结果。所有值均超时则标记 B 类错误 |
-| Phase 4          | 无更多优化点 + 无效果     | 以 Phase 3 结果继续                                                                                      |
-| Phase 4          | B 类环境错误              | 终止优化，以 Phase 3 结果继续                                                                            |
+| Phase 4          | 无更多优化点 + 无效果     | 保留已验证的 best_code 继续；没有候选优于 Phase 3 时才是 Phase 3 结果                                      |
+| Phase 4          | B 类环境错误              | 终止优化，保留此前已验证的 best_code 继续                                                                  |
 
 ### L1 闸门触发的失败映射
 
