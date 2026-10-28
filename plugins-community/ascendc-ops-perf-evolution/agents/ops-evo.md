@@ -788,8 +788,8 @@ Supervisor 返回结果处理（4.5.1/4.5.2 共用，仅输出标签不同）：
 1. 读取该变体的修改文件 `output/{op_name}_ops-evo_{timestamp}/{node.solution_ref}/modified_files/op_kernel/` 和 `implementation_note.txt`
 2. 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md`，判断新颖性：该优化手段是否超出现有所有策略的范畴？（不是组合，而是一种新方法论）
 3. **若确认新颖**：
-   a. 列出 `.claude/skills/ascendc-evolution-strategies/references/discovered/disc_X*.md`，确定下一个 X 编号（如 X1、X2…）
-   b. 写入新策略文件 `discovered/disc_X{n}.md`，格式：
+   a. 列出 `$CANNBOT_KNOWLEDGE_ROOT/knowledge/contrib/ascendc/optimizations/evolution_strategies/discovered/disc_x*.md`，确定下一个 X 编号（如 X1、X2…）
+   b. 用 `python3 .claude/skills/ascendc-evolution-strategies/scripts/knowledge_local.py add --id X{n} --file <草稿>` 写入本地 staging，格式：
       ```markdown
       ---
       id: X{n}

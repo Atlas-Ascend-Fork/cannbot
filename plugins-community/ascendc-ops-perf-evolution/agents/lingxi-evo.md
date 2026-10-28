@@ -270,7 +270,7 @@ with open('$EVO_DIR/shared/call_spec.json', 'w') as f:
 
 1. 读取 `output/{op_name}_evo_{timestamp}/shared/model.py` 和 `shared/design/tile_level/`
 2. **必读知识库**: 读取 `.claude/skills/ascendc-evolution-knowledge/references/a3/hardware/guide.md` 和 `a3/optimization_patterns/guide.md`；算子匹配特定族（attention/reduction/elementwise）时额外读取 `a3/algorithm_insights/{family}.md`；`a3/proven_solutions/INDEX.md` 中有同类算子方案时读取对应条目
-3. 分析算子特性: 内存密集型 vs 计算密集型？尾块对齐问题（形状非32字节整数倍）？数据类型特殊处理（FP16/BF16精度）？并读取 `.claude/skills/ascendc-evolution-strategies/references/strategy_index.md` 识别最相关策略
+3. 分析算子特性: 内存密集型 vs 计算密集型？尾块对齐问题（形状非32字节整数倍）？数据类型特殊处理（FP16/BF16精度）？并读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md` 识别最相关策略
 4. **模式B特殊处理**: `baseline_performance` 填入实际测量值（来自步骤3B.3），**必须包含 `time_us` 字段**（ascendc-evolution-report 读取的关键字段）:
    ```json
    "baseline_performance": { "speedup": {baseline_speedup}, "precision_passed": {baseline_precision_passed}, "compilation_success": {baseline_compilation_success}, "time_us": {baseline_time_us} }
@@ -801,11 +801,11 @@ python3 .claude/skills/ascendc-evolution-world-model/scripts/wm_ops.py diagnose 
 对每个满足条件的 open_exploration 节点：
 
 1. 读取该内核代码 `output/{op_name}_evo_{timestamp}/{node.solution_ref}/kernel/` 和 `evaluation_results.json` 中的 `implementation_note`
-2. 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy_index.md` 判断新颖性：该优化手段是否超出现有所有策略的范畴？（不是组合，而是一种新方法论）
-3. **若确认新颖**：列出 `.../references/discovered/disc_X*.md` 确定下一个 X 编号 → 写入新策略文件 `.../discovered/disc_X{n}.md`（格式见下方）→ 在 `strategy_index.md` 末尾追加"探索发现策略"分类条目（已存在则追加到其中）：`| X{n} | {简洁名称} | {一句话描述} |` → 将 `"X{n}"` 追加到 `world_model.json` 的 `discovered_strategies` 列表写回 → 输出 `"[提示] 策略提炼: 发现新策略 X{n} [{名称}]，已写入策略库，后续 strategy_guided 节点可引用"`
+2. 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md` 判断新颖性：该优化手段是否超出现有所有策略的范畴？（不是组合，而是一种新方法论）
+3. **若确认新颖**：列出 `$CANNBOT_KNOWLEDGE_ROOT/knowledge/contrib/ascendc/optimizations/evolution_strategies/discovered/disc_x*.md` 确定下一个 X 编号 → 用 `python3 .claude/skills/ascendc-evolution-strategies/scripts/knowledge_local.py add --id X{n} --file <草稿>` 写入本地 staging（格式见下方；不再直接改知识仓或 strategy-index.md）→ 将 `"X{n}"` 追加到 `world_model.json` 的 `discovered_strategies` 列表写回 → 输出 `"[提示] 策略提炼: 发现新策略 X{n} [{名称}]，已写入策略库，后续 strategy_guided 节点可引用"`
 4. **若非新颖**：输出：`"[INFO] open_exploration 手法与策略 {匹配ID} 相似，跳过提炼"`
 
-**新策略文件格式** (`.../discovered/disc_X{n}.md`)：
+**新策略文件格式**（`knowledge_local.py add` 会落到 `.cannbot/knowledge-local/staging/x{n}.md`）：
 ```markdown
 ---
 id: X{n}

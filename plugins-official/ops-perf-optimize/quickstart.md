@@ -59,7 +59,7 @@ bash /path/to/cannbot/plugins-official/ops-perf-optimize/init.sh project opencod
 
 ### 知识库安装与配置
 
-知识库用于方案设计和实施约束补证，安装方式参考 [ops-perf-evolution 快速入门](../../plugins-community/ops-perf-evolution/quickstart.md)，实际参数以[知识仓当前安装器](https://gitcode.com/cann/cannbot-knowledge/blob/master/install.sh)为准。在同一调优工程中安装 consumer：
+知识库用于方案设计和实施约束补证，安装方式参考 [ascendc-ops-perf-evolution 快速入门](../../plugins-community/ascendc-ops-perf-evolution/quickstart.md)，实际参数以[知识仓当前安装器](https://gitcode.com/cann/cannbot-knowledge/blob/master/install.sh)为准。在同一调优工程中安装 consumer：
 
 ```bash
 # 使用插件已克隆的知识仓；opencode 可换成 claude 或 codex

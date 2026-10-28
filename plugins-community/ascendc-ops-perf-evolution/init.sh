@@ -68,7 +68,12 @@ Arguments:
   tool    - Target tool: "opencode" (default), "claude", "trae", "cursor", or "codearts"
 
 Options:
-  --help  - Show this help message
+  --help                   - Show this help message
+  --knowledge-root <dir>   - cannbot-knowledge 仓根（显式绑定，写入 <project>/.cannbot/knowledge.env）
+  --knowledge-install      - 绑定失败时自动安装 cannbot-knowledge（默认官方 install.sh，需要网络）
+  --knowledge-installer <path|url> - 指定知识仓安装脚本（本地路径或 URL，配合 --knowledge-install）
+  --skills-repo <dir>      - cannbot-skills 仓根（默认 vendor/cannbot-skills 或兄弟检出）
+  --project <dir>          - 写入知识配置的项目根（默认当前目录）
 
 Examples:
   init.sh                      # Project-level, OpenCode
@@ -95,6 +100,11 @@ EOF
 
 LEVEL="project"
 TOOL="opencode"
+KNOWLEDGE_ROOT_ARG=""
+KNOWLEDGE_INSTALL=""
+KNOWLEDGE_INSTALLER="https://raw.gitcode.com/cann/cannbot-knowledge/raw/master/install.sh"
+SKILLS_REPO_ARG=""
+PROJECT_ROOT_ARG="$PWD"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$SCRIPT_DIR"
@@ -102,13 +112,23 @@ PLUGIN_ROOT="$SCRIPT_DIR"
 LOCAL_AGENT_ROOT="$PLUGIN_ROOT/agents"
 # Skills 本体由 cannbot-skills 仓维护（community/ops 五个插件 skill + ops 两个共享 skill），
 # cannbot 仓经 vendor/cannbot-skills 子模块携带同一棵树；独立 cannbot-skills 检出布局作回退。
-if [ -d "$PLUGIN_ROOT/../../vendor/cannbot-skills/community/ops" ]; then
+if [ -n "$SKILLS_REPO_ARG" ]; then
+  SKILLS_REPO_ROOT="$SKILLS_REPO_ARG"
+elif [ -d "$PLUGIN_ROOT/../../vendor/cannbot-skills/community/ops" ]; then
   SKILLS_REPO_ROOT="$PLUGIN_ROOT/../../vendor/cannbot-skills"
+elif [ -d "$PLUGIN_ROOT/../../../cannbot-skills/community/ops" ]; then
+  # 三仓分离布局：cannbot / cannbot-skills / cannbot-knowledge 同级检出
+  SKILLS_REPO_ROOT="$(cd "$PLUGIN_ROOT/../../../cannbot-skills" && pwd)"
 else
   SKILLS_REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd)"
 fi
 COMMUNITY_SKILL_ROOT="$SKILLS_REPO_ROOT/community/ops"
 SHARED_SKILL_ROOT="$SKILLS_REPO_ROOT/ops"
+if [ ! -d "$COMMUNITY_SKILL_ROOT" ] && [ ! -d "$SHARED_SKILL_ROOT" ]; then
+  err "无法定位 cannbot-skills 仓：$SKILLS_REPO_ROOT"
+  echo "       请用 --skills-repo <cannbot-skills 路径> 指定，或检出 vendor/cannbot-skills 子模块。" >&2
+  exit 2
+fi
 # 去重后的 skill 源目录列表（community/ops 优先，避免与 ops/ 同名时被覆盖）
 SKILL_SOURCE_DIRS="$COMMUNITY_SKILL_ROOT $SHARED_SKILL_ROOT"
 
@@ -148,12 +168,21 @@ else
   exit 1
 fi
 
-for arg in "$@"; do
-    case "$arg" in
-        --help)            show_help; exit 0 ;;
-        global|project)    LEVEL="$arg" ;;
-        opencode|claude|trae|cursor|codearts)   TOOL="$arg" ;;
-        *)  echo "Error: Unknown argument '$arg'. Valid: global, project, opencode, claude, trae, cursor, codearts, --help."
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help)             show_help; exit 0 ;;
+        global|project)     LEVEL="$1"; shift ;;
+        opencode|claude|trae|cursor|codearts) TOOL="$1"; shift ;;
+        --knowledge-root)   KNOWLEDGE_ROOT_ARG="$2"; shift 2 ;;
+        --knowledge-install) KNOWLEDGE_INSTALL=1; shift ;;
+        --knowledge-installer) KNOWLEDGE_INSTALLER="$2"; shift 2 ;;
+        --skills-repo)      SKILLS_REPO_ARG="$2"; shift 2 ;;
+        --project)          PROJECT_ROOT_ARG="$2"; shift 2 ;;
+        --knowledge-root=*) KNOWLEDGE_ROOT_ARG="${1#*=}"; shift ;;
+        --knowledge-installer=*) KNOWLEDGE_INSTALLER="${1#*=}"; shift ;;
+        --skills-repo=*)    SKILLS_REPO_ARG="${1#*=}"; shift ;;
+        --project=*)        PROJECT_ROOT_ARG="${1#*=}"; shift ;;
+        *)  echo "Error: Unknown argument '$1'. Valid: global, project, opencode, claude, trae, cursor, codearts, --knowledge-root, --knowledge-install, --knowledge-installer, --skills-repo, --project, --help." >&2
             exit 1 ;;
     esac
 done
@@ -202,6 +231,67 @@ echo "  Tool:      $TOOL"
 echo "  Level:     $LEVEL"
 echo "  Path:      $CONFIG_ROOT"
 echo ""
+
+# --- Knowledge repo binding (cannbot-knowledge) ---
+# 显式绑定优先；未提供时按统一解析链（env / .cannbot / 兄弟检出）尝试。
+# 显式 --knowledge-root 无效 => exit 2（fail-loud）；完全未找到 => 告警但不阻塞安装。
+# --knowledge-install：绑定失败时自动调用知识仓 install.sh（默认官方 URL，可用
+# --knowledge-installer 指定本地路径/URL），安装完成后再绑定。
+KNOWLEDGE_HELPER="$COMMUNITY_SKILL_ROOT/ascendc-evolution-strategies/scripts/knowledge_root.py"
+
+bind_knowledge() {
+    local kr_args=(--project "$PROJECT_ROOT_ARG" --mode consumer --write-env)
+    [ -n "$KNOWLEDGE_ROOT_ARG" ] && kr_args+=(--knowledge-root "$KNOWLEDGE_ROOT_ARG")
+    python3 "$KNOWLEDGE_HELPER" "${kr_args[@]}"
+}
+
+install_knowledge() {
+    local installer="$1" target="$2" tmp=""
+    if [[ "$installer" =~ ^https?:// ]]; then
+        tmp="$(mktemp -t cannbot-knowledge-install.XXXXXX.sh)" || return 1
+        if ! curl -fsSL -o "$tmp" "$installer"; then
+            rm -f "$tmp"; return 1
+        fi
+        installer="$tmp"
+    fi
+    if [ ! -f "$installer" ]; then
+        rm -f "$tmp"; return 1
+    fi
+    bash "$installer" "$TOOL" "$PROJECT_ROOT_ARG" consumer --knowledge-root "$target"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
+if [ -f "$KNOWLEDGE_HELPER" ]; then
+    step "[0/4] Binding knowledge repository..."
+    if bind_knowledge; then
+        ok "knowledge root -> $PROJECT_ROOT_ARG/.cannbot/knowledge.env"
+    else
+        if [ "$KNOWLEDGE_INSTALL" = "1" ]; then
+            KR_TARGET="$KNOWLEDGE_ROOT_ARG"
+            [ -z "$KR_TARGET" ] && KR_TARGET="$HOME/.cannbot/cannbot-knowledge"
+            step "[0/4] Installing knowledge repository -> $KR_TARGET ..."
+            if install_knowledge "$KNOWLEDGE_INSTALLER" "$KR_TARGET"; then
+                KNOWLEDGE_ROOT_ARG="$KR_TARGET"
+                if bind_knowledge; then
+                    ok "knowledge root -> $PROJECT_ROOT_ARG/.cannbot/knowledge.env（新安装）"
+                else
+                    warn "知识仓安装完成但绑定失败，请检查 $KR_TARGET 布局"
+                fi
+            else
+                warn "知识仓自动安装失败（installer=$KNOWLEDGE_INSTALLER）；可手动安装后重跑 init.sh"
+            fi
+        elif [ -n "$KNOWLEDGE_ROOT_ARG" ]; then
+            err "指定的 --knowledge-root 无效：$KNOWLEDGE_ROOT_ARG"
+            exit 2
+        else
+            warn "未找到 cannbot-knowledge，跳过知识配置（可用 --knowledge-root 重新绑定，或 --knowledge-install 自动安装）"
+        fi
+    fi
+else
+    warn "knowledge_root.py 不可用（skills 仓未就绪），跳过知识配置"
+fi
 
 # --- Step 0: Confirmation before installation ---
 step "[0/4] Checking items to be installed..."
@@ -811,7 +901,7 @@ fi
 
 # --- Summary & Quick Start ---
 echo ""
-echo -e "  ${GREEN}${BOLD}✓ CANNBot ops-perf-evolution installed successfully!${NC}"
+echo -e "  ${GREEN}${BOLD}✓ CANNBot ascendc-ops-perf-evolution installed successfully!${NC}"
 echo ""
 echo -e "  ${BOLD}Quick Start:${NC}"
 if [ "$TOOL" = "opencode" ]; then

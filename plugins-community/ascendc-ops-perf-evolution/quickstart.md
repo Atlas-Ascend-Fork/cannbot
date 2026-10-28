@@ -48,17 +48,17 @@ Ascend C 算子性能进化优化模式适用于**已有 AscendC 内核或 ops �
 
 ```bash
 # 注册 marketplace（首次，GitCode 仓库需完整 URL）
-/plugin marketplace add https://gitcode.com/cann/cannbot.git
+/plugin marketplace add https://gitcode.com/cann/cannbot-skills.git
 
 # 安装插件
-/plugin install ops-perf-evolution@cannbot
+/plugin install ascendc-ops-perf-evolution@cannbot
 ```
 
 **方式二：init.sh 脚本**
 
 ```bash
 git clone https://gitcode.com/cann/cannbot.git
-cd cannbot/plugins-community/ops-perf-evolution
+cd cannbot/plugins-community/ascendc-ops-perf-evolution
 bash init.sh project claude     # 项目级
 bash init.sh global claude      # 全局级
 ```
@@ -76,7 +76,7 @@ bash init.sh global claude      # 全局级
 算子路径为 /path/to/ops-nn/softmax/，目标加速比 2x，进化轮数 3，并行数 5
 ```
 
-`ops-perf-evolution` Agent 会调度 `ops-evo` Subagent，直接在 ops 仓库内进行定向优化。
+`ascendc-ops-perf-evolution` Agent 会调度 `ops-evo` Subagent，直接在 ops 仓库内进行定向优化。
 
 #### 场景二：基线内核进化优化
 
@@ -87,7 +87,7 @@ bash init.sh global claude      # 全局级
 目标加速比 3x，进化轮数 3，并行数 5
 ```
 
-CANNBot 会自动调度 `ops-perf-evolution` Agent，由其内部调度 `lingxi-evo` Subagent 执行：
+CANNBot 会自动调度 `ascendc-ops-perf-evolution` Agent，由其内部调度 `lingxi-evo` Subagent 执行：
 1. 解析参数，判断路径类型
 2. 环境检测与设备绑定
 3. 评估基线性能
@@ -189,6 +189,6 @@ bash init.sh --help
 ## 总结
 
 1. 从已有 AscendC 内核或 ops 仓库算子出发，进行多轮并行性能进化优化
-2. 使用 `/plugin install ops-perf-evolution@cannbot` 一键安装，或用 `init.sh` 脚本安装 Claude Code 环境
+2. 使用 `/plugin install ascendc-ops-perf-evolution@cannbot` 一键安装，或用 `init.sh` 脚本安装 Claude Code 环境
 3. 世界模型驱动、证据驱动的策略选择，保证优化方向的可积累性
 4. 产出物包含世界模型、状态游标、各轮变体、最佳方案和 `evolution-report_*.html`

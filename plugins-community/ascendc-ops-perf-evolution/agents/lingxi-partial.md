@@ -85,9 +85,9 @@ Mode: {mode}
 
 - **strategy_guided 模式**（默认）:
   - **优先按 prompt 中 `[Optimization Approach]` 的指引执行**（主 Agent 已将策略要点内联到 `node_description` 中）
-  - 仅当 prompt 中的方向描述不够清晰时，才读取至多 1 个策略文件: `.claude/skills/ascendc-evolution-strategies/references/strategies/XXX.md`
+  - 仅当 prompt 中的方向描述不够清晰时，才读取至多 1 个策略文件: `$CANNBOT_KNOWLEDGE_ROOT/knowledge/contrib/ascendc/optimizations/evolution_strategies/cards/<策略ID小写>_*.md`
   - 若 `strategy_combination` **为空**且 prompt 未给出方向:
-    - 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy_index.md`，自行选择策略
+    - 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md`，自行选择策略
     - 注意与其他并行变体保持策略多样性
   - **兼容性检查**: 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-compatibility.md`，验证选定策略无互斥冲突
 

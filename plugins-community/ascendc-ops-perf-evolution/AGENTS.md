@@ -1,5 +1,5 @@
 ---
-name: ops-perf-evolution
+name: ascendc-ops-perf-evolution
 description: Ascend C 算子性能进化优化工具 CANNBot，对已有 AscendC 内核或 ops 仓库算子进行多轮并行进化优化。
 mode: primary
 skills:
@@ -188,3 +188,18 @@ Ascend C 算子性能进化优化 Orchestrator，负责调度进化 Agent 对已
 | 报告 Skill | `.claude/skills/ascendc-evolution-report` | 报告生成参考 |
 | 知识库 Skill | `.claude/skills/ascendc-evolution-knowledge` | 优化知识参考 |
 | NPU 架构 Skill | `ops/npu-arch` | 硬件能力查询参考（含芯片规格，数据源为 CANN 包 platform_config 与白皮书） |
+
+---
+
+## 知识使用 Trace（强制步骤）
+
+为使"知识仓被有效检索利用"与"local-first 本地知识库"可审计，进化会话必须落盘知识使用 trace：
+
+- **每个 round checkpoint 与会话完成时**，执行：
+  ```bash
+  python3 .claude/skills/ascendc-evolution-strategies/scripts/knowledge_trace.py \
+    --evo-dir "$EVO_DIR" --since <会话启动时间> --projects-filter ascendc-ops-perf-evolution \
+    --out "$EVO_DIR/knowledge_trace.md"
+  ```
+- 汇报结果时必须给出该文件路径，并列出：检索到的卡片/playbook、本地 staging 命中、窗口内新入 staging 的自进化策略、知识仓写入数（必须为 0）。
+- 若脚本判定 `retrieval=NO-EVIDENCE` 或 `repo_writes>0`，视为流程异常：前者需检查知识仓绑定，后者违反 local-first 纪律，必须停止并上报。
