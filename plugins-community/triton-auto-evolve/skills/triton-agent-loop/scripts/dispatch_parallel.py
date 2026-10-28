@@ -40,6 +40,12 @@ ROUTE_PROMPT = "Read .task_manifest.json in your working directory and execute i
 # 以 allowlist 最小授权文件与 Bash 工具; 越权兜底仍由 PreToolUse guard(worker 模式)承担。
 ROUTE_ALLOWED_TOOLS = "Read,Edit,Write,MultiEdit,Glob,Grep,Bash,TodoWrite"
 
+# route 子 CLI 的模型：写死 "claude-sonnet-4-6" 会在只提供别的模型的网关/环境里直接失败。
+# 默认跟随环境（TRITON_ROUTE_MODEL / CANNBOT_ROUTE_MODEL），都没设置就继承 claude 自身默认。
+DEFAULT_ROUTE_MODEL = (
+    os.environ.get("TRITON_ROUTE_MODEL") or os.environ.get("CANNBOT_ROUTE_MODEL") or ""
+)
+
 # B5: AGENTS.md 同样三 route 一字节相同（会进 system prompt，含 route_id 同样
 # 从第 1 token 分叉缓存）。每次派发重写，覆盖旧版含 route_id 的残留文件。
 AGENTS_MD_TEXT = """---
@@ -85,8 +91,9 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true",
                         help="只解析并打印每 route 的生效超时与启动延迟，不实际派发（A6/I2 验证通道）")
     parser.add_argument("--output", type=str, default=None, help="结果输出 JSON 文件路径，默认写入第一个 manifest 的 work_dir 同级")
-    parser.add_argument("--model", type=str, default="claude-sonnet-4-6",
-                        help="route 子 CLI 模型（默认 claude-sonnet-4-6）")
+    parser.add_argument("--model", type=str, default=DEFAULT_ROUTE_MODEL,
+                        help="route 子 CLI 模型（默认取 TRITON_ROUTE_MODEL/CANNBOT_ROUTE_MODEL；"
+                             "都未设置则继承 claude 自身默认）")
     return parser.parse_args()
 
 
@@ -140,7 +147,7 @@ class RouteRunCtx:
     work_dir: Path
     manifest: dict
     effective_timeout: int
-    model: str = "claude-sonnet-4-6"
+    model: str = DEFAULT_ROUTE_MODEL
 
 
 def _collect_route_success(proc, start_time, ctx: RouteRunCtx) -> dict:
@@ -164,11 +171,15 @@ def _collect_route_success(proc, start_time, ctx: RouteRunCtx) -> dict:
     return result
 
 
-def _launch_route(work_dir: Path, model: str = "claude-sonnet-4-6") -> subprocess.Popen:
+def _launch_route(work_dir: Path, model: str = DEFAULT_ROUTE_MODEL) -> subprocess.Popen:
     """Launch the route sub CLI (--allowedTools 白名单授权, 见 ROUTE_ALLOWED_TOOLS 注记)."""
+    command = ["claude", "--print", "--output-format", "json",
+               "--allowedTools", ROUTE_ALLOWED_TOOLS]
+    if model:
+        command += ["--model", model]
+    command.append(ROUTE_PROMPT)
     return subprocess.Popen(
-        ["claude", "--print", "--output-format", "json",
-         "--allowedTools", ROUTE_ALLOWED_TOOLS, "--model", model, ROUTE_PROMPT],
+        command,
         cwd=str(work_dir),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -232,7 +243,7 @@ def run_single_route(
     tier_timeouts: dict[str, int | None] | None = None,
     start_delay: float = 0.0,
     partial_dir: Path | None = None,
-    model: str = "claude-sonnet-4-6",
+    model: str = DEFAULT_ROUTE_MODEL,
 ) -> dict:
     """启动单个 route 子 CLI 并等待其完成。"""
     manifest_path = Path(manifest_path).resolve()

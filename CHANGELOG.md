@@ -6,6 +6,51 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 
 ### Added
 
+- Installers now prepare the knowledge base for use: both the unified installer and
+  `triton-auto-evolve/init.sh` build the retrieval index (`search/okf.index.json`, ~50s,
+  ~310MB) right after cloning `cannbot-knowledge`, instead of leaving the first query to
+  pay for it (and instead of failing with "knowledge base root does not look ready" on
+  the old code). Failures degrade to a warning and the next query retries;
+  `CANNBOT_SKIP_KNOWLEDGE_INDEX=1` skips the step and `CANNBOT_REBUILD_KNOWLEDGE_INDEX=1`
+  forces a rebuild.
+- `triton-auto-evolve/init.sh` generates a project-level `config.json` after a
+  project-level install (`target_mfu=60`, `max_rounds=2`), with `npu_idle` thresholds
+  probed from the current machine and `npu_device_id` pinned to a free card when
+  `npu-smi` answers (falling back to `TRITON_NPU_DEVICE_ID`, then to auto-selection).
+  Without it the orchestrator fell back to `DEFAULT_CONFIG` (`max_rounds=10`,
+  `npu_idle.hbm=10`), which marks every card busy on a shared machine and fails round 1.
+- `triton-auto-evolve/init.sh` installs only `triton-auto-evolve` itself. It no longer
+  provisions `triton-op-generator`: `--with-op-generator` now fails with a hint to run that
+  plugin's own installer, and `--no-op-generator` is accepted as a no-op. The orchestration
+  flow already reaches the same shared ops Skills, while co-installing costs a second
+  knowledge clone and index (~310MB), grows the project instructions file from 18KB to
+  97KB, and registers op-generator's PreToolUse baseline guard for every CLI in that
+  project.
+
+
+
+### Fixed
+
+- `dispatch_parallel.py` hard-coded `--model claude-sonnet-4-6` in the CLI default, in
+  `RouteRunCtx` and in `_launch_route`, so `gene-fusion` route workers failed outright on
+  gateways that only serve other models. The default now comes from
+  `TRITON_ROUTE_MODEL` / `CANNBOT_ROUTE_MODEL`, and when neither is set the `--model` flag
+  is omitted so the CLI inherits its own default; the route prompt is still passed
+  positionally after the optional model flag.
+- `triton-op-generator/plugin-sources.json` and `triton-auto-evolve/plugin-sources.json`
+  now declare `ops/triton-mfu-analyzer`. Both agents require that Skill for MFU
+  measurement (`Phase 4` / metric_mode=mfu), but it was never installed, so agents
+  reported "there's no triton-mfu-analyzer" and fell back to ad-hoc measurement tooling.
+- `config_loader.py` normalises `target_mfu` to `target_speedup`, and `check_npu_idle.py`
+  honours `TRITON_NPU_SMI_TIMEOUT` (default unchanged at 10s): on a busy machine
+  `npu-smi info -m` can take over 20s, which made every device look unusable and aborted
+  the round with `NpuIdleCheckError`.
+
+### Changed
+
+- `triton-auto-evolve/init.sh` defaults to the `claude` client, so `init.sh project` alone
+  produces the Claude Code layout (`CLAUDE.md`, `.claude/`); `opencode`, `trae`, `cursor`
+  and `copilot` remain available as an explicit second argument.
 - Added the `ops-direct-invoke-flash` plugin (migrated from the cannbot-skills repository): end-to-end construction of a brand-new Ascend C kernel from a CPU function, a mathematical formula, a code fragment, or a text description, covering environment probing, definition and design documents, incremental implementation, on-device NPU verification, and wrap-up documentation; `AscendC::Reg` code is generated natively when the target is Ascend950 / `dav-3510`. The entry Skill `ops-direct-invoke-flash` ships inside the plugin with its own hooks, references, scripts, and the `add`/`mul`/`sqrt` reference operators; `ascendc-st-design` and `ascendc-whitebox-design` are sourced from `vendor/cannbot-skills` via `plugin-sources.json`, which sets `preserveSkillInvocationPolicy` so the bundler leaves the entry Skill's `disable-model-invocation: true` intact and an npm install behaves like a source install. The three reference operators moved from the plugin root to `skills/ops-direct-invoke-flash/operators/` so they remain reachable through `${CLAUDE_SKILL_DIR}` after installation; `AGENTS.md` gained a `name` and is declared in `agents`, so it installs as the `direct-invoke-flash` primary agent alongside the `ops-direct-invoke-flash-reviewer` subagent. The plugin's self-contained 322-line `init.sh` is replaced by the shared thin source adapter: the cursor/copilot/codearts targets and global-level installation are no longer offered, and installs are recorded in the shared `cannbot-plugin.json` registry instead of the per-tool `cannbot-manifest.json` the old installer wrote. The shared installer splices `AGENTS.md` into a marker block instead of symlinking it as the project instruction file, which left the old fixed `parents[3]` lookup in `validate_test_gate.py` unable to find any config once installed, silently forcing `harness.test_gate` to `off`; the validator now locates its own `<!-- cannbot:ops-direct-invoke-flash:start -->` block wherever it sits in the file (the installer appends it after existing content, and other plugins splice their own), accepts `CLAUDE.md` as well as `AGENTS.md`, and resolves the config file — not merely its directory — as the nearest one actually declaring `harness.test_gate` at or above `--operator-doc-dir`, falling back to its own plugin directory. The upward search stops at the project root (`.git`/`.cannbot`) so a user-level config cannot supply the switch, and ignores the operator doc directory, which the workflow writes into. A resolution miss is now a gate failure (`config_not_found`, exit 1) instead of a silent `off`, and the file the setting came from is printed.
 - Added the `ops-perf-optimize` plugin (migrated from the cannbot-skills repository): end-to-end AscendC operator performance tuning through the five-stage workflow (baseline evaluation, preparation, diagnostic analysis, implementation verification, post-processing), with project extraction and restoration, precision gates, generalization tuning, and per-case regression protection. Its nine workflow Skills ship inside the plugin; seventeen shared AscendC Skills plus the `knowledge-query` Skill are sourced from `vendor/cannbot-skills` via `plugin-sources.json`. The cannbot-knowledge knowledge base, `asc-devkit`, and `cann-samples` are declared in `plugin-install.json` and cloned under `.cannbot/dependencies/ops-perf-optimize/` (asc-devkit/cann-samples exposed at the project root); scheme design (analysis) and scheme implementation consume KB cards through the `KB_ROOT` dispatch-envelope field — citing `kb_cards` doc-ids in the analysis report and `scheme-conformance.json`, degrading to `kb_unavailable` when the knowledge base is absent; the installer replaces the previous self-contained `init.sh`.
 - Added the `triton-op-generator` plugin (migrated from the cannbot-skills repository): Triton-Ascend operator generation and optimization in Phase 0-7 direct-execution mode. Its eight triton Skills plus `knowledge-query`/`ops-knowledge-ingest` are sourced from `vendor/cannbot-skills` via `plugin-sources.json`; the cannbot-knowledge knowledge base is auto-cloned at install time via `plugin-install.json`; the baseline guard hook uses the standard `hooks/hooks.json` layout; all knowledge cards are served from cannbot-knowledge.
@@ -64,6 +109,31 @@ This file records notable changes to the CANNBot plugin orchestration and delive
   It adapted a Stanford KernelBench task, and the step 4 bullet in that skill's
   `SKILL.md` which pointed at it is removed with it; `linear_softplus.py` remains as
   the reference example for that step.
+
+### Fixed
+
+- A clean install could leave `knowledge-query` installed but unusable, so agents ran on
+  the skeleton path while the knowledge base sat unused in the project. The retrieval
+  index is built lazily on first query, but that auto-build — and the rebuild after the
+  index goes stale — was gated by a stricter rule than root discovery uses, so
+  `cannbot-knowledge` checkouts provisioned by `plugin-install.json` (which carry only
+  `ops/` + `index.md`) were rejected with "does not look ready". The fix lives in
+  `cannbot-skills` (`knowledge-query`: three readiness checks now share one trust rule);
+  the `vendor/cannbot-skills` gitlink will be bumped to the merged commit in a follow-up,
+  and this entry records the user-visible behaviour change. `triton-op-generator`'s
+  quickstart now states that the index is built lazily on first query rather than at
+  install time, so the one-off ~50s cost is not mistaken for a hang.
+
+### Fixed
+
+- `triton-auto-evolve`'s `init.sh` resolved the shared Skills from the
+  `vendor/cannbot-skills` gitlink, so a fresh clone installed whatever commit the gitlink
+  pinned instead of the current branch: users got stale Skills and a stale
+  `knowledge-query` even after the Skills repository had moved. It now resolves the shared
+  checkout the way the unified installer does — explicit `--skills <path|SHA>` first,
+  otherwise the latest commit of the same-named remote branch (falling back to `master`),
+  failing loudly instead of silently installing the pinned revision — and prints the
+  resolved revision so staleness is visible at install time.
 
 ### Changed
 

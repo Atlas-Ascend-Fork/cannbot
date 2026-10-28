@@ -223,6 +223,12 @@ def read_config(cwd: Path | None = None) -> dict[str, Any]:
         if key not in config:
             config[key] = value
 
+    # target_mfu 是 MFU 任务的显式目标（百分数）。orchestrator 内部统一用
+    # target_speedup 承载目标值，这里把 target_mfu 归一化过去，避免在 config.json
+    # 里写 target_mfu=60 却被 DEFAULT_CONFIG 的 target_speedup=5 覆盖。
+    if config.get("target_mfu") is not None and "target_speedup" not in config:
+        config["target_speedup"] = config["target_mfu"]
+
     return config
 
 

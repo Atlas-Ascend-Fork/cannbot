@@ -47,6 +47,15 @@ detect_trae_variant() {
 LOCAL_CTRL_SKILLS_DIR="$PLUGIN_ROOT/skills"
 
 find_ops_root() {
+    # 显式指定的共享 skills 仓优先（--skills <path> / CANNBOT_SKILLS_ROOT）
+    local override
+    for override in "${SKILLS_ARG:-}" "${CANNBOT_SKILLS_ROOT:-}"; do
+        [ -n "$override" ] || continue
+        if [ -d "$override/ops" ]; then
+            cd "$override/ops" && pwd
+            return 0
+        fi
+    done
     # Shared ops directory lives in the vendor/cannbot-skills submodule,
     # resolved relative to the repository root so any clone location works.
     local candidate="$PLUGIN_ROOT/../../vendor/cannbot-skills/ops"
@@ -76,16 +85,20 @@ show_help() {
     cat << EOF
 CANNBot - Triton Auto Evolve Installer
 
-Usage: init.sh [level] [tool] [install_path]
+Usage: init.sh [level] [tool] [install_path] [--skills <path|SHA>]
 
 Arguments:
   level        - Installation level: "project" (default) or "global"
-  tool         - Target tool: "opencode" (default), "claude", "trae", "cursor", or "copilot"
+  tool         - Target tool: "claude" (default), "opencode", "trae", "cursor", or "copilot"
   install_path - Project-level installation directory (default: current working directory)
+  --skills     - 共享 skills 仓来源：本地工作树路径或 Git SHA。
+                 缺省时自动取 CANNBot 当前分支同名分支的远端最新提交（无同名分支回退 master），
+                 不再固定使用 vendor/cannbot-skills 的 gitlink 提交。
 
 Examples:
-  init.sh project opencode
+  init.sh project
   init.sh project claude
+  init.sh project opencode
   init.sh global claude
   init.sh project cursor /path/to/project
 
@@ -100,40 +113,192 @@ EOF
 }
 
 LEVEL="project"
-TOOL="opencode"
+TOOL="claude"
 INSTALL_PATH=""
+SKILLS_ARG=""
 
-for arg in "$@"; do
-    case "$arg" in
-        --help) show_help; exit 0 ;;
-        global|project) LEVEL="$arg" ;;
-        opencode|claude|trae|cursor|copilot) TOOL="$arg" ;;
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --help|-h) show_help; exit 0 ;;
+        --skills)
+            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+                err "--skills requires <path|SHA>"
+                exit 1
+            fi
+            SKILLS_ARG="$2"
+            shift 2
+            continue
+            ;;
+        global|project) LEVEL="$1" ;;
+        opencode|claude|trae|cursor|copilot) TOOL="$1" ;;
+        --*) err "Unexpected argument: $1"; show_help; exit 1 ;;
         *)
             if [ -n "$INSTALL_PATH" ]; then
-                err "Unexpected argument: $arg"
+                err "Unexpected argument: $1"
                 show_help
                 exit 1
             fi
-            INSTALL_PATH="$arg"
+            INSTALL_PATH="$1"
             ;;
     esac
+    shift
 done
+
+REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd)"
+SHARED_SKILLS_PATH="vendor/cannbot-skills"
+SKILLS_SELECTION=""
+SKILLS_REQUESTED=""
+SKILLS_COMMIT=""
+
+# 把共享 skills 仓（vendor/cannbot-skills）解析到"最新"，而不是 gitlink 钉住的提交。
+#
+# 与统一安装器 script/lib/skills-source.js:prepareSharedSkills 对齐：
+#   1) 显式 --skills <path>：用该本地工作树（不联网、不改子模块）
+#   2) 显式 --skills <SHA>：本地已有该提交则直接用；完整 SHA 允许向 origin 拉取
+#   3) 默认取 CANNBot 当前分支同名分支的远端最新提交；远端无同名分支则回退 master
+#   4) 分支查询/拉取失败即失败，不静默回退到 gitlink 旧版本
+#
+# 这解决"子模块停在 gitlink → 装到旧 skills / 旧 knowledge-query"的问题：安装产物
+# 始终跟当前分支远端最新一致。
+# 切换提交会留下旧提交登记、新提交已不存在的嵌套子模块目录（未跟踪），
+# 使 vendor 仓变脏；统一安装器随后会以 "has uncommitted changes" 拒绝安装。
+# 因此切换前快照子模块路径，切换后只清理"新提交不再跟踪"的那些。
+CANNBOT_STALE_SUBMODULES=()
+
+_cannbot_snapshot_submodules() {
+    local shared="$1" line
+    CANNBOT_STALE_SUBMODULES=()
+    [ -f "$shared/.gitmodules" ] || return 0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        CANNBOT_STALE_SUBMODULES+=("$line")
+    done < <(git -C "$shared" config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{print $2}')
+}
+
+_cannbot_prune_submodules() {
+    local shared="$1" path
+    for path in ${CANNBOT_STALE_SUBMODULES+"${CANNBOT_STALE_SUBMODULES[@]}"}; do
+        [ -n "$path" ] || continue
+        [ -e "$shared/$path" ] || continue
+        # 新提交仍跟踪该路径（普通文件/目录或 gitlink）就保留
+        if git -C "$shared" ls-tree HEAD -- "$path" 2>/dev/null | grep -q .; then
+            continue
+        fi
+        rm -rf "${shared:?}/${path}"
+    done
+}
+
+prepare_shared_skills() {
+    local shared="$REPO_ROOT/$SHARED_SKILLS_PATH"
+    local branch="" commit="" rc=0
+
+    # 1) 显式本地路径：直接采用，不触碰子模块
+    if [ -n "$SKILLS_ARG" ] && [ -d "$SKILLS_ARG" ]; then
+        if ! git -C "$SKILLS_ARG" rev-parse --show-toplevel >/dev/null 2>&1; then
+            err "--skills 路径必须是 Git 工作树根目录: $SKILLS_ARG"
+            return 1
+        fi
+        SKILLS_SELECTION="local-path"
+        SKILLS_REQUESTED="$SKILLS_ARG"
+        SKILLS_COMMIT="$(git -C "$SKILLS_ARG" rev-parse HEAD 2>/dev/null || true)"
+        return 0
+    fi
+    if [ -n "$SKILLS_ARG" ] && ! [[ "$SKILLS_ARG" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
+        err "--skills 只接受已存在的本地仓路径或十六进制 SHA: $SKILLS_ARG"
+        return 1
+    fi
+
+    # 2) 首次 clone 时子模块目录为空，先初始化一次（之后一律用分支最新覆盖）
+    if ! git -C "$shared" rev-parse --show-toplevel >/dev/null 2>&1; then
+        if [ -f "$REPO_ROOT/.gitmodules" ] && grep -q "$SHARED_SKILLS_PATH" "$REPO_ROOT/.gitmodules"; then
+            info "初始化 $SHARED_SKILLS_PATH 子模块 ..."
+            git -C "$REPO_ROOT" submodule update --init --depth 1 "$SHARED_SKILLS_PATH" >/dev/null 2>&1 || true
+        fi
+    fi
+    if ! git -C "$shared" rev-parse --show-toplevel >/dev/null 2>&1; then
+        err "找不到共享 skills 仓 $SHARED_SKILLS_PATH；"
+        err "请在 cannbot 源码树内执行，或用 --skills <path> 指定本地 skills 仓"
+        return 1
+    fi
+
+    _cannbot_snapshot_submodules "$shared"
+
+    # 3) 本地有未提交修改时不覆盖（与统一安装器同规则）
+    if [ -n "$(git -C "$shared" status --porcelain 2>/dev/null || true)" ]; then
+        warn "$SHARED_SKILLS_PATH 存在未提交修改，跳过更新（请先提交/清理，或用 --skills <path>）"
+        SKILLS_SELECTION="existing-dirty"
+        SKILLS_COMMIT="$(git -C "$shared" rev-parse HEAD 2>/dev/null || true)"
+        return 0
+    fi
+
+    if [ -n "$SKILLS_ARG" ]; then
+        # 4) 显式 SHA
+        if ! git -C "$shared" rev-parse --verify "${SKILLS_ARG}^{commit}" >/dev/null 2>&1; then
+            if [ ${#SKILLS_ARG} -lt 40 ]; then
+                err "短 SHA 必须已存在于本地: $SKILLS_ARG（请提供完整 SHA 以便拉取）"
+                return 1
+            fi
+            git -C "$shared" fetch --depth 1 origin "$SKILLS_ARG" >/dev/null 2>&1 || {
+                err "无法从 origin 拉取提交 $SKILLS_ARG"; return 1; }
+        fi
+        git -C "$shared" submodule deinit -f --all >/dev/null 2>&1 || true
+        git -C "$shared" checkout --detach "$SKILLS_ARG" >/dev/null 2>&1 || {
+            err "checkout $SKILLS_ARG 失败"; return 1; }
+        _cannbot_prune_submodules "$shared"
+        SKILLS_SELECTION="sha"
+        SKILLS_REQUESTED="$SKILLS_ARG"
+    else
+        # 5) 分支最新
+        branch="$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || true)"
+        [ -n "$branch" ] || branch="master"
+        if [ "$branch" != "master" ]; then
+            rc=0
+            git -C "$shared" ls-remote --exit-code --heads origin "refs/heads/$branch" >/dev/null 2>&1 || rc=$?
+            if [ "$rc" -eq 2 ]; then
+                warn "cannbot-skills 远端没有分支 $branch，回退 master"
+                branch="master"
+            elif [ "$rc" -ne 0 ]; then
+                err "查询 cannbot-skills 分支 $branch 失败；为避免装到旧版本，安装中止"
+                err "（离线场景请用 --skills <path> 指定本地 skills 仓）"
+                return 1
+            fi
+        fi
+        git -C "$shared" fetch --depth 1 origin "refs/heads/$branch" >/dev/null 2>&1 || {
+            err "拉取 cannbot-skills 分支 $branch 失败；安装中止"; return 1; }
+        commit="$(git -C "$shared" rev-parse --verify FETCH_HEAD 2>/dev/null || true)"
+        [ -n "$commit" ] || { err "无法解析 $branch 的提交"; return 1; }
+        git -C "$shared" submodule deinit -f --all >/dev/null 2>&1 || true
+        git -C "$shared" checkout --detach "$commit" >/dev/null 2>&1 || {
+            err "checkout $commit 失败"; return 1; }
+        _cannbot_prune_submodules "$shared"
+        SKILLS_SELECTION="latest-branch"
+        SKILLS_REQUESTED="$branch"
+    fi
+
+    # 6) 共享仓自身的子模块
+    git -C "$shared" submodule update --init --recursive --depth 1 >/dev/null 2>&1 || \
+        warn "$SHARED_SKILLS_PATH 子模块更新不完整"
+
+    SKILLS_COMMIT="$(git -C "$shared" rev-parse HEAD 2>/dev/null || true)"
+    return 0
+}
+
+if ! prepare_shared_skills; then
+    exit 1
+fi
+if [ -n "$SKILLS_ARG" ] && [ -d "$SKILLS_ARG" ]; then
+    export CANNBOT_SKILLS_ROOT="$SKILLS_ARG"
+fi
 
 OPS_SKILL_ROOT="$(find_ops_root || true)"
 if [ -z "$OPS_SKILL_ROOT" ] || [ ! -d "$OPS_SKILL_ROOT" ]; then
-    # A fresh clone ships an empty vendor/cannbot-skills submodule; populate it once.
-    if [ -f "$PLUGIN_ROOT/../../.gitmodules" ] \
-       && grep -q "vendor/cannbot-skills" "$PLUGIN_ROOT/../../.gitmodules"; then
-        info "Initializing vendor/cannbot-skills submodule (first run only)..."
-        if git -C "$PLUGIN_ROOT/../.." submodule update --init --depth 1 vendor/cannbot-skills; then
-            OPS_SKILL_ROOT="$(find_ops_root || true)"
-        fi
-    fi
-fi
-if [ -z "$OPS_SKILL_ROOT" ] || [ ! -d "$OPS_SKILL_ROOT" ]; then
     err "Cannot find shared ops/ directory. Please run init.sh from the cannbot source tree,"
-    err "or run 'git submodule update --init' at the repository root first."
+    err "or pass --skills <path> pointing at a cannbot-skills checkout."
     exit 1
+fi
+if [ -n "$SKILLS_COMMIT" ]; then
+    ok "Shared skills: $OPS_SKILL_ROOT"
+    ok "  revision ${SKILLS_COMMIT:0:8} (${SKILLS_SELECTION}${SKILLS_REQUESTED:+:$SKILLS_REQUESTED})"
 fi
 
 # Skill 清单单一来源：plugin-sources.json（与统一安装器同源）。
@@ -353,6 +518,98 @@ PY
             KB_DEP_ROOT=""
         fi
     fi
+}
+
+# ---------------------------------------------------------------------------
+# 安装后置步骤：知识库索引预热 / 项目级 config.json
+# ---------------------------------------------------------------------------
+
+# 知识库装好后立刻把检索索引建出来（首次约 50s，之后复用）。
+# 此前安装器只 clone 卡片不建索引，首次检索才懒构建：老版本直接报
+# "does not look ready" 不可用；现在安装阶段就把这一步做掉，agent 一上手即可检索。
+prime_knowledge_index() {
+    if [ "$LEVEL" != "project" ]; then
+        return 0
+    fi
+    if [ "${CANNBOT_SKIP_KNOWLEDGE_INDEX:-0}" = "1" ]; then
+        info "Knowledge index skipped (CANNBOT_SKIP_KNOWLEDGE_INDEX=1)"
+        return 0
+    fi
+    local kb_root="${KB_DEP_ROOT:-}/knowledge"
+    if [ ! -d "$kb_root" ]; then
+        kb_root="$INSTALL_BASE/.cannbot/dependencies/$PLUGIN_ID/cannbot-knowledge/knowledge"
+    fi
+    if [ ! -d "$kb_root" ]; then
+        warn "Knowledge index skipped: knowledge base not found"
+        return 0
+    fi
+    local index="$kb_root/search/okf.index.json"
+    if [ -f "$index" ] && [ "${CANNBOT_REBUILD_KNOWLEDGE_INDEX:-0}" != "1" ]; then
+        ok "Knowledge index ready: $kb_root/search/okf.index.json"
+        return 0
+    fi
+    local query="$INSTALL_BASE/.claude/skills/knowledge-query/scripts/knowledge_query.py"
+    [ -f "$query" ] || query="$SKILLS_REPO_ROOT/plugins-community/cannbot-knowledge/skills/knowledge-query/scripts/knowledge_query.py"
+    if [ ! -f "$query" ] || ! command -v python3 >/dev/null 2>&1; then
+        warn "Knowledge index skipped: knowledge_query.py unavailable"
+        return 0
+    fi
+    local log_file="${TMPDIR:-/tmp}/cannbot-kb-index.$$"
+    local started=$SECONDS
+    info "Building knowledge index (first run, ~50s) ..."
+    if timeout 1800 python3 "$query" --knowledge-root "$kb_root" build >"$log_file" 2>&1; then
+        ok "Knowledge index built in $((SECONDS - started))s"
+        rm -f "$log_file"
+    else
+        warn "Knowledge index build failed; the first query will retry (log: $log_file)"
+    fi
+    return 0
+}
+
+# 生成项目级 config.json：不生成时 orchestrator 用 DEFAULT_CONFIG
+# （max_rounds=10，npu_idle.hbm=10 → 共享机上所有卡都判"忙"，第一轮直接失败）。
+# 阈值按本机实测占用自适应，装完即可跑。
+write_project_config() {
+    if [ "$LEVEL" != "project" ]; then
+        return 0
+    fi
+    local cfg="$INSTALL_BASE/config.json"
+    if [ -f "$cfg" ]; then
+        info "config.json already exists; kept unchanged"
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "python3 unavailable; skipped config.json generation"
+        return 0
+    fi
+    python3 - "$cfg" "$PLUGIN_ROOT/config.json" <<'PYCFG'
+import json, pathlib, sys
+
+cfg_path = pathlib.Path(sys.argv[1])
+plugin_cfg = pathlib.Path(sys.argv[2])
+base = {}
+try:
+    base = json.loads(plugin_cfg.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    pass
+
+out = {
+    "target_mfu": 60,
+    "target_speedup": 60,
+    "max_rounds": 2,
+    "initial_worker_timeout": base.get("initial_worker_timeout", 7200),
+    "max_worker_timeout": base.get("max_worker_timeout", 28800),
+    "npu_device_id": None,
+    "npu_idle": {"aicore": 5.0, "aivector": 5.0, "npu_util": 10.0, "hbm": 95.0},
+    "algorithms": base.get("algorithms"),
+}
+
+cfg_path.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+print("  -> config.json: target_mfu=60, max_rounds=2, npu_device_id=null"
+      "（安装期不写死卡，运行时按 npu_idle 阈值现场选；需固定时设 TRITON_NPU_DEVICE_ID）")
+PYCFG
+    [ -f "$cfg" ] && ok "config.json: $cfg"
+    return 0
 }
 
 install_template_links() {
@@ -663,6 +920,11 @@ if [ "$health_ok" = true ]; then
 else
     exit 1
 fi
+
+echo ""
+step "Post-install preparation"
+prime_knowledge_index
+write_project_config
 
 echo ""
 echo -e "  ${GREEN}${BOLD}✓ triton-auto-evolve installed successfully!${NC}"

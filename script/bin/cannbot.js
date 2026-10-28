@@ -993,6 +993,49 @@ function installNativeHooks(pluginDir, target, tool, assets) {
   return null;
 }
 
+function primeKnowledgeIndex(provisioned, target) {
+  // 安装器只负责把 cannbot-knowledge 的卡片 clone 下来，检索索引要靠 knowledge-query
+  // 自己 build。此前没人做这一步：老版本安装完首次检索直接报 "does not look ready"
+  // 不可用；即使有自愈也要等第一次查询 50s。这里在安装阶段就把索引建好。
+  if (process.env.CANNBOT_SKIP_KNOWLEDGE_INDEX === "1") {
+    console.log("Skipping knowledge index priming (CANNBOT_SKIP_KNOWLEDGE_INDEX=1)");
+    return null;
+  }
+  // provisioned[].path 是相对 target 的路径（.cannbot/dependencies/...），必须显式拼 target，
+  // 否则 existsSync 会按 process.cwd() 解析而静默跳过。
+  const knowledge = provisioned.find((entry) => basename(entry.path) === "cannbot-knowledge");
+  if (!knowledge) return null;
+  const root = join(target, knowledge.path, "knowledge");
+  if (!existsSync(root)) return null;
+  const indexPath = join(root, "search", "okf.index.json");
+  if (existsSync(indexPath) && process.env.CANNBOT_REBUILD_KNOWLEDGE_INDEX !== "1") {
+    console.log(`  knowledge index: ready (${relative(target, indexPath)})`);
+    return indexPath;
+  }
+  const query = [
+    join(target, ".claude", "skills", "knowledge-query", "scripts", "knowledge_query.py"),
+    join(knowledge.path, "skills", "knowledge-query", "scripts", "knowledge_query.py"),
+  ].find((candidate) => existsSync(candidate));
+  if (!query) {
+    console.warn("  knowledge index: knowledge_query.py not found; skipped");
+    return null;
+  }
+  console.log("  knowledge index: building (first run, ~50s) ...");
+  const started = Date.now();
+  const result = spawnSync("python3", [query, "--knowledge-root", root, "build"], {
+    encoding: "utf8",
+    cwd: target,
+    timeout: 1800000,
+  });
+  if (result.status === 0) {
+    console.log(`  knowledge index: built in ${Math.round((Date.now() - started) / 1000)}s`);
+    return indexPath;
+  }
+  const detail = (result.stderr || "").trim().split("\n").pop() || `exit ${result.status}`;
+  console.warn(`  knowledge index: build failed (${detail}); the first query will retry`);
+  return null;
+}
+
 function install(options) {
   const sourceRoot = options.source ?? process.env.CANNBOT_SOURCE_ROOT ?? process.env.CANNBOT_SKILLS_PATH;
   const sourceRepositoryRoot = sourceRoot ? resolve(sourceRoot) : null;
@@ -1089,6 +1132,7 @@ function install(options) {
     nativePlugin,
     unsupported: existsSync(join(pluginDir, "hooks")) && options.tool === "dsh" ? ["hooks"] : [],
   };
+  record.knowledgeIndex = primeKnowledgeIndex(provisioned, options.target) ? "ready" : "pending";
   updateInstallRegistry(join(configDir, "cannbot-plugin.json"), record);
 
   console.log(`Installed ${plugin.name}@${plugin.version} for ${options.tool}`);

@@ -51,7 +51,24 @@ logger = logging.getLogger(__name__)
 
 
 def _plugin_config() -> dict[str, Any]:
-    """Load plugin-root config.json if it exists; otherwise return empty dict."""
+    """Load the effective config: workspace config.json first, then plugin root.
+
+    安装器（以及 config_loader）以工作区 ``config.json`` 为准，其中包含安装器按机器实测
+    生成的 ``npu_idle`` 阈值。历史实现只看插件根：技能以软链接装进项目时会解析回源码树，
+    于是永远读到插件自带的 ``npu_idle``（1/1/1/10），在共享机器上把每张卡都判成忙，
+    工作区里生成的阈值形同虚设。这里改为先走 config_loader（cwd → 插件根），失败再回落。
+    """
+    try:
+        import config_loader  # 同目录，复用同一套查找顺序
+
+        loader = getattr(config_loader, "read_config", None) or getattr(config_loader, "load_config", None)
+        if loader is not None:
+            cfg = loader()
+            if isinstance(cfg, dict) and cfg:
+                return cfg
+    except Exception as exc:
+        logger.debug("config_loader unavailable, falling back to plugin root: %s", exc)
+
     try:
         plugin_root = Path(__file__).resolve().parents[3]
         config_path = plugin_root / "config.json"
@@ -143,11 +160,17 @@ class NpuDevice:
         return True, ""
 
 
-def _run_cmd(cmd: list[str], timeout: int = 10) -> tuple[str, int, str]:
+# npu-smi 在共享/繁忙机器上可能十几秒才返回（实测 npu-smi info -m 需 22s）。
+# 固定 10s 超时会把设备误判为不可用，select_idle_device 随即抛 NpuIdleCheckError，
+# 整轮派发失败。默认保持 10s，可用 TRITON_NPU_SMI_TIMEOUT 放宽（安装期探针用 60s）。
+SMI_TIMEOUT = int(os.environ.get("TRITON_NPU_SMI_TIMEOUT", "10"))
+
+
+def _run_cmd(cmd: list[str], timeout: int | None = None) -> tuple[str, int, str]:
     """Run a command and return (stdout, returncode, stderr)."""
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
+            cmd, capture_output=True, text=True, timeout=timeout or SMI_TIMEOUT
         )
         return result.stdout, result.returncode, result.stderr
     except FileNotFoundError:
@@ -341,9 +364,29 @@ def select_idle_device(
     Otherwise the first idle device from npu-smi enumeration is returned.
     Raises NpuIdleCheckError if no idle device is available.
     """
-    devices = discover_npu_devices()
-    for device in devices:
-        fetch_device_usage(device)
+    try:
+        devices = discover_npu_devices()
+        for device in devices:
+            fetch_device_usage(device)
+    except NpuIdleCheckError as exc:
+        # npu-smi 偶发不可用（dcmi 初始化失败、超时）。此时若用户已显式指定卡，
+        # 就按显式意图直接采用并标注 unverified，而不是让整轮派发失败；
+        # 未指定卡（自动选卡）没有依据，仍然报错。
+        if preferred_id is not None:
+            logger.warning("npu-smi unavailable (%s); accepting explicitly pinned device %s",
+                           exc, preferred_id)
+            return {
+                "device_id": preferred_id,
+                "chip_id": None,
+                "global_id": None,
+                "chip_name": None,
+                "metrics": {},
+                "selected_from": "preferred-unverified",
+                "idle_devices": [],
+                "busy_devices": [],
+                "warning": f"npu-smi unavailable: {exc}",
+            }
+        raise
 
     idle_devices, busy_devices = _classify_devices(devices, thresholds)
 
@@ -389,6 +432,46 @@ def preferred_device_id() -> Optional[int]:
     return None
 
 
+def _emit_json(payload: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def _unverified_pin(pinned: int, message: str) -> dict[str, Any]:
+    """显式指定卡的降级结果：npu-smi 不可用时直接采用并标注 unverified。"""
+    return {
+        "device_id": pinned,
+        "chip_id": None,
+        "global_id": None,
+        "chip_name": None,
+        "metrics": {},
+        "selected_from": "preferred-unverified",
+        "idle_devices": [],
+        "busy_devices": [],
+        "warning": message,
+    }
+
+
+def _report_selection(result: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        _emit_json(result)
+        return
+    logger.info(
+        "Idle NPU selected: NPU %s (%s, metrics=%s)",
+        result.get("device_id"),
+        result.get("chip_name"),
+        result.get("metrics"),
+    )
+
+
+def _report_error(exc: "NpuIdleCheckError", as_json: bool) -> None:
+    if as_json:
+        _emit_json({"error": str(exc), "details": exc.details})
+        return
+    logger.error("ERROR: %s", exc)
+    for key, value in exc.details.items():
+        logger.error("  %s: %s", key, value)
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description="Check for an idle Ascend NPU")
@@ -397,49 +480,38 @@ def main() -> int:
     args = parser.parse_args()
 
     if should_skip_idle_check():
-        result = {
-            "skipped": True,
-            "reason": "TRITON_SKIP_NPU_IDLE_CHECK is set",
-        }
         if args.json:
-            sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+            _emit_json({"skipped": True, "reason": "TRITON_SKIP_NPU_IDLE_CHECK is set"})
         else:
             logger.info("NPU idle check skipped (TRITON_SKIP_NPU_IDLE_CHECK is set)")
         return 0
 
+    # 命令行 --preferred-id 优先，其次 config.json / TRITON_NPU_DEVICE_ID。
+    pinned = args.preferred_id if args.preferred_id is not None else preferred_device_id()
+
     if not npu_smi_available():
         message = "npu-smi not available; cannot verify NPU idle status"
-        if args.json:
-            sys.stdout.write(json.dumps({"error": message}, indent=2, ensure_ascii=False) + "\n")
-        else:
-            logger.error(message)
-        return 1
+        if pinned is None:
+            if args.json:
+                _emit_json({"error": message})
+            else:
+                logger.error(message)
+            return 1
+        # 显式指定的卡不需要探测；npu-smi 偶发不可用时直接采用，避免整轮派发失败。
+        logger.warning("%s; accepting explicitly pinned device %s", message, pinned)
+        _report_selection(_unverified_pin(pinned, message), args.json)
+        return 0
 
     try:
         result = select_idle_device(
-            preferred_id=args.preferred_id,
+            preferred_id=pinned,
             thresholds=DEFAULT_THRESHOLDS,
         )
     except NpuIdleCheckError as exc:
-        if args.json:
-            sys.stdout.write(json.dumps(
-                {"error": str(exc), "details": exc.details},
-                indent=2, ensure_ascii=False) + "\n")
-        else:
-            logger.error("ERROR: %s", exc)
-            for key, value in exc.details.items():
-                logger.error("  %s: %s", key, value)
+        _report_error(exc, args.json)
         return 1
 
-    if args.json:
-        sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
-    else:
-        logger.info(
-            "Idle NPU selected: NPU %s (%s, metrics=%s)",
-            result.get("device_id"),
-            result.get("chip_name"),
-            result.get("metrics"),
-        )
+    _report_selection(result, args.json)
     return 0
 
 
