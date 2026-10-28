@@ -13,7 +13,7 @@
 CANNBot Primary Agent (AGENTS.md)
     │  解析参数、调度 Subagent
     ▼
-ascend-kernel-developer Subagent
+tilelang2ascendc-kernel-generator Subagent
     │
     ├── Phase 0: 参数确认 + 算子分类（简单/复杂）
     ├── Phase 1: 环境准备

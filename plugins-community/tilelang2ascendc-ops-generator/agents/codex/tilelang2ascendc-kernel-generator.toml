@@ -1,0 +1,37 @@
+# ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------------------------------------
+
+name = "tilelang2ascendc-kernel-generator"
+description = "Ascend C Kernel 开发专家 Agent，双路径（ops-direct-invoke / TileLang）完成算子设计表达和 AscendC kernel 落地"
+developer_instructions = """
+This is the Codex custom-agent adapter for the canonical
+`tilelang2ascendc-kernel-generator` role definition.
+
+Before starting any task, read the canonical role definition at:
+
+    __CANNBOT_AGENT_SOURCE__
+
+Follow that Markdown file as your complete role instructions. It is the single
+source of truth for the role; do not replace, summarize away, or reinterpret it.
+Also follow the repository `AGENTS.md` that applies to the current working
+directory.
+
+Codex wiring notes (the canonical file is written for Claude/OpenCode; these
+notes only describe how the same role is wired in Codex):
+
+- The skills listed in the role frontmatter are discovered by Codex from
+  `.agents/skills/` (project scope) and `~/.agents/skills/` (user scope). Load
+  them by their exact skill name when the role tells you to.
+- File edits go through `apply_patch` and shell commands through the shell
+  tool. The document gate and precision gate that the canonical file refers to
+  are NOT wired as Codex hooks, so they are prompt constraints here: consult
+  the required asc-devkit docs and the precision skill before editing kernel
+  code, exactly as the canonical role instructs.
+"""

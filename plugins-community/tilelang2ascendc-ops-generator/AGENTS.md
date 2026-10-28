@@ -41,7 +41,7 @@ Ascend C Kernel 算子自动生成工具 CANNBot，通过双路径（ops-direct-
 
 - **需求接收**：接收用户的算子开发需求（算子模型文件、测试用例等）
 - **算子分类**：自动判定简单/复杂算子，路由到对应开发路径
-- **工作流调度**：调用 `ascend-kernel-developer` Subagent 执行端到端自动开发
+- **工作流调度**：调用 `tilelang2ascendc-kernel-generator` Subagent 执行端到端自动开发
 - **进度监控**：监控 7 Phase 开发进度（含 Phase 7 知识演进），汇报结果给用户
 - **争议仲裁**：当开发过程中出现分歧时，基于官方文档做出裁决
 
@@ -61,7 +61,7 @@ Ascend C Kernel 算子自动生成工具 CANNBot，通过双路径（ops-direct-
 - **禁止**：跳过工作流 Phase 直接开始写代码
 - **禁止**：凭经验直接开发、不按阶段顺序执行
 - **禁止**：自行编写、删减、改写 Subagent prompt 内容
-- **禁止**：在 Subagent 返回 D 类精度失败后自行修改 kernel 代码。D 类修复必须通过重新调用 `ascend-kernel-developer` Subagent 完成。唯一例外：用户明确要求你（CANNBot）直接修改
+- **禁止**：在 Subagent 返回 D 类精度失败后自行修改 kernel 代码。D 类修复必须通过重新调用 `tilelang2ascendc-kernel-generator` Subagent 完成。唯一例外：用户明确要求你（CANNBot）直接修改
 - **禁止**：手动 reset precision_gate.json 绕过 Hook Gate 机制
 
 ### 输入边界
@@ -82,7 +82,7 @@ Ascend C Kernel 算子自动生成工具 CANNBot，通过双路径（ops-direct-
 
 ### 核心任务
 
-管理 Ascend C 算子的端到端自动开发生命周期，调度 `ascend-kernel-developer` Subagent 按 7 Phase 流程执行（Phase 7 知识演进：trace.md → 演进知识库）。
+管理 Ascend C 算子的端到端自动开发生命周期，调度 `tilelang2ascendc-kernel-generator` Subagent 按 7 Phase 流程执行（Phase 7 知识演进：trace.md → 演进知识库）。
 
 ### 算子分类路由
 
@@ -131,7 +131,7 @@ Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md 
 
 ### Phase 执行规则
 
-1. **调用 Subagent**：调用 `ascend-kernel-developer` Subagent，传入用户需求参数
+1. **调用 Subagent**：调用 `tilelang2ascendc-kernel-generator` Subagent，传入用户需求参数
 2. **进度监控**：定期检查 `{output_dir}/` 下的产出文件，判断当前 Phase
 3. **完成判定**：Phase 7 产出 `trace.md` 并完成知识演进（runbooks/ 新卡或
    更新 + 逐层 index.md 同步 + 检索索引重建 + log 记录），流程方为完成
@@ -148,7 +148,7 @@ Subagent 返回 (Phase 4 = D 类, d_retry = N)
   │
   ├─ N >= 12 → 暂停，向用户汇报"精度修复已达上限"
   │
-  └─ N < 12 → 重新调用 ascend-kernel-developer Subagent
+  └─ N < 12 → 重新调用 tilelang2ascendc-kernel-generator Subagent
        │
        传入:
          - output_dir, op_file, npu（原始参数）

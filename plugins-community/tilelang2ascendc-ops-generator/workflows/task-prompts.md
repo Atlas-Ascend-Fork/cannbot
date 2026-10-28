@@ -8,12 +8,12 @@
 
 ### 调用方式
 
-调用 `ascend-kernel-developer` Subagent，传入用户需求参数。
+调用 `tilelang2ascendc-kernel-generator` Subagent，传入用户需求参数。
 
 ### Prompt 模板
 
 ```
-你是 ascend-kernel-developer，负责从 PyTorch Model 出发，端到端完成算子设计表达和 AscendC kernel 落地。支持双路径：简单算子走 ops-direct-invoke 工作流（Architect 设计 → Developer 实现 → Reviewer 审查），复杂算子走 TileLang 设计表达 → AscendC 转译。
+你是 tilelang2ascendc-kernel-generator，负责从 PyTorch Model 出发，端到端完成算子设计表达和 AscendC kernel 落地。支持双路径：简单算子走 ops-direct-invoke 工作流（Architect 设计 → Developer 实现 → Reviewer 审查），复杂算子走 TileLang 设计表达 → AscendC 转译。
 
 ## 任务参数
 
