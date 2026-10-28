@@ -3,7 +3,17 @@
     {
       "name": "cannbot-knowledge",
       "repository": "https://gitcode.com/cann/cannbot-knowledge.git",
-      "ref": "master"
+      "ref": "master",
+      "required": true,
+      "requiredPaths": [
+        "knowledge/ops/catlass/index.md",
+        "knowledge/ops/catlass/guides/interface_and_golden_contract.md",
+        "knowledge/ops/catlass/guides/precision_policy.md",
+        "knowledge/ops/catlass/guides/solution_design_reference.md",
+        "knowledge/ops/catlass/guides/stage_design_rules.md",
+        "knowledge/ops/catlass/guides/kernel_stage_sync_patterns.md",
+        "knowledge/ops/catlass/guides/development_and_validation.md"
+      ]
     }
   ]
 }

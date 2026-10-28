@@ -533,6 +533,12 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
     if (!dependency?.name || !dependency?.repository || /[\\/]/.test(dependency.name)) {
       fail(`invalid dependency in ${definitionPath}`);
     }
+    if (dependency.required !== undefined && typeof dependency.required !== "boolean") {
+      fail(`invalid dependency required flag in ${definitionPath}`);
+    }
+    if (dependency.requiredPaths !== undefined && !Array.isArray(dependency.requiredPaths)) {
+      fail(`invalid dependency requiredPaths in ${definitionPath}`);
+    }
     const destination = join(dependencyRoot, dependency.name);
     let available = existsSync(join(destination, ".git"));
     if (available) {
@@ -552,12 +558,22 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
       if (dependency.recursive) args.push("--recurse-submodules", "--shallow-submodules");
       args.push(dependency.repository, destination);
       available = tryRun("git", args, target);
-      if (!available) console.warn(`cannbot: failed to clone ${dependency.name}; continuing without it`);
+      if (!available && !dependency.required) console.warn(`cannbot: failed to clone ${dependency.name}; continuing without it`);
     }
-    if (!available) continue;
+    if (!available) {
+      if (dependency.required) fail(`required dependency ${dependency.name} is unavailable`);
+      continue;
+    }
     if (dependency.recursive) {
       const updated = tryRun("git", ["-C", destination, "submodule", "update", "--init", "--recursive", "--depth", "1"], target);
       if (!updated) console.warn(`cannbot: ${dependency.name} submodule update was incomplete`);
+      if (!updated && dependency.required) fail(`required dependency ${dependency.name} submodule update failed`);
+    }
+    for (const requiredPath of dependency.requiredPaths ?? []) {
+      const path = dependencyAssetPath(destination, requiredPath, "requiredPaths", definitionPath);
+      if (!existsSync(path) || !lstatSync(path).isFile() || lstatSync(path).size === 0) {
+        fail(`required dependency ${dependency.name} is missing required file: ${requiredPath}`);
+      }
     }
     if (dependency.cleanMarkdownWithSkill) {
       const cleanerSkill = skills.find((skill) => skill.name === dependency.cleanMarkdownWithSkill);
@@ -1014,6 +1030,8 @@ function install(options) {
       skill.source = source;
     }
   }
+  // Resolve required repositories before replacing any live Skills or instructions.
+  const provisioned = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
   const skillsDir = toolSkillsDir(options.target, options.tool);
   mkdirSync(skillsDir, { recursive: true });
   const installedSkills = [];
@@ -1033,7 +1051,6 @@ function install(options) {
   const runtimeSettings = installRuntimeSettings(pluginDir, options.target, options);
   const nativeHookSettings = installNativeHooks(pluginDir, options.target, options.tool, assets);
   const hookSettings = installClaudeHooks(pluginDir, options.target, options.tool, assets) ?? nativeHookSettings;
-  const provisioned = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
   const dependencies = provisioned.map((provision) => provision.path);
   const dependencyAssets = installDependencyAssets(provisioned, plugin, options.target, options.tool);
   const nativeSkills = [

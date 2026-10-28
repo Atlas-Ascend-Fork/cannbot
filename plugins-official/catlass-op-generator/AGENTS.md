@@ -40,7 +40,8 @@ ABI 与知识条目独立，不得互推结论。
 2. interface 阶段冻结 `target_architecture` 和 operator contract；reference 阶段冻结 golden contract。后续设计、开发与测试必须使用相同架构。
 3. `sparse_flash_mla`、`block_sparse_attention`、`flash_attention` 的现有知识主要覆盖 `atlas_a2_a3`；`block_sparse_attention_grad`、`flash_attention_grad` 覆盖 `ascend950`；`linear_attention` 与 `general` 按目标 contract 选择受支持架构。使用卡片前核对其 `platforms` 与状态。
 4. `catlass-cpp-knowledge` 从已安装的 cannbot-knowledge `knowledge/ops/catlass/` 查询。通用指南位于 `guides/`，接口卡位于 `apis/`，注意力 Operator 卡位于 `operators/direct/transformer/attention/`，通过家族前缀区分。注意力家族在设计阶段先 `query --family <family> --compact`，再对返回的完整路径执行 `get`；显式家族查询包括 draft 卡。`general` 按实际组件查询 `apis/`，读取 draft API 卡时显式传入 `--include-draft`。
-5. 严格按五阶段推进，仅 full 验收通过才进入 `complete`。状态恢复使用 validator 允许的 `issue_type`、`resume_from` 和 `validation_scope` 组合。
+5. 严格按五阶段推进。使用 interface Skill 的 `scripts/workflow_state.py` 冻结契约和推进/恢复状态；每次恢复运行 `validate_workflow.py --workflow <operator>/docs/workflow.json --operator-root <operator>`。仅 schema 校验不代表工程验收。
+6. reference 阶段冻结 `reference/validation-plan.json` 的 case IDs 和性能要求；只有最终产物的 full 验收、冻结用例覆盖与 `docs/acceptance.json` 中的报告/源码/构建摘要全部通过，才允许 `complete`。调优改动必须重新构建和验收。
 
 | 状态 | Skill | 核心产物 |
 | --- | --- | --- |

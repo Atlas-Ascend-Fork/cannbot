@@ -63,7 +63,7 @@ function fixture({ packaged = false, edit } = {}) {
         writeFileSync(join(repo, "ops", name, "SKILL.md"), `---\nname: ${name}\ndescription: fixture\ndisable-model-invocation: true\n---\n# Preserved body\n`);
       }
     }
-    for (const relative of dependency.name === "cannbot-knowledge" ? knowledgeFiles : []) {
+    for (const relative of dependency.name === "cannbot-knowledge" ? new Set([...knowledgeFiles, ...(dependency.requiredPaths ?? [])]) : []) {
       const file = join(repo, relative);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, "# Preserved knowledge fixture\n");
@@ -155,4 +155,35 @@ test("CATLASS repeat install fast-forwards clean dependencies and does not dupli
   assert.equal(result.status, 0, result.stderr);
   assert.equal(git(checkout(f, "cannbot-knowledge"), "rev-parse", "HEAD"), git(f.repos["cannbot-knowledge"], "rev-parse", "HEAD"));
   assert.equal(readFileSync(join(f.target, "CLAUDE.md"), "utf8").match(/<!-- cannbot:catlass-op-generator:start -->/g).length, 1);
+});
+
+for (const packaged of [false, true]) {
+  test(`CATLASS ${packaged ? "package" : "source"} rejects unavailable required knowledge before installing workflow`, () => {
+    const f = fixture({ packaged, edit: ({ definition, root }) => {
+      definition.dependencies[0].repository = pathToFileURL(join(root, "missing-knowledge")).href;
+    } });
+    assertFailure(f, /required dependency cannbot-knowledge is unavailable/);
+    assert.equal(existsSync(join(f.target, ".claude", "skills", names[0])), false);
+  });
+
+  test(`CATLASS ${packaged ? "package" : "source"} rejects a knowledge checkout without required guides`, () => {
+    const f = fixture({ packaged, edit: ({ definition, repos }) => {
+      unlinkSync(join(repos["cannbot-knowledge"], definition.dependencies[0].requiredPaths[1]));
+      commit(repos["cannbot-knowledge"]);
+    } });
+    assertFailure(f, /missing required file.*interface_and_golden_contract/);
+  });
+}
+
+test("failed CATLASS reinstall preserves existing instructions and Skill links", () => {
+  const f = fixture();
+  assert.equal(install(f).status, 0);
+  const instructions = readFileSync(join(f.target, "CLAUDE.md"));
+  const skill = realpathSync(join(f.target, ".claude", "skills", names[0]));
+  rmSync(checkout(f, "cannbot-knowledge"), { recursive: true });
+  mkdirSync(checkout(f, "cannbot-knowledge"));
+  const result = install(f);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(readFileSync(join(f.target, "CLAUDE.md")), instructions);
+  assert.equal(realpathSync(join(f.target, ".claude", "skills", names[0])), skill);
 });

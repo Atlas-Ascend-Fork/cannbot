@@ -52,6 +52,7 @@ Claude Code 使用 `.claude/skills/`；其他客户端使用其对应 Skill 目�
 源码入口把 Skills 链接到主仓的 `vendor/cannbot-skills/ops/`；npx 安装复制到客户端 Skill 目录，并为 Codex 生成包含六个 Skill 的原生插件。
 
 六个 Skill 和知识库均为完整工作流所必需。安装后执行下面的知识读取验证，确认知识库可用。
+必需知识库不可用或缺少公共工作流指南时，安装器返回失败，在依赖检查通过前保留已有项目配置和 Skills。
 源码安装的 `--skills <SHA|path>` 可选择共享 Skills 版本，不改变知识库下载位置。
 
 本插件通过 `catlass-cpp-knowledge` 直接读取这些 Markdown 卡片，不要求另行执行知识仓的 `install.sh`、建立通用检索索引或下载全部外部文档归档。
@@ -79,9 +80,14 @@ python3 .agents/skills/catlass-cpp-knowledge/scripts/record_knowledge.py \
 ```bash
 bash <installed-catlass-cpp-interface>/scripts/init_operator_project.sh my_operator
 bash <installed-catlass-cpp-interface>/scripts/init_operator_project.sh my_attention --algorithm-family flash_attention
+bash <installed-catlass-cpp-interface>/scripts/init_operator_project.sh my_sage --algorithm-family flash_attention --algorithm-variant sageattention
 ```
 
 不指定家族时使用 `general`。初始化后依次完成 interface、reference、design、implementation、validation；每次继续前校验 `operators/<name>/docs/workflow.json`。设计阶段通过 `catlass-cpp-knowledge` 查询 `guides/` 与目标家族的 Operator 卡，按返回的完整路径读取正文。
+
+Skill 的 `scripts/workflow_state.py`，详见该 Skill 的 `references/workflow-gates.md`。恢复与验收时
+给 `validate_workflow.py` 同时传入 `--operator-root operators/<name>`；最终完成需要冻结用例计划、
+`docs/acceptance.json` 及本轮源码/构建/实际报告摘要，不能仅将 marker 改为 complete。
 
 启动客户端后可使用以下提示词，将路径和架构替换为实际值：
 
