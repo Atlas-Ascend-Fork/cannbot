@@ -1,6 +1,6 @@
 # 方案实施任务模板
 
-仅在 `ROLE=implementation` 时读取。一个实施验证阶段代理管理最多三份实施契约，每个方案使用独立候选目录；按 `ops-perf-implementation` 调度独立构建/静态检查、排他设备验证和唯一终选。
+仅在 `ROLE=implementation` 时读取。实施验证阶段代理执行本轮唯一实施契约，在独立候选目录完成构建、静态检查、排他设备验证，并在候选与基线之间做唯一选择。
 
 ```text
 ROLE: implementation
@@ -22,7 +22,7 @@ CODE_DIR: <isolated round workspace absolute path>
 KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
 INPUT_ARTIFACTS:
   <analysis/roundN/analysis.md absolute path>
-  <up to three implementation-contract-<scheme_id>.json absolute paths>
+  <the round's single implementation-contract-<scheme_id>.json absolute path>
   <frozen schedule contracts and model checks referenced by implementation contracts when policy enabled>
   <functional-acceptance-cases.csv absolute path>
   <working baseline gate and source identity absolute paths>
@@ -46,6 +46,8 @@ CONDITIONAL_SKILLS:
 ```
 
 不得换成未授权路线、减少 case 或跳过功能门禁。通过序列门禁后按统一协议采集性能，主 Agent 只负责设备排他调度和选择/状态登记。终选后按阶段 Skill 完成 demo 全集验收。
+
+启用 `manifest.configuration.search_policy` 时，ACCEPTANCE 增加 [搜索决策](../../../ops-perf-acceptance-criteria/references/architecture-search.md) 的选择记录：`selection.json.search` 绑定本轮唯一方案、实测 effect、已验收 gate、机制证据和重试条件。落选候选仍交真实评估材料；不得用保留基线的自比较结果替代候选观测。需要更换方向时交回主 Agent，下一轮重新冻结。
 
 `BACKEND=cannbot_dsl` 时采用本阶段 Skill 的 references/dsl-implementation.md，共享验证与领域边界见 ops-perf-acceptance-criteria 的 references/cannbot-dsl.md；在 INPUT_ARTIFACTS 追加领域知识原始路径、dsl-environment.json 和当前编译/加载证据。本模板中的 TTK、C++ 模板和注册机械要求仅在真实相关路径启用，保持冻结集合、目标和证据门禁。
 

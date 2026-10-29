@@ -36,7 +36,16 @@ VALID_FEATURE_STATUSES = {"pass", "fail", "not_implemented", "blocked"}
 FEATURE_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
 SOURCE_LOCATION_PATTERN = re.compile(r"^(.*):(\d+)$")
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hh", ".hpp", ".cce", ".asc", ".py"}
-IGNORED_DIRS = {".git", ".pytest_cache", "__pycache__", "build", "build_out", "dist", "output", "outputs"}
+IGNORED_DIRS = {
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "build",
+    "build_out",
+    "dist",
+    "output",
+    "outputs",
+}
 PUBLIC_CONTRACT_DIRS = {"op_api", "op_proto"}
 PUBLIC_CONTRACT_NAME = re.compile(
     r"(?:_def|_proto|_infershape|torch_adpt)\.(?:c|cc|cpp|h|hh|hpp|json|ya?ml)$",
@@ -62,7 +71,9 @@ def _validate_safety(safety: object) -> None:
     if not isinstance(safety, dict):
         raise ContractError("safety must be an object")
     if set(safety) != {"public_contract", "non_target_socs"}:
-        raise ContractError("safety must contain exactly public_contract and non_target_socs")
+        raise ContractError(
+            "safety must contain exactly public_contract and non_target_socs"
+        )
     if safety.get("public_contract") != "unchanged":
         raise ContractError("safety.public_contract must be 'unchanged'")
     if safety.get("non_target_socs") != "unchanged":
@@ -71,9 +82,13 @@ def _validate_safety(safety: object) -> None:
 
 def _validate_expectations(expectations: object) -> None:
     if not isinstance(expectations, dict) or set(expectations) != {"vf", "casttrait"}:
-        raise ContractError("expectations must contain exactly the vf and casttrait booleans")
+        raise ContractError(
+            "expectations must contain exactly the vf and casttrait booleans"
+        )
     if not all(isinstance(expectations[name], bool) for name in ("vf", "casttrait")):
-        raise ContractError("expectations.vf and expectations.casttrait must be booleans")
+        raise ContractError(
+            "expectations.vf and expectations.casttrait must be booleans"
+        )
     if expectations["casttrait"] and not expectations["vf"]:
         raise ContractError("expectations.casttrait=true requires expectations.vf=true")
 
@@ -107,8 +122,12 @@ def _feature_ids(features: list) -> list[str]:
             raise ContractError(f"required_features[{index}] must be an object")
         identifier = feature.get("id")
         description = feature.get("description")
-        if not isinstance(identifier, str) or not FEATURE_ID_PATTERN.fullmatch(identifier):
-            raise ContractError(f"required_features[{index}].id must be stable snake/kebab case")
+        if not isinstance(identifier, str) or not FEATURE_ID_PATTERN.fullmatch(
+            identifier
+        ):
+            raise ContractError(
+                f"required_features[{index}].id must be stable snake/kebab case"
+            )
         if identifier in identifiers:
             raise ContractError(f"duplicate required feature id: {identifier}")
         if not isinstance(description, str) or not description.strip():
@@ -125,15 +144,24 @@ def required_feature_ids(contract: dict[str, Any]) -> list[str]:
     return _feature_ids(features)
 
 
-def validate_manifest_scope(contract: dict[str, Any], manifest: dict[str, Any]) -> None:
+def validate_manifest_scope(
+    contract: dict[str, Any], manifest: dict[str, Any], baseline: Path | None = None
+) -> None:
+    from search_policy import validate_contract
+
+    validate_contract(contract, manifest, baseline)
     manifest_socs = manifest.get("configuration", {}).get("target_socs")
     if manifest_socs != contract.get("target_socs"):
-        raise ContractError("contract target_socs must exactly match RUN_MANIFEST configuration.target_socs")
+        raise ContractError(
+            "contract target_socs must exactly match RUN_MANIFEST configuration.target_socs"
+        )
     backend = manifest.get("configuration", {}).get("backend", "ascendc")
     if contract.get("backend", "ascendc") != backend:
         raise ContractError("contract backend must match the frozen language")
     if backend == "cannbot_dsl" and contract.get("expectations", {}).get("casttrait"):
-        raise ContractError("DSL contracts describe cast/pack semantics as required features, not C++ CastTrait")
+        raise ContractError(
+            "DSL contracts describe cast/pack semantics as required features, not C++ CastTrait"
+        )
 
 
 def resolve_candidate_file(candidate: Path, raw_path: str) -> Path:
@@ -167,7 +195,9 @@ def validate_source_location(candidate: Path, location: str) -> str | None:
     return None
 
 
-def _check_evidence_files(identifier: str, feature: dict, candidate: Path, malformed: list[str]) -> None:
+def _check_evidence_files(
+    identifier: str, feature: dict, candidate: Path, malformed: list[str]
+) -> None:
     evidence_files = feature.get("evidence_files")
     if not isinstance(evidence_files, list) or not evidence_files:
         malformed.append(f"passing feature {identifier} needs evidence_files")
@@ -182,11 +212,14 @@ def _check_evidence_files(identifier: str, feature: dict, candidate: Path, malfo
             malformed.append(str(error))
             continue
         if not evidence_path.is_file():
-            malformed.append(f"feature {identifier} evidence file does not exist: {raw_path}")
+            malformed.append(
+                f"feature {identifier} evidence file does not exist: {raw_path}"
+            )
 
 
-def _check_source_locations(identifier: str, feature: dict, candidate: Path,
-                            malformed: list[str]) -> None:
+def _check_source_locations(
+    identifier: str, feature: dict, candidate: Path, malformed: list[str]
+) -> None:
     source_locations = feature.get("source_locations")
     if not isinstance(source_locations, list) or not source_locations:
         malformed.append(f"passing feature {identifier} needs source_locations")
@@ -200,8 +233,13 @@ def _check_source_locations(identifier: str, feature: dict, candidate: Path,
             malformed.append(f"feature {identifier}: {error}")
 
 
-def _check_feature(identifier: str, features: dict, candidate: Path,
-                   malformed: list[str], failures: list[str]) -> None:
+def _check_feature(
+    identifier: str,
+    features: dict,
+    candidate: Path,
+    malformed: list[str],
+    failures: list[str],
+) -> None:
     feature = features.get(identifier)
     if not isinstance(feature, dict):
         malformed.append(f"missing result for required feature {identifier}")
@@ -217,13 +255,17 @@ def _check_feature(identifier: str, features: dict, candidate: Path,
     _check_source_locations(identifier, feature, candidate, malformed)
 
 
-def _check_result_header(result: dict, contract: dict, malformed: list[str], failures: list[str]) -> None:
+def _check_result_header(
+    result: dict, contract: dict, malformed: list[str], failures: list[str]
+) -> None:
     if result.get("schema_version") != SCHEMA_VERSION:
         malformed.append(f"result schema_version must be {SCHEMA_VERSION}")
     if result.get("scheme_id") != contract.get("scheme_id"):
         malformed.append("result scheme_id does not match contract")
     if result.get("implementation_status") not in VALID_RESULT_STATUSES:
-        malformed.append(f"implementation_status must be one of {sorted(VALID_RESULT_STATUSES)}")
+        malformed.append(
+            f"implementation_status must be one of {sorted(VALID_RESULT_STATUSES)}"
+        )
     if result.get("route_changed") is not False:
         failures.append("route_changed must be false for an exact implementation")
     if result.get("substitution_used") is not False:
@@ -247,7 +289,9 @@ def validate_result(
     for identifier in required:
         _check_feature(identifier, features, candidate, malformed, failures)
     if result.get("implementation_status") != "complete":
-        failures.append(f"implementation_status is {result.get('implementation_status')}, not complete")
+        failures.append(
+            f"implementation_status is {result.get('implementation_status')}, not complete"
+        )
     decision = "pass" if not malformed and not failures else "fail"
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -267,7 +311,9 @@ def validate_result(
 def relative_files(root: Path) -> dict[str, Path]:
     result: dict[str, Path] = {}
     for current, directories, files in os.walk(root):
-        directories[:] = sorted(name for name in directories if name not in IGNORED_DIRS)
+        directories[:] = sorted(
+            name for name in directories if name not in IGNORED_DIRS
+        )
         current_path = Path(current)
         for name in sorted(files):
             path = current_path / name
@@ -279,7 +325,9 @@ def relative_files(root: Path) -> dict[str, Path]:
 def is_public_contract_path(relative: str) -> bool:
     path = Path(relative)
     lowered_parts = {part.lower() for part in path.parts}
-    return bool(lowered_parts & PUBLIC_CONTRACT_DIRS) or bool(PUBLIC_CONTRACT_NAME.search(path.name))
+    return bool(lowered_parts & PUBLIC_CONTRACT_DIRS) or bool(
+        PUBLIC_CONTRACT_NAME.search(path.name)
+    )
 
 
 def file_bytes(path: Path | None) -> bytes | None:
@@ -290,13 +338,24 @@ def python_public_signatures(path: Path) -> dict[str, str]:
     """Conservative signature check; body/input/return semantics still need review."""
     result = {}
     for node in ast.parse(path.read_text(encoding="utf-8")).body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ) and not node.name.startswith("_"):
             # Decorated device helpers are not public Python entry points.
-            decorators = [ast.unparse(item).split("(", 1)[0].rsplit(".", 1)[-1] for item in node.decorator_list]
+            decorators = [
+                ast.unparse(item).split("(", 1)[0].rsplit(".", 1)[-1]
+                for item in node.decorator_list
+            ]
             if {"kernel", "jit", "aicpu_kernel"} & set(decorators):
                 continue
-            result[node.name] = ast.dump(node.args, include_attributes=False) + ":" + (
-                ast.dump(node.returns, include_attributes=False) if node.returns else "None"
+            result[node.name] = (
+                ast.dump(node.args, include_attributes=False)
+                + ":"
+                + (
+                    ast.dump(node.returns, include_attributes=False)
+                    if node.returns
+                    else "None"
+                )
             )
     return result
 
@@ -316,12 +375,16 @@ def atomic_write(path: Path, value: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
-def _protected_contract_changes(baseline_files: dict[str, Path], candidate_files: dict[str, Path]) -> list[str]:
+def _protected_contract_changes(
+    baseline_files: dict[str, Path], candidate_files: dict[str, Path]
+) -> list[str]:
     protected_changes = []
     for relative in sorted(set(baseline_files) | set(candidate_files)):
         if not is_public_contract_path(relative):
             continue
-        if file_bytes(baseline_files.get(relative)) != file_bytes(candidate_files.get(relative)):
+        if file_bytes(baseline_files.get(relative)) != file_bytes(
+            candidate_files.get(relative)
+        ):
             protected_changes.append(relative)
     return protected_changes
 
@@ -337,16 +400,28 @@ def _python_signature_changes(
             continue
         try:
             original = python_public_signatures(path)
-            current = python_public_signatures(candidate_files[relative]) if relative in candidate_files else {}
-            changed = [name for name, signature in original.items() if current.get(name) != signature]
+            current = (
+                python_public_signatures(candidate_files[relative])
+                if relative in candidate_files
+                else {}
+            )
+            changed = [
+                name
+                for name, signature in original.items()
+                if current.get(name) != signature
+            ]
             if changed:
                 protected_changes.append(relative)
-                failures.append(f"public Python signature/default/annotation changed: {relative}: {changed}")
+                failures.append(
+                    f"public Python signature/default/annotation changed: {relative}: {changed}"
+                )
         except SyntaxError as error:
             failures.append(f"cannot parse Python public contract: {relative}: {error}")
 
 
-def validate_candidate_safety(baseline: Path, candidate: Path, backend: str = "ascendc") -> dict[str, Any]:
+def validate_candidate_safety(
+    baseline: Path, candidate: Path, backend: str = "ascendc"
+) -> dict[str, Any]:
     baseline = baseline.resolve()
     candidate = candidate.resolve()
     if not baseline.is_dir():
@@ -358,10 +433,13 @@ def validate_candidate_safety(baseline: Path, candidate: Path, backend: str = "a
     protected_changes = _protected_contract_changes(baseline_files, candidate_files)
     failures = []
     if backend == "cannbot_dsl":
-        _python_signature_changes(baseline_files, candidate_files, protected_changes, failures)
+        _python_signature_changes(
+            baseline_files, candidate_files, protected_changes, failures
+        )
     if protected_changes:
         failures.append(
-            "public interface/constraint/dtype contract changed: " + ", ".join(protected_changes)
+            "public interface/constraint/dtype contract changed: "
+            + ", ".join(protected_changes)
         )
     return {
         "decision": "pass" if not failures else "fail",
@@ -387,8 +465,11 @@ def attach_candidate_safety(report: dict[str, Any], safety: dict[str, Any]) -> N
         report["decision"] = "fail"
 
 
-def evidence_identity(args: argparse.Namespace, result: dict[str, Any]) -> dict[str, Any]:
+def evidence_identity(
+    args: argparse.Namespace, result: dict[str, Any]
+) -> dict[str, Any]:
     """Bind the gate to inputs, source trees and feature evidence, not filenames alone."""
+
     def sha(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -426,60 +507,117 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--isolation-scope", type=Path, required=True)
     output = parser.add_mutually_exclusive_group(required=True)
     output.add_argument("--out", type=Path)
-    output.add_argument("--verify-existing", type=Path, help="verify a saved gate without overwriting evidence")
+    output.add_argument(
+        "--verify-existing",
+        type=Path,
+        help="verify a saved gate without overwriting evidence",
+    )
     return parser.parse_args()
 
 
 def _verify_saved_gate(
-    args: argparse.Namespace, report: dict[str, Any], malformed: list[str], candidate: Path
+    args: argparse.Namespace,
+    report: dict[str, Any],
+    malformed: list[str],
+    candidate: Path,
 ) -> int:
     saved = load_json(args.verify_existing.resolve())
     if saved != report:
-        emit(json.dumps({
-            "decision": "fail", "reason": "stale_or_misattributed_gate",
-            "gate": str(args.verify_existing.resolve()),
-        }, ensure_ascii=False))
+        emit(
+            json.dumps(
+                {
+                    "decision": "fail",
+                    "reason": "stale_or_misattributed_gate",
+                    "gate": str(args.verify_existing.resolve()),
+                },
+                ensure_ascii=False,
+            )
+        )
         return 1
-    emit(json.dumps({
-        "decision": report["decision"], "scheme_id": report["scheme_id"],
-        "candidate": str(candidate), "gate": str(args.verify_existing.resolve()),
-    }, ensure_ascii=False))
+    emit(
+        json.dumps(
+            {
+                "decision": report["decision"],
+                "scheme_id": report["scheme_id"],
+                "candidate": str(candidate),
+                "gate": str(args.verify_existing.resolve()),
+            },
+            ensure_ascii=False,
+        )
+    )
     return 2 if malformed else (0 if report["decision"] == "pass" else 1)
+
+
+def evaluate(args: argparse.Namespace) -> tuple[list, dict]:
+    """Recompute a gate for both CLI validation and search evidence consumption."""
+    candidate = args.candidate.resolve()
+    if not candidate.is_dir():
+        raise ContractError(f"candidate is not a directory: {candidate}")
+    contract = load_json(args.contract.resolve())
+    result = load_json(args.result.resolve())
+    manifest = load_json(args.manifest.resolve())
+    validate_manifest_scope(contract, manifest, args.baseline)
+    malformed, report = validate_result(contract, result, candidate)
+    from validate_schedule_contract import validate_implementation_schedule
+
+    schedule = validate_implementation_schedule(
+        contract, result, args.manifest.resolve(), candidate
+    )
+    if schedule is not None:
+        report["schedule"] = schedule
+    safety = validate_candidate_safety(
+        args.baseline.resolve(),
+        candidate,
+        manifest.get("configuration", {}).get("backend", "ascendc"),
+    )
+    attach_candidate_safety(report, safety)
+    isolation = validate_source_isolation(
+        load_json(args.isolation_scope.resolve()),
+        args.baseline,
+        candidate,
+        contract["target_socs"],
+    )
+    report["source_isolation"] = isolation
+    isolation["scope_path"] = str(args.isolation_scope.resolve())
+    isolation["scope_sha256"] = hashlib.sha256(
+        args.isolation_scope.read_bytes()
+    ).hexdigest()
+    report["conformance_failures"].extend(isolation["failures"])
+    if isolation["decision"] != "pass":
+        report["decision"] = "fail"
+    if not malformed:
+        report["evidence_identity"] = evidence_identity(args, result)
+    return malformed, report
+
+
+def verify_gate(path: Path) -> dict:
+    saved = load_json(path)
+    identity = saved.get("evidence_identity", {})
+    names = (
+        "contract",
+        "result",
+        "manifest",
+        "isolation_scope",
+        "baseline",
+        "candidate",
+    )
+    if any(
+        not isinstance(identity.get(name), dict) or not identity[name].get("path")
+        for name in names
+    ):
+        raise ContractError("conformance gate lacks evidence identity")
+    args = argparse.Namespace(**{name: Path(identity[name]["path"]) for name in names})
+    malformed, actual = evaluate(args)
+    if malformed or actual != saved or actual["decision"] != "pass":
+        raise ContractError("stale, failed or misattributed conformance gate")
+    return actual
 
 
 def main() -> int:
     args = parse_args()
     candidate = args.candidate.resolve()
-    if not candidate.is_dir():
-        emit(f"[ERROR] candidate is not a directory: {candidate}", file=sys.stderr)
-        return 2
     try:
-        contract = load_json(args.contract.resolve())
-        result = load_json(args.result.resolve())
-        manifest = load_json(args.manifest.resolve())
-        validate_manifest_scope(contract, manifest)
-        malformed, report = validate_result(contract, result, candidate)
-        from validate_schedule_contract import validate_implementation_schedule
-        schedule = validate_implementation_schedule(contract, result, args.manifest.resolve(), candidate)
-        if schedule is not None:
-            report["schedule"] = schedule
-        safety = validate_candidate_safety(
-            args.baseline.resolve(), candidate,
-            manifest.get("configuration", {}).get("backend", "ascendc"),
-        )
-        attach_candidate_safety(report, safety)
-        isolation = validate_source_isolation(
-            load_json(args.isolation_scope.resolve()), args.baseline, candidate,
-            contract["target_socs"],
-        )
-        report["source_isolation"] = isolation
-        isolation["scope_path"] = str(args.isolation_scope.resolve())
-        isolation["scope_sha256"] = hashlib.sha256(args.isolation_scope.read_bytes()).hexdigest()
-        report["conformance_failures"].extend(isolation["failures"])
-        if isolation["decision"] != "pass":
-            report["decision"] = "fail"
-        if not malformed:
-            report["evidence_identity"] = evidence_identity(args, result)
+        malformed, report = evaluate(args)
         if args.verify_existing:
             return _verify_saved_gate(args, report, malformed, candidate)
     except (ValueError, OSError) as error:

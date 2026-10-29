@@ -20,7 +20,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts"))
-SCRIPT = ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "summarize_performance_effects.py"
+SCRIPT = (
+    ROOT
+    / "skills"
+    / "ops-perf-optimize-workflow"
+    / "scripts"
+    / "summarize_performance_effects.py"
+)
 SPEC = importlib.util.spec_from_file_location("performance_effects", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -46,20 +52,34 @@ class PerformanceJitterSummaryTest(unittest.TestCase):
     def write_piecewise_pair(self, root):
         baseline = root / "baseline.csv"
         candidate = root / "candidate.csv"
-        write_performance(baseline, [
-            ("micro_boundary", 5.0), ("micro_effective", 4.0),
-            ("short_boundary", 20.0), ("short_effective", 10.0),
-            ("medium_boundary", 100.0), ("medium_effective", 40.0),
-            ("long_floor_boundary", 200.0), ("long_relative_boundary", 1000.0),
-            ("long_effective", 1000.0),
-        ])
-        write_performance(candidate, [
-            ("micro_boundary", 5.25), ("micro_effective", 3.0),
-            ("short_boundary", 20.5), ("short_effective", 8.0),
-            ("medium_boundary", 103.0), ("medium_effective", 30.0),
-            ("long_floor_boundary", 203.0), ("long_relative_boundary", 1010.0),
-            ("long_effective", 1100.0),
-        ])
+        write_performance(
+            baseline,
+            [
+                ("micro_boundary", 5.0),
+                ("micro_effective", 4.0),
+                ("short_boundary", 20.0),
+                ("short_effective", 10.0),
+                ("medium_boundary", 100.0),
+                ("medium_effective", 40.0),
+                ("long_floor_boundary", 200.0),
+                ("long_relative_boundary", 1000.0),
+                ("long_effective", 1000.0),
+            ],
+        )
+        write_performance(
+            candidate,
+            [
+                ("micro_boundary", 5.25),
+                ("micro_effective", 3.0),
+                ("short_boundary", 20.5),
+                ("short_effective", 8.0),
+                ("medium_boundary", 103.0),
+                ("medium_effective", 30.0),
+                ("long_floor_boundary", 203.0),
+                ("long_relative_boundary", 1010.0),
+                ("long_effective", 1100.0),
+            ],
+        )
         return baseline, candidate
 
     def test_piecewise_boundaries_and_effective_geomean(self) -> None:
@@ -68,24 +88,30 @@ class PerformanceJitterSummaryTest(unittest.TestCase):
             baseline, candidate = self.write_piecewise_pair(root)
             result = MODULE.summarize(baseline, candidate)
             cases = {case["case_id"]: case for case in result["cases"]}
-            self.assert_classifications(cases, {
-                "micro_boundary": "jitter_no_effect",
-                "micro_effective": "effective_improvement",
-                "short_boundary": "jitter_no_effect",
-                "short_effective": "effective_improvement",
-                "medium_boundary": "jitter_no_effect",
-                "medium_effective": "effective_improvement",
-                "long_floor_boundary": "jitter_no_effect",
-                "long_relative_boundary": "jitter_no_effect",
-                "long_effective": "effective_regression",
-            })
-            self.assert_thresholds(cases, {
-                "micro_boundary": 0.25,
-                "short_boundary": 0.5,
-                "medium_boundary": 3.0,
-                "long_floor_boundary": 3.0,
-                "long_relative_boundary": 10.0,
-            })
+            self.assert_classifications(
+                cases,
+                {
+                    "micro_boundary": "jitter_no_effect",
+                    "micro_effective": "effective_improvement",
+                    "short_boundary": "jitter_no_effect",
+                    "short_effective": "effective_improvement",
+                    "medium_boundary": "jitter_no_effect",
+                    "medium_effective": "effective_improvement",
+                    "long_floor_boundary": "jitter_no_effect",
+                    "long_relative_boundary": "jitter_no_effect",
+                    "long_effective": "effective_regression",
+                },
+            )
+            self.assert_thresholds(
+                cases,
+                {
+                    "micro_boundary": 0.25,
+                    "short_boundary": 0.5,
+                    "medium_boundary": 3.0,
+                    "long_floor_boundary": 3.0,
+                    "long_relative_boundary": 10.0,
+                },
+            )
             self.assertEqual(result["jitter_case_count"], 5)
             self.assertEqual(result["effective_case_count"], 4)
             self.assertEqual(result["effective_improvement_count"], 3)
@@ -164,19 +190,17 @@ class PerformanceJitterSummaryTest(unittest.TestCase):
 
     def test_prediction_and_target_are_not_candidate_rejection_thresholds(self) -> None:
         analysis = (
-            ROOT
-            / "skills/ops-perf-analysis/references/analysis-execution.md"
+            ROOT / "skills/ops-perf-analysis/references/analysis-execution.md"
         ).read_text(encoding="utf-8")
         selection = (
-            ROOT
-            / "skills/ops-perf-implementation/references/selection-and-final.md"
+            ROOT / "skills/ops-perf-implementation/references/selection-and-final.md"
         ).read_text(encoding="utf-8")
         self.assertNotIn("则弃", analysis)
         self.assertNotIn('"abandon_if"', analysis)
         self.assertIn("不得新增 `abandon_if`", analysis)
         self.assertIn("不参与候选选择", analysis)
         self.assertIn("整体目标未达不等于候选落选", selection)
-        self.assertIn("提升不按抖动过滤", selection)
+        self.assertIn("不另设最小收益门槛", selection)
 
     def test_case_set_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

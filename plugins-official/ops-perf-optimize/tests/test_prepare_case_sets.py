@@ -18,14 +18,20 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOL = ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "prepare_case_sets.py"
-STATE_TOOL = ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "workflow_state.py"
+TOOL = (
+    ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "prepare_case_sets.py"
+)
+STATE_TOOL = (
+    ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "workflow_state.py"
+)
 
 
 def write_cases(path: Path, count: int, *, include_l1: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=["case_id", "shape", "dtype", "mode", "level"])
+        writer = csv.DictWriter(
+            stream, fieldnames=["case_id", "shape", "dtype", "mode", "level"]
+        )
         writer.writeheader()
         for index in range(count):
             writer.writerow(
@@ -46,7 +52,9 @@ def write_competitor(path: Path, count: int, *, alias_columns: bool = False) -> 
         writer = csv.DictWriter(stream, fieldnames=[id_field, time_field])
         writer.writeheader()
         for index in range(count):
-            writer.writerow({id_field: f"case-{index:03d}", time_field: str(index + 1.5)})
+            writer.writerow(
+                {id_field: f"case-{index:03d}", time_field: str(index + 1.5)}
+            )
 
 
 def run(*args: str | Path) -> dict:
@@ -97,7 +105,9 @@ def create_request(
     return run(*args)
 
 
-def test_large_performance_selection_is_deterministic_and_confirmed_explicitly(tmp_path: Path) -> None:
+def test_large_performance_selection_is_deterministic_and_confirmed_explicitly(
+    tmp_path: Path,
+) -> None:
     code = tmp_path / "code"
     code.mkdir()
     (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
@@ -105,10 +115,15 @@ def test_large_performance_selection_is_deterministic_and_confirmed_explicitly(t
     write_cases(cases, 60)
     request = tmp_path / "optimization-request.json"
     result = create_request(request, code, cases)
-    assert result["summary"]["optimization_objective"] == {"mode": "fixed_rounds", "rounds": 3}
+    assert result["summary"]["optimization_objective"] == {
+        "mode": "fixed_rounds",
+        "rounds": 5,
+    }
     assert result["summary"]["target_socs"] == ["Ascend950"]
     assert "precision_diagnosis_policy" not in result["summary"]
-    assert result["summary"]["python"]["executable"] == str(Path(sys.executable).resolve())
+    assert result["summary"]["python"]["executable"] == str(
+        Path(sys.executable).resolve()
+    )
     assert result["summary"]["cann"]["setup_command"] == "inherit"
     assert "precision_diagnosis_policy" not in load(request)
     assert run("validate-request", "--request", request)["status"] == "valid"
@@ -130,7 +145,7 @@ def test_large_performance_selection_is_deterministic_and_confirmed_explicitly(t
         assert tuning["count"] == 50
         assert tuning["selection"]["algorithm"] == "coverage-v1"
         assert tuning["selection"]["confirmation"] == "pending"
-        assert manifest["configuration"]["optimization_objective"]["rounds"] == 3
+        assert manifest["configuration"]["optimization_objective"]["rounds"] == 5
         assert manifest["configuration"]["target_socs"] == ["Ascend950"]
         assert load(output / "optimization-request.json") == load(request)
         selections.append([item["case_id"] for item in tuning["selection"]["selected"]])
@@ -138,10 +153,17 @@ def test_large_performance_selection_is_deterministic_and_confirmed_explicitly(t
 
     manifest_path = tmp_path / "run-a" / "run-manifest.json"
     run("confirm-performance", "--manifest", manifest_path, "--by", "user")
-    assert load(manifest_path)["collections"]["performance_tuning"]["selection"]["confirmation"] == "confirmed"
+    assert (
+        load(manifest_path)["collections"]["performance_tuning"]["selection"][
+            "confirmation"
+        ]
+        == "confirmed"
+    )
 
 
-def test_existing_inventory_freezes_full_set_and_selects_only_l0(tmp_path: Path) -> None:
+def test_existing_inventory_freezes_full_set_and_selects_only_l0(
+    tmp_path: Path,
+) -> None:
     code = tmp_path / "code"
     code.mkdir()
     (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
@@ -172,11 +194,15 @@ def test_existing_inventory_freezes_full_set_and_selects_only_l0(tmp_path: Path)
     acceptance = manifest["collections"]["functional_acceptance"]
     assert acceptance["count"] == 40
     assert acceptance["selection"]["l0_count"] == 45
-    with (output / "baseline" / "functional-acceptance-cases.csv").open(encoding="utf-8") as stream:
+    with (output / "baseline" / "functional-acceptance-cases.csv").open(
+        encoding="utf-8"
+    ) as stream:
         assert {row["level"] for row in csv.DictReader(stream)} == {"L0"}
 
 
-def test_generate_mode_attaches_inventory_without_a_second_manifest(tmp_path: Path) -> None:
+def test_generate_mode_attaches_inventory_without_a_second_manifest(
+    tmp_path: Path,
+) -> None:
     code = tmp_path / "code"
     code.mkdir()
     (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
@@ -197,7 +223,13 @@ def test_generate_mode_attaches_inventory_without_a_second_manifest(tmp_path: Pa
     )
     manifest_path = output / "run-manifest.json"
     assert load(manifest_path)["functional_preparation"]["status"] == "pending"
-    run("attach-functional", "--manifest", manifest_path, "--functional-cases", generated)
+    run(
+        "attach-functional",
+        "--manifest",
+        manifest_path,
+        "--functional-cases",
+        generated,
+    )
     manifest = load(manifest_path)
     assert manifest["functional_preparation"]["status"] == "complete"
     assert manifest["collections"]["functional_full"]["count"] == 4
@@ -244,7 +276,10 @@ def test_target_objective_and_environment_are_reusable(tmp_path: Path) -> None:
         "unit": "ratio",
         "max_rounds": 5,
     }
-    assert payload["environments"]["python"]["activation_command"] == "source /opt/venv/bin/activate"
+    assert (
+        payload["environments"]["python"]["activation_command"]
+        == "source /opt/venv/bin/activate"
+    )
     assert payload["confirmation"]["status"] == "confirmed"
 
     for name in ("first", "second"):
@@ -252,7 +287,10 @@ def test_target_objective_and_environment_are_reusable(tmp_path: Path) -> None:
         run("freeze", "--output-dir", output, "--request", request)
         manifest = load(output / "run-manifest.json")
         assert manifest["configuration"]["optimization_objective"]["value"] == 1.2
-        assert manifest["configuration"]["environments"]["cann"]["setup_command"] == "inherit"
+        assert (
+            manifest["configuration"]["environments"]["cann"]["setup_command"]
+            == "inherit"
+        )
 
 
 def test_unconfirmed_request_is_rejected(tmp_path: Path) -> None:
@@ -267,7 +305,15 @@ def test_unconfirmed_request_is_rejected(tmp_path: Path) -> None:
     request.write_text(json.dumps(payload), encoding="utf-8")
 
     result = subprocess.run(
-        [sys.executable, str(TOOL), "freeze", "--output-dir", str(tmp_path / "run"), "--request", str(request)],
+        [
+            sys.executable,
+            str(TOOL),
+            "freeze",
+            "--output-dir",
+            str(tmp_path / "run"),
+            "--request",
+            str(request),
+        ],
         check=False,
         text=True,
         capture_output=True,
@@ -325,7 +371,9 @@ def start_state(output: Path) -> None:
     )
 
 
-def test_generalization_provided_inventory_and_file_competitor_are_frozen(tmp_path: Path) -> None:
+def test_generalization_provided_inventory_and_file_competitor_are_frozen(
+    tmp_path: Path,
+) -> None:
     code = tmp_path / "code"
     code.mkdir()
     (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
@@ -355,7 +403,10 @@ def test_generalization_provided_inventory_and_file_competitor_are_frozen(tmp_pa
     assert manifest["configuration"]["tuning_mode"] == "generalization"
     assert manifest["configuration"]["functional_mode"] == "reuse_performance"
     assert manifest["collections"]["generalization_full"]["count"] == 45
-    assert manifest["collections"]["functional_full"]["shared_with"] == "generalization_full"
+    assert (
+        manifest["collections"]["functional_full"]["shared_with"]
+        == "generalization_full"
+    )
     assert manifest["collections"]["functional_acceptance"]["count"] == 40
     assert manifest["collections"]["competitor_performance"]["count"] == 45
     assert manifest["collections"]["competitor_performance"]["validation"] == {
@@ -370,7 +421,9 @@ def test_generalization_provided_inventory_and_file_competitor_are_frozen(tmp_pa
     assert "泛化全集 | 45" in report
 
 
-def test_generalization_generated_cases_and_external_competitor_are_attached(tmp_path: Path) -> None:
+def test_generalization_generated_cases_and_external_competitor_are_attached(
+    tmp_path: Path,
+) -> None:
     code = tmp_path / "code"
     code.mkdir()
     (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
@@ -407,14 +460,21 @@ def test_generalization_generated_cases_and_external_competitor_are_attached(tmp
     run("attach-generalization", "--manifest", manifest_path, "--cases", generated)
     manifest = load(manifest_path)
     assert manifest["collections"]["generalization_full"]["count"] == 4
-    assert manifest["collections"]["competitor_performance"]["validation"]["status"] == "complete"
+    assert (
+        manifest["collections"]["competitor_performance"]["validation"]["status"]
+        == "complete"
+    )
     assert manifest["generalization_preparation"]["cases"]["status"] == "complete"
     assert manifest["generalization_preparation"]["competitor"]["status"] == "complete"
-    with (output / "baseline" / "competitor-performance.csv").open(encoding="utf-8") as stream:
+    with (output / "baseline" / "competitor-performance.csv").open(
+        encoding="utf-8"
+    ) as stream:
         assert csv.DictReader(stream).fieldnames == ["case_id", "gpu_total_us"]
 
 
-def run_create_request(tmp_path: Path, extra: tuple[str, ...]) -> subprocess.CompletedProcess:
+def run_create_request(
+    tmp_path: Path, extra: tuple[str, ...]
+) -> subprocess.CompletedProcess:
     code = tmp_path / "code"
     code.mkdir()
     cases = tmp_path / "cases.csv"
@@ -491,7 +551,9 @@ def test_target_soc_is_required_and_frozen_as_verified_scope(tmp_path: Path) -> 
     ]
 
 
-def test_reference_configuration_is_copied_into_request_and_frozen_manifest(tmp_path: Path) -> None:
+def test_reference_configuration_is_copied_into_request_and_frozen_manifest(
+    tmp_path: Path,
+) -> None:
     code = tmp_path / "code"
     code.mkdir()
     (code / "kernel.cpp").write_text("// original\n")
@@ -500,17 +562,24 @@ def test_reference_configuration_is_copied_into_request_and_frozen_manifest(tmp_
     reference = tmp_path / "reference.json"
     reference.write_text(json.dumps({"kind": "unfused", "target_ratio": 2.0}))
     request = tmp_path / "request.json"
-    create_request(request, code, cases, extra=("--performance-reference", str(reference)))
+    create_request(
+        request, code, cases, extra=("--performance-reference", str(reference))
+    )
     # External config edits do not silently change the confirmed request.
     reference.write_text(json.dumps({"kind": "unfused", "target_ratio": 3.0}))
     output = tmp_path / "run"
     run("freeze", "--request", request, "--output-dir", output)
-    assert load(output / "run-manifest.json")["configuration"]["performance_reference"] == {
-        "kind": "unfused", "target_ratio": 2.0,
+    assert load(output / "run-manifest.json")["configuration"][
+        "performance_reference"
+    ] == {
+        "kind": "unfused",
+        "target_ratio": 2.0,
     }
 
 
-def test_new_effect_policy_default_override_and_legacy_missing_field(tmp_path: Path) -> None:
+def test_new_effect_policy_default_override_and_legacy_missing_field(
+    tmp_path: Path,
+) -> None:
     code = tmp_path / "code"
     code.mkdir()
     (code / "kernel.cpp").write_text("// synthetic kernel\n")
@@ -518,14 +587,25 @@ def test_new_effect_policy_default_override_and_legacy_missing_field(tmp_path: P
     write_cases(cases, 2)
     request = tmp_path / "request.json"
     create_request(request, code, cases)
-    assert load(request)["performance_effect_policy"] == {"id": "confidence_effect_v1", "version": 1}
+    assert load(request)["performance_effect_policy"] == {
+        "id": "confidence_effect_v1",
+        "version": 1,
+    }
     run("freeze", "--request", request, "--output-dir", tmp_path / "new")
     frozen_manifest = load(tmp_path / "new/run-manifest.json")
-    assert frozen_manifest["configuration"]["performance_effect_policy"]["id"] == "confidence_effect_v1"
-    create_request(request, code, cases, extra=("--performance-effect-policy", "legacy_jitter_v1"))
+    assert (
+        frozen_manifest["configuration"]["performance_effect_policy"]["id"]
+        == "confidence_effect_v1"
+    )
+    create_request(
+        request, code, cases, extra=("--performance-effect-policy", "legacy_jitter_v1")
+    )
     assert load(request)["performance_effect_policy"]["id"] == "legacy_jitter_v1"
     legacy = load(request)
     legacy.pop("performance_effect_policy")
     request.write_text(json.dumps(legacy))
     run("freeze", "--request", request, "--output-dir", tmp_path / "legacy")
-    assert "performance_effect_policy" not in load(tmp_path / "legacy/run-manifest.json")["configuration"]
+    assert (
+        "performance_effect_policy"
+        not in load(tmp_path / "legacy/run-manifest.json")["configuration"]
+    )

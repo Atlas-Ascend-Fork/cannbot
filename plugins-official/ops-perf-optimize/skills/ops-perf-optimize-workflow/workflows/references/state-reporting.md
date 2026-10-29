@@ -15,7 +15,7 @@
 
 ### 保存点与报告刷新
 
-沿用 `mark` 保存点，由主 Agent 串行登记；状态提交时同步重绘报告，不另设刷新命令或报告状态。
+主 Agent 使用 `workflow_state.py mark` 命令串行登记阶段状态、证据与性能摘要，形成保存点；状态提交时同步重绘报告，不另设刷新命令或报告状态。
 
 - 派发前 `mark --status in_progress --next-action <本阶段动作>`：刷新当前阶段与下一动作，继续展示最近已验收结论和性能，注明性能所属保存点。
 - 验收后 `mark --status complete --message <验收结论> --next-action <后续动作>`：刷新结论和恢复点；轮次完成同时登记下述性能摘要。未指定下一动作时显示阶段对应提示，不沿用上一阶段动作。
@@ -37,13 +37,13 @@
 
 五阶段必须按顺序首次交接；缺少前置阶段或必要产物会拒绝完成。`finish --status success` 还校验五阶段均完成且 artifacts SHA 未变。数值门禁只证明集合与性能，不代替真实硬件/二进制/路由审阅；主 Agent 必须复核这些证据。旧 manifest 没有 layout 时继续保留旧键可恢复性，迁移审计须补齐新门禁后才按新版完成定义交付。
 
-### 同轮未终选的诊断修订
+### 单方案诊断与搜索交接
 
-同一轮尚未终选且未注册正式确认计划时，可以用真实单次诊断定位下一方案；不得将其登记为有效改善、提升基线，或为进入下一轮伪造终选。保留当前规范 `roundN.analysis` 完成记录，以 `roundN.refinement.<id>` 的开始/结束和 `progress --kind diagnosis` 记录修订工作。该细粒度键只记录工作，不提供调度门禁。
+每轮 `roundN.analysis` 冻结一个实施契约；`roundN.impl.<scheme_id>` 只验收该方案。契约内的诊断与修复用 `progress --kind diagnosis` 和有实际产物的保存点记录，候选稳定后完成正式确认、方案选择、本轮/累计摘要及 `roundN.complete`。改变方向、依赖或源码修改范围时，保留本轮证据和可信实现，下一轮重新冻结。正式计划注册后不能将慢样本改称探索后择优重采。
 
-新修订的分析、model/check、implementation contract、source-isolation 与候选 root 使用新目录和 scheme_id。旧源码、报告、运行证据和绝对引用保持不变。新方案 ready 后，重新 `mark roundN.analysis --status complete` 消费实际新模型，同时传入原 analysis 保存点的全部 `--artifact` 路径，以及新修订文件；先按普通 artifact 归档旧 analysis 登记记录。`mark complete` **替换 artifact 列表，不自动追加**，遗漏已实施方案的历史合同会使同轮实施归属核验失败。`phase.analysis` 保持初次交接记录。
+启用搜索策略（`search_policy`）后，主 Agent 通过 `workflow_state.py mark` 登记分析完成或轮次完成保存点时，脚本自动从实施契约和 `selection.json` 追加搜索计划（`search_plan`）或评估结果（`search_result`）事件。状态查询结果中的 `inspect.search` 和报告从事件推导参考、连续有效评估次数与下一动作；同一轮重复登记不重复计数。
 
-随后使用规范 `roundN.impl.<new_scheme>` 派发并验收新候选，不能用 refinement 键冒充实施通过。每次至多三份当前活跃方案，历史方案只保留证据，不自动参与选择。最终稳定候选再注册并完成正式统计确认、selection、本轮/累计摘要及 `roundN.complete`，之后才开始下一轮或最终验收。正式计划一旦注册，仍按原采集与恢复规则处理，不得将已成功的慢样本改称探索后择优重采。
+搜索证据与源码身份纳入状态校验命令 `verify`，不另设状态文件。字段和架构重规划命令 `search-replan` 见 [搜索决策](../../../ops-perf-acceptance-criteria/references/architecture-search.md)。`phase.analysis` 记录首次交接，轮内契约归属始终使用规范 `roundN.analysis`。
 
 `progress --evidence` 只记录路径；需要恢复时校验 SHA 的诊断原件，应通过 `mark --artifact` 或已有门禁消费的依赖链登记。不要修改旧路径内容或依靠一份自报索引替代实际依赖核验。
 

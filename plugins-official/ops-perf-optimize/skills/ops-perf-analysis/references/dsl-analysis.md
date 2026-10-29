@@ -9,5 +9,5 @@
 ## 分析产物
 
 - 一份 `analysis/roundN/analysis.md`：逐 case 的 MBU/MFU/cost_bound/ceiling_us/headroom/verdict 与双 roofline（当前实现 + 算子内在最小成本）
-- 最多三份 `implementation-contract-<scheme_id>.json` 与 `source-isolation-<scheme_id>.json`（ready_for_implementation 才出契约）
+- 本轮就绪方案的 `implementation-contract-<scheme_id>.json` 与 `source-isolation-<scheme_id>.json`（ready_for_implementation 才出契约）
 - 调度契约启用时另交 `schedule-contract-<scheme_id>.json` 与 model `schedule-check-<scheme_id>.json`

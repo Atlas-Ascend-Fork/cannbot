@@ -2,7 +2,9 @@
 
 单次功能通过不足以排除连续发射、跨 case 分配或时序引起的缺陷。统一性能采集前必须先做序列压测：对每个 eligible 候选，以与真实采集相同的 case 顺序、发射次数和 samples 数整序列连跑功能验收子集，再与其它路线 case 混序重复一遍。压测或采集中出现设备级崩溃时立即停采，按 `ops-perf-acceptance-criteria` 的精度规则路由 `ascendc-precision-debug` 定位，未定位前不得进入性能选择。
 
-实施验证代理只对通过序列压测的 eligible 候选按基线同协议各采一次。然后按抖动策略生成 `effect-details.csv`、`effect-summary.json`，只比较有效 case 数、有效提升/回退、有效 case 几何加速比、最差回退和复杂度，顺序为：任一有效回退 case 相对当前基线的加速比（当前基线 `total_us` ÷ 候选 `total_us`）低于 0.70 的候选先出局；其余候选以有效 case 几何加速比最大化为选择准则，两个候选的有效 case 集合不同时，该指标只在共同的有效 case 上比较；差异落在抖动策略判定的等效范围内（以有效 case 几何加速比较低的一方为基线，对另一方运行同一效果脚本，其有效 case 数为 0，即逐 case 差异都在抖动范围内）时，依次比较最差回退、有效 case 数与有效提升/回退 case 数、实现复杂度。在上述下限之上，最差回退不单独构成否决。`selection.json` 记录本轮生效的下限、每个候选的最差单 case 比值，另记所保留实现的最差单 case 比值相对原始基线的累计值，使跨轮累计的回退在终验之前可见。泛化模式的选择顺序另见下文「泛化终选与全集验证」。`expected_effect`、历史 `abandon_if` 和整体优化目标不参与候选选择，也不得设为最低保留收益。baseline 也参加选择；无有效改善时保留 baseline。提升不按抖动过滤，有有效净收益的候选仍可胜出并进入下一轮；整体目标未达不等于候选落选。不得重复 profiling、事后按 case 拼候选或把未实测组合声明为最佳；任何组合代码都是新候选，必须重新走完整门禁。
+实施验证代理对本轮通过序列压测的 eligible 候选按基线同协议采一次，生成 `effect-details.csv`、`effect-summary.json`，在该候选与当前基线之间做唯一选择。任一有效回退 case 的加速比（当前基线 `total_us` ÷ 候选 `total_us`）低于 0.70 时淘汰候选；其余情况按有效 case 几何加速比判断净收益，有有效净收益则保留候选，无有效改善则保留基线。置信策略下尚不能判断净收益的结果先完成合法确认；等效实现保留基线。`selection.json` 记录本轮下限、候选最差单 case 比值、保留原因及相对原始基线的累计最差比值，使跨轮回退在终验前可见。泛化模式另按下文 ratio 规则选择。`expected_effect`、历史 `abandon_if` 和整体目标不作为最低保留收益；整体目标未达不等于候选落选。已确认的微小净收益可保留，不另设最小收益门槛。任何组合代码都是新候选；组合或换方向时，在下一轮重新冻结并通过完整门禁。
+
+启用 search_policy 时，按 [搜索决策契约](../../ops-perf-acceptance-criteria/references/architecture-search.md) 在同一 `selection.json` 写 `search` 结果。候选落选也保留其真实 effect、门禁及机制证据；保留基线的自比较摘要不能充当候选“无提升”的证据。本轮方案对应的规范 `roundN.impl.<scheme_id>` 完成保存点应含已复核的符合性 gate、真实构建/加载、完整功能和序列压测材料。主 Agent 登记 `roundN.complete` 时由脚本消费结果，不单独维护停滞计数。
 
 每轮只保留 `analysis/roundN/analysis.md`（及契约、隔离 scope）、`implementation/roundN/` 下的候选证据目录与 `selection.json`；本轮与累计 effect 摘要保存在对应性能证据目录。按`$WORKFLOW_ROOT/workflows/references/state-reporting.md`刷新报告并登记 `roundN.complete` 后，下一轮直接复用终选身份和已有采集作为当前基线。
 

@@ -31,7 +31,8 @@ def read(path: Path) -> str:
 
 def test_application_profiling_protocol_is_single_source_and_identity_bound() -> None:
     contract = read(
-        ROOT / "skills/ops-perf-acceptance-criteria/references/performance-collection.md"
+        ROOT
+        / "skills/ops-perf-acceptance-criteria/references/performance-collection.md"
     )
     analysis = read(ANALYSIS)
     for token in (
@@ -72,10 +73,18 @@ def test_runtime_artifact_model_has_three_truth_layers_and_no_duplicate_summarie
     assert "一份 `analysis/roundN/analysis.md`" in skill
     assert "同一事实只写一次" in contract
 
-    prompts = read(ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md")
+    prompts = read(
+        ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md"
+    )
     assert "必须保留的稳定派发入口" in prompts
     assert "唯一工作流真源" in prompts
-    assert not (ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "resume-and-lessons.md").exists()
+    assert not (
+        ROOT
+        / "skills"
+        / "ops-perf-optimize-workflow"
+        / "workflows"
+        / "resume-and-lessons.md"
+    ).exists()
     assert "不另建进度 JSON、双份多轮汇总或逐轮同名报告" in contract
     assert "不拆成三段保存点或重复的方案报告" in read(
         ROOT / "skills/ops-perf-analysis/references/analysis-execution.md"
@@ -170,7 +179,7 @@ def test_quickstart_remains_a_complete_human_guide() -> None:
     assert "自动生成功能用例" in quickstart
     assert "性能调优报告.md" in quickstart
     assert "optimization-request.json" in quickstart
-    assert "默认 3 轮" in quickstart
+    assert "默认 5 轮" in quickstart
     assert "Python 环境" in quickstart
     assert "CANN 环境" in quickstart
     assert "目标 SoC" in quickstart

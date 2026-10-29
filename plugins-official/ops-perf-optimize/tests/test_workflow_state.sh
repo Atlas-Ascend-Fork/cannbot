@@ -89,13 +89,13 @@ grep -q 'CANN 环境：`inherit`' "$TEST_ROOT/run/性能调优报告.md"
 grep -q '已证实基线失败：1' "$TEST_ROOT/run/性能调优报告.md"
 grep -q 'conditional_pass' "$TEST_ROOT/run/性能调优报告.md"
 
-# Parallel candidates must not overwrite each other's stage records.
+# Concurrent evidence writers must not overwrite each other's stage records.
 printf '%s\n' '# impl a' > "$TEST_ROOT/run/round1/impl-a.md"
 printf '%s\n' '# impl b' > "$TEST_ROOT/run/round1/impl-b.md"
-timeout 60s python3 "$TOOL" mark --state "$STATE" --stage round1.impl.a --status complete \
+timeout 60s python3 "$TOOL" mark --state "$STATE" --stage round1.diagnosis.a --status complete \
     --artifact "$TEST_ROOT/run/round1/impl-a.md" &
 PID_A=$!
-timeout 60s python3 "$TOOL" mark --state "$STATE" --stage round1.impl.b --status complete \
+timeout 60s python3 "$TOOL" mark --state "$STATE" --stage round1.diagnosis.b --status complete \
     --artifact "$TEST_ROOT/run/round1/impl-b.md" &
 PID_B=$!
 wait "$PID_A" "$PID_B"
@@ -106,22 +106,22 @@ import sys
 
 state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 stages = state["stages"]
-assert "round1.impl.a" in stages
-assert "round1.impl.b" in stages
-for name in ("round1.impl.a", "round1.impl.b"):
+assert "round1.diagnosis.a" in stages
+assert "round1.diagnosis.b" in stages
+for name in ("round1.diagnosis.a", "round1.diagnosis.b"):
     record = stages[name]
     assert record["elapsed_seconds"] is None, f"{name} lacked in_progress mark; elapsed must stay unknown, not fake 0.0"
     assert "started_at" not in record
 PY
 grep -q '当前阶段：`阶段间歇`' "$TEST_ROOT/run/性能调优报告.md"
-grep -q '| `round1.impl.a` | complete | - | .* | - | 1 |' "$TEST_ROOT/run/性能调优报告.md"
+grep -q '| `round1.diagnosis.a` | complete | - | .* | - | 1 |' "$TEST_ROOT/run/性能调优报告.md"
 
 # Interactive waits are explicit, report-visible, and resolvable.
-timeout 60s python3 "$TOOL" decision --state "$STATE" --awaiting --question '继续修复还是淘汰 candidate-a？' \
-    --safe-restore-point round1.impl.a >/dev/null
+timeout 60s python3 "$TOOL" decision --state "$STATE" --awaiting --question '继续修复还是结束当前诊断？' \
+    --safe-restore-point round1.diagnosis.a >/dev/null
 grep -q '状态：等待人工' "$TEST_ROOT/run/性能调优报告.md"
-timeout 60s python3 "$TOOL" decision --state "$STATE" --decision '淘汰 candidate-a，继续 candidate-b' >/dev/null
-grep -q '淘汰 candidate-a' "$TEST_ROOT/run/性能调优报告.md"
+timeout 60s python3 "$TOOL" decision --state "$STATE" --decision '结束当前诊断，保留已验证实现' >/dev/null
+grep -q '结束当前诊断' "$TEST_ROOT/run/性能调优报告.md"
 
 # Intentional manifest updates must be synchronized; silent changes are stale.
 timeout 60s python3 "$PREPARE" confirm-performance --manifest "$MANIFEST" --note 'operator reaffirmed set' >/dev/null
@@ -141,15 +141,15 @@ STATUS=$?
 set -e
 test "$STATUS" -eq 5
 grep -q 'resume_with_workflow_change' <<< "$RESULT"
-printf '%s\n' '# migration audit' 'Only round1.impl.a is affected.' > "$TEST_ROOT/run/migration.md"
+printf '%s\n' '# migration audit' 'Only round1.diagnosis.a is affected.' > "$TEST_ROOT/run/migration.md"
 timeout 60s python3 "$TOOL" migrate-workflow --state "$STATE" --audit "$TEST_ROOT/run/migration.md" \
-    --workflow-version workflow-v4 --invalidate-stage round1.impl.a >/dev/null
+    --workflow-version workflow-v4 --invalidate-stage round1.diagnosis.a >/dev/null
 set +e
 RESULT=$(python3 "$TOOL" start --state "$STATE" --manifest "$MANIFEST" --workflow-version workflow-v4)
 STATUS=$?
 set -e
 test "$STATUS" -eq 4
-grep -q 'round1.impl.a' <<< "$RESULT"
+grep -q 'round1.diagnosis.a' <<< "$RESULT"
 
 # Modified completed evidence is detected and reflected in state/report.
 printf '%s\n' '# changed' >> "$TEST_ROOT/run/round1/impl-b.md"

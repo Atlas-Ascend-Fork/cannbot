@@ -10,10 +10,11 @@
 | `TARGET_SOCS` | 本次实际验证的代表 SoC 列表；A2/A3 共用一套实现与验证结论，选一个代表验证；不同代际分别列出 |
 | `SCHEDULE_POLICY` | 新请求默认 `{"id":"schedule_contract_v1","version":1}`，随请求冻结到 manifest.configuration；历史缺字段保持旧协议，不在恢复时偷偷升级。适用性与证据见 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md) |
 | `TUNING_MODE` | `standard`（默认）或 `generalization`；属于输入身份 |
+| `SEARCH_POLICY` | 新请求默认 `{"id":"architecture_search_v1","version":1}`；每轮一个方案，测量驱动参考晋升与架构重规划，见 [搜索决策](../../ops-perf-acceptance-criteria/references/architecture-search.md)。搜索不改变用户目标或轮数 |
 | `PERFORMANCE_CASES` | standard 必选；generalization 可提供性能/功能合一用例，或留空后生成 |
 | `FUNCTIONAL_MODE` | standard：`reuse_performance|existing|generate`；generalization：固定 `reuse_performance`，不作为待确认选项 |
 | `PERFORMANCE_REFERENCE` | 每 case 对标来源与目标比例，见 [基线评估](../ops-perf-baseline-evaluate/references/baseline-evaluation.md)；通过 `--performance-reference <json>` 固化，旧任务保留原始实现对比 |
-| `OPTIMIZATION_OBJECTIVE` | `fixed_rounds` 或 `target`；前者默认 3 轮，后者需指标、比较方向、数值、单位和可选最大轮次 |
+| `OPTIMIZATION_OBJECTIVE` | `fixed_rounds` 或 `target`；前者默认 5 轮，后者需指标、比较方向、数值、单位和可选最大轮次 |
 | `PYTHON_ENVIRONMENT` | Python 可执行文件及可选激活命令；创建 request 时记录实际版本 |
 | `CANN_ENVIRONMENT` | 环境加载命令；用户明确选择当前环境时写 `inherit` |
 
@@ -23,7 +24,7 @@ generalization 还必须在启动时确认竞品性能来源：
 
 竞品性能文件未给出时必须询问，不允许默认跳过。泛化模式固定记录默认目标 1000 条、geomean ratio ≥ 1.0、min ratio ≥ 0.6、内层最多 3 轮和外层最多 2 次；这些值进入 request/manifest，不能只留在对话中。
 
-`fixed_rounds` 固定执行确认的轮数；未指定轮数时向用户提议默认 3 轮并确认。`target` 按 `metric + comparison(ge/le/eq) + value + unit` 判断达标，指标必须能从本工作流的落盘性能证据计算；可选 `max_rounds`，不提供时不设隐式轮次上限。达到目标即结束性能循环；目标未达时，只有所有仍可能填补差额的合法方向均有不可行证据，或显式停止条件到达，才能结束。零方案、连续无收益或未能外推的诊断仿真不满足这一条件，具体判定以 [workflow-contract.md](workflow-contract.md) 为准。性能轮次或目标不会截断尚未完成的精度诊断。
+`fixed_rounds` 固定执行确认的轮数；未指定轮数时向用户提议默认 5 轮并确认。`target` 按 `metric + comparison(ge/le/eq) + value + unit` 判断达标，指标必须能从本工作流的落盘性能证据计算；可选 `max_rounds`，不提供时不设隐式轮次上限。达到目标即结束性能循环；目标未达时，只有所有仍可能填补差额的合法方向均有不可行证据，或显式停止条件到达，才能结束。零方案、连续无收益或未能外推的诊断仿真不满足这一条件，具体判定以 [workflow-contract.md](workflow-contract.md) 为准。性能轮次或目标不会截断尚未完成的精度诊断。
 
 精度诊断不是用户输入项，固定持续执行，没有工作流级总时长、轮次、Agent turn 或 token 上限。命令级防挂死 watchdog 可以识别单次编译/执行的 Hang，但不得被解释成精度诊断总预算。
 
@@ -40,10 +41,11 @@ DSL 创建时追加 `--backend cannbot_dsl --dsl-repo-root <领域仓库> --dsl-
   "code_dir": "/abs/path/to/operator",
   "performance_cases": "/abs/path/to/performance.csv",
   "functional": {"mode": "existing", "cases": "/abs/path/to/functional.csv"},
-  "optimization_objective": {"mode": "fixed_rounds", "rounds": 3},
+  "optimization_objective": {"mode": "fixed_rounds", "rounds": 5},
   "performance_reference": {"kind": "baseline", "target_ratio": 1.0},
   "generalization": null,
   "schedule_policy": {"id": "schedule_contract_v1", "version": 1},
+  "search_policy": {"id": "architecture_search_v1", "version": 1},
   "environments": {
     "python": {"executable": "/abs/path/to/python", "version": "Python 3.x", "activation_command": null},
     "cann": {"setup_command": "source /abs/path/to/setenv.bash"}

@@ -1,6 +1,6 @@
 # 性能分析任务模板
 
-仅在 `ROLE=analysis` 时读取。每轮只派发一次分析任务，按 `ops-perf-analysis` 的固定过程生成一份可审阅报告和最多三份实施契约。
+仅在 `ROLE=analysis` 时读取。每轮只派发一次分析任务，按 `ops-perf-analysis` 的固定过程生成一份可审阅报告及本轮就绪方案的实施契约。
 
 ```text
 ROLE: analysis
@@ -42,6 +42,8 @@ CONDITIONAL_SKILLS:
 ```
 
 输入中的 standard/generalization 两行是互斥分支，只保留与 manifest 一致的一行。先复用或采集一次当前基线，再只读分析；分析不得重采性能、重选 case 或修改源码。
+
+启用 `manifest.configuration.search_policy` 时，在 INPUT_ARTIFACTS 传入当前参考身份、上轮 selection 和相关失败/机制证据；ACCEPTANCE 增加 [搜索决策](../../../ops-perf-acceptance-criteria/references/architecture-search.md) 的单方案、父实现、已接受依赖、触发证据与重试条件校验。`inspect.search.next_action=replan` 时，本次先完成架构复盘并交主 Agent 登记，不能直接重试已停滞方向。
 
 MC²/多 rank 和各特殊算子族的路由按阶段 Skill 与共享验证规则执行，不得降级为通用 application 分析。
 

@@ -26,7 +26,7 @@
 
 队列、buffer、event、流水同步被修改，或出现卡死/偶现不一致时加载 `ascendc-sync-audit`；静态 finding 必须结合控制流和动态复验。
 
-沿用已验证的单算子构建入口，保存工作目录、命令、目标 SoC、工具链/编译选项、依赖输入及源码/产物 SHA；入口变化时先检查最小闭包，不静默全仓编译。上述构建输入与产物均未变时复用；仅源码 SHA 相同不能证明构建身份相同。诊断探针与正式候选分别登记构建/加载身份；移除插桩后按正式候选身份重新构建和验收。独立候选的 CPU 构建/静态检查可在资源允许时同时运行，日志和构建目录分别隔离；部署、功能压测和性能采集按设备排他。保存首个未裁剪错误；fresh process 必须加载所登记的二进制身份。
+沿用已验证的单算子构建入口，保存工作目录、命令、目标 SoC、工具链/编译选项、依赖输入及源码/产物 SHA；入口变化时先检查最小闭包，不静默全仓编译。上述构建输入与产物均未变时复用；仅源码 SHA 相同不能证明构建身份相同。诊断探针与正式候选分别登记构建/加载身份；移除插桩后按正式候选身份重新构建和验收。本轮方案的构建与静态检查使用隔离日志和构建目录；部署、功能压测和性能采集按设备排他。保存首个未裁剪错误；fresh process 必须加载所登记的二进制身份。
 
 写 `scheme-conformance.json`，包含 scheme、route/substitution 状态、每个 required feature 的状态和证据，以及知识卡消费记录（顶层 `kb_cards`，或 `kb_unavailable`）。使用主 Agent提供的 `$WORKFLOW_SCRIPTS/validate_implementation_conformance.py --manifest "$RUN_MANIFEST" --baseline "$BASELINE_DIR" --candidate "$CODE_DIR" --isolation-scope "$ISOLATION_SCOPE"`（并传入 contract/result/out）生成 `scheme-conformance-gate.json`；其中 `candidate_safety.decision` 和 `source_isolation.decision` 均须为 `pass`，scope SHA 须与派发前一致。机器范围检查不替代 SoC/模板路由、编译期隔离及原 fallback 的语义审阅。
 
@@ -36,7 +36,7 @@
 
 用库存 golden/阈值运行完整 `functional-acceptance-cases.csv`；不得放宽阈值、换 golden、删 case。允许分批，但实际并集必须等于冻结子集。
 
-功能验收不是可删除的“提速步骤”。编排提速来自同一实施代理内的隔离候选构建/静态检查并行、相同构建身份复用和同身份证据复用；不得通过减少 case、跳过门禁或缩短精度诊断换取速度。
+功能验收不是可删除的“提速步骤”。编排提速来自相同构建身份复用和同身份证据复用；不得通过减少 case、跳过门禁或缩短精度诊断换取速度。
 
 - 基线 `strict_pass`：所有 case 必须 PASS。
 - 基线 `conditional_pass`：原始 PASS case 仍须 PASS；已登记 `known_baseline_failure` 必须逐例不恶化；不得新增失败。
@@ -62,7 +62,7 @@
 
 | # | 规则 |
 |---|---|
-| C1 | 一次只修改一个隔离方案；已就绪的独立构建/静态检查可并行，各方案证据分别保留 |
+| C1 | 每轮只修改一个隔离方案；独立保存该方案的源码、构建与验证证据 |
 | C2 | 只写隔离候选，不写原始工程，不修改共享 CANN SDK |
 | C3 | 契约固定 `exact/forbidden`；required feature 缺失不得声明完成 |
 | C4 | 完整功能验收子集满足 strict/conditional 门禁后才可进入性能采集 |

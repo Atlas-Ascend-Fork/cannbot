@@ -16,7 +16,7 @@
 | 实施验证 / `implementation` | 通用 subagent + 加载 `ops-perf-implementation` | `ops-perf-implementation` |
 | 后处理 / `integration` | 通用 subagent + 加载 `ops-perf-postprocess` | `ops-perf-postprocess` |
 
-前处理和后处理分别定义、使用独立实例，通过文件映射和证据交接。用例生成归 baseline；同一实施代理管理最多三份隔离方案，独立构建/静态检查可并行。主 Agent 负责请求接入、设备排他调度、scope 冻结、门禁复核、选择登记、恢复和报告，不制定优化算法或修改候选。
+前处理和后处理分别定义、使用独立实例，通过文件映射和证据交接。用例生成归 baseline；每轮由实施代理执行一个隔离方案，评估后决定保留候选或基线。主 Agent 负责请求接入、设备排他调度、scope 冻结、门禁复核、选择登记、恢复和报告，不制定优化算法或修改候选。
 
 ### 运行目录布局与阶段总结
 
@@ -65,13 +65,13 @@ baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_S
 |---|---|---|
 | baseline | 已确认 request、原代码/库存、对标配置 | `preflight-report.json`、`环境检查报告.md`、冻结集合、`performance-targets.json`、`性能目标.md`；原实现实测另有 `execution-identity.json`；环境无 fail，目标精确覆盖性能全集 × TARGET_SOCS，功能库存就绪 |
 | preparation | 基线评估产物与原工程 | 独立 demo、`extraction-manifest.json`、`source-compatibility.md`、原快照、构建/加载证据、`functional-acceptance.md`；原调用方式/算法不变，依赖闭包与功能基线 strict/conditional 门禁通过（AscendC 用 TTK，DSL 用原测试入口） |
-| analysis | 当前可信基线、冻结目标/调优集合、已有性能证据 | 一份 `analysis/roundN/analysis.md`、最多三份 `implementation-contract-<scheme_id>.json` 和 source-isolation scope；每个 case 覆盖，方案收益与目标差额有证据对应，方案 exact/forbidden，主 Agent 冻结 scope |
+| analysis | 当前可信基线、冻结目标/调优集合、已有性能证据 | 一份 `analysis/roundN/analysis.md`、一个就绪方案的 `implementation-contract-<scheme_id>.json` 和 source-isolation scope；每个 case 覆盖，方案收益与目标差额有证据对应，方案 exact/forbidden，主 Agent 冻结 scope；无就绪方案时交证据与下一诊断动作 |
 | implementation | 冻结方案/scope、当前与原始基线、用例/目标 | 每候选符合性/安全/构建/精度/序列门禁、eligible 性能、`selection.json`、本轮/累计 effect；退出循环时另交最终功能/性能全集报告和 `final_optimized/` |
 | integration | 最终 demo 与验收证据、原快照/映射、两个全集 | 集成计划/scope、安全与加载证据、两个全集精度/性能、每 SoC `postprocess-performance-<soc>.json`、回路由复验、`VERIFY_REPORT.md`；原入口保持、非目标族不变、无有效性能退化 |
 
 各阶段产物一律写入该阶段对应的文件夹（布局见「运行目录布局与阶段总结」），交付时同步更新该文件夹的 `阶段总结.md`。
 
-启用 `manifest.configuration.schedule_policy={"id":"schedule_contract_v1","version":1}` 时，analysis/implementation 按 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md) 交接候选模型与检查报告。analysis 在原阶段内完成 A1 独立程序/微任务恢复、A2 数据/资源/复用与事件约束检查、A3 最多三份候选；主 Agent 核验适用性、未知项与身份后冻结。implementation 先消费契约，再核对实际生成代码和运行/序列证据。模型可行不等于 eligible，更不等于更快。同步/所有权关键未知先 probe；纯性能收益 unknown 不阻止合法候选实测。integration 的路由、编译选路或输入分支改变时，对新身份重新核验，不能把满 tile 的证据外推到未覆盖路径。旧 request/manifest 缺字段保持原门禁；新策略不重写历史状态。
+启用 `manifest.configuration.schedule_policy={"id":"schedule_contract_v1","version":1}` 时，analysis/implementation 按 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md) 交接候选模型与检查报告。analysis 在原阶段内完成 A1 独立程序/微任务恢复、A2 数据/资源/复用与事件约束检查、A3 本轮候选模型；主 Agent 核验适用性、未知项与身份后冻结。implementation 先消费契约，再核对实际生成代码和运行/序列证据。模型可行不等于 eligible，更不等于更快。同步/所有权关键未知先 probe；纯性能收益 unknown 不阻止合法候选实测。integration 的路由、编译选路或输入分支改变时，对新身份重新核验，不能把满 tile 的证据外推到未覆盖路径。旧 request/manifest 缺字段保持原门禁；新策略不重写历史状态。
 
 阶段返回 `status`、产物绝对路径、代码/二进制 SHA、门禁结论、未决证据与下一动作。主 Agent 检查实际文件和 gate，不能把文字“完成”当作验收。脚本 gate 证明数值/文件范围，不能替代真实构建、调用链和运行身份审阅。证据身份与覆盖完全相同时复用已有证据，不重采择优。confidence待确认case允许在看到确认结果前冻结一次配对计划，按原canonical10及完整门禁采该新计划；不默认每case十轮、不事后加轮。
 
@@ -85,9 +85,11 @@ baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_S
 
 standard：preparation → 每轮 analysis → implementation → 主 Agent 复核终选及报告 → 下一轮或 integration。最终 demo 全集验收由 implementation 完成。baseline 也参与候选选择，无有效收益时保留 baseline；未实测的拼接代码不参与选择。`expected_effect`、历史 `abandon_if` 和整体优化目标不是候选淘汰条件，有有效净收益的候选即使未达目标也可保留并进入下一轮。每轮按同协议逐 case 核对实测净收益与剩余目标差额。
 
-尚未终选且未注册正式确认计划时，允许在同一轮内根据真实诊断修订方案，不要求每次探索先完成最终统计采集。诊断不得提升当前基线、证明有效收益或替代终选。旧方案、模型、scope、生成物和采集记录按原身份保留；新修订使用独立目录、scheme_id 与候选 root，仍须通过规范 analysis 模型交接和 implementation 的符合性、安全、精度与 runtime 门禁。主 Agent 以细粒度 refinement 保存点记录工作，重新登记该轮 analysis 时保留已验收历史合同及全部旧 artifact 引用；普通诊断键不能替代规范门禁。每次至多三份当前活跃方案，稳定候选才按冻结效果策略进行正式确认。具体状态操作见 `$WORKFLOW_ROOT/workflows/references/state-reporting.md` 的“同轮未终选的诊断修订”。
+每轮只冻结并实施一个方案，契约内耦合的架构特性作为整体评估。允许在同一契约和 scope 内诊断、修复实现；需要改变优化方向、依赖或范围时，先记录本轮处置和保留实现，再在下一轮重新分析、冻结。诊断证据不能提升基线或替代终选。正式确认计划注册后，按原采集协议完成，不得把慢样本改称探索后择优重采。
 
-`fixed_rounds` 执行已确认轮数，默认 3 轮；`target` 使用冻结的 metric/comparison/value/unit，可选 max_rounds，无显式上限则不另设上限。`target` 的性能循环只在目标达成、显式轮数/用户停止条件到达，或证据证明所有仍可能填补目标差额的合法方向均不可实施后结束。某轮零实施契约、候选退化、连续数轮无改善、缺少物理 roofline，均不单独证明“没有可信方向”；一次候选退化须先区分机制、实现、正确性和证据问题。循环停止不截断未完成的精度诊断。
+新请求冻结 `search_policy={"id":"architecture_search_v1","version":1}`，按 [搜索决策](../../ops-perf-acceptance-criteria/references/architecture-search.md) 在既有 analysis/implementation 交接中登记契约依赖与实测结果。连续三次**可比较的候选评估**未刷新最优、决策耗尽或已测架构瓶颈触发重新分析；编译/精度失败和无效采集分别处置，统计待确认先补证，不计作无收益。每轮结束后读取 `inspect.search.next_action` 决定下一轮的分析重点。重规划从最早受影响的决策展开，保留可信实现；它不增加用户轮数、不重置泛化计数、不构成自动退出条件。实际停止仍按下文目标与完成规则。
+
+`fixed_rounds` 执行已确认轮数，默认 5 轮；`target` 使用冻结的 metric/comparison/value/unit，可选 max_rounds，无显式上限则不另设上限。`target` 的性能循环只在目标达成、显式轮数/用户停止条件到达，或证据证明所有仍可能填补目标差额的合法方向均不可实施后结束。某轮零实施契约、候选退化、连续数轮无改善、缺少物理 roofline，均不单独证明“没有可信方向”；一次候选退化须先区分机制、实现、正确性和证据问题。循环停止不截断未完成的精度诊断。
 
 当目标未达且关键收益/安全性仍为 `unknown`，主 Agent 应派下一轮有界诊断或方案分析，并在状态中记录待核验假设与下一动作，不得把 `unknown` 写成 `infeasible_evidenced`、`ceiling_bound` 或用 `no_material_improvement` 结束。足以改变退出结论的未知量须先有界验证；缩小问题规模或改变关键负载特征的探针，只有证明关键路径与目标 case 可比时才可外推，否则只支持定性定位，不能据此否定完整目标场景。诊断工具无法归因时保留未知并继续寻找同身份证据；实际外部资源阻断按第 5 节记录 blocker，不冒充性能收敛。
 
