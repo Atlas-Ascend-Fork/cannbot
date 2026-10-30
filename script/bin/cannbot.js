@@ -11,13 +11,14 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { findPluginDirectory, pluginSourceDefinition } from "../lib/plugin-bundle.js";
@@ -503,6 +504,28 @@ function repositoryIdentity(url) {
   return url.replace(/^git@gitcode\.com:/, "https://gitcode.com/").replace(/\.git$/, "").replace(/\/$/, "");
 }
 
+function dependencyExposePath(target, exposure, definitionPath) {
+  if (typeof exposure !== "string" || isAbsolute(exposure)) {
+    fail(`invalid dependency expose path in ${definitionPath}: ${exposure}`);
+  }
+  const destination = resolve(target, exposure);
+  const outside = (root, candidate) => {
+    const pathFromRoot = relative(root, candidate);
+    return pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot);
+  };
+  if (destination === resolve(target) || outside(target, destination)) {
+    fail(`dependency expose path escapes its project target in ${definitionPath}: ${exposure}`);
+  }
+  // Follow existing parents, but not the final link: replacing that link is
+  // intentional, even when it currently points outside the project.
+  let parent = dirname(destination);
+  while (!pathExists(parent)) parent = dirname(parent);
+  if (outside(realpathSync(target), realpathSync(parent))) {
+    fail(`dependency expose parent escapes its project target in ${definitionPath}: ${exposure}`);
+  }
+  return destination;
+}
+
 function exposeDependency(source, destination) {
   if (pathExists(destination)) {
     if (lstatSync(destination).isSymbolicLink()) {
@@ -539,6 +562,9 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
     if (dependency.requiredPaths !== undefined && !Array.isArray(dependency.requiredPaths)) {
       fail(`invalid dependency requiredPaths in ${definitionPath}`);
     }
+    const exposedPath = dependency.expose
+      ? dependencyExposePath(target, dependency.expose, definitionPath)
+      : null;
     const destination = join(dependencyRoot, dependency.name);
     let available = existsSync(join(destination, ".git"));
     if (available) {
@@ -587,7 +613,7 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
         console.warn(`cannbot: cleanup Skill is unavailable: ${dependency.cleanMarkdownWithSkill}`);
       }
     }
-    if (dependency.expose) exposeDependency(destination, join(target, dependency.expose));
+    if (exposedPath) exposeDependency(destination, exposedPath);
     installed.push({
       dependency,
       destination,

@@ -3,7 +3,7 @@
 // See script/LICENSE for the full license text.
 
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -1372,3 +1372,156 @@ for (const source of sources) {
     assert.deepEqual(JSON.parse(readFileSync(join(root, "config.json"), "utf8")), expected);
   });
 }
+
+// Exercise the complete installer with committed local Git dependencies.
+function dependencyExposureFixture(exposure) {
+  const sandbox = createSandbox("cannbot-dependency-expose-");
+  const dependency = createDependencyRepository(sandbox, "dependency-repository", { "value.txt": "dependency bytes\n" });
+  const definition = { name: "fixture-dependency", repository: dependency };
+  if (exposure !== undefined) definition.expose = exposure;
+  const bundle = createAssetsPluginBundle(sandbox, [definition]);
+  mkdirSync(join(bundle, "plugins-official", "asset-fixture", "skills"));
+  const target = join(sandbox, "project");
+  mkdirSync(target);
+  return { sandbox, bundle, target };
+}
+
+function installExposureFixture(fixture) {
+  return spawnSync(process.execPath, [
+    cli, "install", "asset-fixture", "--tool", "dsh", "--target", fixture.target, "--source", fixture.bundle,
+  ], {
+    cwd: fixture.sandbox,
+    encoding: "utf8",
+    env: { ...process.env, GIT_ALLOW_PROTOCOL: "file", CANNBOT_SKIP_DEPENDENCY_REPOS: "0" },
+  });
+}
+
+for (const exposure of ["../outside-link", "nested/../../outside-link", "../project-other/outside-link"]) {
+  test(`dependency expose rejects a path outside the project: ${exposure}`, () => {
+    const f = dependencyExposureFixture(exposure);
+    const original = join(f.sandbox, "original");
+    const outside = resolve(f.target, exposure);
+    mkdirSync(original);
+    mkdirSync(dirname(outside), { recursive: true });
+    writeFileSync(join(original, "sentinel.txt"), "outside bytes must remain\n");
+    symlinkSync(original, outside, "dir");
+    const before = lstatSync(outside);
+    const result = installExposureFixture(f);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.equal(readlinkSync(outside), original);
+    assert.equal(lstatSync(outside).ino, before.ino);
+    assert.equal(readFileSync(join(original, "sentinel.txt"), "utf8"), "outside bytes must remain\n");
+  });
+}
+
+test("dependency expose rejects an existing parent symlink leading outside the project", () => {
+  const f = dependencyExposureFixture("linked-parent/dependency");
+  const outside = join(f.sandbox, "outside");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "sentinel.txt"), "outside directory bytes\n");
+  symlinkSync(outside, join(f.target, "linked-parent"), "dir");
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.equal(existsSync(join(outside, "dependency")), false);
+  assert.equal(readlinkSync(join(f.target, "linked-parent")), outside);
+  assert.equal(readFileSync(join(outside, "sentinel.txt"), "utf8"), "outside directory bytes\n");
+});
+
+test("dependency expose replaces its final symlink without following its outside target", () => {
+  const f = dependencyExposureFixture("dependency");
+  const original = join(f.sandbox, "outside");
+  mkdirSync(original);
+  writeFileSync(join(original, "sentinel.txt"), "final target bytes\n");
+  symlinkSync(original, join(f.target, "dependency"), "dir");
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(realpathSync(join(f.target, "dependency")),
+    realpathSync(join(f.target, ".cannbot", "dependencies", "asset-fixture", "fixture-dependency")));
+  assert.equal(readFileSync(join(original, "sentinel.txt"), "utf8"), "final target bytes\n");
+});
+
+test("dependency expose accepts a parent symlink that stays inside the project", () => {
+  const f = dependencyExposureFixture("linked-parent/dependency");
+  mkdirSync(join(f.target, "real-parent"));
+  symlinkSync(join(f.target, "real-parent"), join(f.target, "linked-parent"), "dir");
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(readFileSync(join(f.target, "real-parent", "dependency", "value.txt"), "utf8"), "dependency bytes\n");
+});
+
+test("dependency expose accepts a project target that is itself a symlink", () => {
+  const f = dependencyExposureFixture("dependency");
+  const real = join(f.sandbox, "real-project");
+  mkdirSync(real);
+  const link = join(f.sandbox, "project-link");
+  symlinkSync(real, link, "dir");
+  f.target = link;
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(readFileSync(join(real, "dependency", "value.txt"), "utf8"), "dependency bytes\n");
+  assert.equal(readlinkSync(link), real);
+});
+
+test("dependency expose accepts a newly created target with missing parent directories", () => {
+  const f = dependencyExposureFixture("dependency");
+  f.target = join(f.sandbox, "missing", "parents", "project");
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "dependency bytes\n");
+});
+
+for (const exposure of [".dependency", "..dependency", "dependency..name"]) {
+  test(`dependency expose keeps legal relative child names: ${exposure}`, () => {
+    const f = dependencyExposureFixture(exposure);
+    const result = installExposureFixture(f);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(readFileSync(join(f.target, exposure, "value.txt"), "utf8"), "dependency bytes\n");
+  });
+}
+
+test("dependency expose accepts an existing nested parent", () => {
+  const f = dependencyExposureFixture("nested/dependency");
+  mkdirSync(join(f.target, "nested"));
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(readFileSync(join(f.target, "nested", "dependency", "value.txt"), "utf8"), "dependency bytes\n");
+});
+
+test("dependency expose preserves the existing failure for a missing alias parent", () => {
+  const f = dependencyExposureFixture("missing/dependency");
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.equal(existsSync(join(f.target, "missing")), false);
+});
+
+for (const exposure of [undefined, null, false, 0, ""]) {
+  test(`dependency expose retains an omitted or false-valued declaration: ${String(exposure)}`, () => {
+    const f = dependencyExposureFixture(exposure);
+    const result = installExposureFixture(f);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(readFileSync(join(f.target, ".cannbot", "dependencies", "asset-fixture", "fixture-dependency", "value.txt"), "utf8"),
+      "dependency bytes\n");
+  });
+}
+
+for (const exposure of [true, 1, {}, []]) {
+  test(`dependency expose rejects a truthy non-string declaration: ${JSON.stringify(exposure)}`, () => {
+    const f = dependencyExposureFixture(exposure);
+    writeFileSync(join(f.target, "sentinel.txt"), "project bytes\n");
+    const result = installExposureFixture(f);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.equal(readFileSync(join(f.target, "sentinel.txt"), "utf8"), "project bytes\n");
+  });
+}
+
+test("dependency expose keeps an existing real destination directory", () => {
+  const f = dependencyExposureFixture("dependency");
+  const destination = join(f.target, "dependency");
+  mkdirSync(destination);
+  writeFileSync(join(destination, "sentinel.txt"), "local directory bytes\n");
+  const result = installExposureFixture(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(lstatSync(destination).isDirectory(), true);
+  assert.equal(lstatSync(destination).isSymbolicLink(), false);
+  assert.equal(readFileSync(join(destination, "sentinel.txt"), "utf8"), "local directory bytes\n");
+});
