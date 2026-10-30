@@ -37,12 +37,27 @@ contracts = importlib.util.module_from_spec(contract_spec)
 contract_spec.loader.exec_module(contracts)
 
 
+def default_domain_constraints():
+    return [
+        {
+            "input": "x",
+            "metric": "dimension",
+            "axis": -1,
+            "relation": "multiple_of",
+            "value": 16,
+        }
+    ]
+
+
 def unit_fixture(uid, deps=(), files=()):
     return {
         "unit_id": uid,
         "kind": "feature_increment",
         "depends_on": list(deps),
-        "scope": {"source_files": list(files)},
+        "scope": {
+            "source_files": list(files),
+            "domain_constraints": default_domain_constraints(),
+        },
         "verification_obligations": [{"id": f"VO-{uid}", "kind": "numerical"}],
     }
 
@@ -94,6 +109,7 @@ class UnitContractTests(unittest.TestCase):
                 "artifact": "compiled kernel",
                 "check": "execution domain",
                 "pass_criteria": "declared domain used",
+                "reject_examples": ["equivalent single-core route"],
             }
         ]
         self.assertEqual(contracts.validate_units({"U01": unit}), ["U01"])
@@ -146,6 +162,7 @@ class UnitContractTests(unittest.TestCase):
                         "artifact": "compiled kernel and device timeline",
                         "check": "actual producer/consumer dependency",
                         "pass_criteria": "matches declared synchronization",
+                        "reject_examples": ["serial single-core execution"],
                     }
                 ],
             }
@@ -479,7 +496,10 @@ class UnitSubgraphTests(unittest.TestCase):
                     "kind": "minimal_operator",
                     "design_sources": [{"file": "Kernel.md", "section": "Compute"}],
                     "depends_on": [],
-                    "scope": {"source_files": ["operators/add/add.py"]},
+                    "scope": {
+                        "source_files": ["operators/add/add.py"],
+                        "domain_constraints": default_domain_constraints(),
+                    },
                     "verification_obligations": [{"id": "VO-U01", "kind": "numerical"}],
                 }
             }

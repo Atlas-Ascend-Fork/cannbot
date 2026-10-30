@@ -13,7 +13,10 @@ procedure:
 - 运行 `scripts/validate_unit_contracts.py --units-dir "$WORK_DIR/design/units"`，校验能力依赖闭包、义务 ID、设计约束与补证关联；失败时停止交接测试生成。脚本检查声明结构，不证明人工证据已通过。
 - 核对每个 Unit 文件可解析，依赖无环，`requires` 能由依赖中的 `provides` 满足，首个数值 Unit 有独立端到端验收义务。
 - 核对各 Unit 的设计来源真实存在且内容相关，没有固定数量假设或提前分配的测试 Case。
-- 核对 supported_domain 与边界、out_of_scope 及后继覆盖一致，能力依赖与写入顺序原因明确；设计约束和补证有义务关联或带通过判据的 review_evidence，输入触发条件对应真实故障面。
+- 核对 supported_domain 与边界、out_of_scope 及后继覆盖一致，能力依赖与写入顺序原因明确；设计约束和补证有义务关联或带通过判据与 reject_examples 的 review_evidence，输入触发条件对应真实故障面。
+- 核对 `scope.domain_constraints` 与 supported_domain 一致，按本 Unit 实际取值声明且可机器校验，并覆盖设计文档的最小合法输入；无法覆盖或与 spec 冲突时记录证据并返回设计，不靠收窄声明域或调整用例形状迁就；跨输入关系等无法表达项已列明，不以自然语言替代可执行声明。
+- Unit 的 `supported_domain` / `domain_constraints` 只把 spec 节点执行记录中“支持域声明表”标为 `specified`/`derived` 的断言当作需求；`implicit` 按约定处理；`platform`/`implementation` 只作限制，不写成输入域要求；未声明的界不得自行补成具体数值。
+- 核对每条强制承诺的 `review_evidence.reject_examples` 对应真实替代路线并明确判失败；只写正向存在性判据判失败。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`。
 acceptance:
 - set -- "$WORK_DIR"/design/units/U*.yaml; for unit_file do test -s "$unit_file" || exit 1; done

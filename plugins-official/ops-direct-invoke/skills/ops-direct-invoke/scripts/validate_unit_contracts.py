@@ -91,6 +91,9 @@ def validate_obligations(uid, unit, all_ids):
     if not isinstance(scope, dict):
         raise ValueError(f"{uid}: scope must be a mapping")
     names(scope.get("source_files", []), f"{uid}: source_files")
+    constraints = scope.get("domain_constraints")
+    if not isinstance(constraints, list) or not constraints:
+        raise ValueError(f"{uid}: scope.domain_constraints must be a nonempty list")
     items = unit.get("verification_obligations")
     if not isinstance(items, list) or not items:
         raise ValueError(f"{uid}: verification_obligations must be a nonempty list")
@@ -215,6 +218,18 @@ def validate_check_items(uid, label, items, fields, refs):
             raise ValueError(
                 f"{uid}: {label} review evidence needs artifact/check/pass_criteria"
             )
+        for entry in review:
+            rejects = entry.get("reject_examples")
+            if (
+                not isinstance(rejects, list)
+                or not rejects
+                or any(
+                    not isinstance(text, str) or not text.strip() for text in rejects
+                )
+            ):
+                raise ValueError(
+                    f"{uid}: {label} review evidence needs nonempty reject_examples"
+                )
         if not bound and not review:
             raise ValueError(
                 f"{uid}: {label} requires executable obligations or review evidence"

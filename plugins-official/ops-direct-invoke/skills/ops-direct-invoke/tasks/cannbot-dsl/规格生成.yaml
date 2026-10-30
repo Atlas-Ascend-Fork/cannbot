@@ -6,13 +6,20 @@ approach:
 - 生成前必须读取该 Skill 的 category、paradigm 和 category-paradigm 映射注册表；范式分类在本节点完成并冻结，后续设计节点不得重新选择。
 - 读取需求分析节点的有效产物，生成算子接口、输入输出、属性、数据类型、shape、格式、约束、异常语义、精度标准和性能目标，以 `$WORK_DIR/design/doc` 作为生成器 `--output-dir`。
 - 依据已确认需求补齐规格并执行 Skill 的完整校验，保存命令、退出码和 findings；缺少依据或存在未决项时记录并终止，不补造事实。
+- 为 spec 中每个数值/枚举断言建立“支持域声明表”并写入本节点执行记录，表列为：断言路径 / 断言 / 值或声明 / kind / 依据（条目、约定或关系） / 原文 / 结论。覆盖范围至少包括：`shape_constraints.symbols.*` 的 range 下界与上界（分别成行，缺失写“未声明”）、`kind=const` 的 value、`kind=rank` 的“无数值声明”、`attributes.*` 的数值/枚举约束与默认值、`outputs.*.shape_bounds`、`dtype_policy.supported_combinations`、`numerical_tolerance.*`、`reduction.fixed_value`、`boundary_conditions`/`extreme_inputs` 的数值阈值、`global_constraints` 的跨字段关系；缺失的界不得补造数值。
+- 每行标注 kind：`specified`（来源原文必须存在并包含该值/枚举）、`derived`（给出推导关系与来源原文）、`implicit`（给出约定，如下界按定义为 1）、`platform`/`implementation`（给出依据并作为限制，不得作为需求界）、`not_applicable`（说明为何无数值/枚举断言）；无来源的数值不得写成 `specified`。
+- '`boundary_conditions` 与异常语义的期望行为必须由来源（desc、proto、需求分析）决定，不得由生成器模板、范式必含清单或已有参考实现代为决定。来源未明确要求报错的行为，不得写成 `raises_error`；确需声明报错时，必须写明校验层（Host/Device）和能触发该行为的输入取值，保证用例可执行、可证伪。来源缺失或规格格式无法表达该行为时，按缺少依据的未决项记录并终止，不臆造。同一约束只能有一种归属，禁止同时写成“调用方契约”和“必须报错”。'
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
 - 审查执行者的完整校验记录，确认对应当前 spec 且返回 0；证据不足时退回补齐，不重跑同一校验代替执行者提供证据。
 - 逐项核对 `spec.yaml` 覆盖接口、输入、输出、属性、dtype、shape/格式约束、精度口径和异常边界。
 - 核对每条规格可追溯到 `$WORK_DIR/design/doc/REQUIREMENTS.md` 的已确认需求；不存在 TODO、会阻断黑盒设计或方案设计的未决项及相互冲突的约束。
+- 逐行核对“支持域声明表”覆盖 spec 中所有数值/枚举断言：symbol 的 range 下界/上界（含“未声明”）、const 值、rank 无数值声明、属性数值/枚举与默认值、shape_bounds、dtype 组合、容差、reduction.fixed_value、boundary/extreme 数值阈值、global_constraints 跨字段关系；缺失行或结论为 unsourced 判不合格。
+- 核对 `specified` 的原文包含该值/枚举，`derived` 有推导关系，`implicit` 有约定，`platform`/`implementation` 已作为限制记录；不把缺失的界补造成具体数值。
+- '核对每条 `boundary_conditions` 与异常语义条目的期望行为与来源一致且归属唯一：声明报错的必须给出校验层与可触发取值；声明不校验的不得与报错条目并存；同一输入或属性不得同时被声明为调用方契约和算子校验义务。冲突、归属不明或不可执行的条目判不合格。'
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
 - 'test -s "$WORK_DIR/design/doc/spec.yaml"'
+- 本节点执行记录包含“支持域声明表”，覆盖 spec 中所有数值/枚举断言（含缺失的下界/上界、const、rank、属性、默认值、容差和 dtype 组合）；缺行或 unsourced 判失败。
 out_of_scope:
 - 不生成测试代码、CANNBotDSL 实现或设计方案。
