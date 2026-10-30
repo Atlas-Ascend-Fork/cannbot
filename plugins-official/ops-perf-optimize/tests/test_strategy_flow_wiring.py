@@ -25,11 +25,11 @@ def read(path: Path) -> str:
     return text
 
 
-def test_strategy_flow_skill_is_a_required_analysis_dependency() -> None:
+def test_reference_skills_are_available_to_analysis() -> None:
     # 阶段走通用 subagent + 阶段 Skill：共享策略 Skill 在阶段正文路由，不再做 frontmatter 声明。
     analysis = read(ANALYSIS)
-    # Stage skills declare no `skills:` frontmatter; required capabilities are
-    # invoked task-scoped through the language routing prose instead.
+    # Stage skills declare no `skills:` frontmatter; reference resources are
+    # available in the body and selected for the current analysis task.
     assert "ascendc-perf-optimize" in analysis
     assert "ascendc-performance-best-practices" in analysis
     # 策略推导保留在 analysis；implementation 仅在 DSL 路由用其做候选诊断与流水/tiling 复核；
@@ -38,7 +38,7 @@ def test_strategy_flow_skill_is_a_required_analysis_dependency() -> None:
     assert "ascendc-perf-optimize" not in read(WRAPPER)
 
 
-def test_analysis_standards_execute_the_four_step_strategy_flow() -> None:
+def test_selected_strategy_flow_preserves_its_four_steps() -> None:
     analysis = read(ANALYSIS)
     assert "`ascendc-perf-optimize` 的 4 步流程" in analysis
     assert "Step 1 Tiling 理论建模必选" in analysis

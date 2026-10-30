@@ -44,7 +44,7 @@ DSL 默认 standard，围绕指定网络 case 优化，不自动生成 1000 条�
 
 五个角色和阶段键保持不变，Agent 的原有技能依赖全部保留。先加载本阶段 Skill 和共享验证，再按 backend 选择执行步骤：AscendC 使用原阶段步骤；DSL 执行本阶段 Skill 的 references/dsl-<stage>.md（共享验证与领域边界见 ops-perf-acceptance-criteria 的 references/cannbot-dsl.md），使用原测试入口，并交付编译及实际加载证据。原测试使用 TTK 时保留 TTK；原工程包含 Native/AOT、C++ 扩展或注册入口时保留对应构建与集成检查。纯 Python/JIT 输入不要求改造成 C++ 注册工程。阶段依赖、exact/forbidden、身份、全集、抖动和恢复门禁均须满足；语言选择不允许跳过门禁。其他声明技能按本阶段实际任务使用，客户端自动预加载不改变其适用范围。
 
-主 Agent 将 DSL 仓库与领域原文件路径、原测试、dsl-environment.json、编译依据按职责放入 INPUT_ARTIFACTS；analysis/implementation 使用公共方法 ascendc-perf-optimize 和融合的族级 DSL 最佳实践。前处理、最终实施、后处理交接增加 dsl-compile-evidence.json，workflow_state.py 在 complete 时机械验证并登记编译/加载依赖。仅有源码与二进制 SHA、同名 kernel 或进程 exit 0 不能代替血缘证明。
+主 Agent 将 DSL 仓库与领域原文件路径、原测试、dsl-environment.json、编译依据按职责放入 INPUT_ARTIFACTS；analysis 接收知识库、最佳实践和优化方法三项通用参考的概览、索引与适用范围，浏览后结合当前证据自主选择方案并按需深读；MC²、AscendC 静态性能检视和 AscendC API 文档检索不作为 DSL 参考输入。implementation 消费已冻结方案及其采用的证据。前处理、最终实施、后处理交接增加 dsl-compile-evidence.json，workflow_state.py 在 complete 时机械验证并登记编译/加载依赖。仅有源码与二进制 SHA、同名 kernel 或进程 exit 0 不能代替血缘证明。
 
 DSL 分析生成实施契约前必须执行本阶段 [方案净收益评估](../../ops-perf-analysis/references/dsl-benefit-assessment.md)。在同一 analysis.md 逐方向/方案、逐 case × SoC 记录关键路径、新增成本、完整调用收益区间或 unknown、目标贡献、证据可信度和处置；主 Agent 审阅后再冻结 scope。ready_for_implementation 才派发实施，needs_probe 按分析阶段采集路由补齐已登记诊断，deferred 保留证据和下一动作。字段完整不证明估计正确；理论空间、单核仿真跨度或局部加速不能直接作为完整调用收益。关键未知不允许作为不可行或收敛结论，正式终选仍按实测。
 
@@ -128,7 +128,7 @@ generalization 保留既有规则：
 
 ## 6. 派发、状态与报告
 
-诊断分析与实施验证的方案设计、方案实施引用 cannbot-knowledge 知识卡。使用知识仓自身 `install.sh <tool> <project> consumer` 安装的 `knowledge-query`，不使用 cannbot-skills 中的旧版副本。主 Agent 在首次派发需要它的阶段前读取该 Skill 与 `references/cli.md`，解析一次 `KB_ROOT` 并全程复用：优先按 Query 自身规则使用环境变量 `CANNBOT_KNOWLEDGE_ROOT`、当前目录及祖先中的 `.cannbot/knowledge.env`、真实 Skill 所在知识仓；未配置且尚未定位时，可检查项目下 `.cannbot/dependencies/*/cannbot-knowledge`，或同级检出的 cannbot-knowledge，并显式交给 Query。`KB_ROOT` 必须是包含 `governance/` 与 `knowledge/` 的仓根绝对路径，不是 `knowledge/` Bundle 根；显式配置无效时报告配置错误，不静默改用别的仓。
+主 Agent 将知识库、最佳实践和优化方法的概览、真实索引入口与目标适用范围作为两条 backend 的分析输入；仅在 AscendC 路径追加 MC²、静态性能检视与 API 文档检索三项，DSL 不接收这三项。缺失来源注明原因。分析 Agent 浏览适用概览后根据当前任务择优选择方案、按需深读资料，平台/API/同步及特殊路线检查独立于资料选择；实施验证消费所选方案及其实际采用的证据。选用知识库时，使用知识仓自身 `install.sh <tool> <project> consumer` 安装的 `knowledge-query`，不使用 cannbot-skills 中的旧版副本。主 Agent 在首次派发需要它的阶段前读取该 Skill 与 `references/cli.md`，解析一次 `KB_ROOT` 并全程复用：优先按 Query 自身规则使用环境变量 `CANNBOT_KNOWLEDGE_ROOT`、当前目录及祖先中的 `.cannbot/knowledge.env`、真实 Skill 所在知识仓；未配置且尚未定位时，可检查项目下 `.cannbot/dependencies/*/cannbot-knowledge`，或同级检出的 cannbot-knowledge，并显式交给 Query。`KB_ROOT` 必须是包含 `governance/` 与 `knowledge/` 的仓根绝对路径，不是 `knowledge/` Bundle 根；显式配置无效时报告配置错误，不静默改用别的仓。
 
 首次进入该知识仓运行 `discover --json`，使用其返回的 `root` 与真实覆盖信息；同一任务、同一知识根且索引指纹未变时复用。Query 只读已准备的索引；索引缺失、损坏或 stale 时记录具体错误，由知识仓安装器或维护者准备，不在调优阶段自动重建或扫描全库兜底。知识库不可用（Skill 未安装、依赖仓克隆被跳过、离线、配置或索引错误）不是阻塞项：信封省略 `KB_ROOT`，阶段标注 `kb_unavailable`，按无知识增强继续，不降低精度与性能验收要求；主 Agent 在报告中登记原因与恢复方式。有效零命中保留为当前决策的知识缺口，不等同于知识库不可用，更不能作为技术不可行的证据。
 

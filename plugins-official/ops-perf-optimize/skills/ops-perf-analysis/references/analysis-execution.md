@@ -2,13 +2,15 @@
 
 本阶段先按 `ops-perf-acceptance-criteria` 的性能采集参考采集或复用当前基线；下面的只读边界约束采集完成后的分析推导。修改源码或负载的诊断探针只在采集阶段的专用副本进行，冻结基线不变；未改源码的流水图可沿用基线身份。分析只消费已登记的有效证据。每个 case 同时读取 `performance-targets.json`，报告目标时延、差距和达标状态；不得用停止轮次代替性能目标。
 
+简单 profile 的聚合指标或 Duration 不足以支撑瓶颈分析时，必须在基线采集阶段按 `ops-perf-profile-feature-extractor` 补齐流水图，定位依赖、重叠、气泡和同步等待；已有同身份有效图可复用。按目标平台选择板上或仿真来源，聚合利用率不是流水图，图也不替代稳态计时验收。缺少必要证据时返回主 Agent 按采集协议补齐，不在只读分析中自行重采。
+
 ## 职责
 
 消费主 Agent 已冻结的用例、当前基线源码和本阶段一次统一 profiling，解释每个 case 的瓶颈并给出可直接实施的方案。不得重选 case、重采性能、编译 demo 或修改源码。
 
 开始前读取派发输入视图、本阶段 Skill 和本角色输入；需要逐 case 选择记录等详细字段时再按路径读取 `RUN_MANIFEST`。按验证类型读取共享参考。输入不完整或身份不匹配时退回主 Agent，不猜测映射。
 
-性能分析固定按以下顺序执行：输入与证据校验 → 逐 case bound/瓶颈分析 → 特殊算子路由 → 族/模板与 API 核验 → 方案和实施契约。不得合并、跳过或调换前置门禁。
+性能分析固定按以下顺序执行：输入与证据校验 → 逐 case bound/瓶颈分析 → 特殊算子路由 → 族/模板与 API 核验 → 方案和实施契约。这里规定证据与交付的前置关系；本阶段 Skill 列出的各项参考资料概览、索引和适用范围全部作为输入。Agent 浏览概览后自主选择方案并按需深读，不限定深读顺序；平台、API、同步和特殊路线检查按实际源码及候选机制触发，不因参考资料的选择而豁免。
 
 ## 输入
 
@@ -19,16 +21,17 @@
 - `source-compatibility.md`：公开契约面、工程支持 SoC、目标工程代际隔离风格和证据；
 - `extraction-manifest.json`：原工程到独立工作工程的文件/依赖/调用入口映射；
 - 信封 `KB_ROOT`（cannbot-knowledge 仓根，包含 `governance/` 与 `knowledge/`；absent 时本阶段无知识增强）；
-- 目标 SocVersion 与可验证本地 SDK/参考路径。
+- 目标 SocVersion 与可验证本地 SDK/参考路径；
+- 本阶段 Skill 列出的各项参考概览：用途、覆盖关键词、真实入口/索引、目标适用范围；缺失来源的原因同样随输入提供。
 
 按共享 [performance-collection.md](../../ops-perf-acceptance-criteria/references/performance-collection.md) 校验协议、身份和覆盖。只使用 `mapped_launches[]` 的 case/sample/role/kernel 映射；MC²/多 rank 不套用 application 协议，也不得按目录、kernel 名或 CSV 顺序猜测 case 映射。
 
 ## 分析标准
 
-1. 逐 case 记录计算模式、dtype/shape/attrs、bound（VEC/MEM/SCALAR）、关键指标、`total_us` 和证据路径。每个冻结 case 必须恰好出现；spread >10% 标不确定性，不自行重采。按下文“效率与理论上限”计算逐 case 量化证据。多阶段融合算子若聚合指标不足以归因，优先用覆盖目标计算路径的完整仿真流水图定位阶段依赖、掩盖和同步等待，不再叠加消融；无有效仿真图时，才消费已登记的上板阶段隔离证据，其端到端耗时差只表示边际影响，不相加推算可节省耗时。
-2. 先按 case 计算模式判定算子族，先按精确 `TARGET_SOCS` 执行两本策略/最佳实践 Skill 的代际前置路由，再读取 `ascendc-performance-best-practices` 对应族中目标适用的说明和模板代码，按决策树选路径。算子名不能锁定单一族；Broadcast、Elementwise、Reduction 分别按实际轴和计算结构判定，数据依赖读地址走 Gather，数据依赖写地址走 Scatter。
-3. `KB_ROOT` 存在时，方案设计前加载 `knowledge-query` 及其 `references/cli.md`、性能优化模式与证据工作流；以 `--knowledge-root "$KB_ROOT"` 固定知识仓。复用主 Agent 的 discover，以 `TARGET_SOCS` 确认任务目标平台，按该 Skill 的平台识别规则映射，不用本机型号或知识仓缺省平台覆盖任务目标；A2/A3 工程证据复用不代表知识卡可省略平台适用性核对。围绕主导 profiling 信号拆分独立 decision，以实体加一个关键约束的短 query 执行 `search`，按需限定 `ops` / `ascendc` 和已注册的优化、机制、API 或 runbook 类型；准确 API 用 literal，机制或现象用 text，默认 stable。先看返回的 `results` 中 `path` / `local_path`、`title` 和 `description` 选卡，再按绝对 `local_path` 阅读完整正文，核对平台、版本和适用边界，按需沿链接补证；不得把搜索摘要当作已核验知识。KB 检索结论是假设级证据，逐条标 `adopted`/`refuted`/`deferred` 后并入本轮分析，不替代本文件的分析标准和共享 Skill 路由。按 Query 的证据工作流保存独立 decision 的 receipt 与已读卡路径/指纹；有缺口时保留 gap/insufficient，不伪造 covered。退出码 0 的零命中记录知识缺口；参数或索引错误先按具体原因处理，仍不可用时记 `kb_unavailable` 与错误原因，不阻塞分析，也不自动构建索引。
-4. 策略推导按 `ascendc-perf-optimize` 的 4 步流程执行：Step 1 Tiling 理论建模必选，产出理想 tiling data 作为后续修正对照，并结合标准 1 的 `compute_efficiency` 输出给出理论最优耗时（roofline 上限：`max(字节/带宽, FLOP/算力)`）与距该上限的可达 headroom，作为"值不值得调、最多能到哪"的定量上界；Step 2 仅命中 MC²/通信类算子时执行，按 `ascendc-mc2-best-practice` 的 `references/shared/profiling_mc2.md` 口径判定主导流水与通信隐藏率，只消费基线采集阶段已登记的 TilingData 与隔离测试证据（T_comm/T_compute/R 值），缺失时退回主 Agent 按协议补采，不得修改源码自行补采；Step 3 仅在跨核同步或共享目标写入时分析核间依赖、同步和负载；Step 4 单核流水 bound 诊断结论并入逐 case bound 证据。各步产出的 tiling 修正建议和优化策略直接映射为方案与实施契约 required features，不因流程推导重选 case 或重采性能。
+1. 逐 case 记录计算模式、dtype/shape/attrs、bound（VEC/MEM/SCALAR）、关键指标、`total_us` 和证据路径。每个冻结 case 必须恰好出现；spread >10% 标不确定性，不自行重采。按下文“效率与理论上限”计算逐 case 量化证据。多阶段融合算子若聚合指标不足以归因，优先用覆盖目标计算路径的有效流水图定位阶段依赖、掩盖和同步等待，不再叠加消融；工具或调用路径无法产出有效图时记录缺口，再消费已登记的上板阶段隔离证据，其端到端耗时差只表示边际影响，不相加推算可节省耗时。
+2. 按 case 计算模式判定算子族。选用 `ascendc-performance-best-practices` 时，按精确 `TARGET_SOCS` 和算子族查询目标适用的说明、模板与参考代码；实际采用的路线须核验其平台和接口约束。算子名不能锁定单一族；Broadcast、Elementwise、Reduction 分别按实际轴和计算结构判定，数据依赖读地址走 Gather，数据依赖写地址走 Scatter。
+3. Agent 选用知识库且 `KB_ROOT` 可用时，加载 `knowledge-query` 及其 `references/cli.md`、性能优化模式与证据工作流；以 `--knowledge-root "$KB_ROOT"` 固定知识仓。复用主 Agent 的 discover，以 `TARGET_SOCS` 确认任务目标平台，按该 Skill 的平台识别规则映射，不用本机型号或知识仓缺省平台覆盖任务目标；A2/A3 工程证据复用不代表知识卡可省略平台适用性核对。围绕主导 profiling 信号拆分独立 decision，以实体加一个关键约束的短 query 执行 `search`，按需限定 `ops` / `ascendc` 和已注册的优化、机制、API 或 runbook 类型；准确 API 用 literal，机制或现象用 text，默认 stable。先看返回的 `results` 中 `path` / `local_path`、`title` 和 `description` 选卡，再按绝对 `local_path` 阅读完整正文，核对平台、版本和适用边界，按需沿链接补证；不得把搜索摘要当作已核验知识。KB 检索结论是假设级证据，逐条标 `adopted`/`refuted`/`deferred` 后并入本轮分析，不替代本文件的分析标准和共享 Skill 路由。按 Query 的证据工作流保存独立 decision 的 receipt 与已读卡路径/指纹；有缺口时保留 gap/insufficient，不伪造 covered。退出码 0 的零命中记录知识缺口；参数或索引错误先按具体原因处理，仍不可用时记 `kb_unavailable` 与错误原因，不阻塞分析，也不自动构建索引。
+4. Agent 选用 `ascendc-perf-optimize` 的 4 步流程时，按该方法的适用条件执行：Step 1 Tiling 理论建模必选，产出理想 tiling data 作为后续修正对照，并结合标准 1 的 `compute_efficiency` 输出给出理论最优耗时（roofline 上限：`max(字节/带宽, FLOP/算力)`）与距该上限的可达 headroom，作为"值不值得调、最多能到哪"的定量上界；Step 2 仅命中 MC²/通信类算子时执行，按 `ascendc-mc2-best-practice` 的 `references/shared/profiling_mc2.md` 口径判定主导流水与通信隐藏率，只消费基线采集阶段已登记的 TilingData 与隔离测试证据（T_comm/T_compute/R 值），缺失时退回主 Agent 按协议补采，不得修改源码自行补采；Step 3 仅在跨核同步或共享目标写入时分析核间依赖、同步和负载；Step 4 单核流水 bound 诊断结论并入逐 case bound 证据。各步产出的 tiling 修正建议和优化策略直接映射为方案与实施契约 required features，不因流程推导重选 case 或重采性能。
 5. 只有族级终选仍使用 SIMT 时才读取 SIMT 指南。不得因为原源码有 `__simt_vf__` 就跳过族级选路。
 6. 模板按证据分类：构建契约一致且已有编译证据才是“可直接使用”；上下文/契约待补为“集成边界待验证”；只有说明则是“设计参考”。不得用概念伪代码替代已找到的模板骨架。
 7. DAV_3510 的向量、归约、寄存器重排、Cast/Pack 热点查询 `reference/common/arch35/regbase/catalog.json` 并运行 `vf_preflight.py --strict`。记录 catalog ID、match_hints、readiness、目标工程的编译/精度/性能验证方案、`example_build_contract` 和目标差异；查询不等于选中。
@@ -64,7 +67,7 @@
 不同模板、运行时分支互斥的路径应融合进一个方案；同一分支的互斥策略每轮选择一种。相互依赖的架构修改写入同一契约，避免单独评估不可用的中间状态。方案必须包含：
 
 - 稳定 `scheme_id`、目标瓶颈、Tiling/流水/模板路径、适用分支和逐 case 覆盖；
-- 支撑知识卡：`kb_cards` 列出方案引用的 doc-id（使用搜索结果的 Concept `path`）、绝对 `local_path`、`card_sha256` 及各自用途（方向约束/优化方法/反模式），与方案正文及检索 receipt 可对照；只登记实际阅读全文的卡片，不把 Concept ID 当作相对文件名。`KB_ROOT` 缺失时写 `kb_unavailable`，有效零命中则记录知识缺口，不虚构卡片；
+- 采用知识卡时，`kb_cards` 列出方案引用的 doc-id（使用搜索结果的 Concept `path`）、绝对 `local_path`、`card_sha256` 及各自用途（方向约束/优化方法/反模式），与方案正文及检索 receipt 可对照；只登记实际阅读全文的卡片，不把 Concept ID 当作相对文件名。未采用知识卡时 `kb_cards` 留空，不要求为生成方案而补齐卡片数量；`KB_ROOT` 缺失时写 `kb_unavailable`，有效零命中则记录知识缺口，不虚构卡片；
 - 可证伪的收益假设与复盘条件，写成一行：`预测 <指标+比较方向+数值+case 集>；若观测到 <一次具体观测> 则记录 prediction_missed，供后续方案复盘`；预测未命中不改变已实施候选的门禁与终选资格；
 - 模板/VF readiness、目标构建契约、最小预检与 API 证据；
 - 上一轮 deferred/落选手段的处置；区分策略机制被证伪、具体实现成本、正确性缺陷和采集无效，一次实现退化不能单独否定整类方向。

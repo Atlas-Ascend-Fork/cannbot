@@ -119,7 +119,7 @@ def test_contract_defines_bootstrap_order_and_non_blocking_degradation() -> None
     assert "kb_unavailable: true" in entry
 
 
-def test_analysis_designs_schemes_on_cited_kb_cards() -> None:
+def test_analysis_records_actually_adopted_kb_cards() -> None:
     analysis = read(ANALYSIS)
     assert "`knowledge-query`" in analysis
     assert "`KB_ROOT`" in analysis
