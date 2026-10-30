@@ -51,7 +51,7 @@ bash /path/to/cannbot/plugins-official/ops-perf-optimize/init.sh project opencod
 安装会自动完成：
 
 1. **Skills 安装**：本插件自带的 9 个工作流 Skill（`ops-perf-optimize-workflow` 入口、五个阶段、验收标准、性能检视与特征提取）从插件目录软链，17 个共享 AscendC Skill（profiling、精度调试、Blaze 路由等）从 `vendor/cannbot-skills` submodule 软链到目标项目的工具 skills 目录；源码安装可用 `--skills <SHA|本地仓路径>` 锁定共享 Skill 版本。知识检索 Skill 使用下节知识仓自身的安装器，不再从该 submodule 安装旧版；
-2. **参考仓准备**：浅克隆 cannbot-knowledge 知识仓、asc-devkit（经 `ascendc-docs-search` 清洗）与 cann-samples 到 `<项目>/.cannbot/dependencies/ops-perf-optimize/`，asc-devkit/cann-samples 在项目根暴露同名入口。克隆知识仓不等于已准备检索 Skill、资源与索引，需完成下节 consumer 安装；断网/离线时告警跳过，`CANNBOT_SKIP_DEPENDENCY_REPOS=1` 可整体关闭；
+2. **参考仓准备**：浅克隆 cannbot-knowledge 知识仓、asc-devkit（经 `ascendc-docs-search` 清洗）与 cann-samples 到 `<项目>/.cannbot/dependencies/ops-perf-optimize/`，asc-devkit/cann-samples 在项目根暴露同名入口。统一安装器随后调用知识仓自身的 consumer 安装器，准备检索 Skill、资源、项目配置与索引，并执行只读 `discover` 检查；断网/离线时告警跳过，`CANNBOT_SKIP_DEPENDENCY_REPOS=1` 可整体关闭；
 3. **主 Agent 与主提示词**：`AGENTS.md` 作为 `perf-optimize` 主 Agent 安装到客户端 agents 目录（opencode/claude 为 `.opencode/agents/perf-optimize.md`、`.claude/agents/perf-optimize.md`，codex 为 `.codex/agents/perf-optimize.toml`），并以标记块写入项目 `CLAUDE.md`（claude）或 `AGENTS.md`（其他工具）；五个阶段仍派发给客户端通用 subagent；
 4. **hook 注册**（仅 claude 工具）：SessionStart 路由提示注册进 `.claude/settings.json`。
 
@@ -59,7 +59,9 @@ bash /path/to/cannbot/plugins-official/ops-perf-optimize/init.sh project opencod
 
 ### 知识库安装与配置
 
-知识库用于方案设计和实施约束补证，安装方式参考 [ascendc-ops-perf-evolution 快速入门](../../plugins-community/ascendc-ops-perf-evolution/quickstart.md)，实际参数以[知识仓当前安装器](https://gitcode.com/cann/cannbot-knowledge/blob/master/install.sh)为准。在同一调优工程中安装 consumer：
+知识库用于方案设计和实施约束补证。统一安装器自动完成 consumer 安装；只有该安装成功、规范 Skill 链接与项目配置存在、只读 `discover` 确认同一知识根时，安装记录的 `knowledgeIndex` 才为 `ready`。初始化或检查失败会告警、输出修复命令并记录 `pending`，插件仍可使用；首次查询不会自动补建索引。
+
+修复旧工程或单独安装 consumer 时，直接运行知识仓安装器（完整参数见[知识仓当前安装器](https://gitcode.com/cann/cannbot-knowledge/blob/master/install.sh)）：
 
 ```bash
 # 使用插件已克隆的知识仓；opencode 可换成 claude 或 codex
@@ -75,6 +77,8 @@ bash /path/to/cannbot-knowledge/install.sh opencode /path/to/your/tuning-project
 ```
 
 该安装器安装 `knowledge-query` 与 `ascendc-api-knowledge-query`，保留到完整知识仓的链接，准备运行依赖、文档/固定提交源码与检索索引，并在调优工程 `.cannbot/knowledge.env` 写入知识仓位置。普通检索可通过安装器 `--platform <已确认平台>` 配置缺省平台，任务目标不同时仍须按 Query 规则显式指定。
+
+显式离线、仅消费知识卡时，可设置 `CANNBOT_SKIP_KNOWLEDGE_RESOURCES=1`，统一安装器会向 consumer 传入 `--skip-resources`；这会跳过文档与固定源码恢复，仍准备索引并验证检索。`CANNBOT_SKIP_KNOWLEDGE_INDEX=1` 跳过整个 consumer 初始化并保留 `pending`。知识仓安装器目前支持 opencode、claude、codex、trae；统一 CLI 的 dsh 插件安装不受影响，但其 consumer 初始化会告警并保留 `pending`。
 
 知识仓根是包含 `governance/` 与 `knowledge/` 的目录。可用 `export CANNBOT_KNOWLEDGE_ROOT=/path/to/cannbot-knowledge` 覆盖，或在工程/祖先的 `.cannbot/knowledge.env` 配置同名变量；Query 也可通过真实 Skill 链接定位其知识仓。仅配置路径不能替代完整 consumer 安装，不要独立复制检索 Skill。
 

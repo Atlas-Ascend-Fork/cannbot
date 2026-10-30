@@ -1019,47 +1019,58 @@ function installNativeHooks(pluginDir, target, tool, assets) {
   return null;
 }
 
-function primeKnowledgeIndex(provisioned, target) {
-  // 安装器只负责把 cannbot-knowledge 的卡片 clone 下来，检索索引要靠 knowledge-query
-  // 自己 build。此前没人做这一步：老版本安装完首次检索直接报 "does not look ready"
-  // 不可用；即使有自愈也要等第一次查询 50s。这里在安装阶段就把索引建好。
+function installKnowledgeConsumer(provisioned, target, tool) {
+  const knowledge = provisioned.find((entry) => entry.dependency.name === "cannbot-knowledge");
+  if (!knowledge) return false;
   if (process.env.CANNBOT_SKIP_KNOWLEDGE_INDEX === "1") {
-    console.log("Skipping knowledge index priming (CANNBOT_SKIP_KNOWLEDGE_INDEX=1)");
-    return null;
+    console.log("Skipping knowledge consumer setup (CANNBOT_SKIP_KNOWLEDGE_INDEX=1)");
+    return false;
   }
-  // provisioned[].path 是相对 target 的路径（.cannbot/dependencies/...），必须显式拼 target，
-  // 否则 existsSync 会按 process.cwd() 解析而静默跳过。
-  const knowledge = provisioned.find((entry) => basename(entry.path) === "cannbot-knowledge");
-  if (!knowledge) return null;
-  const root = join(target, knowledge.path, "knowledge");
-  if (!existsSync(root)) return null;
-  const indexPath = join(root, "search", "okf.index.json");
-  if (existsSync(indexPath) && process.env.CANNBOT_REBUILD_KNOWLEDGE_INDEX !== "1") {
-    console.log(`  knowledge index: ready (${relative(target, indexPath)})`);
-    return indexPath;
+  // The knowledge repository owns its runtime, full-checkout Skill links,
+  // project config and index lifecycle. Query itself remains read-only.
+  const root = knowledge.destination;
+  const installer = join(root, "install.sh");
+  const args = [installer, tool, target, "consumer", "--skip-repository-update"];
+  if (process.env.CANNBOT_SKIP_KNOWLEDGE_RESOURCES === "1") args.push("--skip-resources");
+  const unavailable = (reason) => {
+    console.warn(`  knowledge consumer: unavailable (${reason}); knowledgeIndex=pending`);
+    console.warn(`  repair: bash ${args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(" ")}`);
+    return false;
+  };
+  if (!existsSync(installer)) return unavailable(`missing installer: ${installer}`);
+  console.log("  knowledge consumer: preparing runtime, resources and search index ...");
+  const installed = spawnSync("bash", args, { cwd: root, stdio: "inherit", timeout: 1800000 });
+  if (installed.status !== 0) {
+    return unavailable(installed.error?.message ?? `installer exit ${installed.status}`);
   }
-  const query = [
-    join(target, ".claude", "skills", "knowledge-query", "scripts", "knowledge_query.py"),
-    join(knowledge.path, "skills", "knowledge-query", "scripts", "knowledge_query.py"),
-  ].find((candidate) => existsSync(candidate));
-  if (!query) {
-    console.warn("  knowledge index: knowledge_query.py not found; skipped");
-    return null;
+  try {
+    for (const name of ["knowledge-query", "ascendc-api-knowledge-query"]) {
+      const canonical = join(target, ".agents", "skills", name);
+      if (realpathSync(canonical) !== realpathSync(join(root, ".agents", "skills", name))) {
+        return unavailable(`${name} does not link to the knowledge checkout`);
+      }
+    }
+    if (!existsSync(join(target, ".cannbot", "knowledge.env"))) {
+      return unavailable("missing .cannbot/knowledge.env");
+    }
+    const query = join(target, ".agents", "skills", "knowledge-query", "scripts", "knowledge_query.py");
+    const discovered = spawnSync(process.env.CANNBOT_PYTHON || "python3", [
+      query, "discover", "--json",
+    ], { cwd: target, encoding: "utf8", timeout: 120000 });
+    if (discovered.status !== 0) {
+      return unavailable(discovered.error?.message || discovered.stderr?.trim()
+        || discovered.stdout?.trim() || `discover exit ${discovered.status}`);
+    }
+    const coverage = JSON.parse(discovered.stdout);
+    if (coverage.schema_version !== "knowledge-discovery.v1" || !Number.isInteger(coverage.cards)
+        || coverage.cards < 0 || realpathSync(coverage.root) !== realpathSync(root)) {
+      return unavailable("discover did not confirm the installed knowledge root");
+    }
+    console.log(`  knowledge index: ready (${coverage.cards} cards; discover verified)`);
+    return true;
+  } catch (error) {
+    return unavailable(error.message);
   }
-  console.log("  knowledge index: building (first run, ~50s) ...");
-  const started = Date.now();
-  const result = spawnSync("python3", [query, "--knowledge-root", root, "build"], {
-    encoding: "utf8",
-    cwd: target,
-    timeout: 1800000,
-  });
-  if (result.status === 0) {
-    console.log(`  knowledge index: built in ${Math.round((Date.now() - started) / 1000)}s`);
-    return indexPath;
-  }
-  const detail = (result.stderr || "").trim().split("\n").pop() || `exit ${result.status}`;
-  console.warn(`  knowledge index: build failed (${detail}); the first query will retry`);
-  return null;
 }
 
 function install(options) {
@@ -1158,7 +1169,7 @@ function install(options) {
     nativePlugin,
     unsupported: existsSync(join(pluginDir, "hooks")) && options.tool === "dsh" ? ["hooks"] : [],
   };
-  record.knowledgeIndex = primeKnowledgeIndex(provisioned, options.target) ? "ready" : "pending";
+  record.knowledgeIndex = installKnowledgeConsumer(provisioned, options.target, options.tool) ? "ready" : "pending";
   updateInstallRegistry(join(configDir, "cannbot-plugin.json"), record);
 
   console.log(`Installed ${plugin.name}@${plugin.version} for ${options.tool}`);

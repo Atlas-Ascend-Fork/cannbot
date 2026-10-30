@@ -52,6 +52,10 @@ bash plugins-official/ops-direct-invoke/init.sh project codex /absolute/project 
 
 默认更新或指定 SHA 可能使子模块 HEAD 与主仓记录的 Gitlink 不同，主仓状态因此显示子模块版本变化。源码安装的软链接指向可变工作树：以后更新该仓，会影响此前安装的项目（指定 SHA 模式也一样）。记录追溯的是安装当时的版本；dirty 为 true 时，SHA 不包含本地未提交内容。需要冻结多个项目的不同版本时，使用独立检出目录并分别通过 `--skills <path>` 安装。
 
+声明 `cannbot-knowledge` 依赖的插件在克隆后，统一调用该仓的 `install.sh <tool> <target> consumer`；仓库更新由统一 CLI 负责，consumer 复用该 checkout。知识仓安装器负责运行依赖、完整仓库 Skill 链接、`.cannbot/knowledge.env`、资源和索引。统一 CLI 再通过安装后的规范 Query 入口执行只读 `discover`，确认知识根后将 `knowledgeIndex` 记为 `ready`。初始化或检查失败会输出原因和修复命令，保留 `pending`，不阻断插件安装。
+
+`CANNBOT_SKIP_DEPENDENCY_REPOS=1` 跳过依赖仓及 consumer；`CANNBOT_SKIP_KNOWLEDGE_INDEX=1` 仅跳过 consumer 初始化。显式离线、仅消费知识卡时使用 `CANNBOT_SKIP_KNOWLEDGE_RESOURCES=1`，会映射到 consumer 的 `--skip-resources`，仍准备并检查检索索引。Python 解释器可通过知识仓支持的 `CANNBOT_PYTHON` 指定。索引生命周期由知识仓当前安装器管理，旧版 `CANNBOT_REBUILD_KNOWLEDGE_INDEX` 不再控制索引构建；正常调优与查询不自动重建索引。
+
 ## 算子领域
 
 ### 算子生成
