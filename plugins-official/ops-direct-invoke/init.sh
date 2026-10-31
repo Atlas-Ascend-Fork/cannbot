@@ -11,6 +11,12 @@
 
 set -euo pipefail
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Install the complete performance workflow before initializing direct invocation.
+# Clear the public-installer context so its init installs the whole plugin.
+CANNBOT_INIT_CONTEXT= bash "${PLUGIN_DIR}/../ops-perf-optimize/init.sh" "$@"
+export CANNBOT_PREINITIALIZED_PLUGIN=ops-perf-optimize
+
 if [[ -f "${PLUGIN_DIR}/../../script/bin/source-plugin-init.sh" ]]; then
   exec bash "${PLUGIN_DIR}/../../script/bin/source-plugin-init.sh" "${PLUGIN_DIR}" "$@"
 fi

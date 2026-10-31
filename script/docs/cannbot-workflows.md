@@ -2,6 +2,8 @@
 
 ## 安装方式
 
+安装 `ops-direct-invoke` 时，统一安装器按其 `plugin-install.json` 的 `initializeBefore` 声明，先完整初始化 `ops-perf-optimize`，再初始化直调。源码与 npm 安装使用相同顺序、客户端和目标目录；源码两次安装复用同一个已选公共 Skill checkout。性能插件维护自身的 Skill、角色、hooks 和知识依赖，安装记录保留两个插件。
+
 普通用户在目标项目中执行各插件下方的 `npx` 命令。源码安装进入对应插件目录执行：
 
 ```bash

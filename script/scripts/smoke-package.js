@@ -76,6 +76,9 @@ try {
     join(target, ".cannbot", "plugins", "ops-direct-invoke", "agents", "ops-direct-invoke-verifier.md"),
     join(target, ".claude", "skills", "repo-env-check", "SKILL.md"),
     join(target, "CLAUDE.md"),
+    join(target, ".claude", "skills", "ops-direct-invoke", "workflows", "ascendc/perf-optimize.yaml"),
+    join(target, ".claude", "skills", "ops-perf-optimize-workflow", "SKILL.md"),
+    join(target, ".claude", "agents", "perf-optimize.md"),
   ]) {
     if (!existsSync(path)) throw new Error(`packaged harness install is missing: ${path}`);
   }
@@ -83,10 +86,12 @@ try {
   const entryRoot = join(target, ".claude", "skills", "ops-direct-invoke");
   const guide = join(workflowRun, "workflow-guide.csv");
   run("python3", [join(entryRoot, "scripts", "generate_workflow_guide.py"), "--output", guide], consumer);
-  if (!readFileSync(guide, "utf8").includes("ascendc/basic.yaml")) throw new Error("basic workflow missing from guide");
-  run("python3", [join(entryRoot, "scripts", "run_workflow.py"),
-    "--template", "ascendc/basic.yaml", "--work-dir", workflowRun, "--provider", "claude",
-    "--prompt", "package workflow smoke test", "--foreground", "--dry-run"], consumer);
+  for (const template of ["basic", "perf-optimize", "op-dev-with-perf"]) {
+    if (!readFileSync(guide, "utf8").includes(`ascendc/${template}.yaml`)) throw new Error(`${template} workflow missing from guide`);
+    run("python3", [join(entryRoot, "scripts", "run_workflow.py"),
+      "--template", `ascendc/${template}.yaml`, "--work-dir", join(workflowRun, template), "--provider", "claude",
+      "--prompt", "package workflow smoke test", "--foreground", "--dry-run"], consumer);
+  }
   console.log(`Verified ${archiveName} through the installed cannbot npm bin.`);
 } finally {
   rmSync(sandbox, { recursive: true, force: true });

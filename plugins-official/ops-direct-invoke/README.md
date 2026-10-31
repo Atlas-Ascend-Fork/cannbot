@@ -2,6 +2,11 @@
 
 ## 新特性
 
+### 【2026-10-31】
+
+- 新增 [perf-optimize](skills/ops-direct-invoke/workflows/ascendc/perf-optimize.yaml) 入口，用于已有 Ascend C 算子的性能优化。
+- 新增 [op-dev-with-perf](skills/ops-direct-invoke/workflows/ascendc/op-dev-with-perf.yaml) 入口，用于对算子开发有较高性能要求的任务。
+
 ### 【2026-10-28】
 
 - 新增 **Kirin 平台 Ascend C 直调算子开发支持**：`ops-direct-invoke` 工作流覆盖 Kirin9030、KirinX90 直调算子的需求对齐、方案设计、实现、功能验收与交付。对齐 [cannbot-skills PR1518](https://gitcode.com/cann/cannbot-skills/pull/1518)：`npu-arch` 新增 Vector 编程模式（MemBase/RegBase/SIMT）与架构支持矩阵，修正 Kirin 端侧平台硬件参数；新增 `ops-kirin-simulator` Skill 提供 Kirin 仿真指南。所选 skills 版本需包含该 PR；统一 init 默认自动更新，指定 SHA 或本地 skills 仓时由调用方选择兼容版本。
@@ -74,6 +79,8 @@ node script/bin/cannbot.js install ops-direct-invoke \
 
 客户端配置目录的 `cannbot-plugin.json`（例如 `.codex/cannbot-plugin.json`）记录 `source.revisions`：主仓 SHA、公共仓实际完整 SHA、选择方式、请求值、dirty 状态及本地来源路径。默认模式记录 `selection: "latest-branch"`，`requested` 为实际选中的分支名（回退时为 `master`）。同一插件重装会更新记录。公共字段定义和跨工作流适用范围见 [统一安装指南](../../script/docs/cannbot-workflows.md#安装方式)。
 
+安装器先完整初始化性能插件再初始化直调，两个插件均记录在客户端安装清单中。性能插件的角色、入口和知识环境按其自身声明安装，直调不重复维护内部 Skill 清单。
+
 源码安装使用软链接，指定 SHA 也只固定本次选择；以后修改或更新共享工作树，会影响之前安装的项目。版本记录不是内容快照，dirty 内容不能仅由 SHA 复现。需要多个项目使用不同版本时，用独立 checkout 并分别指定 `--skills <path>`。更新 vendor 后，主仓可能显示子模块 HEAD 与 gitlink 不一致。
 
 ### 工作区资产与定制
@@ -84,7 +91,7 @@ PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装�
 
 ### 任务输入与恢复
 
-使用 CANNBot-DSL 时明确开发语言，并提供目标 wheel、目标芯片和相关需求资料。PM 先对齐缺失信息，再选择 AscendC basic、独立 feasibility 或 DSL op-dev 流程。
+任务请求提供已确认的开发语言、目标平台和相关资料。PM 先生成并读取 workflow 引导，再按模板的 `use_when` 选择流程并准备输入；具体方法见 [流程编排入口](skills/ops-direct-invoke/SKILL.md#从生成的引导选择模板)。
 
 每轮 YAML、日志和交付记录位于 `.cannbot/<任务名>/workflow<序号>/`。恢复同一轮时沿用原 YAML 和工作目录，通过 harness 公开恢复接口执行；新一轮修复使用新目录，不删除或复制旧调度状态。手动组装与启动参数见 [算子流程入口](skills/ops-direct-invoke/SKILL.md)。
 
@@ -121,7 +128,7 @@ PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装�
 
 ## 默认流程与角色
 
-需求确认与 PM 环境检查在工作流启动前完成。PM 先核对路线依据和 Skill 调用契约；路线明确时使用 basic，有关键实现疑点时先独立运行 [feasibility](skills/ops-direct-invoke/workflows/ascendc/feasibility.yaml)。穿刺交付最小代码、代表用例的真实编译与设备证据，通过后新开一轮 basic；规则冲突先澄清，不靠穿刺绕过。basic 默认包含 7 个普通节点，知识搜集可以省略或用前轮资料替代；仓内没有已有算子文档时，下发前从本轮图省略最后的文档准备节点：
+需求确认与 PM 环境检查在工作流启动前完成。下图展示开发节点的组织关系；模板的适用场景、使用说明与允许的调整统一以生成引导中的 `use_when` 为准，节点依赖和验收由模板及 task 定义。
 
 ```mermaid
 flowchart TD
@@ -130,25 +137,26 @@ flowchart TD
     T --> D[2 算子开发]
     D --> W[3 白盒测试设计与用例接入]
     W --> R[4 代码修复]
-    R --> U[5 文档准备：仅仓内已有算子文档时]
+    R --> U[5 文档准备]
 ```
 
-知识搜集形成中立补充文档，包含资料索引、API 组合和不同 shape 的初版 Tiling 草稿，开发可根据验证调整实现。算子开发通过 `knowledge_documents` 接收本轮或前轮文档路径；无资料时使用默认值“无补充文档。”，不要求工作流存在知识搜集节点。省略知识节点时删去相应依赖，将黑盒设计编号改为 `0`、测试工程依赖改为 `0`，同步更新知识文档变量，其他阶段仍为 `1`～`5`。测试工程先准备黑盒，算子实现后再按源码生成白盒用例并直接接入已有框架。白盒节点检查测试质量与证据，发现的算子缺陷交给默认编排的代码修复节点；代码修复要求全量黑盒、白盒回归及代码检视通过，没有缺陷且已有当前版本的有效全量证据时复用并记录依据，不强制重复构建或测试；证据缺失或失效时补齐验证。
+开发图中的知识搜集形成可溯源的资料与初版实现参考；测试工程、实现、白盒测试及代码修复各自交付证据并独立验收。节点的具体工作方法与完成标准由 task 维护。
 
-[generate_workflow_guide.py](skills/ops-direct-invoke/scripts/generate_workflow_guide.py) 扫描模板并生成本轮 `workflow-guide.csv`，列出模板文件名和调用时机。PM 先生成并读取引导，再打开匹配模板。调用时机由各模板第二行的 `use_when` 维护，组装后不传给 harness。basic 与 feasibility 各自维护引用图，每个节点声明 id、task YAML、depends_on、max_retries，以及 task 需要的 variables 赋值。task 内容由组装脚本读取并展开，默认每个节点允许 3 次重试（含首次执行最多 4 轮），重试次数由 PM 在下发时确定。固定必需 Skill 保留在 task；PM 仅对声明了 `executor_skills`、`verifier_skills` 的 task 下发专项必需项，以及开发、修复阶段的有限候选清单与触发条件。节点按实际证据选用候选并记录依据，必需能力缺口或已确认约束、范围变更需求写入报告，交付标准无法满足时验收失败。运行中不与 PM 或用户交互；PM 在整轮退出后处理阻塞及知识搜集建议，供下一轮编排使用，不修改已启动的 YAML。AscendC 的文档准备按仓内已有格式补全资料，无已有算子文档时可省略该节点；DSL 文档节点按其交付契约生成本轮文档。入口 [SKILL.md](skills/ops-direct-invoke/SKILL.md) 规定模板选择与使用方法。
+[generate_workflow_guide.py](skills/ops-direct-invoke/scripts/generate_workflow_guide.py) 扫描模板的 `use_when` 并生成本轮 `workflow-guide.csv`。PM 读取引导后再打开匹配模板，不在入口维护另一份模板清单或节点省略规则。模板声明节点及依赖，组装脚本展开 task、变量和报告引用，harness 执行完整图。
 
 | 角色 | 职责 |
 |---|---|
 | [主会话 PM](skills/ops-direct-invoke/SKILL.md) | 理解用户目标、规划协作与多轮交付；不进入 task 图 |
 | [ops-direct-invoke-architect](agents/ops-direct-invoke-architect.md) | 需求、规格、黑盒设计、方案、实现规划与任务拆分 |
 | [ops-direct-invoke-developer](agents/ops-direct-invoke-developer.md) | 工作区、环境、代码实现与修复、精度和性能验证、文档及交付 |
+| `perf-optimize`（性能插件安装） | 独立性能流程的主执行者，负责其内部派发与完整优化 |
 | [ops-direct-invoke-verifier](agents/ops-direct-invoke-verifier.md) | 需求/规格/方案/设计与通用验收，以及代码检视；不重复构建或运行测试 |
 
 节点通过 `executor` / `verifier` 名称引用安装后的客户端角色，不在 prompt 中额外读取角色文件。主会话的 PM 入口与运行期子 Agent 派发是两个层次；实际 provider 是否正确加载角色、Skill 和权限仍需真实调用验证。
 
-执行者提供原始构建日志、本阶段测试结果（穿刺代表用例、正式交付全量）、源码/测试/构建产物哈希及实际加载路径，使用 [测试执行记录模板](skills/ops-direct-invoke/templates/测试执行记录.md)。验收者核对证据是否真实、完整、对应当前版本并独立检视代码；证据不足则失败，不代跑测试补证据。所有节点均按 [验收报告模板](skills/ops-direct-invoke/templates/验收报告.md) 生成 `<节点ID>-验收报告.md`，其中记录结论及具体修改意见。共享 acceptance 只列执行者交付件；验收报告由 verifier 在 procedure 中生成并检查，executor 根据回传反馈按需读取详情，不代写或等待它。
+执行者提供原始构建日志、本阶段测试结果及全量交付证据、源码/测试/构建产物哈希及实际加载路径，使用 [测试执行记录模板](skills/ops-direct-invoke/templates/测试执行记录.md)。验收者核对证据是否真实、完整、对应当前版本并独立检视代码；证据不足则失败，不代跑测试补证据。所有节点均按 [验收报告模板](skills/ops-direct-invoke/templates/验收报告.md) 生成 `<节点ID>-验收报告.md`，其中记录结论及具体修改意见。共享 acceptance 只列执行者交付件；验收报告由 verifier 在 procedure 中生成并检查，executor 根据回传反馈按需读取详情，不代写或等待它。
 
-穿刺代码、测试入口及证据通过本轮任务 prompt 传入下一轮，并明确使用节点，知识资料通过 `knowledge_documents` 传入；记录绝对路径、版本及适用范围，复用有效产物而非重复调查。穿刺通过仅证明限定范围可行，正式交付仍须全量测试和代码检视。
+性能优化作为独立 task 与开发图组合，接入原工作流所需的输入并交付结果索引；执行由性能插件的 `perf-optimize` Agent 调用 `ops-perf-optimize-workflow`，外层验收者核对最终版本的原有全量用例。
 
 报告保留关键结论和证据路径，每次真实执行的输入/版本清单、原始日志与用例明细只存一份；后续节点引用并核对差异，每个验收者仍独立出具本阶段报告。返工依据 harness 回传的失败摘要，按需读取所引用报告的未解决项，并补充变更证据；版本变化使旧证据失效时重新验证。确定性阻塞未变时只记录条件复核，当前 harness 仍按预算重试，不能凭报告自动跳过重试。
 
@@ -174,7 +182,7 @@ PM 入口负责跨 Skill 的流程编排，task 的 approach/procedure 声明节
 
 本仓 `repo-*` 知识按 CANN Bench 的直调工程与评测契约组织，包含需求、环境、接口、模板、构建、测试和编码规则。初始化会获取 `cann-bench` 到 `.cannbot/dependencies/ops-direct-invoke/cann-bench/`，实际运行记录所用 commit；已有 checkout 可作为任务输入复用。跨仓定制继续通过同名 `repo-*` Skill 覆写，不将仓库知识复制进 task。
 
-AscendC basic 的范围为本地开发、功能验收与交付文档；DSL op-dev 还包含可读性整改、全量回归及性能摸底。两者均不包含 PR、外部 CI 或合并。需求阶段仍需如实记录性能诉求；用户要求的硬门槛超出当前执行范围时，先对齐交付安排，不能承诺本流程已验证性能。引用业务知识时不启用其中遗留的 PM 派发、状态维护或回退指令。
+交付范围与验证要求由所选模板和 task 明确，性能诉求在需求阶段如实记录；超出当前能力的目标先对齐安排，不把未执行的工作写成已验证。引用业务知识时不启用其中遗留的 PM 派发、状态维护或回退指令。
 
 ## 维护与验证
 
@@ -201,7 +209,7 @@ ops-direct-invoke/
 ├── agents/                         # architect / developer / verifier
 ├── init.sh                         # 统一安装器的薄入口
 ├── plugin-sources.json             # 公共 Skill 来源与安装方式
-├── plugin-install.json             # 外部依赖仓声明
+├── plugin-install.json             # 前置插件初始化与外部依赖仓声明
 └── skills/
     ├── ops-direct-invoke-maintain/
     │   ├── SKILL.md                 # 维护入口与完整回归要求
@@ -225,7 +233,8 @@ ops-direct-invoke/
     │   │   ├── cannbot-dsl/          # op-dev 主图与展示资料
     │   │   └── ascendc/
     │   │       ├── basic.yaml       # 正式开发，含 use_when
-    │   │       └── feasibility.yaml # 独立技术穿刺，含 use_when
+    │   │       ├── op-dev-with-perf.yaml # 完整开发后性能优化，含 use_when
+    │   │       └── perf-optimize.yaml # 已有算子的独立性能优化，含 use_when
     │   └── templates/              # 文档模板平铺，文件名不带编号
     ├── repo-knowledge/
     ├── repo-build-guide/

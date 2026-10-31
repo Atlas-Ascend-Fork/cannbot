@@ -1,0 +1,9 @@
+# 对已有算子独立执行性能优化，或从已有性能恢复点继续。
+use_when: 已有 Ascend C 直调算子只需性能优化或续跑已有性能流程时使用；按 ops-perf-optimize-workflow 的公开请求契约准备代码及版本、构建和测试入口、原有全量用例与标准、性能目标、环境及授权；续跑时传入原交接、请求、运行目录及续写授权。
+workflow: ops-direct-invoke
+max_parallel: 1
+nodes:
+- id: '0'
+  yaml: ../../tasks/ascendc/性能优化.yaml
+  depends_on: []
+  max_retries: 0

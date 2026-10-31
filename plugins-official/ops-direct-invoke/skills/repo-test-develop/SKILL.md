@@ -14,4 +14,4 @@ description: 基于 CANN Bench 组织 proto、golden、cases.yaml，复用 kerne
 | 将源码分支用例写入现有任务集 | [白盒设计](references/whitebox-design.md) |
 | 精度 checker、阈值与评分含义 | [精度与性能](references/precision-and-perf.md) |
 
-任务决定执行代表用例还是全量回归；穿刺的局部通过不能代替正式全量交付。原始评测文件和候选工程分开，禁止改 golden、阈值、评测器或删测掩盖算子错误。
+任务决定执行代表用例还是全量回归；局部验证通过不能代替正式全量交付。原始评测文件和候选工程分开，禁止改 golden、阈值、评测器或删测掩盖算子错误。

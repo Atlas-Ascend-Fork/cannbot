@@ -1,0 +1,19 @@
+task_type: normal
+title: 性能优化
+goal:
+- 完成算子性能优化。
+approach:
+- 从 $USER_PROMPT、$WORK_DIR/需求分析.md、$WORK_DIR/环境信息.md 及已验收上游产物接入算子代码及版本、构建和测试入口、原有全量用例与判定标准、环境、性能目标及修改授权。
+- 首次输出目录为 $WORK_DIR/{{id}}-性能优化/；续跑时接入任务 prompt 指定的已有请求、恢复点及获准续写的运行目录。
+- 必须加载 `ops-perf-optimize-workflow` Skill，按其中的要求执行。
+- 将最终实现、性能结果、原有全量用例验证记录及恢复入口的路径汇总至 $WORK_DIR/{{id}}-性能优化交接.md。
+procedure:
+- 读取需求、环境及性能优化交接，按原有全量用例及判定标准核对最终版本的逐例原始结果，确认全部执行通过；流程未完成、用例跳过、结果失败或证据不足时不通过。
+- 按 ops-direct-invoke/templates/验收报告.md 写入 $WORK_DIR/{{id}}-验收报告.md，并执行 test -s "$WORK_DIR/{{id}}-验收报告.md"，记录结论与证据路径。
+acceptance:
+- test -s "$WORK_DIR/{{id}}-性能优化交接.md"
+out_of_scope:
+- 未经授权修改原有用例、判定标准或写出约定范围。
+executor: perf-optimize
+verifier: ops-direct-invoke-verifier
+on_exhaust: exit

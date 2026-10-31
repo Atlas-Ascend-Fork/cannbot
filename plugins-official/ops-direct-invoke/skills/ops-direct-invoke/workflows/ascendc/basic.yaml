@@ -1,5 +1,5 @@
-# 仅在路线明确或穿刺通过后启动。PM 下发 Skill、复用路径和预算；task 路径相对本文件。
-use_when: 一般算子开发任务
+# 正式开发流程。PM 下发 Skill、复用路径和预算；task 路径相对本文件。
+use_when: 一般 Ascend C 直调算子开发或功能修复；按节点图执行，知识搜集不可省略；目标仓无已有算子文档时可省略文档准备，其他节点与验收保留。
 workflow: ops-direct-invoke
 max_parallel: 2
 nodes:

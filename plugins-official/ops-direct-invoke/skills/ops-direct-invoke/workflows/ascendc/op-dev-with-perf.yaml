@@ -1,0 +1,62 @@
+# 完整执行 basic 后运行性能优化工作流；task 路径相对本文件。
+use_when: 对 Ascend C 算子开发有较高性能要求时使用；完整执行全部开发、验收与文档节点（知识搜集不可省略）后运行性能优化，以已验收实现及全量用例接入原性能入口；启动前按其公开请求契约确认性能目标、环境与修改授权。
+workflow: ops-direct-invoke
+max_parallel: 2
+nodes:
+- id: '0.0'
+  yaml: ../../tasks/ascendc/知识搜集.yaml
+  depends_on: []
+  max_retries: 3
+  variables:
+    executor_skills: 无补充 Skill。
+    verifier_skills: 无补充 Skill。
+    research_focus: 重点搜集算子专项资料、目标芯片 API 组合和不同 shape 的初版 Tiling。
+- id: '0.1'
+  yaml: ../../tasks/ascendc/黑盒测试设计.yaml
+  depends_on: []
+  max_retries: 3
+- id: '1'
+  yaml: ../../tasks/ascendc/测试工程开发.yaml
+  depends_on:
+  - '0.0'
+  - '0.1'
+  max_retries: 3
+- id: '2'
+  yaml: ../../tasks/ascendc/算子开发.yaml
+  depends_on:
+  - '1'
+  max_retries: 3
+  variables:
+    executor_skills: |
+      候选 Skill（仅在实际证据命中时加载）：
+      - 自测或复现出现输出错误、精度不达标时，必须加载 `ascendc-precision-debug` Skill，按其中的要求执行。
+      - 自测或复现出现卡死、超时、崩溃或内存访问异常时，必须加载 `ascendc-crash-debug` Skill，按其中的要求执行。
+    verifier_skills: 无补充 Skill。
+    knowledge_documents: $WORK_DIR/0.0-知识搜集.md
+- id: '3'
+  yaml: ../../tasks/ascendc/白盒测试设计.yaml
+  depends_on:
+  - '2'
+  max_retries: 3
+- id: '4'
+  yaml: ../../tasks/ascendc/代码修复.yaml
+  depends_on:
+  - '3'
+  max_retries: 3
+  variables:
+    executor_skills: |
+      候选 Skill（仅在实际证据命中时加载）：
+      - 自测或复现出现输出错误、精度不达标时，必须加载 `ascendc-precision-debug` Skill，按其中的要求执行。
+      - 自测或复现出现卡死、超时、崩溃或内存访问异常时，必须加载 `ascendc-crash-debug` Skill，按其中的要求执行。
+    verifier_skills: 无补充 Skill。
+    repair_requirements: 根据本轮白盒测试设计节点的验收报告、测试执行记录与源码覆盖记录，修复暴露的算子代码缺陷；同步受影响的白盒用例，完成全量黑盒、白盒回归并提供证据供代码检视。没有待修复缺陷且当前版本已有有效全量证据时复用并记录依据，否则补齐验证。
+- id: '5'
+  yaml: ../../tasks/ascendc/文档准备.yaml
+  depends_on:
+  - '4'
+  max_retries: 3
+- id: '6'
+  yaml: ../../tasks/ascendc/性能优化.yaml
+  depends_on:
+  - '5'
+  max_retries: 0

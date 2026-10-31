@@ -55,8 +55,42 @@ function fixture(t, mixed = false) {
 function install(f, skills) {
   return spawnSync(process.execPath, [join(repository, "script/bin/cannbot.js"), "install", "fixture-plugin",
     "--source", f.checkout, "--tool", "codex", "--target", join(f.box, "target"),
-    ...(skills === undefined ? [] : ["--skills", skills])], { encoding: "utf8", env });
+    ...(skills === undefined ? [] : ["--skills", skills])], { encoding: "utf8",
+    env: { ...env, HOME: join(f.box, "home"), XDG_CACHE_HOME: join(f.box, "cache") } });
 }
+
+test("ordered plugin initialization reuses the selected shared checkout", (t) => {
+  const f = fixture(t);
+  const parent = join(f.checkout, "plugins-official/fixture-plugin");
+  const before = join(f.checkout, "plugins-official/before-plugin");
+  mkdirSync(join(before, ".claude-plugin"), { recursive: true });
+  writeFileSync(join(before, ".claude-plugin/plugin.json"), JSON.stringify({ name: "before-plugin", version: "1.0.0", description: "Initialization fixture" }));
+  writeFileSync(join(before, "plugin-sources.json"), JSON.stringify(f.definition));
+  writeFileSync(join(parent, "plugin-install.json"), JSON.stringify({ initializeBefore: ["before-plugin"] }));
+  const result = install(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.ok(result.stdout.indexOf("Installed before-plugin@") < result.stdout.indexOf("Installed fixture-plugin@"));
+  const records = JSON.parse(readFileSync(join(f.box, "target/.codex/cannbot-plugin.json"))).plugins;
+  assert.deepEqual(records.map((record) => record.plugin), ["before-plugin", "fixture-plugin"]);
+  for (const record of records) assert.equal(record.source.revisions["cannbot-skills"].commit, f.latest);
+
+  writeFileSync(join(before, "plugin-install.json"), JSON.stringify({ initializeBefore: ["fixture-plugin"] }));
+  const cycle = install(f, f.remote);
+  assert.notEqual(cycle.status, 0);
+  assert.match(cycle.stderr, /initialization cycle: fixture-plugin -> before-plugin -> fixture-plugin/);
+});
+
+test("invalid or unavailable initializers stop before installing the requested plugin", (t) => {
+  const f = fixture(t);
+  const config = join(f.checkout, "plugins-official/fixture-plugin/plugin-install.json");
+  for (const initializeBefore of ["not-an-array", ["../escape"], ["missing-plugin"]]) {
+    writeFileSync(config, JSON.stringify({ initializeBefore }));
+    const result = install(f, f.remote);
+    assert.notEqual(result.status, 0);
+    assert.equal(existsSync(join(f.box, "target/.cannbot/plugins/fixture-plugin")), false);
+    assert.equal(existsSync(join(f.box, "target/.agents/skills/fixture")), false);
+  }
+});
 
 test("fresh initialization and repeated installs fetch master and record the actual SHA", (t) => {
   const f = fixture(t);

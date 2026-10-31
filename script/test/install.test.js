@@ -174,7 +174,9 @@ function assertUnifiedInstall(target, tool, plugin) {
   const instructionsPath = join(target, tool === "claude" ? "CLAUDE.md" : "AGENTS.md");
   if (existsSync(instructionsPath)) {
     const instructions = readFileSync(instructionsPath, "utf8");
-    assert.equal(instructions.match(new RegExp(`<!-- cannbot:${plugin}:start -->`, "g"))?.length, 1);
+    const expected = plugin === "ops-direct-invoke" ? undefined : 1;
+    assert.equal(instructions.match(new RegExp(`<!-- cannbot:${plugin}:start -->`, "g"))?.length, expected);
+    if (plugin === "ops-direct-invoke") assert.match(instructions, /<!-- cannbot:ops-perf-optimize:start -->/);
   }
 }
 
@@ -810,7 +812,7 @@ test("multiple plugins keep independent instructions and install records", () =>
 
   const registry = JSON.parse(readFileSync(join(first.target, ".dsh", "cannbot-plugin.json"), "utf8"));
   assert.equal(registry.schemaVersion, 2);
-  assert.deepEqual(registry.plugins.map((plugin) => plugin.plugin), ["model-infer-optimize", "ops-direct-invoke"]);
+  assert.deepEqual(registry.plugins.map((plugin) => plugin.plugin), ["model-infer-optimize", "ops-direct-invoke", "ops-perf-optimize"]);
   assert.equal(registry.plugins.find((plugin) => plugin.plugin === "ops-direct-invoke").instructions, null);
   assert.equal(existsSync(join(skillRoot(first.target, "dsh"), "ascendc-env-check", "SKILL.md")), true);
   assert.equal(existsSync(join(skillRoot(first.target, "dsh"), "model-infer-migrator", "SKILL.md")), true);

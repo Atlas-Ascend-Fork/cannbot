@@ -1,4 +1,5 @@
 {
+  "initializeBefore": ["ops-perf-optimize"],
   "dependencies": [
     {
       "name": "asc-devkit",

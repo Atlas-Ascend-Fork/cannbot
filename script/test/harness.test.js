@@ -12,6 +12,7 @@ import { assemblePlugins } from '../lib/plugin-bundle.js';
 
 const repository = resolve(import.meta.dirname, '../..');
 const plugin = 'ops-direct-invoke';
+const performance = 'ops-perf-optimize';
 const sourceDirectory = 'plugins-official/ops-direct-invoke';
 const bundleDirectory = 'dist/plugins/ops-direct-invoke';
 const entry = 'ops-direct-invoke';
@@ -37,19 +38,20 @@ function install(box, tool, source, extra = []) {
   else args.push('--plugin-dir', bundleDirectory);
   const result = spawnSync(process.execPath, [...args, ...extra], { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  return join(box.target, tool === 'claude' ? '.claude' : '.agents', 'skills');
+  assert.ok(result.stdout.indexOf(`Installed ${performance}@`) >= 0 && result.stdout.indexOf(`Installed ${performance}@`) < result.stdout.indexOf(`Installed ${plugin}@`), result.stdout);
+  return join(box.target, ['codex', 'opencode'].includes(tool) ? '.agents' : `.${tool}`, 'skills');
 }
 
 for (const source of ['repository', 'package']) {
-  for (const tool of ['codex', 'opencode', 'claude']) {
+  for (const tool of ['codex', 'opencode', 'claude', 'trae', 'dsh']) {
     test(`harness installs ${source} for ${tool} with a skill entry and without global PM instructions`, (t) => {
       const box = sandbox(t);
       const skills = install(box, tool, source);
-      const clientDirectory = tool === 'codex' ? '.codex' : tool === 'opencode' ? '.opencode' : '.claude';
+      const clientDirectory = `.${tool}`;
       const installedRegistry = JSON.parse(readFileSync(join(box.target, clientDirectory, 'cannbot-plugin.json'), 'utf8'));
-      assert.deepEqual(installedRegistry.plugins.map((item) => item.plugin), [plugin]);
+      assert.deepEqual(installedRegistry.plugins.map((item) => item.plugin), [plugin, performance]);
       assert.equal(installedRegistry.plugins[0].instructions, null);
-      assert.deepEqual(readdirSync(join(box.target, '.cannbot/plugins')), [plugin]);
+      assert.deepEqual(readdirSync(join(box.target, '.cannbot/plugins')), [plugin, performance]);
       for (const name of [entry, 'workflow-orchestrator', ...localKnowledge,
         'ascendc-simt-tiling-design', 'ascendc-mc2-best-practice', 'cann-env-setup']) {
         assert.ok(existsSync(join(skills, name, 'SKILL.md')), name);
@@ -65,7 +67,7 @@ for (const source of ['repository', 'package']) {
         assert.equal(existsSync(join(skills, entry, path)), false, path);
       }
       const tasks = join(skills, entry, 'tasks/ascendc');
-      assert.equal(readdirSync(tasks).length, 8);
+      assert.deepEqual(readdirSync(tasks).sort(), readdirSync(join(repository, sourceDirectory, 'skills', entry, 'tasks/ascendc')).sort());
       for (const name of readdirSync(tasks)) assert.doesNotMatch(name, /^\d/);
       const templates = join(skills, entry, 'templates');
       const sourceTemplates = join(repository, sourceDirectory, 'skills', entry, 'templates');
@@ -101,13 +103,26 @@ for (const source of ['repository', 'package']) {
         assert.equal(existsSync(join(skills, entry, name)), false, name);
       }
       for (const name of ['generate_workflow_guide.py', 'assemble_workflow.py', 'run_workflow.py']) assert.ok(existsSync(join(skills, entry, 'scripts', name)));
-      const agents = join(box.target, tool === 'claude' ? '.claude' : tool === 'codex' ? '.codex' : '.opencode', 'agents');
+      const agents = join(box.target, clientDirectory, 'agents');
       const extension = tool === 'codex' ? '.toml' : '.md';
       assert.deepEqual(readdirSync(agents).filter((name) => name.startsWith('ops-direct-invoke-')).sort(),
         ['architect', 'developer', 'verifier'].map((name) => `ops-direct-invoke-${name}${extension}`));
-      for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(existsSync(join(box.target, name)), false);
+      assert.ok(existsSync(join(agents, `perf-optimize${extension}`)));
+      const instructionsPath = join(box.target, tool === 'claude' ? 'CLAUDE.md' : 'AGENTS.md');
+      const instructions = readFileSync(instructionsPath, 'utf8');
+      assert.match(instructions, /<!-- cannbot:ops-perf-optimize:start -->/);
+      assert.doesNotMatch(instructions, /<!-- cannbot:ops-direct-invoke:start -->/);
+      for (const name of readdirSync(join(repository, 'plugins-official', performance, 'skills'))) {
+        if (!existsSync(join(repository, 'plugins-official', performance, 'skills', name, 'SKILL.md'))) continue;
+        assert.equal(readFileSync(join(skills, name, 'SKILL.md'), 'utf8'),
+          readFileSync(join(repository, 'plugins-official', performance, 'skills', name, 'SKILL.md'), 'utf8'));
+      }
+      assert.ok(existsSync(join(skills, 'ops-perf-optimize-workflow/scripts/workflow_state.py')));
+      assert.ok(existsSync(join(skills, 'ops-perf-optimize-workflow/workflows/task-prompts.md')));
+      const help = spawnSync('python3', ['-B', join(skills, 'ops-perf-optimize-workflow/scripts/workflow_state.py'), '--help'], { encoding: 'utf8' });
+      assert.equal(help.status, 0, help.stdout + help.stderr);
       install(box, tool, source);
-      for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(existsSync(join(box.target, name)), false);
+      assert.equal(readFileSync(instructionsPath, 'utf8'), instructions);
       if (source === 'package') {
         assert.equal(existsSync(join(skills, 'workflow-orchestrator/scripts/__pycache__')), false);
       }
@@ -125,14 +140,18 @@ function legacyInstructions(box, tool) {
   const other = '<!-- cannbot:other:start -->\nOther plugin\n<!-- cannbot:other:end -->';
   const prefix = `用户自己的 PM 说明\r\n${other}\n\n`;
   const suffix = '\n用户尾部内容  \n\n';
-  writeFileSync(join(box.target, 'AGENTS.md'), prefix + block + suffix + block);
-  writeFileSync(join(box.target, 'CLAUDE.md'), block);
+  const perfFile = tool === 'claude' ? 'CLAUDE.md' : 'AGENTS.md';
+  const perfInstructions = readFileSync(join(box.target, perfFile), 'utf8');
+  const expectedAgents = prefix + suffix + (perfFile === 'AGENTS.md' ? perfInstructions : '');
+  const expectedClaude = perfFile === 'CLAUDE.md' ? perfInstructions : '';
+  writeFileSync(join(box.target, 'AGENTS.md'), prefix + block + suffix + block + (perfFile === 'AGENTS.md' ? perfInstructions : ''));
+  writeFileSync(join(box.target, 'CLAUDE.md'), block + expectedClaude);
   const client = tool === 'codex' ? '.codex' : tool === 'claude' ? '.claude' : `.${tool}`;
   const registryPath = join(box.target, client, 'cannbot-plugin.json');
   const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
   registry.plugins[0].instructions = tool === 'claude' ? 'CLAUDE.md' : 'AGENTS.md';
   writeFileSync(registryPath, JSON.stringify(registry));
-  return { registryPath, expected: prefix + suffix };
+  return { registryPath, expected: expectedAgents, expectedClaude };
 }
 
 for (const source of ['repository', 'package']) {
@@ -140,11 +159,11 @@ for (const source of ['repository', 'package']) {
     test(`upgrade ${source} for ${tool} retires only managed PM blocks in both instruction files`, (t) => {
       const box = sandbox(t);
       install(box, tool, source);
-      const { registryPath, expected } = legacyInstructions(box, tool);
+      const { registryPath, expected, expectedClaude } = legacyInstructions(box, tool);
       for (let attempt = 0; attempt < 2; attempt++) {
         install(box, tool, source);
         assert.equal(readFileSync(join(box.target, 'AGENTS.md'), 'utf8'), expected);
-        assert.equal(readFileSync(join(box.target, 'CLAUDE.md'), 'utf8'), '');
+        assert.equal(readFileSync(join(box.target, 'CLAUDE.md'), 'utf8'), expectedClaude);
         const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
         assert.equal(registry.plugins[0].instructions, null);
       }
@@ -157,7 +176,8 @@ test('upgrade preserves unmarked or incomplete user instructions', (t) => {
   const instructions = '<!-- cannbot:ops-direct-invoke:start -->\nUser-maintained PM instructions\n';
   writeFileSync(join(box.target, 'AGENTS.md'), instructions);
   install(box, 'codex', 'repository');
-  assert.equal(readFileSync(join(box.target, 'AGENTS.md'), 'utf8'), instructions);
+  assert.ok(readFileSync(join(box.target, 'AGENTS.md'), 'utf8').startsWith(instructions));
+  assert.match(readFileSync(join(box.target, 'AGENTS.md'), 'utf8'), /<!-- cannbot:ops-perf-optimize:start -->/);
   assert.equal(existsSync(join(box.target, 'CLAUDE.md')), false);
 });
 
@@ -180,13 +200,36 @@ test('harness knowledge overrides preserve the source and cannot replace schedul
   assert.match(result.stderr, /cannot be overridden/);
 });
 
-test('harness source init delegates to the unified installer', (t) => {
+test('harness source init initializes performance first and installs each plugin once', (t) => {
   const box = sandbox(t);
   const result = spawnSync('bash', [join(repository, sourceDirectory, 'init.sh'), 'project', 'codex', box.target,
     '--skills', join(repository, 'vendor/cannbot-skills')],
     { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.stdout.match(/Installed ops-perf-optimize@/g)?.length, 1, result.stdout);
+  assert.equal(result.stdout.match(/Installed ops-direct-invoke@/g)?.length, 1, result.stdout);
+  assert.ok(result.stdout.indexOf('Installed ops-perf-optimize@') < result.stdout.indexOf('Installed ops-direct-invoke@'));
+  assert.ok(existsSync(join(box.target, '.agents/skills/ops-perf-optimize-workflow/SKILL.md')));
+  assert.ok(existsSync(join(box.target, '.codex/agents/perf-optimize.toml')));
   assert.ok(existsSync(join(box.target, '.agents/skills', entry, 'tasks/ascendc/知识搜集.yaml')));
+});
+
+test('direct init calls the performance init script and stops if it fails', (t) => {
+  const box = sandbox(t);
+  const source = join(box.root, 'source with spaces');
+  const direct = join(source, sourceDirectory);
+  const perf = join(source, 'plugins-official', performance);
+  mkdirSync(direct, { recursive: true });
+  mkdirSync(perf, { recursive: true });
+  mkdirSync(join(source, 'script/bin'), { recursive: true });
+  cpSync(join(repository, sourceDirectory, 'init.sh'), join(direct, 'init.sh'));
+  writeFileSync(join(perf, 'init.sh'), 'printf "performance-init\\n"\nprintf "<%s>\\n" "$@"\nexit 7\n');
+  writeFileSync(join(source, 'script/bin/source-plugin-init.sh'), 'echo direct-init-must-not-run\n');
+  const args = ['project', 'codex', box.target, '--skills', '/skills with spaces'];
+  const result = spawnSync('bash', [join(direct, 'init.sh'), ...args], { env: box.env, encoding: 'utf8' });
+  assert.equal(result.status, 7, result.stdout + result.stderr);
+  assert.equal(result.stdout, `performance-init\n${args.map((value) => `<${value}>\n`).join('')}`);
+  assert.doesNotMatch(result.stdout, /direct-init-must-not-run/);
 });
 
 function prepare(box, skills, input = 'template') {
@@ -447,9 +490,10 @@ test('ops-direct-invoke assembles and installs from a self-contained source layo
   cpSync(join(repository, 'LICENSE'), join(isolated, 'LICENSE'));
   cpSync(join(repository, 'plugins-official/LICENSE'), join(isolated, 'plugins-official/LICENSE'));
   cpSync(join(repository, sourceDirectory), join(isolated, sourceDirectory), { recursive: true });
-  // Only the common framework and domain Skill repository are shared with the source tree.
+  // Share the declared framework, domain Skills and separately initialized performance plugin.
   symlinkSync(join(repository, 'harness'), join(isolated, 'harness'), 'dir');
   symlinkSync(join(repository, 'vendor'), join(isolated, 'vendor'), 'dir');
+  symlinkSync(join(repository, 'plugins-official', performance), join(isolated, 'plugins-official', performance), 'dir');
   assert.equal(existsSync(join(isolated, 'plugins-community')), false);
   const bundles = assemblePlugins(isolated, join(box.root, 'dist'), [basename(sourceDirectory)]);
   assert.equal(bundles.length, 1);

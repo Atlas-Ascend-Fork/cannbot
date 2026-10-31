@@ -13,7 +13,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "1.0.5",
@@ -51,7 +51,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "infra",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "1.1.0",
@@ -74,7 +74,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "model",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "1.2.0",
@@ -219,7 +219,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "communication",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "1.2.13",
@@ -277,12 +277,12 @@
     },
     {
       "name": "triton-op-generator-skills",
-      "description": "Triton-Ascend 算子生成与优化 Skills（8 项）。覆盖任务构建、草图设计、代码生成、精度验证、性能优化、精度调试、simulator 诊断与 NPU 架构知识。",
+      "description": "Triton-Ascend 算子生成与优化 Skills（9 项）。覆盖任务构建、草图设计、代码生成、精度验证、性能优化、精度调试、simulator 诊断、MFU 分析与 NPU 架构知识。",
       "source": {
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "1.0.0",
@@ -298,7 +298,8 @@
         "./triton-latency-optimizer",
         "./triton-precision-debug",
         "./triton-simulator-optimizer",
-        "./npu-arch"
+        "./npu-arch",
+        "./triton-mfu-analyzer"
       ]
     },
     {
@@ -308,7 +309,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "plugins-community/cannbot-knowledge/skills",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "1.0.0",
@@ -349,7 +350,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "4.1.0",
@@ -380,7 +381,7 @@
     {
       "name": "ops-perf-optimize",
       "source": "./plugins-official/ops-perf-optimize",
-      "description": "AscendC 五阶段性能调优 Team：基线评估、前处理、诊断分析、实施验证、后处理；保留泛化调优、精度门禁和恢复，回集成逐 case 防退化。",
+      "description": "AscendC / CANNBot-DSL 性能调优工作流",
       "version": "4.1.0",
       "author": {
         "name": "CANNBot"
@@ -421,7 +422,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
       },
       "strict": false,
       "version": "1.2.0",

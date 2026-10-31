@@ -28,6 +28,8 @@ each `dist/plugins/<plugin>/` directory.
 
 All supported CLI clients use the same Node installer. Source `init.sh` scripts that use the shared entry point forward the selected plugin, source repository, tool, and target to the CLI, which links Skills to their declared source directories. Independent plugin installers retain their own behavior. npm installation copies the bundled Skills. Plugin-specific dependency repositories are declared in `plugin-install.json`.
 
+`plugin-install.json` may declare `initializeBefore`, an ordered list of plugin IDs to fully install before the current plugin. The same client, target and selected shared Skill checkout are reused; plugin-specific overrides apply only to the requested plugin. Cycles are rejected. `ops-direct-invoke` initializes `ops-perf-optimize` this way, so the performance plugin owns its Skills, agents, hooks and knowledge setup in both source and npm installations.
+
 See [the workflow installation and usage guide](docs/cannbot-workflows.md) for all supported commands and prompt examples.
 
 Community plugins with a `plugin-sources.json` are also assembled into the package. To install ops-direct-invoke from its source directory:

@@ -19,7 +19,7 @@ cd cannbot
 bash plugins-official/ops-direct-invoke/init.sh project opencode /path/to/your-workspace
 ```
 
-init 自动拉取 `cannbot-skills` 同名分支，不存在则用 master。已有本地仓库时，用下面的命令直接软链接复用：
+已有本地 cannbot-skills 仓库时，用下面的命令复用：
 
 ```bash
 bash plugins-official/ops-direct-invoke/init.sh project opencode /path/to/your-workspace \

@@ -428,13 +428,17 @@ function installInstructionsFrom(source, pluginName, target, tool, assets, skill
   }
   const destination = join(target, tool === "claude" ? "CLAUDE.md" : "AGENTS.md");
   const current = existsSync(destination) ? readFileSync(destination, "utf8") : "";
-  const withoutOldBlock = current
-    .replace(new RegExp(`${markers.start}[\\s\\S]*?${markers.end}\\s*`, "g"), "")
-    .trimEnd();
   const pluginInstructions = rewritePluginReferences(readFileSync(source, "utf8"), assets, skillRewrites).trim();
-  const parts = [withoutOldBlock, markers.start, pluginInstructions, markers.end, ""].filter(Boolean);
+  const block = `${markers.start}\n\n${pluginInstructions}\n\n${markers.end}`;
+  const managed = new RegExp(`${escapeRegExp(markers.start)}[\\s\\S]*?${escapeRegExp(markers.end)}`, "g");
+  let replaced = false;
+  const updated = current.replace(managed, () => {
+    if (replaced) return "";
+    replaced = true;
+    return block;
+  });
   const temporary = `${destination}.${process.pid}.tmp`;
-  writeFileSync(temporary, parts.join("\n\n"));
+  writeFileSync(temporary, replaced ? updated : `${current}${current ? "\n\n" : ""}${block}\n`);
   renameSync(temporary, destination);
   return destination;
 }
@@ -1073,7 +1077,10 @@ function installKnowledgeConsumer(provisioned, target, tool) {
   }
 }
 
-function install(options) {
+function install(options, initializing = []) {
+  if (initializing.includes(options.pluginId)) {
+    fail(`plugin initialization cycle: ${[...initializing, options.pluginId].join(" -> ")}`);
+  }
   const sourceRoot = options.source ?? process.env.CANNBOT_SOURCE_ROOT ?? process.env.CANNBOT_SKILLS_PATH;
   const sourceRepositoryRoot = sourceRoot ? resolve(sourceRoot) : null;
   const selectedDirectory = options.pluginDir
@@ -1117,6 +1124,16 @@ function install(options) {
       if (text.match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim() !== entry.name) fail(`override name mismatch: ${entry.name}`);
       skill.source = source;
     }
+  }
+  const installDefinition = join(pluginDir, "plugin-install.json");
+  const initializeBefore = existsSync(installDefinition)
+    ? readJson(installDefinition).initializeBefore ?? [] : [];
+  if (!Array.isArray(initializeBefore)) fail("initializeBefore must be an array of plugin names");
+  for (const prerequisite of initializeBefore) {
+    validateInstallName(prerequisite, "initializeBefore plugin");
+    if (process.env.CANNBOT_PREINITIALIZED_PLUGIN === prerequisite) continue;
+    install({ ...options, pluginId: prerequisite, pluginDir: undefined, overrideSkills: undefined,
+      skills: sharedSkills?.root ?? options.skills }, [...initializing, plugin.name]);
   }
   // Resolve required repositories before replacing any live Skills or instructions.
   const provisioned = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
