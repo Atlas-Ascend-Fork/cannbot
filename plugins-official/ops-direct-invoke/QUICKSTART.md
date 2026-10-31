@@ -37,7 +37,7 @@ opencode
 
 向 Agent 提出需求：
 
-> 请使用 ops-direct-invoke 开发一个 abs 算子，开发语言为 Ascend C 直调。
+> 请使用 ops-direct-invoke 开发一个 abs 算子，开发语言为 Ascend C 直调，(开发目标平台为 Ascend950PR/Kirin9030/...)。
 
 根据 Agent 的集中问卷补齐算子规格、目标芯片、conda/Python 与 CANN 环境，以及允许修改的范围；也可在最初请求中直接提供。完成后查看 Agent 的交付说明；运行记录在工作区 `.cannbot/` 下。
 

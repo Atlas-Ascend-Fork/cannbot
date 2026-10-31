@@ -31,6 +31,7 @@
     "vendor/cannbot-skills/ops/ops-precision-standard",
     "vendor/cannbot-skills/ops/ops-profiling",
     "vendor/cannbot-skills/ops/ops-simulator",
+    "vendor/cannbot-skills/ops/ops-kirin-simulator",
     "vendor/cannbot-skills/ops/ops-spec-gen",
     "vendor/cannbot-skills/ops/ops-design-paradigms"
   ]

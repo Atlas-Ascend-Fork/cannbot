@@ -2,6 +2,13 @@
 
 ## 新特性
 
+### 【2026-10-28】
+
+- 新增 **Kirin 平台 Ascend C 直调算子开发支持**：`ops-direct-invoke` 工作流覆盖 Kirin9030、KirinX90 直调算子的需求对齐、方案设计、实现、功能验收与交付。对齐 [cannbot-skills PR1518](https://gitcode.com/cann/cannbot-skills/pull/1518)：`npu-arch` 新增 Vector 编程模式（MemBase/RegBase/SIMT）与架构支持矩阵，修正 Kirin 端侧平台硬件参数；新增 `ops-kirin-simulator` Skill 提供 Kirin 仿真指南。所选 skills 版本需包含该 PR；统一 init 默认自动更新，指定 SHA 或本地 skills 仓时由调用方选择兼容版本。
+- 新增 [repo-test-develop-kirin](skills/repo-test-develop-kirin/SKILL.md) Skill：面向 Kirin 直调工程的测试方法论与框架。黑盒测试设计、白盒测试设计、测试工程开发三个 task 的 Kirin 直调工程自动路由至该 Skill，其余节点不变。
+- 新增 [repo-env-check-kirin](skills/repo-env-check-kirin/SKILL.md) Skill：面向 Kirin 平台的启动前环境检查，提供 conda/Python 与 mobile-station CANN 候选，检查 Simulator 支持并记录授权与证据。
+- 安装、启动与恢复命令不变，安装与使用统一见 [QUICKSTART.md](QUICKSTART.md)。
+
 ### 【2026-10-14】
 
 - DSL 全量精度验证后新增 [review-fix 子图](skills/ops-direct-invoke/workflows/cannbot-dsl/review-fix.yaml)：由 Agent 管理独立 Git 基线、候选提交与恢复，脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并复跑全部 case；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可验收恢复的基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
@@ -145,7 +152,7 @@ flowchart TD
 
 报告保留关键结论和证据路径，每次真实执行的输入/版本清单、原始日志与用例明细只存一份；后续节点引用并核对差异，每个验收者仍独立出具本阶段报告。返工依据 harness 回传的失败摘要，按需读取所引用报告的未解决项，并补充变更证据；版本变化使旧证据失效时重新验证。确定性阻塞未变时只记录条件复核，当前 harness 仍按预算重试，不能凭报告自动跳过重试。
 
-固定绑定采用与当前节点契约兼容的仓库能力：工程骨架由 `repo-op-templates` 承担，白盒方法由 `repo-test-develop` 承担。PM 按任务需要选择补充 Skill，并核对其完整契约与节点的交互、派发及权限边界兼容。
+固定绑定采用与当前节点契约兼容的仓库能力：工程骨架由 `repo-op-templates` 承担，白盒方法由 `repo-test-develop` 承担，Kirin 平台的测试方法由 `repo-test-develop-kirin` 承担。PM 按任务需要选择补充 Skill，并核对其完整契约与节点的交互、派发及权限边界兼容。
 
 公共 Skill 的规则由来源仓维护；本插件只调整绑定与流程，不复制或覆盖其规则。已知 Ascend 950 路由组合问题见 [cannbot-skills #688](https://gitcode.com/cann/cannbot-skills/issues/688)。
 
@@ -224,5 +231,7 @@ ops-direct-invoke/
     ├── repo-build-guide/
     ├── repo-op-templates/
     ├── repo-coding-rules/
-    └── repo-test-develop/
+    ├── repo-test-develop/
+    ├── repo-test-develop-kirin/
+    └── repo-env-check-kirin/
 ```

@@ -4,11 +4,11 @@ goal:
 - 形成覆盖算子规格的黑盒测试方案。
 approach:
 - 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，停止依赖该输入的操作，在本阶段报告中记录阻塞证据，按 harness 原生协议结束执行。
-- 必须加载 `repo-test-develop`、`ascendc-st-design` Skill，按其中的要求执行。
+- 必须加载 `repo-test-develop`、`ascendc-st-design` Skill，按其中的要求执行；Kirin 平台开发不加载 repo-test-develop`、`ascendc-st-design` 改为加载 `repo-test-develop-kirin`。
 - 依据已确认规格设计 golden、L0/L1/L2 用例、覆盖矩阵、预期错误及逐输出精度标准；按已安装的 ops-direct-invoke/templates/黑盒测试设计.md 写入 $WORK_DIR/{{id}}-黑盒测试设计.md。
 procedure:
 - 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，记录阻塞证据并判定验收失败。
-- 必须加载 `repo-test-develop` Skill，按其中的要求执行。
+- 必须加载 `repo-test-develop` Skill，按其中的要求执行；Kirin 平台开发不加载 repo-test-develop` 改为加载 `repo-test-develop-kirin`。
 - 对照需求和已安装的 ops-direct-invoke/templates/黑盒测试设计.md，检查 $WORK_DIR/{{id}}-黑盒测试设计.md 的规格覆盖、golden、预期结果及精度口径，记录缺口与依据。
 - 由 verifier 按已安装的 ops-direct-invoke/templates/验收报告.md 写入 $WORK_DIR/{{id}}-验收报告.md，执行 test -s "$WORK_DIR/{{id}}-验收报告.md"；通过、失败或阻塞均记录逐项结论与证据路径。重试仅追加问题处理和受影响项复核结果；当前版本缺少有效证据即失败，不补造或重跑测试。
 acceptance:

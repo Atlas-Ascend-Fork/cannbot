@@ -4,14 +4,14 @@ goal:
 - 依据实际代码生成白盒用例并纳入现有测试框架。
 approach:
 - 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，停止依赖该输入的操作，在本阶段报告中记录阻塞证据，按 harness 原生协议结束执行。
-- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行。
+- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行；Kirin 平台开发不加载 `repo-test-develop` 改为加载 `repo-test-develop-kirin`。
 - 读取当前源码、$WORK_DIR/{{id:算子开发}}-实现记录.md、$WORK_DIR/{{id:黑盒测试设计}}-黑盒测试设计.md 和 $WORK_DIR/{{id:测试工程开发}}-测试工程说明.md，按实际代码枚举有效控制流与边界。
 - 按需求允许范围生成触发用例，直接写入现有 ST 框架并接入统一入口；沿用已确认的 golden、预期错误和阈值，不另建框架、不修改算子。将全部用例文件路径赋给 whitebox_cases，多文件逐一检查。
 - 运行全量黑盒与白盒用例，按已安装的 ops-direct-invoke/templates/测试执行记录.md 写入 $WORK_DIR/{{id}}-测试执行记录.md，保存原始日志与问题归属证据；按已安装的 ops-direct-invoke/templates/白盒测试设计.md
   写入 $WORK_DIR/{{id}}-白盒测试设计.md，记录源码位置/条件、用例映射、文件和执行命令。暴露的算子缺陷连同复现证据交下游修复。
 procedure:
 - 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，记录阻塞证据并判定验收失败。
-- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行。
+- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行；Kirin 平台开发不加载 `repo-test-develop` 改为加载 `repo-test-develop-kirin`。
 - 读取源码、ST 框架与 $WORK_DIR/{{id}}-白盒测试设计.md，独立核对有效分支、触发用例和接入情况；给 whitebox_cases 赋实际路径，多文件逐一检查。
 - 只读核对 $WORK_DIR/{{id}}-测试执行记录.md、全量黑盒与白盒原始日志及当前源码/测试哈希，区分设计覆盖、实际命中与受阻路径；不重复构建或运行用例。
 - 检视本节点新增或修改的测试与脚本代码是否符合编码规则；本节点验收用例及接入质量：测试/框架错误或设计遗漏导致失败；正确用例暴露的算子缺陷须有归属证据，连同受影响覆盖交下游修复，不将节点通过表述为算子功能通过。

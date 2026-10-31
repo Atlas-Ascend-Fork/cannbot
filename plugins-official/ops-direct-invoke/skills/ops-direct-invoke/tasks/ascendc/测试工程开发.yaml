@@ -4,14 +4,14 @@ goal:
 - 准备可执行的 ST 测试工程与完整黑盒用例。
 approach:
 - 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，停止依赖该输入的操作，在本阶段报告中记录阻塞证据，按 harness 原生协议结束执行。
-- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行。
+- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行；Kirin 平台开发不加载 `repo-test-develop` 改为加载 `repo-test-develop-kirin`。
 - 读取 $WORK_DIR/{{id:黑盒测试设计}}-黑盒测试设计.md；环境记录中的框架信息仅作线索，检查目标仓当前测试入口，复用已有 ST 框架，仅在不存在框架时按目标仓布局搭建，必要信息不足时记录阻塞，不猜测框架布局。
 - 任务上下文提供穿刺测试入口时，核对当前接口后复用并扩展，不重新搭建已有可用框架；穿刺的少量用例不代替完整黑盒覆盖。
 - 复用现有 golden、数据生成、精度判定与统一入口，补齐目标任务和全部黑盒用例；缺失内容按已确认规格实现，保留方案用例 ID，并支持后续白盒接入。将入口及用例文件的实际绝对路径赋给 test_entry、test_cases，多文件逐一检查。
 - 先按仓库测试契约完成代表用例的任务发现、golden 参数绑定、数据生成与报告输出自检，再补齐全部用例并核对发现数；提交前检查本节点新增或修改的代码符合编码规则。写入 $WORK_DIR/{{id}}-测试工程说明.md，记录框架位置、复用或新建依据、文件与用例映射、代码哈希、自检命令、退出码及原始日志路径。
 procedure:
 - 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，记录阻塞证据并判定验收失败。
-- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行。
+- 必须加载 `repo-test-develop`、`repo-coding-rules` Skill，按其中的要求执行；Kirin 平台开发不加载 `repo-test-develop` 改为加载 `repo-test-develop-kirin`。
 - 读取黑盒方案、测试工程及 $WORK_DIR/{{id}}-测试工程说明.md，核对框架复用情况和全部用例的参数、预期结果及断言；给 test_entry、test_cases 赋实际路径，多文件逐一检查。
 - 检视本节点新增或修改的测试与脚本代码是否符合编码规则；核对 golden 参数绑定、数据生成、用例发现、报告输出与比对逻辑的代码及自检日志，证据应对应当前文件哈希；不代跑执行者的测试。本节点只验收测试工程就绪，不要求执行尚未实现的算子，也不宣称算子全量通过。
 - 由 verifier 按已安装的 ops-direct-invoke/templates/验收报告.md 写入 $WORK_DIR/{{id}}-验收报告.md，执行 test -s "$WORK_DIR/{{id}}-验收报告.md"；通过、失败或阻塞均记录逐项结论与证据路径。重试仅追加问题处理和受影响项复核结果；当前版本缺少有效证据即失败，不补造或重跑测试。
