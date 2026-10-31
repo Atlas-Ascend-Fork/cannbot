@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -117,7 +117,7 @@ else:
   });
   const record = (tool) => JSON.parse(readFileSync(join(target, `.${tool}/cannbot-plugin.json`), "utf8"))
     .plugins.find((entry) => entry.plugin === "knowledge-fixture");
-  return { sandbox, target, checkout, install, record };
+  return { sandbox, repository, source, plugin, target, checkout, install, record };
 }
 
 for (const tool of ["opencode", "codex", "claude", "trae"]) {
@@ -186,4 +186,32 @@ test("an unsupported consumer client does not prevent plugin installation", () =
   assert.equal(result.status, 0, result.stderr);
   assert.equal(f.record("dsh").knowledgeIndex, "pending");
   assert.match(result.stderr, /consumer installation refused/);
+});
+
+test("a generic public initializer still installs the knowledge consumer", () => {
+  const f = fixture();
+  const realPlugin = resolve(import.meta.dirname, "../../plugins-official/ops-perf-optimize");
+  cpSync(join(realPlugin, "init.sh"), join(f.plugin, "init.sh"));
+  cpSync(join(realPlugin, "installer"), join(f.plugin, "installer"), { recursive: true });
+  const target = join(f.sandbox, "public init target");
+  mkdirSync(target);
+  const result = spawnSync("bash", [join(f.plugin, "init.sh"), "project", "codex", target], {
+    cwd: f.plugin,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: join(f.sandbox, "home"), XDG_CACHE_HOME: join(f.sandbox, "cache"),
+      CANNBOT_INIT_CONTEXT: JSON.stringify({ plugin: "knowledge-fixture", tool: "codex", target }),
+      CANNBOT_TOOL: "codex", CANNBOT_TARGET_DIR: target,
+      CANNBOT_SKIP_KNOWLEDGE_RESOURCES: "1", CANNBOT_PYTHON: "python3",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const checkout = join(target, ".cannbot/dependencies/knowledge-fixture/cannbot-knowledge");
+  assert.ok(existsSync(join(target, ".cannbot/knowledge.env")));
+  for (const name of ["knowledge-query", "ascendc-api-knowledge-query"]) {
+    assert.equal(realpathSync(join(target, ".agents/skills", name)),
+      realpathSync(join(checkout, ".agents/skills", name)));
+  }
+  assert.match(result.stdout, /knowledge index: ready/);
 });

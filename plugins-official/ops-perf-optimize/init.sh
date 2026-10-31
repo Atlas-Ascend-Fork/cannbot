@@ -14,6 +14,15 @@
 set -euo pipefail
 
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Generic public installers run this entry point as an initializer and skip the
+# source CLI that owns dependency provisioning. Prepare the knowledge consumer
+# here so those install paths still leave a usable knowledge base.
+if [[ -n "${CANNBOT_INIT_CONTEXT:-}" ]]; then
+  exec bash "${PLUGIN_DIR}/installer/install-knowledge.sh" \
+    "${CANNBOT_TOOL:-opencode}" "${CANNBOT_TARGET_DIR:-${PWD}}"
+fi
+
 if [[ -f "${PLUGIN_DIR}/../../script/bin/source-plugin-init.sh" ]]; then
   exec bash "${PLUGIN_DIR}/../../script/bin/source-plugin-init.sh" "${PLUGIN_DIR}" "$@"
 fi
