@@ -1,0 +1,14 @@
+{
+  "_comment": "逐输出精度门禁模板：复制到 models/M<id>/config/precision_gate.json 后按实际输出名修改。verify.py 按 outputs.<name> 命中阈值，未命中回退 default，再回退 --rtol/--atol。任何比全局阈值更宽的取值都必须在 note 里写明依据与确认人，否则视为降低门禁标准。",
+  "default": {
+    "rtol": 0.001,
+    "atol": 0.001
+  },
+  "outputs": {
+    "output_name_example": {
+      "rtol": 0.001,
+      "atol": 0.5,
+      "note": "坐标类输出允许半像素误差；用户 2026-10-29 确认"
+    }
+  }
+}

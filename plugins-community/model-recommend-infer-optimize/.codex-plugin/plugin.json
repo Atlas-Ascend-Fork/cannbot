@@ -1,0 +1,34 @@
+{
+  "name": "model-recommend-infer-optimize",
+  "version": "1.0.0",
+  "description": "推荐模型整网推理优化工作流。",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "cannbot",
+    "npu",
+    "recommend",
+    "recsys",
+    "inference",
+    "optimize"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "CANNBot 推荐推理优化",
+    "shortDescription": "推荐模型整网推理优化工作流",
+    "longDescription": "以 GE 图模式为核心优化基座，覆盖环境基线到回归验收的条目 0-14 与双门禁持续优化循环；onnx 直接进入，pytorch/HF 经 torchair 转入。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills",
+      "Agents"
+    ],
+    "defaultPrompt": [
+      "使用 model-recommend-infer-optimize 优化当前推荐模型的 NPU 推理性能。"
+    ]
+  }
+}

@@ -7,6 +7,7 @@
 | [`ascendc-port-orchestrator`](../plugins-community/ascendc-port-orchestrator/) | AscendC 算子跨代际移植与反向算子生成 |
 | [`model-train-precision-diagnose`](../plugins-community/model-train-precision-diagnose/) | PyTorch on Ascend NPU 训练精度异常诊断 |
 | [`pypto-pro-op-orchestrator`](../plugins-community/pypto-pro-op-orchestrator/) | PyPTO-Pro 算子开发、验证与性能优化（主 agent 按需调度 6 个专职 subagent） |
+| [`model-recommend-infer-optimize`](../plugins-community/model-recommend-infer-optimize/) | 推荐 / 搜索 / 排序 / 视觉编码类模型的整网推理优化（条目 0-14 + 双门禁持续优化循环，内置 GE_SESSION_DEMO 框架） |
 | [`tilelang2ascendc-ops-generator`](../plugins-community/tilelang2ascendc-ops-generator/) | Ascend C 算子自动生成（双路径设计表达 + AscendC 转译） |
 | [`triton-auto-evolve`](../plugins-community/triton-auto-evolve/) | Triton-Ascend 算子多轮自动优化 |
 | [`triton-optimizer`](../plugins-community/triton-optimizer/) | Triton Ascend NPU 算子优化与 PyTorch 算子转换 |
@@ -84,3 +85,20 @@ cd plugins-community/triton-optimizer && bash init.sh project claude
 ```
 
 各客户端安装参数与使用方式见 [quickstart.md](../plugins-community/triton-optimizer/quickstart.md)。
+
+## model-recommend-infer-optimize
+
+推荐 / 搜索 / 排序 / 视觉编码类模型的整网推理优化工作流。主 agent 按条目 0-14 推进：环境基线与依赖台账 → 模型结构与显存分析 → 单卡基线 → 并发与限核策略 → 精度基线门禁 → 性能分析与四项专项（三表 + bound 判定）→ 分层优化（GE 图模式、既有算子与图适配含 FA 族、多线程与图并行、访存、融合规划、Kernel 生成、自定义算子）→ 回归验收；随后进入一轮一动作的持续优化循环，每轮都要同时过精度与性能双门禁，并落 `perf_ledger.json` / `loop_state.json` 双台账。
+
+- **Skill 位置**：18 个原子 Skill 维护在 `cannbot-skills` 仓 `community/model/`（`model-recommend-*`），由 `plugin-sources.json` 引用；插件内只保留编排资产（primary agent、4 个 subagent、workflow、hooks、templates、tests）与内置 `framework/GE_SESSION_DEMO`（Apache-2.0）。
+- **执行基座**：onnx 路径走内置 GE_SESSION_DEMO（`compile.sh` 产出 `GEsession_test_acl`）；pytorch / HuggingFace 路径用模型自身脚本 + `torch_npu`，当前为**实验性**，条目 1/2/3/5 需自备等价脚本。
+- **前置防护**：hooks 只挂 `Edit|Write|MultiEdit`，用于 onnx 原图零改动、状态文件 primary 独占写、只读角色越界拦截；这是前置防护而非沙箱，Bash 写入不受控。
+
+安装（项目级会自动把执行框架复制到工程根）：
+
+```bash
+git submodule update --init --recursive --depth 1 vendor/cannbot-skills
+cd plugins-community/model-recommend-infer-optimize && bash init.sh project opencode    # 或 claude / codex / trae / dsh ...
+```
+
+各客户端安装参数、框架落位与常见问题见 [quickstart.md](../plugins-community/model-recommend-infer-optimize/quickstart.md)。

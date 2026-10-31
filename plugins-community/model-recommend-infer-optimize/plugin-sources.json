@@ -1,0 +1,24 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "skills": [
+    "community/model/model-recommend-ascend-env-baseline",
+    "community/model/model-recommend-baseline-run",
+    "community/model/model-recommend-concurrency-strategy-analysis",
+    "community/model/model-recommend-custom-op-development",
+    "community/model/model-recommend-flash-attention-fusion",
+    "community/model/model-recommend-fusion-operator-adaptation",
+    "community/model/model-recommend-fusion-planning-estimation",
+    "community/model/model-recommend-ge-graph-optimization",
+    "community/model/model-recommend-kernel-generation",
+    "community/model/model-recommend-memory-access-optimize",
+    "community/model/model-recommend-multi-thread-optimization",
+    "community/model/model-recommend-optimization-loop",
+    "community/model/model-recommend-performance-analysis",
+    "community/model/model-recommend-precision-comparison",
+    "community/model/model-recommend-profiling-deep-analysis",
+    "community/model/model-recommend-regression-baseline-mgmt",
+    "community/model/model-recommend-runtime-debug",
+    "community/model/model-recommend-structure-analysis"
+  ]
+}

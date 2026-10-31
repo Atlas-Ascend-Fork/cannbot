@@ -1,0 +1,20 @@
+{
+  "name": "model-recommend-infer-optimize",
+  "description": "推荐模型整网推理优化 Team。以 GE 图模式为核心优化基座（onnx 直接进入；pytorch/HF 经 torchair 转入），先把推荐/搜索/排序/视觉编码类模型跑通到可复现精度的单卡基线，再按「性能分析 → 图/算子/并发/访存/融合/kernel 分层优化 → 精度与性能双门禁 → 动作表更新」持续循环收敛。含 1 条主工作流、4 个 Subagent 与 18 个原子 Skill。",
+  "version": "1.0.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "dependencies": [
+    "model-recommend-skills"
+  ],
+  "agents": [
+    "./agents/model-recommend-infer-runner.md",
+    "./agents/model-recommend-infer-analyzer.md",
+    "./agents/model-recommend-infer-implementer.md",
+    "./agents/model-recommend-infer-reviewer.md"
+  ]
+}

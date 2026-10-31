@@ -38,6 +38,7 @@
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/cake-docs-search/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/op-dashboard/assets/chart.umd.min.js" desc="Third-party Chart.js 4.4.7 (MIT), vendored minified build; keeps its upstream notice."/>
+                <filteritem type="filepath" name="plugins-community/model-recommend-infer-optimize/framework/.*" desc="Bundled GE_SESSION_DEMO inference sample retains upstream Apache-2.0 licensing (LICENSE/NOTICE shipped under framework/); exempt from repository CANN-2.0 header policy."/>
 </filefilter>
             <filefilter name="copyrightPolicyFilter" desc="Filters for copyright header policies">
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
@@ -49,12 +50,14 @@
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/cake-docs-search/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/op-dashboard/assets/chart.umd.min.js" desc="Third-party Chart.js 4.4.7 (MIT), vendored minified build; keeps its upstream notice."/>
+                <filteritem type="filepath" name="plugins-community/model-recommend-infer-optimize/framework/.*" desc="Bundled GE_SESSION_DEMO inference sample retains upstream Apache-2.0 licensing (LICENSE/NOTICE shipped under framework/); exempt from repository CANN-2.0 header policy."/>
 </filefilter>
             <filefilter name="licenseFileNamePolicyFilter" desc="Explicitly licensed components excluded from the repository default license policy">
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/workflows/Ascend950/LICENSE" desc="The original MIT license text is checked by the explicit TileLang MIT policy, rather than the default CANN-2.0 header policy."/>
                 <filteritem type="filepath" name="script/.*" desc="The npm installer is distributed under the MIT License in script/LICENSE."/>
                 <filteritem type="filepath" name="vendor/cannbot-skills/.*" desc="Git submodule distributed under its own repository license."/>
+                <filteritem type="filepath" name="plugins-community/model-recommend-infer-optimize/framework/.*" desc="Bundled GE_SESSION_DEMO inference sample retains upstream Apache-2.0 licensing (LICENSE/NOTICE shipped under framework/); exempt from repository CANN-2.0 header policy."/>
                 <filteritem type="filename" name="*.yaml" desc="YAML configuration files, no license header required"/>
                 <filteritem type="filename" name="*.yml" desc="YAML configuration files, no license header required"/>
                 <filteritem type="filename" name="*.csv" desc="CSV test case files, no license header required"/>

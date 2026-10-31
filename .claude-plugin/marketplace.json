@@ -162,6 +162,60 @@
       ]
     },
     {
+      "name": "model-recommend-infer-optimize",
+      "source": "./plugins-community/model-recommend-infer-optimize",
+      "description": "推荐模型整网推理优化 Team。以 GE 图模式为核心优化基座（onnx 直接进入；pytorch/HF 经 torchair 转入），覆盖环境基线到回归验收的条目 0-14 与双门禁持续优化循环，内置 GE_SESSION_DEMO 执行框架。",
+      "version": "1.0.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "recommend",
+        "recsys",
+        "npu",
+        "inference",
+        "optimize",
+        "orchestrator"
+      ],
+      "category": "development"
+    },
+    {
+      "name": "model-recommend-skills",
+      "description": "Skills used by the recommendation-model inference optimization workflow.",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "community/model",
+        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+      },
+      "strict": false,
+      "version": "1.0.0",
+      "author": {
+        "name": "CANNBOT"
+      },
+      "category": "skills",
+      "skills": [
+        "./model-recommend-structure-analysis",
+        "./model-recommend-baseline-run",
+        "./model-recommend-concurrency-strategy-analysis",
+        "./model-recommend-precision-comparison",
+        "./model-recommend-performance-analysis",
+        "./model-recommend-profiling-deep-analysis",
+        "./model-recommend-optimization-loop",
+        "./model-recommend-ge-graph-optimization",
+        "./model-recommend-fusion-operator-adaptation",
+        "./model-recommend-flash-attention-fusion",
+        "./model-recommend-multi-thread-optimization",
+        "./model-recommend-memory-access-optimize",
+        "./model-recommend-fusion-planning-estimation",
+        "./model-recommend-kernel-generation",
+        "./model-recommend-custom-op-development",
+        "./model-recommend-runtime-debug",
+        "./model-recommend-regression-baseline-mgmt",
+        "./model-recommend-ascend-env-baseline"
+      ]
+    },
+    {
       "name": "ops-registry-invoke",
       "source": "./plugins-official/ops-registry-invoke",
       "description": "ACLNN算子开发工作流",

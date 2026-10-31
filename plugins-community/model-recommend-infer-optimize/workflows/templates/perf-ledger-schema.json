@@ -1,0 +1,194 @@
+{
+  "$id": "perf-ledger-schema.json",
+  "$comment": "JSON Schema draft 2020-12 语义（离线校验，不引用外部链接）",
+  "title": "perf_ledger.json 记录 schema（model-recommend-infer-optimize）",
+  "description": "路径 data/{model_name}/optimization_log/perf_ledger.json。逐条目/逐动作追加，不回改历史行。分析类条目性能字段填 null 并在 note 注明。",
+  "type": "object",
+  "required": [
+    "model_name",
+    "entries"
+  ],
+  "properties": {
+    "model_name": {
+      "type": "string",
+      "description": "工作区标识：onnx 输入为 M<id>，pytorch/hf 为模型名"
+    },
+    "baseline_ref": {
+      "type": "string",
+      "description": "首基线指针，如 data/M100/baseline/baseline_metadata.json"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "step",
+          "timestamp",
+          "action",
+          "reverted",
+          "note"
+        ],
+        "properties": {
+          "step": {
+            "type": "string",
+            "description": "条目号 + 动作简述，如「条目6：启用 FORCE_16」"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "action": {
+            "type": "string",
+            "description": "具体改动：开关名/参数/文件/算子包，禁止空话"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "shape策略",
+              "编译选项",
+              "图融合pass",
+              "等价改写",
+              "并发限核",
+              "访存优化",
+              "自定义算子",
+              "精度模式",
+              "运行时修复",
+              "分析"
+            ],
+            "description": "手段类型，供贡献分解归类"
+          },
+          "perf_before": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "同口径主指标；建议含 latency_avg_ms / tp99_ms / qps 三键，缺测填 null",
+            "properties": {
+              "latency_avg_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "tp99_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "tp999_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "qps": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "throughput": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "hbm_peak_mb": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "perf_after": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "结构与 perf_before 一致，口径必须相同"
+          },
+          "delta_pct": {
+            "type": [
+              "number",
+              "object",
+              "null"
+            ],
+            "description": "主指标变化百分比；负值表示变快/变大，报告中须统一声明方向约定。允许写成对象（如 {\"latency\": -6.3, \"qps\": 6.7}）以同时记录多个指标，此时 loop_state.py 按 latency → qps → tp99 的顺序取主指标对账",
+            "properties": {
+              "latency": {
+                "type": "number"
+              },
+              "tp99": {
+                "type": "number"
+              },
+              "qps": {
+                "type": "number"
+              }
+            }
+          },
+          "noise_band_pct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "本轮判定所用噪声带，典型 2.0～5.0"
+          },
+          "precision": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "result": {
+                "type": "string",
+                "enum": [
+                  "pass",
+                  "fail"
+                ]
+              },
+              "max_abs": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "max_rel": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "threshold": {
+                "type": "string",
+                "description": "如 rtol=atol=1e-3；用户裁定须注明"
+              },
+              "low_precision_confirmed_by_user": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          },
+          "profiling": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "prof/{model_name}/{case}/ 归档路径"
+          },
+          "reverted": {
+            "type": "boolean",
+            "description": "true 时 note 必写回退原因"
+          },
+          "note": {
+            "type": "string",
+            "description": "归因说明、用户确认记录、回退原因、循环轮次标注"
+          }
+        }
+      }
+    }
+  }
+}

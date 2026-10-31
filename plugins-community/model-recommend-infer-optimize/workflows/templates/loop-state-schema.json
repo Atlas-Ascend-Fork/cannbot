@@ -1,0 +1,177 @@
+{
+  "$id": "loop-state-schema.json",
+  "$comment": "JSON Schema draft 2020-12 语义（离线校验，不引用外部链接）",
+  "title": "loop_state.json schema（model-recommend-infer-optimize）",
+  "description": "路径 data/{model_name}/optimization_log/loop_state.json。循环的唯一轮次真相源，每轮 L5 后更新；中断恢复时从 iteration + 1 继续。",
+  "type": "object",
+  "required": [
+    "target",
+    "noise_band_pct",
+    "iteration",
+    "no_gain_streak",
+    "max_iterations",
+    "history",
+    "terminated",
+    "termination_reason"
+  ],
+  "properties": {
+    "model_name": {
+      "type": "string"
+    },
+    "target": {
+      "type": "object",
+      "description": "性能目标必须由用户指定，缺失时不得进入循环",
+      "required": [
+        "metric",
+        "op",
+        "value",
+        "confirmed_by_user"
+      ],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "enum": [
+            "latency_avg_ms",
+            "tp99_ms",
+            "qps",
+            "throughput"
+          ]
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "<=",
+            ">="
+          ]
+        },
+        "value": {
+          "type": "number"
+        },
+        "confirmed_by_user": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "target",
+            "regression_guard"
+          ],
+          "default": "target",
+          "description": "target=用户给定数值目标；regression_guard=用户选择以历史最优为回归基准（此时 value 取历史值，confirmed_by_user 仍须为 true）"
+        }
+      }
+    },
+    "noise_band_pct": {
+      "type": "number",
+      "description": "主指标噪声带，典型 2.0～5.0；未测定不得开始判定"
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "no_gain_streak": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "连续无收益轮数；回退轮计入，纯分析轮不计"
+    },
+    "max_iterations": {
+      "type": "integer",
+      "default": 10
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "iter",
+          "action",
+          "entry",
+          "landed"
+        ],
+        "properties": {
+          "iter": {
+            "type": "integer"
+          },
+          "action": {
+            "type": "string"
+          },
+          "entry": {
+            "type": "string",
+            "description": "如「条目6」"
+          },
+          "perf_before": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "perf_after": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gain_pct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "landed": {
+            "type": "boolean",
+            "description": "是否落地（过双门禁并合入）"
+          },
+          "prof_analysis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "findings.json 路径"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "terminated": {
+      "type": "boolean"
+    },
+    "termination_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "target_reached",
+        "converged_no_gain",
+        "no_actionable",
+        "budget_exhausted",
+        null
+      ]
+    },
+    "schema_version": {
+      "type": "integer",
+      "description": "状态文件 schema 版本；当前 2。旧文件用 loop_state.py migrate 升级",
+      "default": 2
+    },
+    "sweep_fallback": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "sweep 不可用而改手工扫描时的记录：{reason, rounds}；有该项时报告须说明扫描点与口径",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "rounds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

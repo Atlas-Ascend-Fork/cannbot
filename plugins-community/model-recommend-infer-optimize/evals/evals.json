@@ -1,0 +1,126 @@
+{
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "title": "端到端整网优化流程编排（无基线）",
+      "config": {
+        "ascend_platforms": [
+          "A2"
+        ],
+        "max_tokens": 200000,
+        "distractor_skills": [
+          "model-recommend-flash-attention-fusion",
+          "model-recommend-kernel-generation",
+          "model-recommend-runtime-debug"
+        ],
+        "timeout": 900,
+        "eval_mode": "text"
+      },
+      "prompt": "我有一个推荐场景的视觉编码器 onnx 模型，还没在昇腾 NPU 上跑通过，也没有 baseline。请加载 model-recommend-infer-optimize 技能（可 Read AGENTS.md 与 workflows/model-recommend-infer-workflow.md），按其整网流程回答：从零到收口分哪几个条目、执行顺序是什么；哪些条目属于持续优化循环内部；每个条目各自产出什么；整条流程由哪几类 subagent 分工、primary 自己做什么。沙箱内没有真实模型工程，不需要执行优化，只给整体方案。",
+      "expected_output": "1. 应给出条目 0-14 的顺序：0 环境基线与路由 → 1 模型分析 → 2 单卡基线 → 3 并发与限核策略 → 4 精度基线门禁 → 之后进入持续优化循环（5 性能分析含四项专项、6 GE 图模式与 shape、7 既有算子与图适配含 FA、8 多线程与图并行、9 访存优化、10 融合规划、11 Kernel 生成、12 自定义算子开发、13 运行时诊断贯穿、14 回归验收与基线管理）。\n2. 应说明循环的一轮一动作、双门禁（精度门禁串行单并发 verify + 性能门禁同口径对比且双口径）、终止条件（目标达成 / 连续 3 轮无收益 / 无可执行动作 / 轮次预算用尽）四类。\n3. 应说明产物：perf_ledger.json、loop_state.json、workflow_status.md、每轮 round{k}.md、final_optimization_report.md、next_actions.json，并说明 docs/data/prof/ops/tmp 的目录分工。\n4. 应说明 subagent 分工：runner 采集、analyzer 只读分析、implementer 实施、reviewer 双门禁验收；primary 只做流程编排、用户交互、状态文件维护与收口核验，不亲自改代码。",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 2,
+      "title": "适用边界识别",
+      "config": {
+        "ascend_platforms": [
+          "A2"
+        ],
+        "max_tokens": 150000,
+        "timeout": 900,
+        "eval_mode": "text"
+      },
+      "prompt": "我想用 model-recommend-infer-optimize 优化一个 GPU 上的训练吞吐，框架是 PyTorch DDP。这个插件适用吗？只回答适不适用和原因，不展开方案。",
+      "expected_output": "应说明不适用：本插件面向昇腾 NPU 上的推荐模型推理整网优化（GE 图模式基座），不处理训练优化、不处理非昇腾平台；若只是某个 AscendC 算子级性能调优，也不属于本插件范围（应走算子性能调优类插件）。",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 3,
+      "title": "已有基线续跑（幂等恢复）",
+      "config": {
+        "ascend_platforms": [
+          "A2"
+        ],
+        "max_tokens": 200000,
+        "distractor_skills": [
+          "model-recommend-baseline-run"
+        ],
+        "timeout": 900,
+        "eval_mode": "text"
+      },
+      "prompt": "模型 M200 已经有单卡基线了，data/M200/optimization_log/loop_state.json 存在且 terminated 为 false，iteration 是 2。用户说「继续压性能，目标 QPS 到 1500」。请说明 primary 应该怎么接着做，哪些事不能重做，哪些前置条件必须先确认。",
+      "expected_output": "1. 应判定走续跑路径：读主工作流与 references/loop-rules.md，从 iteration + 1（即第 3 轮）继续，不重做已记录的 1、2 轮（幂等）。\n2. 应先确认性能目标已由用户指定且写入 loop_state.target（QPS >= 1500，confirmed_by_user=true），并确认噪声带已测定。\n3. 应从 next_actions.json 取优先级最高且前置依赖满足的单个动作，完成必要的用户确认后再派 implementer（一轮一动作）。\n4. 应说明每轮：实施 → 采集 → 四项专项分析 → 收益判定 → 终止检查 → 台账/报告/状态矩阵/动作表同步更新；回退轮计入 no_gain_streak，纯分析轮不计。\n5. 应说明状态文件只由 primary 写，loop_state 与 perf_ledger 必须对账一致。",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 4,
+      "title": "双门禁与低精度授权",
+      "config": {
+        "ascend_platforms": [
+          "A2"
+        ],
+        "max_tokens": 150000,
+        "timeout": 900,
+        "eval_mode": "text"
+      },
+      "prompt": "用户说：「直接开 FORCE_16，肯定能快，不用测精度了，性能数字我自己认。」请说明按本工作流应该怎么处理，以及这笔改动要落地必须满足什么条件。",
+      "expected_output": "1. 应拒绝跳过精度门禁：低精度选项默认关闭，启用须「用户人工确认 + 精度门禁（记录误差指标）」双前置，缺一不可；用户口头豁免不能替代精度门禁。\n2. 应说明精度门禁要求：串行单并发 THREAD_NUM=1 全量输出 verify，整型/bool 精确相等、浮点 allclose（阈值按模型精度要求裁定并记录依据），并记录 max_abs/max_rel 等误差指标；先确认 [GE RESULT] inference finished: success 且产物为本轮新生成。\n3. 应说明性能门禁要求：同口径对比（同卡/batch/THREAD_NUM/CORE_NUM/CircleCount 与统计策略），时延与吞吐双口径都产出，劣化超噪声带即回退，改善小于噪声带不得宣称提升。\n4. 应说明落地流程与记账：精度不过直接回退不进入性能测量；通过后写 perf_ledger（reverted=false），回退项记录原因。",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 5,
+      "title": "单点诉求路由（不走整网流程）",
+      "config": {
+        "ascend_platforms": [
+          "A2"
+        ],
+        "max_tokens": 150000,
+        "timeout": 900,
+        "eval_mode": "text"
+      },
+      "prompt": "用户说：「我只想让 attention 链换成 FlashAttention 融合，别给我搞整套流程。」请说明该走哪条路径、由哪个角色承接、以及这个改动要满足哪些约束。",
+      "expected_output": "1. 应判定为单点诉求，直接调用 model-recommend-flash-attention-fusion 原子 skill，不加载整网工作流、不建全套产物目录、不派全套 subagent。\n2. 应说明承接角色与边界：改动由 model-recommend-infer-implementer 实施（若在整网流程内），或直接按该 skill 流程执行；analysis 侧可参考条目 5 的热点证据判断 attention 链是否为热点。\n3. 应说明约束：onnx 输入禁止改原图，融合通过 GE 内存图 pass（aclgrphParseONNX 之后、AddGraph 之前）替换；开关独立默认关闭、可回退；FA 族需先做功能确认（序列长/头数/头维/dtype/布局/mask/scale 参数矩阵验证）。\n4. 应说明验收：仍需过双门禁（串行 verify + 同口径端到端性能双口径对比），算子/图级收益必须补整图对比；已知风险如低核数下 FA pass 可能出现 NaN 或挂死须提示。",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 6,
+      "title": "产物与状态文件归属",
+      "config": {
+        "ascend_platforms": [
+          "A2"
+        ],
+        "max_tokens": 150000,
+        "timeout": 900,
+        "eval_mode": "text"
+      },
+      "prompt": "请说明本工作流里 perf_ledger.json、loop_state.json、workflow_status.md、next_actions.json 四个文件分别解决什么问题、由谁写入，以及为什么不能合并成一个文件。",
+      "expected_output": "1. perf_ledger.json：动作视图，逐动作记录 before/after/precision/reverted，执行者写入、reviewer 复核。\n2. loop_state.json：轮次视图，记录 iteration/no_gain_streak/history/终止原因，primary 写，是幂等恢复与终止判定的唯一轮次真相源。\n3. workflow_status.md：执行覆盖矩阵，每轮必须覆盖条目 0-14（含 not_applicable/skipped/blocked 判断），primary 每轮收口更新；表中无记录即视为未执行。\n4. next_actions.json：下一步动作队列，是循环 L1 动作选择的唯一输入，每轮 L7 重排。\n5. 应说明不合并的理由：四者读写者不同（独占写 vs 多方追加）、更新时机不同（逐动作 / 逐轮 / 收口）、消费方不同；合并会导致状态冲突、归因不清与幂等恢复失败，因此 loop_state 与 perf_ledger 只做对账、不互相复制。",
+      "files": [],
+      "expectations": []
+    },
+    {
+      "id": 7,
+      "title": "外部依赖与执行基座前置检查（onnx 与 pytorch 两条路径）",
+      "config": {
+        "ascend_platforms": [
+          "A2"
+        ],
+        "max_tokens": 150000,
+        "timeout": 900,
+        "eval_mode": "text"
+      },
+      "prompt": "目标机器上还没有 GE_SESSION_DEMO 执行框架，也没有 g++ 与 nlohmann/json.hpp。现有两个待优化模型：A 是 onnx 图，B 是 pytorch 脚本（HuggingFace 模型同构）。请回答：\n① 本工作流依赖哪些外部组件（按硬件、CANN、编译链路、执行框架、Python 侧、算子开发、数据资产分类）；\n② 执行框架从哪来、它的目录布局如何、该放到工程哪个位置、怎么编译；\n③ A（onnx）缺这些依赖时，哪些条目会被阻塞、能不能先「假设框架可用」推进；\n④ B（pytorch/HF）在这台机器上能否直接开始优化？需要哪些依赖，执行与采集各走哪套手段，是否同样被阻塞？",
+      "expected_output": "1. 依赖分类应覆盖：NPU 硬件与驱动（Ascend910B 单卡）、CANN 9.1.0 与 GE v2（libge_runner_v2.so）、atc/msopgen/msprof 工具链、g++ 与 nlohmann/json.hpp 编译链路、GE_SESSION_DEMO 执行框架、python3/onnx/numpy/onnxruntime（golden）、torch/torch_npu、AscendC（A2/A3）与 cannbot-dsl（A5）、用户提供的模型与输入与标杆；并应指出 g++/nlohmann 与执行框架属 onnx 路径，torch/torch_npu 属 pytorch/HF 路径。\n2. 框架来源应指出：随插件内置在 framework/GE_SESSION_DEMO/，安装时复制到工程根并执行 bash compile.sh 产出 GEsession_test_acl；框架代码在插件内维护并随插件提交；目录布局与维护约定见 framework/README.md；应强调工作流不引用任何外部链接，不得建议去外部仓库下载。\n3. A（onnx）阻塞判断：条目 0/1/2/5/6/7/8/9/11/12 依赖该框架，精度门禁（条目 4）也无法建立；g++/nlohmann 缺失同样阻塞 onnx 路径（compile.sh 编不过）；缺失不得进入条目 1。\n4. B（pytorch/HF）结论必须明确「不因缺 GE_SESSION_DEMO、g++、nlohmann 而阻塞」：其执行与采集基座是模型自身脚本 + torch_npu，要求 python3、torch 与 torch_npu（参考 2.9.0.post6）可用，并具备模型权重、输入与精度标杆；采集用 torch_npu.profiler 导出 kernel 明细与 trace，不走 prepare.sh / compile.sh / run.sh；torchair 转 GE 是条目 6 的必选优化项，但不是启动前置。\n5. 阻塞项须按输入路径判定：NPU / CANN / GE v2 / 无标杆的精度门禁对两条路径都阻塞；执行框架与 g++/nlohmann 只阻塞 onnx 路径；torch_npu 只阻塞 pytorch/HF 路径。\n6. 必须拒绝「假设可用」：应先自检并记录缺失项，按依赖文档的处置矩阵标注阻塞/能力受限/可继续，而不是跳过自检直接推进；onnxruntime 缺失时可改用用户提供的 reference/ 标杆。",
+      "files": [],
+      "expectations": []
+    }
+  ],
+  "team_name": "model-recommend-infer-optimize"
+}

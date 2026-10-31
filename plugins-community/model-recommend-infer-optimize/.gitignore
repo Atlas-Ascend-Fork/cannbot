@@ -1,0 +1,22 @@
+.opencode
+.claude
+.trae
+.marscode
+.traecli
+.cursor
+.codex
+.agents
+.codeartsdoer
+.github
+.copilot
+__pycache__/
+*.pyc
+/GE_SESSION_DEMO/
+
+# 内置执行框架在本仓内不编译；若误编译，产物不入库
+framework/GE_SESSION_DEMO/GEsession_test_acl
+framework/GE_SESSION_DEMO/*.o
+framework/GE_SESSION_DEMO/models/*/output/
+framework/GE_SESSION_DEMO/models/*/report/
+framework/GE_SESSION_DEMO/models/*/.cache/
+framework/GE_SESSION_DEMO/models/*/sweep/

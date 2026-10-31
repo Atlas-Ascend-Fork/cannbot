@@ -1,0 +1,19 @@
+# ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------------------------------------
+name = "model-recommend-infer-runner"
+description = "Data collection and execution agent for recommendation-model inference. Runs the environment self-check (entry 0), the single-card baseline (entry 2) and profiling collection (entry 5 capture, loop L3). Execution only: never changes model logic and never judges optimizations."
+developer_instructions = """
+This is the Codex adapter for the canonical model-recommend-infer-runner definition.
+Before starting any task, read `model-recommend-infer-runner.md` from the same directory as this config
+(`.codex/agents/` for project scope, `~/.codex/agents/` for user scope); the installer
+places it next to this file. Follow that Markdown file as your complete role
+instructions. Also follow the applicable repository AGENTS.md.
+Do not replace or reinterpret the canonical instructions.
+"""
