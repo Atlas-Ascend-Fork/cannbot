@@ -31,16 +31,17 @@
 1. 逐 case 记录计算模式、dtype/shape/attrs、bound（VEC/MEM/SCALAR）、关键指标、`total_us` 和证据路径。每个冻结 case 必须恰好出现；spread >10% 标不确定性，不自行重采。按下文“效率与理论上限”计算逐 case 量化证据。多阶段融合算子若聚合指标不足以归因，优先用覆盖目标计算路径的有效流水图定位阶段依赖、掩盖和同步等待，不再叠加消融；工具或调用路径无法产出有效图时记录缺口，再消费已登记的上板阶段隔离证据，其端到端耗时差只表示边际影响，不相加推算可节省耗时。
 2. 按 case 计算模式判定算子族。选用 `ascendc-performance-best-practices` 时，按精确 `TARGET_SOCS` 和算子族查询目标适用的说明、模板与参考代码；实际采用的路线须核验其平台和接口约束。算子名不能锁定单一族；Broadcast、Elementwise、Reduction 分别按实际轴和计算结构判定，数据依赖读地址走 Gather，数据依赖写地址走 Scatter。
 3. Agent 选用知识库且 `KB_ROOT` 可用时，加载 `knowledge-query` 及其 `references/cli.md`、性能优化模式与证据工作流；以 `--knowledge-root "$KB_ROOT"` 固定知识仓。复用主 Agent 的 discover，以 `TARGET_SOCS` 确认任务目标平台，按该 Skill 的平台识别规则映射，不用本机型号或知识仓缺省平台覆盖任务目标；A2/A3 工程证据复用不代表知识卡可省略平台适用性核对。围绕主导 profiling 信号拆分独立 decision，以实体加一个关键约束的短 query 执行 `search`，按需限定 `ops` / `ascendc` 和已注册的优化、机制、API 或 runbook 类型；准确 API 用 literal，机制或现象用 text，默认 stable。先看返回的 `results` 中 `path` / `local_path`、`title` 和 `description` 选卡，再按绝对 `local_path` 阅读完整正文，核对平台、版本和适用边界，按需沿链接补证；不得把搜索摘要当作已核验知识。KB 检索结论是假设级证据，逐条标 `adopted`/`refuted`/`deferred` 后并入本轮分析，不替代本文件的分析标准和共享 Skill 路由。按 Query 的证据工作流保存独立 decision 的 receipt 与已读卡路径/指纹；有缺口时保留 gap/insufficient，不伪造 covered。退出码 0 的零命中记录知识缺口；参数或索引错误先按具体原因处理，仍不可用时记 `kb_unavailable` 与错误原因，不阻塞分析，也不自动构建索引。
-4. Agent 选用 `ascendc-perf-optimize` 的 4 步流程时，按该方法的适用条件执行：Step 1 Tiling 理论建模必选，产出理想 tiling data 作为后续修正对照，并结合标准 1 的 `compute_efficiency` 输出给出理论最优耗时（roofline 上限：`max(字节/带宽, FLOP/算力)`）与距该上限的可达 headroom，作为"值不值得调、最多能到哪"的定量上界；Step 2 仅命中 MC²/通信类算子时执行，按 `ascendc-mc2-best-practice` 的 `references/shared/profiling_mc2.md` 口径判定主导流水与通信隐藏率，只消费基线采集阶段已登记的 TilingData 与隔离测试证据（T_comm/T_compute/R 值），缺失时退回主 Agent 按协议补采，不得修改源码自行补采；Step 3 仅在跨核同步或共享目标写入时分析核间依赖、同步和负载；Step 4 单核流水 bound 诊断结论并入逐 case bound 证据。各步产出的 tiling 修正建议和优化策略直接映射为方案与实施契约 required features，不因流程推导重选 case 或重采性能。
-5. 只有族级终选仍使用 SIMT 时才读取 SIMT 指南。不得因为原源码有 `__simt_vf__` 就跳过族级选路。
-6. 模板按证据分类：构建契约一致且已有编译证据才是“可直接使用”；上下文/契约待补为“集成边界待验证”；只有说明则是“设计参考”。不得用概念伪代码替代已找到的模板骨架。
-7. DAV_3510 的向量、归约、寄存器重排、Cast/Pack 热点查询 `reference/common/arch35/regbase/catalog.json` 并运行 `vf_preflight.py --strict`。记录 catalog ID、match_hints、readiness、目标工程的编译/精度/性能验证方案、`example_build_contract` 和目标差异；查询不等于选中。
-8. 融合算子中的每个内嵌 MM 独立命中 MatMul 族并记录 `mm_route`、shape、布局和证据。DAV_3510 按 Blaze → 保留 Cube MMAD 的低阶流水重建 → 高阶 MatMul API 数据流依次评估；AIV 替换须有独立、可比较的同 case 实测证据。低 MAC 利用率、较小 K 或外层融合名称都不足以直接选择 AIV。
-9. 仅当目标单元已确认是 AIV 向量计算链、数据已 UB 驻留且 VEC 耗时主导时，才评估 `register-resident-vector-chain`；该条目不能用于替换内嵌 MM。
-10. DAV_3510 目标的 RoPE/rotary 必查 `paired-segment-rotate`。DAV_3510 量化逐 case 给出 `quant_vf_route`：`shared-exponent-pack`、`two-pass-amax-cast` 或有证据的 `no_matching_vf_example`。
-11. 具体 AscendC API 参数必须用 `ascendc-docs-search` 和目标 SDK 验证，未经验证的参数不得进入方案。
-12. 静态检查点处于 `ready` 时，把适用 finding 作为 profiling 假设直接并入分析，逐条标 `adopted`、`refuted` 或 `deferred`；不再生成独立代码检视阶段或报告。
-13. 从 manifest 读取 `TARGET_SOCS`，不得把当前设备或 A5 工作基线扩大成全代际结论。A2/A3 共用同一套 arch22 实现，验证结果可互换，方案无需按二者拆分。方案不得修改公开 API、原约束或支持 dtype。按 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 追踪共享实现和模板使用者，将复制后独立路由、非目标代际及同代未涉及分支的原 fallback 作为 required feature；生成实施前冻结的文件/行范围，不能仅以架构目录命名证明隔离。
+4. **理论建模估算。** 粗粒度 roofline 不足以解释差距或需要定量比较方案时，纯 Vector/RegBase 使用 `ops-theoretical-performance-estimation`，MM/Cube、融合算子和多阶段 DAG 使用 `ops-opmodel-toolkit`；混合算子以 OpModel 建模整体图，必要时再细化纯 Vector 子图。模型输入、报告、实际 Skill/wheel 版本和搜索/trace 证据保存到 `analysis/roundN/theory/`，模型下界不得改写性能目标或用理论吞吐填补实测缺口，BELOW_FLOOR 先核对口径。所选路径不支持时记录 unsupported，不阻塞粗粒度分析；建模可行时本轮至少一个就绪方案须由模型瓶颈归因导出，并与实施契约的 `required_features` 和 `expected_effect` 对应。
+5. Agent 选用 `ascendc-perf-optimize` 的 4 步流程时，按该方法的适用条件执行：Step 1 Tiling 理论建模必选，产出理想 tiling data 作为后续修正对照，并结合标准 1 的 `compute_efficiency` 输出给出理论最优耗时（roofline 上限：`max(字节/带宽, FLOP/算力)`）与距该上限的可达 headroom，作为"值不值得调、最多能到哪"的定量上界；Step 2 仅命中 MC²/通信类算子时执行，按 `ascendc-mc2-best-practice` 的 `references/shared/profiling_mc2.md` 口径判定主导流水与通信隐藏率，只消费基线采集阶段已登记的 TilingData 与隔离测试证据（T_comm/T_compute/R 值），缺失时退回主 Agent 按协议补采，不得修改源码自行补采；Step 3 仅在跨核同步或共享目标写入时分析核间依赖、同步和负载；Step 4 单核流水 bound 诊断结论并入逐 case bound 证据。各步产出的 tiling 修正建议和优化策略直接映射为方案与实施契约 required features，不因流程推导重选 case 或重采性能。
+6. 只有族级终选仍使用 SIMT 时才读取 SIMT 指南。不得因为原源码有 `__simt_vf__` 就跳过族级选路。
+7. 模板按证据分类：构建契约一致且已有编译证据才是“可直接使用”；上下文/契约待补为“集成边界待验证”；只有说明则是“设计参考”。不得用概念伪代码替代已找到的模板骨架。
+8. DAV_3510 的向量、归约、寄存器重排、Cast/Pack 热点查询 `reference/common/arch35/regbase/catalog.json` 并运行 `vf_preflight.py --strict`。记录 catalog ID、match_hints、readiness、目标工程的编译/精度/性能验证方案、`example_build_contract` 和目标差异；查询不等于选中。
+9. 融合算子中的每个内嵌 MM 独立命中 MatMul 族并记录 `mm_route`、shape、布局和证据。DAV_3510 按 Blaze → 保留 Cube MMAD 的低阶流水重建 → 高阶 MatMul API 数据流依次评估；AIV 替换须有独立、可比较的同 case 实测证据。低 MAC 利用率、较小 K 或外层融合名称都不足以直接选择 AIV。
+10. 仅当目标单元已确认是 AIV 向量计算链、数据已 UB 驻留且 VEC 耗时主导时，才评估 `register-resident-vector-chain`；该条目不能用于替换内嵌 MM。
+11. DAV_3510 目标的 RoPE/rotary 必查 `paired-segment-rotate`。DAV_3510 量化逐 case 给出 `quant_vf_route`：`shared-exponent-pack`、`two-pass-amax-cast` 或有证据的 `no_matching_vf_example`。
+12. 具体 AscendC API 参数必须用 `ascendc-docs-search` 和目标 SDK 验证，未经验证的参数不得进入方案。
+13. 静态检查点处于 `ready` 时，把适用 finding 作为 profiling 假设直接并入分析，逐条标 `adopted`、`refuted` 或 `deferred`；不再生成独立代码检视阶段或报告。
+14. 从 manifest 读取 `TARGET_SOCS`，不得把当前设备或 A5 工作基线扩大成全代际结论。A2/A3 共用同一套 arch22 实现，验证结果可互换，方案无需按二者拆分。方案不得修改公开 API、原约束或支持 dtype。按 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 追踪共享实现和模板使用者，将复制后独立路由、非目标代际及同代未涉及分支的原 fallback 作为 required feature；生成实施前冻结的文件/行范围，不能仅以架构目录命名证明隔离。
 
 ## 效率与理论上限
 

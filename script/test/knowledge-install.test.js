@@ -204,6 +204,7 @@ test("a generic public initializer still installs the knowledge consumer", () =>
       CANNBOT_INIT_CONTEXT: JSON.stringify({ plugin: "knowledge-fixture", tool: "codex", target }),
       CANNBOT_TOOL: "codex", CANNBOT_TARGET_DIR: target,
       CANNBOT_SKIP_KNOWLEDGE_RESOURCES: "1", CANNBOT_PYTHON: "python3",
+      CANNBOT_SKIP_OPMODEL_INSTALL: "1",
     },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);

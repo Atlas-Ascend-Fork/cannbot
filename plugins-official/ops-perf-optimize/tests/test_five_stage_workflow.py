@@ -419,6 +419,15 @@ def test_five_roles_dispatch_to_generic_subagent_without_named_experts():
     assert "ops/ops-theoretical-performance-estimation" in (
         ROOT / "plugin-sources.json"
     ).read_text()
+    assert (ROOT / "skills/ops-opmodel-toolkit/SKILL.md").is_file()
+    analysis = (ROOT / "skills/ops-perf-analysis/SKILL.md").read_text()
+    assert "`ops-opmodel-toolkit`" in analysis
+    init = (ROOT / "init.sh").read_text()
+    assert "installer/install-opmodel.sh" in init
+    assert "CANNBOT_OPMODEL_STRICT" in init
+    opmodel_installer = (ROOT / "installer/install-opmodel.sh").read_text()
+    assert "CANNBOT_SKIP_OPMODEL_INSTALL" in opmodel_installer
+    assert "CANNBOT_OPMODEL_WHEELHOUSE" in opmodel_installer
 
 
 def phase_files(tmp_path, preflight, targets, gate):

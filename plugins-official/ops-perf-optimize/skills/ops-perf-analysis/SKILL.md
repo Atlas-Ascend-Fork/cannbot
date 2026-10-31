@@ -27,6 +27,7 @@ description: 用于冻结性能任务的基线 profiling、逐 case 瓶颈诊断
 - **知识库（`knowledge-query`）**：代表性关键词为 API 约束、存储层级、SIMD/SIMT、同步、Roofline、优化反模式、编译/精度/性能排障。用于解释 profiling 现象、核对约束和借鉴失败经验：围绕当前瓶颈检索，读相关卡片正文，将机制和约束用于提出或排除候选方向。输入含 Query/CLI 入口、`KB_ROOT`、已有覆盖信息或卡片索引及目标适用范围。
 - **最佳实践（`ascendc-performance-best-practices`）**：代表性关键词为 MatMul、FlashAttention、MC²、Reduction/Softmax、Scan、Gather/Scatter、Transpose、数据搬运、UB 复用、Reg/VF。用于寻找可复用的成熟实现：按目标代际与算子族找参考代码，对照当前实现的布局、Tiling 和流水，提取可迁移的做法并核对集成条件。输入含 Skill 入口、族级与公共能力索引及平台/语言适用范围。
 - **优化方法（`ascendc-perf-optimize`）**：用于定位瓶颈、估算优化空间和推导策略。按当前问题选用 Tiling 建模或卡间/核间/单核流水分析，将模型与 profiling 对照，形成有预期收益依据的修改方向。输入含 Skill 入口、方法索引和适用条件。
+- **理论建模（`ops-theoretical-performance-estimation` / `ops-opmodel-toolkit`）**：粗粒度 roofline 不足以解释实测差距，或需要在设计期定量比较融合、驻留、tiling、分核等候选收益时使用。按计算结构选择入口：纯 Vector/RegBase 计算流使用 `ops-theoretical-performance-estimation` 的标定引擎；MM/Cube、融合算子、多阶段 DAG、流水空泡和映射/参数寻优优先使用 `ops-opmodel-toolkit`。混合算子由 OpModel 建立整体融合图，内部纯 Vector 子图可在需要时再用标定模型细化，不能把含 MM 或跨阶段数据流的融合算子当成单一纯 Vector 算子。输入含 Skill 入口、适用平台与工作流索引；实际版本、硬件绑定和模型范围以运行时核验结果为准。
 
 **以下三项仅适用于 AscendC 路径，不作为 CANNBot-DSL 的参考输入：**
 
@@ -56,7 +57,7 @@ description: 用于冻结性能任务的基线 profiling、逐 case 瓶颈诊断
 
 1. **准备性能基线。** 按 `ops-perf-acceptance-criteria` 复用或采集当前基线；同一 sample 的全部相关 target launches 聚合后取中位数，JIT 编译/加载在正式样本前完成。**聚合指标、Duration 等简单 profile 不足以支撑瓶颈分析时，必须在采集阶段使用 `ops-perf-profile-feature-extractor` 补齐流水图**，定位 pipe 依赖、重叠、气泡和同步等待，必要时补逐指令时序；已有同身份有效流水图可复用。按目标平台选择板上或仿真来源，聚合利用率不能当作流水图，流水图也不替代稳态耗时验收。采集可用隔离探针，分析推导不得重采、重选 case 或修改基线。
 
-2. **分析瓶颈并选择方案。** 结合源码、profiling 和历史结果，自主选用上述[参考输入](#agent-的参考输入)中的知识库、最佳实践和优化方法，逐 case 给出 bound、瓶颈和优化方向；上节末尾三项仅用于 AscendC。选用最佳实践时，按目标平台和问题查询公共能力、cannbot-dsl 公共库或族级 `cannbot-dsl/` 实现；API 事实按 [DSL 共享验证与领域边界](../ops-perf-acceptance-criteria/references/cannbot-dsl.md) 的「文档与样例检索」核验。
+2. **分析瓶颈并选择方案。** 结合源码、profiling 和历史结果，自主选用上述[参考输入](#agent-的参考输入)中的知识库、最佳实践、优化方法和理论建模工具，逐 case 给出 bound、瓶颈和优化方向；上节末尾三项仅用于 AscendC。选用最佳实践时，按目标平台和问题查询公共能力、cannbot-dsl 公共库或族级 `cannbot-dsl/` 实现；API 事实按 [DSL 共享验证与领域边界](../ops-perf-acceptance-criteria/references/cannbot-dsl.md) 的「文档与样例检索」核验。
 
 3. **评估方案净收益。** 候选生成前按 [DSL 诊断分析](references/dsl-analysis.md) 的净收益要求，评估关键路径可节省的耗时和新增成本；不调用仅适用于 AscendC 的静态性能检视参考输入。
 

@@ -32,6 +32,8 @@ def test_reference_skills_are_available_to_analysis() -> None:
     # available in the body and selected for the current analysis task.
     assert "ascendc-perf-optimize" in analysis
     assert "ascendc-performance-best-practices" in analysis
+    assert "ops-theoretical-performance-estimation" in analysis
+    assert "ops-opmodel-toolkit" in analysis
     # 策略推导保留在 analysis；implementation 仅在 DSL 路由用其做候选诊断与流水/tiling 复核；
     # 主编排入口不加载该策略 Skill。
     assert "ascendc-perf-optimize" in read(IMPL)

@@ -1,0 +1,87 @@
+{
+  "skill_name": "ops-opmodel-toolkit",
+  "eval_mode": "text",
+  "evals": [
+    {
+      "id": 1,
+      "case_name": "wheel-only-install",
+      "title": "独立安装与平台边界",
+      "prompt": "我已获取 opmodel wheel 和这个 skill。请说明如何在 Linux x86_64 CPython 3.12 环境使用 CPU 跑通矩阵乘示例。只给操作步骤，不执行安装。",
+      "expected_output": "默认用 --upgrade --pre 安装兼容环境的最新 OpModel，按实际 wheel 标签核对平台与 glibc 要求；设置 skill 和工作区路径，使用随附示例与 scripts/run_case.py；软件仿真无需 NPU，结果写入用户工作区。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 2,
+      "case_name": "new-operator",
+      "title": "新算子建模与语义",
+      "prompt": "请用 OpModel 帮我规划一个从公式开始的新算子模型，已有完整 shape、dtype 和数值标准；本轮仅建模，不进行设备实验。需要哪些定义，如何验证？",
+      "expected_output": "选择新算子工作流，说明六份定义、完整 case、实际任务投影、独立数量/覆盖与尾块多任务检查；保存命令与验证结果，未知成本注明缺口，不启动设备实验。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 3,
+      "case_name": "perf-eval",
+      "title": "局部评分与完整 case",
+      "prompt": "DAG 搜索给出候选 800 周期，原模型完整 case 是 1200 周期。可以直接说提速 1.5 倍吗？请给出正确比较流程。",
+      "expected_output": "拒绝混合 scope 的加速比；区分 case 输入和执行配置，应用候选后保持完整输入、硬件、成本一致并复评，列实际参数与覆盖。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 4,
+      "case_name": "agent-dag-opt",
+      "title": "结构搜索证据",
+      "prompt": "我只在 agent_search 登记了三个手工模型并 evaluate，是否能说已经完成 tiling、阶段和缓冲的联合搜索？下一步怎样做？",
+      "expected_output": "区分登记、固定候选评分和实际搜索；按模型支持域声明阶段/slots/参数，使用适用内置搜索器，记录实际覆盖和完整 case 复评，不保证全局最优。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 5,
+      "case_name": "joint-opt",
+      "title": "未知 VF 成本与联合优化",
+      "prompt": "我的新 VF 没有实测成本，想先填 1 周期拿到模型排名，再声称这个 AscendC 方案性能更好。请说明如何推进联合优化。",
+      "expected_output": "不把任意常数当有效成本；未知项待测，使用实际实现及匹配成本证据，正确性和设备同口径计时决定采用；可以开展有明确限制的建模或实现工作。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 6,
+      "case_name": "dag-bubble-opt",
+      "title": "空泡归因范围",
+      "prompt": "一份关键核 trace 的 M pipe 很空闲，我想直接用完整 case 的总周期作为观察窗，并根据 overlap 小于 5% 判断双缓冲没生效。请审查分析方法。",
+      "expected_output": "核对 trace 身份、单位、核/阶段及窗口；基于公开产物提出待验证原因，不混用局部和总体时间，不从 overlap 阈值推断根因；用同口径模型实验检验。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 7,
+      "case_name": "dag-dataflow-graph",
+      "title": "静态连接验证边界",
+      "prompt": "根据用户模型 definition/dag.yaml 与 operator.yaml 画数据流图。图里所有 signal 都有同名边，是否就证明数值和容量正确？请说明操作方式及验证边界。",
+      "expected_output": "从公开 YAML 声明整理 Mermaid/ASCII 图，核对 stage 端点、版本和数据/控制关系，保留不明确部分；调用完整 case 验证，明确没有独立画图脚本，静态图不证明数值、容量或运行时正确。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 8,
+      "case_name": "design-gen",
+      "title": "设计文档证据",
+      "prompt": "我有模型六份定义、case、result.json 和搜索排名，没有设备实测。请说明如何生成 DESIGN.md，尤其 buffer 容量和性能部分应怎么写。",
+      "expected_output": "选择设计文档工作流和模板，使用有效参数计算 slots/字节与生命周期；区分局部/完整周期及搜索覆盖，设备未验证如实标记，不虚构最优或设备收益。",
+      "expectations": [],
+      "files": []
+    },
+    {
+      "id": 9,
+      "case_name": "version-boundary",
+      "title": "版本与可用入口",
+      "prompt": "我已经安装了 opmodel，执行一个搜索命令时提示该命令不存在。请说明如何确认可用入口，并继续比较 DAG 参数和流水方案。不要修改我的安装包。",
+      "expected_output": "核对包版本、具体报错、CLI 帮助与文档；按任务选择支持的 dag_run、joint_search 或搜索会话入口，说明搜索范围与限制；不编造命令或修改安装包。",
+      "expectations": [],
+      "files": []
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+parameter_space:
+- name: Mb
+  role: outer
+  tiles: M
+  cands:
+  - 64
+  - 128
+  - 256
+  desc: output row task tile
+- name: Nb
+  role: outer
+  tiles: N
+  cands:
+  - 64
+  - 128
+  - 256
+  desc: output column task tile
+- name: Kb
+  role: outer
+  tiles: K
+  cands:
+  - 128
+  - 256
+  - 512
+  desc: L1 K panel
+- name: M_L0
+  role: inner
+  tiles: Mb
+  cands:
+  - 64
+  - 128
+  desc: L0 output row tile
+- name: N_L0
+  role: inner
+  tiles: Nb
+  cands:
+  - 64
+  - 128
+  desc: L0 output column tile
+- name: K_L0
+  role: inner
+  tiles: Kb
+  cands:
+  - 64
+  - 128
+  desc: MMAD K tile
+rewrite_grammar:
+- rule: split_reduction
+mapping_choices: []
+split_choices:
+- name: greedy_outputs
+  strategy:
+    rule: greedy
+    order:
+    - m
+    - n
+    granularity: task
+    hit_policy: all_miss
+- name: contiguous_outputs
+  strategy:
+    rule: contiguous
+    order:
+    - m
+    - n
+    granularity: task
+    hit_policy: all_miss
+- name: round_outputs
+  strategy:
+    rule: round
+    order:
+    - m
+    - n
+    granularity: task
+    hit_policy: all_miss
+budget:
+  max_candidates: 96
+  simpy_top_k: 8
+stopping:
+  scored_rounds_without_improvement: 2
+  require_trace_evidence: true

@@ -96,9 +96,26 @@ ARGS=(bash "$INSTALLER" "$TOOL" "$TARGET" consumer --skip-repository-update)
 [[ "${CANNBOT_SKIP_KNOWLEDGE_RESOURCES:-0}" == "1" ]] && ARGS+=(--skip-resources)
 echo "  knowledge consumer: preparing runtime, resources and search index ..."
 if ! (cd "$DESTINATION" && "${ARGS[@]}"); then
-  echo "cannbot: knowledge consumer: unavailable; knowledgeIndex=pending" >&2
-  echo "cannbot: repair: ${ARGS[*]}" >&2
-  exit 0
+  # Current fixed-archive snapshots can temporarily outpace their generated
+  # cards. Keep the installed raw resources, but build the search index from
+  # the knowledge cards alone so the consumer remains usable.
+  echo "cannbot: full knowledge resources are incompatible with the current cards; retrying knowledge-only indexing" >&2
+  BACKUP="$(mktemp -d "${TARGET}/.cannbot/knowledge-resource-backup.XXXXXX")"
+  trap 'for dir in cann-docs-raw cann-ops-raw cann-runtime-raw cann-recipes-raw; do if [[ -e "${BACKUP}/${dir}" ]]; then mv "${BACKUP}/${dir}" "${DESTINATION}/${dir}"; fi; done; rm -rf "${BACKUP}"' EXIT
+  for dir in cann-docs-raw cann-ops-raw cann-runtime-raw cann-recipes-raw; do
+    if [[ -e "${DESTINATION}/${dir}" ]]; then
+      mv "${DESTINATION}/${dir}" "${BACKUP}/${dir}"
+    fi
+  done
+  FALLBACK_ARGS=("${ARGS[@]}")
+  if [[ " ${FALLBACK_ARGS[*]} " != *" --skip-resources "* ]]; then
+    FALLBACK_ARGS+=(--skip-resources)
+  fi
+  if ! (cd "$DESTINATION" && "${FALLBACK_ARGS[@]}"); then
+    echo "cannbot: knowledge consumer: unavailable; knowledgeIndex=pending" >&2
+    echo "cannbot: repair: ${FALLBACK_ARGS[*]}" >&2
+    exit 0
+  fi
 fi
 
 QUERY="${TARGET}/.agents/skills/knowledge-query/scripts/knowledge_query.py"

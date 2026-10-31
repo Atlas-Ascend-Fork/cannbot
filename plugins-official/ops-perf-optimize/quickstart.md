@@ -50,8 +50,8 @@ bash /path/to/cannbot/plugins-official/ops-perf-optimize/init.sh project opencod
 
 安装会自动完成：
 
-1. **Skills 安装**：本插件自带的 9 个工作流 Skill（`ops-perf-optimize-workflow` 入口、五个阶段、验收标准、性能检视与特征提取）从插件目录软链，17 个共享 AscendC Skill（profiling、精度调试、Blaze 路由等）从 `vendor/cannbot-skills` submodule 软链到目标项目的工具 skills 目录；源码安装可用 `--skills <SHA|本地仓路径>` 锁定共享 Skill 版本。知识检索 Skill 使用下节知识仓自身的安装器，不再从该 submodule 安装旧版；
-2. **参考仓准备**：浅克隆 cannbot-knowledge 知识仓、asc-devkit（经 `ascendc-docs-search` 清洗）与 cann-samples 到 `<项目>/.cannbot/dependencies/ops-perf-optimize/`，asc-devkit/cann-samples 在项目根暴露同名入口。统一安装器随后调用知识仓自身的 consumer 安装器，准备检索 Skill、资源、项目配置与索引，并执行只读 `discover` 检查；断网/离线时告警跳过，`CANNBOT_SKIP_DEPENDENCY_REPOS=1` 可整体关闭；
+1. **Skills 安装**：本插件自带的 10 个 Skill（`ops-perf-optimize-workflow` 入口、五个阶段、验收标准、性能检视、特征提取与 OpModel 理论建模工具）从插件目录软链，17 个共享 AscendC Skill（profiling、精度调试、Blaze 路由等）从 `vendor/cannbot-skills` submodule 软链到目标项目的工具 skills 目录；源码安装可用 `--skills <SHA|本地仓路径>` 锁定共享 Skill 版本。知识检索 Skill 使用下节知识仓自身的安装器，不再从该 submodule 安装旧版；
+2. **参考仓与 OpModel 准备**：浅克隆 cannbot-knowledge 知识仓、asc-devkit（经 `ascendc-docs-search` 清洗）与 cann-samples 到 `<项目>/.cannbot/dependencies/ops-perf-optimize/`，asc-devkit/cann-samples 在项目根暴露同名入口。统一安装器随后调用知识仓自身的 consumer 安装器，准备检索 Skill、资源、项目配置与索引，并执行只读 `discover` 检查；源码安装的 `init.sh` 还会为 `ops-opmodel-toolkit` 创建项目专用虚拟环境、安装最新兼容的 `opmodel` wheel，校验后写入 `.cannbot/opmodel.env`。参考仓断网/离线时告警跳过，`CANNBOT_SKIP_DEPENDENCY_REPOS=1` 可关闭参考仓准备；OpModel 可单独用 `CANNBOT_SKIP_OPMODEL_INSTALL=1` 跳过。npx 安装不经过插件 `init.sh`，首次使用 OpModel 时按 `skills/ops-opmodel-toolkit/references/install.md` 手工准备环境；
 3. **主 Agent 与主提示词**：`AGENTS.md` 作为 `perf-optimize` 主 Agent 安装到客户端 agents 目录（opencode/claude 为 `.opencode/agents/perf-optimize.md`、`.claude/agents/perf-optimize.md`，codex 为 `.codex/agents/perf-optimize.toml`），并以标记块写入项目 `CLAUDE.md`（claude）或 `AGENTS.md`（其他工具）；五个阶段仍派发给客户端通用 subagent；
 4. **hook 注册**（仅 claude 工具）：SessionStart 路由提示注册进 `.claude/settings.json`。
 
@@ -88,7 +88,7 @@ bash /path/to/cannbot-knowledge/install.sh opencode /path/to/your/tuning-project
 
 ### 验证安装
 
-统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示插件安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 26 个插件 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 hooks 资产与 `quickstart.md`；工作流定义和脚本随 `ops-perf-optimize-workflow` Skill 的 `workflows/`、`scripts/` 目录安装。完成知识仓 consumer 安装后，另有两个知识消费 Skill 及 `.cannbot/knowledge.env`。
+统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示插件安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 27 个插件 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 hooks 资产与 `quickstart.md`；工作流定义和脚本随 `ops-perf-optimize-workflow` Skill 的 `workflows/`、`scripts/` 目录安装。完成知识仓 consumer 安装后，另有两个知识消费 Skill 及 `.cannbot/knowledge.env`。
 
 从调优工程运行一次只读覆盖检查（所有客户端均可使用安装器创建的 `.agents/skills/` 规范入口）：
 
