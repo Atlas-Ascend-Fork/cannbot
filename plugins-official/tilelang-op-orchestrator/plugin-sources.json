@@ -1,0 +1,19 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "skills": [
+    "ops/tilelang-api-best-practices",
+    "ops/tilelang-env-check",
+    "ops/tilelang-op-design",
+    "ops/tilelang-op-develop",
+    "ops/tilelang-op-test-design",
+    "ops/tilelang-perf-optimization",
+    "ops/tilelang-programming-model-guide",
+    "ops/tilelang-review",
+    "ops/tilelang-submodule-pull",
+    "ops/tilelang-performance-best-practices",
+    "ops/ascendc-env-check",
+    "ops/npu-arch",
+    "ops/tilelang-op-profiling"
+  ]
+}

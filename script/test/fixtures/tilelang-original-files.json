@@ -1,0 +1,68 @@
+{
+  "repository": "cannbot-skills",
+  "files": {
+    "AGENTS.md": "b0b6f8d45430578512066f75055debab7b3a16aafbeba14b0a791ef5e13c125f",
+    "hooks/hooks.json": "6078a843583b85f687106e3622adf68c31b31ec877a8f130cb9ae6a23b8f1fd7",
+    "hooks/run-hook.cmd": "b249fedccac1ce0808160785eb435178fa0d3842e0eb47d2bc0d85b691779554",
+    "hooks/session-start-tilelang": "207c84399947d2eac709344f56976db684b4245d2cf8436fcec21d443bd4dfff",
+    "evals/evals.json": "f2e97e255321b1aff6ec38675ac99ce22c47a19d23e2b8652b5620556de8ee5b",
+    "agents/tilelang-perf-impl-expert.md": "4e271eeb3621e3d333a567537b705a3f7bd7988af4cbddebb3014f776bfc5e7c",
+    "agents/tilelang-op-perf-tuner.md": "c0e33a3d0cbccd13b3e7cb5248b4959da16b313fed037eb3e878620e6ea22dd6",
+    "agents/tilelang-op-developer.md": "3944631a3a85c907facefddbcb2c4a27bff59f844075d51eb8c0c204bc8d6357",
+    "agents/tilelang-op-analyst.md": "336287944b1d5a3e4692f92afc399d9ccfb509beca18321a088996d0aa12cea3",
+    "agents/tilelang-perf-analysis-expert.md": "9b2f80c2c7639f38c0c70a83a72f9eb3d4d122d12b0c3b57f619fd762deae974",
+    "agents/tilelang-tuning.md": "065873069e519fb0c00b1f1fad9e12a3af49477cb242f02a69c71cd338523038",
+    "references/source-layout.md": "507d713054eefae979d3ab83d432f294440ed719bd675429b7e1156fa8ad7299",
+    "references/tilelang-routing.md": "38ee9f625aca35f073245f0a64c0657c9e5ce0a9ed0b924ae29b8aa0c42b461b",
+    "workflows/Ascend910/workflow.md": "8ef4e44be65ab57f996844beaed8a3ae87d7ead2088dd8293c7fefec58546d29",
+    "workflows/Ascend950/LICENSE": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+    "workflows/Ascend950/import-manifest.json": "04f5b1d65c529338654586051828dd73be7288e3efd5f5cafb61f9cbf4b026a7",
+    "workflows/Ascend950/workflow.md": "1c242195104b79a8324187e494df91354d7dc86c86297b0c4b3bded7bb480660",
+    "workflows/Ascend910/scripts/prepare_framework.sh": "81b168f1d70986175835b978e0113f7f62b9cbebf6bc80d48d70bfa6156ad59a",
+    "workflows/Ascend910/agents/tilelang-op-perf-tuner.md": "8119311e207d7403e04f740eae4055573ae2b11e8e7f26ec13dd45f911e8ca6d",
+    "workflows/Ascend910/agents/tilelang-op-developer.md": "9731d135ed320cd1436101f347e6998dd833f8301cd3658ffd8833fc32b3ae15",
+    "workflows/Ascend910/agents/tilelang-op-analyst.md": "53312273c0a4a99b4f9f0cb523170763f476aa27acb0b1b74029683f732b5a52",
+    "workflows/Ascend950/scripts/validate_optimization_search_coverage.py": "b3070fb70f52d0c3c3dba90a14d8a5784a8d354d55d9ced416b9f025ffc4a96c",
+    "workflows/Ascend950/scripts/prepare_framework.sh": "83e5ceaca39dc41695c087a34596cfb61770a174230a5cd41bb8911046dbca6d",
+    "workflows/Ascend950/workflows/task-prompts.md": "5e930ba02aee959b1e2fe712065889f951d40e82886800885f20c093f41d6691",
+    "workflows/Ascend950/workflows/tilelang-tuning-flash.md": "60fa1e0d20d2de2f95a8dd42aabdbe6f3ba708a1c4828377c7fddbeba9df186d",
+    "workflows/Ascend950/agents/tilelang-perf-impl-expert.md": "57e5a8b02563324f607f18e92925cf9bd2136a9ef44eb3ee76f8868db24fbda1",
+    "workflows/Ascend950/agents/tilelang-perf-analysis-expert.md": "76cca200a7f8003a72b3bede9e3274096d12aad2b3c5ec4cc27458bc9e8332aa",
+    "workflows/Ascend950/agents/tilelang-tuning.md": "9941986c20f54fa86433c7643ffd10cd0e287888514a307c3af78e5fc21c054e",
+    "workflows/Ascend950/workflows/optimization-search-coverage/optimization_search_coverage_gate.md": "a09d674b67eab974852a961700b65ee311919685d1bf3cd67fc94b37bcd91953",
+    "workflows/Ascend950/workflows/optimization-search-coverage/optimization_search_coverage.final.example.json": "4527c57530ca74a9e6edc7889b298805febb7c700ef69c7ed329be55e333d162",
+    "workflows/Ascend950/workflows/optimization-search-coverage/optimization_search_coverage.example.json": "5e31fd2d34cf5a40a717173779346107ec906805e0e3db2a19e0c9c238e323ac",
+    "agents/codex/tilelang-op-developer.toml": "e9b7ec7a2f31c5446e8d3cc192f6ef19cf97eb6d8d7ded69a14373c611aa58a2",
+    "agents/codex/tilelang-perf-analysis-expert.toml": "606866efaff78a0f2fa19a04dcadb8ea23cecca2b50ac6b62b431915588392f3",
+    "agents/codex/tilelang-tuning.toml": "c2632e8e05b545a5d9e65c6af78331ff626880785258573b3f80e65b6ab181e2",
+    "agents/codex/tilelang-op-analyst.toml": "e6e5e3fc4f3c665e25d15b252aaf76c3adf6ae7c4a4d86c2184aa59e3a1be2c4",
+    "agents/codex/tilelang-perf-impl-expert.toml": "8d5c21bd12d8050c3b5f51c029a7d3e639a44573d513c54dd0aef301f14c5a38",
+    "agents/codex/tilelang-op-perf-tuner.toml": "c9fe82dff08daa72d02a7526481c96bc5b72f9f9f635059830c9c4b1a6bc15fe"
+  },
+  "reviewedFixes": {
+    "agents/codex/tilelang-op-analyst.toml": {
+      "sha256": "8c52386cef192548f142e6cabd10904fce7c377946fe463d57df39895cc2c55e",
+      "reason": "OAT.3 NoLicenseHeader: prepend the repository CANN-2.0 license header; TOML configuration and role instructions unchanged."
+    },
+    "agents/codex/tilelang-op-developer.toml": {
+      "sha256": "8903bd65e132856b71e81e2fb61122825af6f64c099efc5153d322aefa35c4fb",
+      "reason": "OAT.3 NoLicenseHeader: prepend the repository CANN-2.0 license header; TOML configuration and role instructions unchanged."
+    },
+    "agents/codex/tilelang-op-perf-tuner.toml": {
+      "sha256": "3497078a650e61359ccf0fdf5375fd90d37cd1a0b94ebbe6bf9062bf43e4239a",
+      "reason": "OAT.3 NoLicenseHeader: prepend the repository CANN-2.0 license header; TOML configuration and role instructions unchanged."
+    },
+    "workflows/Ascend950/scripts/validate_optimization_search_coverage.py": {
+      "sha256": "d18f809ef3776b27a8edf2f24dc288bf88ff2ee09bc2bbf8824ac1c97cd46eca",
+      "reason": "CodeCheck: share ordered checks, name composite results, split validation stages and use logging for diagnostics and stdout results; validation conditions, output text and exit codes preserved."
+    },
+    "hooks/run-hook.cmd": {
+      "sha256": "3225489071431fb9d3dc8972d02c4011f97ff4d9c986faf17e85d1567f9fdba6",
+      "reason": "Installation/SCA: reuse the existing CANNBot AscendC-port CANN-2.0 dispatcher verbatim with pinned repository provenance; hook entry and TileLang workflows unchanged."
+    },
+    "workflows/Ascend910/workflow.md": {
+      "sha256": "b9f7c584dbae54fb3c46476119210a3c83e8a9ac7d8b12be2e510559882984ab",
+      "reason": "Migration resource references: resolve the three Ascend910 API documents from the installed tilelang-api-best-practices Skill real directory; workflow stages, roles and business rules unchanged."
+    }
+  }
+}

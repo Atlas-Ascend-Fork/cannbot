@@ -10,6 +10,7 @@ This directory contains the official CANNBot plugin definitions and non-Skill fi
 - `triton-op-generator`
 - `ops-perf-optimize`
 - `pypto-op-orchestrator`
+- `tilelang-op-orchestrator`
 
 Each plugin declares the Skills it needs in `plugin-sources.json`. The actual Skill source is maintained in the `vendor/cannbot-skills` submodule and is not duplicated in this repository.
 

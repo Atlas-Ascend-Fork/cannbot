@@ -1092,6 +1092,14 @@ function install(options) {
   if (plugin.name !== options.pluginId) {
     fail(`plugin name mismatch: requested ${options.pluginId}, manifest declares ${plugin.name}`);
   }
+  // TileLang retains its original agent files and workflow-relative paths.
+  // Its installer resolves shared Skills without rewriting the workflow tree.
+  if (plugin.name === "tilelang-op-orchestrator") {
+    const args = [join(pluginDir, "init.sh"), "project", options.tool, options.target];
+    if (options.skills !== undefined) args.push("--skills", options.skills);
+    run("bash", args, process.cwd());
+    return;
+  }
   const sharedSkills = prepareSharedSkills(sourceRepositoryRoot, sourceDefinition, options.skills);
   mkdirSync(options.target, { recursive: true });
   const skillInstallMode = sourceDefinition?.skillInstallMode ?? "copy";

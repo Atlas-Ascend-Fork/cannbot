@@ -231,7 +231,7 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
   const skillCommit = revision.stdout.match(/commit ([0-9a-f]+)\t/)?.[1];
   assert.ok(skillSourceUrl, "missing Skill submodule URL");
   assert.match(skillCommit, /^[0-9a-f]{40}$/);
-  const expectedPlugins = ["catlass-op-generator", "hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "ops-direct-invoke-flash", "ops-perf-optimize", "triton-op-generator"];
+  const expectedPlugins = ["catlass-op-generator", "hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "ops-direct-invoke-flash", "ops-perf-optimize", "tilelang-op-orchestrator", "triton-op-generator"];
   // Only bundled plugins have manifests; source-only workflow entries are not packaged.
   // A community plugin is bundled under its directory name, which need not match its
   // manifest name, so only official-directory entries belong to this official list;

@@ -109,6 +109,22 @@ opencode
 先分析需求和运行环境，再完成方案设计、代码实现、测试、精度与性能验收。
 ```
 
+### TileLang 算子开发
+
+```bash
+npx @cannbot-plugin/cannbot install tilelang-op-orchestrator --tool codex
+# 或从源码安装，默认配置写入 TileLang 插件自身目录：
+bash plugins-official/tilelang-op-orchestrator/init.sh project codex --skills /absolute/cannbot-skills
+```
+
+`--tool` 支持 `opencode`、`codex`、`claude`、`trae`、`dsh`。启动客户端后描述需求，例如：
+
+```text
+使用 tilelang-op-orchestrator 开发一个 float16 的 Abs 算子。先识别本机芯片，按对应平台流程完成设计、生成与测试。
+```
+
+TileLang 源码入口省略安装路径时固定安装到 `plugins-official/tilelang-op-orchestrator/`，安装后从该目录启动客户端；显式传入路径可选择其他项目。安装时只配置 13 个共享技能、6 个原有角色和完整的 `AGENTS.md` 入口；工作流保留原来的 `workflows/` 目录及正文。会话中依据完整 SoC / NpuArch 证据选择独立的 Ascend910 / Ascend950 工作流，再按该分支准备框架源码与运行环境。详见 [TileLang 快速入门](../../plugins-official/tilelang-op-orchestrator/quickstart.md)。
+
 ## 模型领域
 
 ### 模型迁移与推理优化

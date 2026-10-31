@@ -1,0 +1,11 @@
+[
+  {
+    "Name": "CANNBot cross-platform hook dispatcher",
+    "License": "CANN-2.0",
+    "License File": "hooks/run-hook.cmd",
+    "Version Number": "2348eda0bcddee4d69260bfb96986ba9a66ef6f8",
+    "Owner": "Huawei Technologies Co., Ltd.",
+    "Upstream URL": "https://gitcode.com/cann/cannbot",
+    "Description": "hooks/run-hook.cmd is reused verbatim from plugins-community/ascendc-port-orchestrator/hooks/run-hook.cmd at this pinned CANNBot revision, including its CANN-2.0 copyright and license notices. The hook entry and TileLang session-start implementation remain unchanged."
+  }
+]

@@ -413,6 +413,56 @@
         "operator"
       ],
       "category": "development"
+    },
+    {
+      "name": "tilelang-op-orchestrator-skills",
+      "description": "TileLang 双平台工作流使用的 13 个共享技能，包含硬件探测与架构查询。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "ops",
+        "sha": "f305e200aa4b1e1fed73cd21ff1f083b8df25a1e"
+      },
+      "strict": false,
+      "version": "1.2.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "category": "skills",
+      "skills": [
+        "./tilelang-api-best-practices",
+        "./tilelang-env-check",
+        "./tilelang-op-design",
+        "./tilelang-op-develop",
+        "./tilelang-op-test-design",
+        "./tilelang-perf-optimization",
+        "./tilelang-programming-model-guide",
+        "./tilelang-review",
+        "./tilelang-submodule-pull",
+        "./tilelang-performance-best-practices",
+        "./ascendc-env-check",
+        "./npu-arch",
+        "./tilelang-op-profiling"
+      ]
+    },
+    {
+      "name": "tilelang-op-orchestrator",
+      "source": "./plugins-official/tilelang-op-orchestrator",
+      "description": "TileLang 算子开发统一入口，按本机芯片路由到独立的 Ascend910 与 Ascend950 工作流，保留各自技能与执行顺序。",
+      "version": "1.2.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "tilelang",
+        "ascend",
+        "operator",
+        "workflow"
+      ],
+      "category": "development",
+      "dependencies": [
+        "tilelang-op-orchestrator-skills"
+      ]
     }
   ]
 }

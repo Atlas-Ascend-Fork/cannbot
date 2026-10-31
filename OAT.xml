@@ -14,15 +14,19 @@
         <policylist>
             <policy name="projectPolicy" desc="CANNBot repository default license policy">
                 <policyitem type="license" name="CANN-2.0" path=".*" filefilter="licenseFileNamePolicyFilter" desc="The repository default license is CANN-2.0; explicitly licensed components are excluded below."/>
+                <policyitem type="license" name="MIT" path="plugins-official/tilelang-op-orchestrator/workflows/Ascend950/LICENSE" filefilter="tilelangLicenseHeaderFilter" desc="Retain and recognize the original MIT license text distributed with the Ascend950 workflow."/>
+                <policyitem type="license" name="CANN-2.0" path="plugins-official/tilelang-op-orchestrator/workflows/Ascend950/scripts/.*" filefilter="tilelangLicenseHeaderFilter" desc="TileLang framework preparation and search validation scripts retain their CANN-2.0 headers."/>
                 <policyitem type="copyright" name="Huawei Technologies Co., Ltd." path=".*" rule="may" group="defaultGroup" filefilter="copyrightPolicyFilter" desc=""/>
             </policy>
         </policylist>
         <filefilterlist>
+            <filefilter name="tilelangLicenseHeaderFilter" desc="Check TileLang license text and script headers against their explicitly declared licenses."/>
             <filefilter name="defaultFilter" desc="Files not checked by the root repository scan">
                 <filteritem type="filename" name="*.mjs" desc="Workflow runtime ES modules, not distributed, skip OAT entirely"/>
                 <filteritem type="filepath" name="vendor/cannbot-skills/.*" desc="Git submodule with its own license and OAT configuration."/>
             </filefilter>
             <filefilter name="defaultPolicyFilter" desc="Filters for compatibility and license header policies">
+                <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="script/.*" desc="The npm installer is distributed under the MIT License in script/LICENSE"/>
                 <filteritem type="filename" name="*.golden" desc="Test oracle fixtures, headers would break comparisons"/>
                 <filteritem type="filename" name="*.jsonl" desc="JSON Lines data files, cannot carry license header"/>
@@ -36,6 +40,7 @@
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/op-dashboard/assets/chart.umd.min.js" desc="Third-party Chart.js 4.4.7 (MIT), vendored minified build; keeps its upstream notice."/>
 </filefilter>
             <filefilter name="copyrightPolicyFilter" desc="Filters for copyright header policies">
+                <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filename" name="*.yaml" desc="YAML configuration files, no copyright header required"/>
                 <filteritem type="filename" name="*.yml" desc="YAML configuration files, no copyright header required"/>
                 <filteritem type="filename" name="*.csv" desc="CSV test case files cannot contain a copyright header without breaking their schema"/>
@@ -46,6 +51,8 @@
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/op-dashboard/assets/chart.umd.min.js" desc="Third-party Chart.js 4.4.7 (MIT), vendored minified build; keeps its upstream notice."/>
 </filefilter>
             <filefilter name="licenseFileNamePolicyFilter" desc="Explicitly licensed components excluded from the repository default license policy">
+                <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
+                <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/workflows/Ascend950/LICENSE" desc="The original MIT license text is checked by the explicit TileLang MIT policy, rather than the default CANN-2.0 header policy."/>
                 <filteritem type="filepath" name="script/.*" desc="The npm installer is distributed under the MIT License in script/LICENSE."/>
                 <filteritem type="filepath" name="vendor/cannbot-skills/.*" desc="Git submodule distributed under its own repository license."/>
                 <filteritem type="filename" name="*.yaml" desc="YAML configuration files, no license header required"/>

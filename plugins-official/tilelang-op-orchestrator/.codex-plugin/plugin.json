@@ -1,0 +1,31 @@
+{
+  "name": "tilelang-op-orchestrator",
+  "description": "TileLang 算子开发统一入口，按本机芯片路由到独立的 Ascend910 与 Ascend950 工作流，保留各自技能与执行顺序。",
+  "version": "1.2.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "tilelang",
+    "ascend",
+    "operator",
+    "workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "TileLang 算子开发",
+    "shortDescription": "按本机芯片路由的 TileLang 双平台工作流",
+    "longDescription": "TileLang 算子开发统一入口，按本机芯片路由到独立的 Ascend910 与 Ascend950 工作流，保留各自技能与执行顺序。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "使用 TileLang 工作流开发一个 float16 的 Abs 算子，先识别本机芯片再进入对应平台流程。"
+    ]
+  }
+}

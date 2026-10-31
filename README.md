@@ -40,6 +40,7 @@ bash init.sh
 | [`triton-op-generator`](plugins-official/triton-op-generator/) | Triton-Ascend 算子代码生成与优化（Phase 0-7 直接执行模式），知识卡片由 cannbot-knowledge 知识库供给 |
 | [`catlass-op-generator`](plugins-official/catlass-op-generator/) | CATLASS C++ 算子开发，基于模板组件生成矩阵计算、注意力等算子，并验证精度与性能 |
 | [`ops-perf-optimize`](plugins-official/ops-perf-optimize/) | AscendC 算子端到端性能调优：五阶段工作流（基线评估、前处理、诊断分析、实施验证、后处理），工程剥离和恢复，含精度门禁、泛化调优与逐 case 防退化 |
+| [`tilelang-op-orchestrator`](plugins-official/tilelang-op-orchestrator/) | TileLang 算子开发：按本机芯片路由到独立的 Ascend910 / Ascend950 工作流，涵盖设计、生成、测试、性能调优与代码检视 |
 | [`pypto-op-orchestrator`](plugins-official/pypto-op-orchestrator/) | PyPTO 算子开发：7 阶段状态机（生成+调优/仅调优两个 harness 工作流），Skills/hooks 安装时从 cannbot-skills 仓拉取并即时软链 |
 
 ## 🧩 社区插件

@@ -4,7 +4,15 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 
 ## Unreleased
 
+### Fixed
+
+- Restored the original TileLang AGENTS.md, role adapters and workflows directory verbatim. Migration now adapts only Skill source resolution and installation; no extra orchestration Skill or workflow rewrite is introduced.
+
+- TileLang source installation now defaults to the plugin directory instead of the CANNBot repository root, preserving its AGENTS.md on repeated installs. Explicit project paths remain supported.
+
 ### Added
+
+- Migrated `tilelang-op-orchestrator` from cannbot-skills, preserving the independent Ascend910 / Ascend950 workflows, six role agents and SessionStart hook. The unified installer links thirteen shared Skills from `vendor/cannbot-skills`; npm builds bundle those Skills. The original AGENTS.md, role definitions and platform workflows are preserved; TileLang installation resolves the shared Skill sources and retains their original relative layout.
 
 - Installers now prepare the knowledge base for use: both the unified installer and
   `triton-auto-evolve/init.sh` build the retrieval index (`search/okf.index.json`, ~50s,
