@@ -323,6 +323,72 @@ class DesignAssemblyTests(unittest.TestCase):
 
 
 class UnitSubgraphTests(unittest.TestCase):
+    @staticmethod
+    def write_unit_graph_fixture(work, code, active, excluded):
+        (work / "design/doc").mkdir(parents=True)
+        (work / "design/units").mkdir()
+        (code / "operators/add/test").mkdir(parents=True)
+        (work / "design/doc/spec.yaml").write_text(
+            "op: {name: add}\n", encoding="utf-8"
+        )
+        (work / "design/doc/DESIGN.md").write_text("# add\n", encoding="utf-8")
+        unit = {
+            "unit": {
+                "unit_id": "U01",
+                "kind": "minimal_operator",
+                "design_sources": [{"file": "Kernel.md", "section": "Compute"}],
+                "depends_on": [],
+                "scope": {
+                    "source_files": ["operators/add/add.py"],
+                    "domain_constraints": default_domain_constraints(),
+                },
+                "verification_obligations": [{"id": "VO-U01", "kind": "numerical"}],
+            }
+        }
+        (work / "design/units/U01.yaml").write_text(
+            yaml.safe_dump(unit), encoding="utf-8"
+        )
+        UnitSubgraphTests.write_graph_cases(code, active, excluded)
+
+    @staticmethod
+    def write_graph_cases(code, active, excluded):
+        with (code / "operators/add/test/testcase.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "sheet",
+                    "case_id",
+                    "unit_id",
+                    "status",
+                    "obligation_ids",
+                    "exclude_reason",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "sheet": "tdd",
+                    "case_id": "TD-u01-main",
+                    "unit_id": "u01",
+                    "status": "active" if active else "excluded",
+                    "obligation_ids": "VO-U01",
+                    "exclude_reason": "" if active else "fixture exclusion",
+                }
+            )
+            if excluded:
+                writer.writerow(
+                    {
+                        "sheet": "tdd",
+                        "case_id": "TD-u01-excluded",
+                        "unit_id": "u01",
+                        "status": "excluded",
+                        "obligation_ids": "VO-U01",
+                        "exclude_reason": "fixture exclusion",
+                    }
+                )
+
     def test_generated_commands_select_only_their_unit_cases(self):
         with tempfile.TemporaryDirectory(prefix="unit batch spaces ") as tmp:
             work = Path(tmp)
@@ -342,7 +408,8 @@ class UnitSubgraphTests(unittest.TestCase):
                 )
                 args = shlex.split(command.split("：", 1)[1].split("；", 1)[0])
                 self.assertIn("CANNBOTDSL_OP_MODULE=operators.add.add", args)
-                self.assertIn("$WORK_DIR/operators/add/test/test_add.py", args)
+                self.assertIn("$CODE_DIR/operators/add/test/test_add.py", args)
+                self.assertIn("PYTHONPATH=$CODE_DIR", args)
                 self.assertEqual(args[args.index("--sheet") + 1], "tdd")
                 expression = args[args.index("--grep") + 1]
                 self.assertEqual(
@@ -435,6 +502,10 @@ class UnitSubgraphTests(unittest.TestCase):
             self.assertEqual(nodes[0]["depends_on"], [])
             self.assertEqual(nodes[1]["depends_on"], [])
             self.assertEqual(nodes[2]["depends_on"], ["implement-u01", "implement-u02"])
+            fix = next(n for n in nodes if n["id"] == "implementation-fix")
+            self.assertEqual(
+                fix["depends_on"], ["implement-u01", "implement-u02", "implement-u03"]
+            )
 
     def test_path_aliases_still_serialize_shared_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -472,76 +543,22 @@ class UnitSubgraphTests(unittest.TestCase):
     def test_native_unit_without_hash_generates_implementation_graph(self):
         self.check_unit_graph()
 
+    def test_separate_code_directory_preserves_harness_output_location(self):
+        self.check_unit_graph(separate_code=True)
+
     def test_excluded_cases_do_not_block_active_obligation_coverage(self):
         self.check_unit_graph(excluded=True)
 
     def test_excluded_cases_cannot_replace_active_obligation_coverage(self):
         self.check_unit_graph(excluded=True, active=False)
 
-    def check_unit_graph(self, excluded=False, active=True):
+    def check_unit_graph(self, excluded=False, active=True, separate_code=False):
         script = SCRIPTS / "build_implementation_subgraph.py"
         harness = support.HARNESS_SKILL / "scripts/get_task.py"
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
-            (work / "design/doc").mkdir(parents=True)
-            (work / "design/units").mkdir()
-            (work / "operators/add/test").mkdir(parents=True)
-            (work / "design/doc/spec.yaml").write_text(
-                "op: {name: add}\n", encoding="utf-8"
-            )
-            (work / "design/doc/DESIGN.md").write_text("# add\n", encoding="utf-8")
-            unit = {
-                "unit": {
-                    "unit_id": "U01",
-                    "kind": "minimal_operator",
-                    "design_sources": [{"file": "Kernel.md", "section": "Compute"}],
-                    "depends_on": [],
-                    "scope": {
-                        "source_files": ["operators/add/add.py"],
-                        "domain_constraints": default_domain_constraints(),
-                    },
-                    "verification_obligations": [{"id": "VO-U01", "kind": "numerical"}],
-                }
-            }
-            (work / "design/units/U01.yaml").write_text(
-                yaml.safe_dump(unit), encoding="utf-8"
-            )
-            with (work / "operators/add/test/testcase.csv").open(
-                "w", encoding="utf-8", newline=""
-            ) as handle:
-                writer = csv.DictWriter(
-                    handle,
-                    fieldnames=[
-                        "sheet",
-                        "case_id",
-                        "unit_id",
-                        "status",
-                        "obligation_ids",
-                        "exclude_reason",
-                    ],
-                )
-                writer.writeheader()
-                writer.writerow(
-                    {
-                        "sheet": "tdd",
-                        "case_id": "TD-u01-main",
-                        "unit_id": "u01",
-                        "status": "active" if active else "excluded",
-                        "obligation_ids": "VO-U01",
-                        "exclude_reason": "" if active else "fixture exclusion",
-                    }
-                )
-                if excluded:
-                    writer.writerow(
-                        {
-                            "sheet": "tdd",
-                            "case_id": "TD-u01-excluded",
-                            "unit_id": "u01",
-                            "status": "excluded",
-                            "obligation_ids": "VO-U01",
-                            "exclude_reason": "fixture exclusion",
-                        }
-                    )
+            code = work / "code" if separate_code else work
+            self.write_unit_graph_fixture(work, code, active, excluded)
             result = subprocess.run(
                 [
                     sys.executable,
@@ -550,6 +567,7 @@ class UnitSubgraphTests(unittest.TestCase):
                     str(work),
                     "--harness-script",
                     str(harness),
+                    *(["--code-dir", str(code)] if separate_code else []),
                 ],
                 capture_output=True,
                 text=True,

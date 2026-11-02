@@ -2,18 +2,20 @@ title: M2｜CANNBotDSL 黑盒用例设计
 goal:
 - 依据冻结规格形成覆盖合法行为、边界及异常语义的可执行黑盒用例。
 approach:
+- 读取本 Skill 的 `references/code-versions.md`，按其中协议处理版本；本节点 ID 为 `blackbox-design`（Unit 以生成节点 ID 为准）。用 `code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
 - 必须加载 `cannbot-dsl-test-generator` Skill，只运行其 DSL 黑盒用例设计模块；输入与输出均以本工作流的 CANNBotDSL 算子契约为准。
-- 将 `$WORK_DIR/design/doc/spec.yaml` 与 `$WORK_DIR/operators/<op>/test/` 分别作为规格和测试目录传给 Skill，按其当前黑盒设计与校验方法执行，保存覆盖报告及校验记录。
-- 直接编写 `$WORK_DIR/operators/<op>/test/testcase.csv` 的 blackbox 行，每例绑定真实 spec 路径、公开输入配方、预期 Golden 比较或 spec 错误代码；不能用固定输入配方表达的复杂布局/结构明确记录排除理由或设计经验证的扩展，不以口头声明代替可执行 case。
-- 本节点只编辑 `$WORK_DIR/operators/<op>/test/testcase.csv` 的 blackbox 分组。异常用例必须对应 spec.op.error_codes 和 raises_error 语义；生成阶段不调用被测算子，也不依赖 DESIGN.md、Golden 或 Unit。
+- 将 `$WORK_DIR/design/doc/spec.yaml` 与 `$CODE_DIR/operators/<op>/test/` 分别作为规格和测试目录传给 Skill，按其当前黑盒设计与校验方法执行，保存覆盖报告及校验记录。
+- 直接编写 `$CODE_DIR/operators/<op>/test/testcase.csv` 的 blackbox 行，每例绑定真实 spec 路径、公开输入配方、预期 Golden 比较或 spec 错误代码；不能用固定输入配方表达的复杂布局/结构明确记录排除理由或设计经验证的扩展，不以口头声明代替可执行 case。
+- 本节点只编辑 `$CODE_DIR/operators/<op>/test/testcase.csv` 的 blackbox 分组。异常用例必须对应 spec.op.error_codes 和 raises_error 语义；生成阶段不调用被测算子，也不依赖 DESIGN.md、Golden 或 Unit。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
+- 读取本 Skill 的 `references/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
 - 核对 `spec.yaml` 的数学语义、dtype 组合、语义分支、边界和极值均有可追溯的 case ID 或明确排除理由。
 - 核对 testcase.csv 中的输入名称、dtype、rank 与预期错误代码通过脚本校验。
 - 核对 `operators/<op>/test/testcase.csv` 的 blackbox 逻辑分组非空、case_id 唯一，且生成阶段未调用被测算子。
 - 核对未将外部用例表或未执行场景写成已通过结果；黑盒设计只产用例，实际设备判定留给精度验证节点。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
-- 'test -s "$WORK_DIR/operators/<op>/test/testcase.csv"'
+- 'test -s "$CODE_DIR/operators/<op>/test/testcase.csv"'
 out_of_scope:
 - 不实现算子，不生成 Golden、白盒或 TDD 用例，不执行设备精度和性能测试。

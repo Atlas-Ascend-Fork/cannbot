@@ -58,12 +58,12 @@ def validate_role_names(nodes):
                 fail(f"node {node.get('id')}: unknown {field} role {node.get(field)!r}")
 
 
-def load_inputs(work):
+def load_inputs(work, code=None):
     spec_doc = read(work / "design" / "doc" / "spec.yaml")
     op = (spec_doc.get("op") or {}).get("name")
     if not isinstance(op, str) or not op:
         fail("spec.op.name is required")
-    test = work / "operators" / op / "test"
+    test = (code or work) / "operators" / op / "test"
     design = work / "design" / "doc" / "DESIGN.md"
     if not design.is_file():
         fail("missing DESIGN.md")
@@ -126,8 +126,11 @@ def bind_unit_cases(work, unit_dir, native, unit_order, cases):
         )
         native_by_id[uid] = {
             "native_id": native_id,
-            "path": str(source.relative_to(work)),
-            "source_files": original.get("scope", {}).get("source_files") or [],
+            "path": source.relative_to(work).as_posix(),
+            "source_files": [
+                (work / path).resolve().relative_to(work.resolve()).as_posix()
+                for path in original.get("scope", {}).get("source_files") or []
+            ],
         }
         case_map[uid] = expected_ids
     active_case_ids = {row["case_id"] for row in cases if row.get("status") == "active"}
@@ -191,22 +194,32 @@ def unit_dependencies(work, units, index, native_by_id):
         }
         if not source_files or not other_files or source_files & other_files:
             deps.add(f"implement-{earlier['id']}")
-    return sorted(deps)
+    order = {f"implement-{item['id']}": i for i, item in enumerate(units)}
+    return sorted(deps, key=order.__getitem__)
+
+
+def implementation_fix_node(skill, op, leaves):
+    return make_node(
+        skill / "tasks/cannbot-dsl/实现修复.yaml",
+        op,
+        "implementation-fix",
+        leaves,
+        NodeOptions(
+            extra={"max_retries": 2},
+            notes=[
+                "首次进入实现修复前，按此顺序 integrate 已验收 Unit 的完整 SHA："
+                + ", ".join(leaves)
+                + "。等待全部 Unit；使用 references/code-versions.md 的汇合协议。"
+                "重试先读取版本记录，已汇合的祖先不重复应用，不丢弃已有修复。"
+            ],
+        ),
+    )
 
 
 def final_stage_nodes(skill, op, units):
     nodes = []
-    depended = {dep for unit in units for dep in unit.get("depends_on") or []}
-    leaves = [f"implement-{unit['id']}" for unit in units if unit["id"] not in depended]
-    nodes.append(
-        make_node(
-            skill / "tasks/cannbot-dsl/实现修复.yaml",
-            op,
-            "implementation-fix",
-            leaves,
-            NodeOptions(extra={"max_retries": 2}),
-        )
-    )
+    leaves = [f"implement-{unit['id']}" for unit in units]
+    nodes.append(implementation_fix_node(skill, op, leaves))
     nodes.append(
         make_node(
             skill / "tasks/cannbot-dsl/单元集成复验.yaml",
@@ -270,22 +283,35 @@ def build_nodes(work, skill, op, units, native_by_id, case_map):
                 deps,
                 NodeOptions(
                     notes=[
+                        f"Git 节点 ID 固定为 implement-{uid}。按 references/code-versions.md 的 Unit 协议，"
+                        "从 test-generator 已验收 SHA 创建独立 worktree；CODE_DIR 取脚本返回值，"
+                        "WORK_DIR 保持不变。执行与验收均使用同一 worktree。",
+                        "按顺序汇合并绑定依赖节点的已验收 SHA："
+                        + (", ".join(deps) or "无")
+                        + "；begin 的 --dependency 复用相同版本。",
+                        "本 Unit 的 --allow 精确使用 source_files："
+                        + ", ".join(entry["source_files"])
+                        + "；为空时停止并补齐授权路径，不以未知写集扩大权限。",
                         f"原生 Unit: {entry['path']}；TDD cases: {', '.join(case_map[uid])}；{op}_golden.py 与 design/doc/DESIGN.md 均为冻结输入。",
                         (
-                            '当前 Unit TDD 批跑命令：PYTHONPATH="$WORK_DIR" '
+                            '当前 Unit TDD 批跑命令：PYTHONPATH="$CODE_DIR" '
                             f"CANNBOTDSL_OP_MODULE={shlex.quote(f'operators.{op}.{op}')} "
-                            f'python "$WORK_DIR"/{shlex.quote(f"operators/{op}/test/test_{op}.py")} '
+                            f'python "$CODE_DIR"/{shlex.quote(f"operators/{op}/test/test_{op}.py")} '
                             f"--sheet tdd --grep {grep} --device npu --require-accelerator；"
                             "公开入口不是 run 时沿用 CANNBOTDSL_OP_ENTRY。"
                         ),
-                        f"将 Red→Green 证据、实现版本、执行命令、退出码与逐例结果写入 $WORK_DIR/operators/{op}/implementation/implement-{uid}-执行记录.md。",
+                        f"将 Red→Green 证据、实现版本、执行命令、退出码与逐例结果写入 $WORK_DIR/implementation/{op}/implement-{uid}-执行记录.md。",
                     ],
                     acceptance=[
-                        f'test -s "$WORK_DIR/operators/{op}/implementation/implement-{uid}-执行记录.md"'
+                        f'test -s "$WORK_DIR/implementation/{op}/implement-{uid}-执行记录.md"'
                     ],
                 ),
             )
         )
+        nodes[-1]["procedure"] = list(nodes[-1].get("procedure", [])) + [
+            f"Git 节点 ID 为 implement-{uid}；通过 code_versions.py status --node implement-{uid} "
+            "取得该 Unit 的 CODE_DIR，审查同一 worktree 的 SHA 与依赖版本，按版本协议登记验收。"
+        ]
     nodes.extend(final_stage_nodes(skill, op, units))
     validate_role_names(nodes)
     return nodes
@@ -317,6 +343,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument(
+        "--code-dir",
+        help="code checkout containing operators/; omitted only for legacy callers",
+    )
+    parser.add_argument(
         "--harness-script",
         required=True,
         help="path to workflow-orchestrator/scripts/get_task.py",
@@ -325,7 +355,9 @@ def main():
     work = Path(args.output_dir).resolve()
     skill = Path(__file__).resolve().parents[1]
     try:
-        op, unit_dir, native, unit_order, cases = load_inputs(work)
+        op, unit_dir, native, unit_order, cases = load_inputs(
+            work, Path(args.code_dir).resolve() if args.code_dir else None
+        )
         units, native_by_id, case_map = bind_unit_cases(
             work, unit_dir, native, unit_order, cases
         )

@@ -81,9 +81,9 @@ def read_index(index: Path):
                 and path.parts[0] == "branches"
                 and re.fullmatch(r"DESIGN-BRANCH-[A-Za-z0-9_-]+\.md", path.name)
             ):
-                if str(path) not in linked_branches:
-                    linked_branches.add(str(path))
-                    entries.append((section, str(path)))
+                if path.as_posix() not in linked_branches:
+                    linked_branches.add(path.as_posix())
+                    entries.append((section, path.as_posix()))
             else:
                 raise ValueError(f"invalid design link: {name}")
     return title, names, entries, linked_branches, reference_files
@@ -103,7 +103,7 @@ def validate_index(design_dir, names, linked_branches, reference_files):
     branches = sorted((design_dir / "branches").glob("DESIGN-BRANCH-*.md"))
     if not branches:
         raise ValueError("missing branch design files")
-    actual_branches = {str(path.relative_to(design_dir)) for path in branches}
+    actual_branches = {path.relative_to(design_dir).as_posix() for path in branches}
     if linked_branches != actual_branches:
         raise ValueError("INDEX.md branch links do not match branch design files")
 

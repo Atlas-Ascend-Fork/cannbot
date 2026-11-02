@@ -12,6 +12,7 @@
 """Read-only baseline validation with Agent-owned Git fixtures, plus child assembly contracts."""
 
 import csv
+import json
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,7 @@ import yaml
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).absolute().parents[1]))
+from version_fixtures import run_code_versions
 from support import SCRIPTS, WORKFLOWS, run_tests  # noqa: E402
 import support  # noqa: E402
 
@@ -162,6 +164,96 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual(inventory(self.work), before)
         self.assertFalse((self.check.root / "baseline.json").exists())
 
+    def versions(self, action, *args):
+        result = run_code_versions(self.work, action, *args)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def create_managed_baseline(self):
+        initial = self.versions("init")
+        code = Path(initial["CODE_DIR"])
+        self.versions(
+            "begin",
+            "--node",
+            "precision-validation",
+            "--attempt",
+            "a1",
+            "--expected-head",
+            initial["head"],
+            "--allow",
+            "operators",
+        )
+        shutil.copytree(
+            self.operator,
+            code / "operators/add",
+            ignore=shutil.ignore_patterns("testcase_output"),
+        )
+        commit = self.versions(
+            "checkpoint",
+            "--node",
+            "precision-validation",
+            "--attempt",
+            "a1",
+            "--expected-head",
+            initial["head"],
+        )["sha"]
+        return initial, code, commit
+
+    def verify_managed_sheets(self, code, commit, results):
+        for sheet in SHEETS:
+            evidence = self.versions(
+                "verify",
+                "--node",
+                "precision-validation",
+                "--attempt",
+                "a1",
+                "--expected-head",
+                commit,
+                "--",
+                sys.executable,
+                code / "operators/add/test/test_add.py",
+                "--sheet",
+                sheet,
+                "--device",
+                "npu",
+                "--require-accelerator",
+            )
+            source = (
+                self.work
+                / "versioning/artifacts"
+                / evidence["id"]
+                / "operators/add/test/testcase_output"
+                / sheet
+            )
+            shutil.copytree(source, results / sheet)
+        self.versions(
+            "verify",
+            "--node",
+            "precision-validation",
+            "--attempt",
+            "a1",
+            "--expected-head",
+            commit,
+            "--accept",
+            evidence["id"],
+        )
+
+    def test_managed_baseline_uses_precision_commit_and_archived_results(self):
+        initial, code, commit = self.create_managed_baseline()
+        results = self.work / "review-fix/baseline-results"
+        self.verify_managed_sheets(code, commit, results)
+        check = BaselineCheck(self.work, code, commit, results)
+        checked = check.baseline()
+        self.assertEqual(checked["commit"], commit)
+        self.assertFalse((self.work / "review-fix/git").exists())
+        self.assertFalse((code / "operators/add/test/testcase_output").exists())
+        with self.assertRaises(ValueError):
+            BaselineCheck(self.work, code, initial["head"], results).baseline()
+        result = results / "tdd/verify_result_tdd.csv"
+        result.write_text(result.read_text().replace("passed", "failed"))
+        with self.assertRaisesRegex(ValueError, "current precision evidence"):
+            check.baseline()
+
     def test_missing_baseline_is_rejected_without_initializing_git(self):
         with self.assertRaises(subprocess.CalledProcessError):
             self.check.baseline()
@@ -245,7 +337,6 @@ class ReviewFixTests(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        import json
 
         self.assertEqual(json.loads(result.stdout)["commit"], commit)
         result = subprocess.run(

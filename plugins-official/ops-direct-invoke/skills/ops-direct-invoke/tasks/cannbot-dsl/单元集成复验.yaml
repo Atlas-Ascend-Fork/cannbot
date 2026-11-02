@@ -2,18 +2,20 @@ title: 单元集成复验｜汇合全部 Unit 实现
 goal:
 - 在全部 Unit 实现及修复完成后，验证组合实现的构建、功能和单元级数值正确性。
 approach:
-- 将 `$WORK_DIR` 加入 `PYTHONPATH`，运行公开行为测试并交付 Unit 的 review_evidence。
+- 读取本 Skill 的 `references/code-versions.md`，按其中协议处理版本；本节点 ID 为 `unit-integration`（Unit 以生成节点 ID 为准）。用 `code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
+- 将 `$CODE_DIR` 加入 `PYTHONPATH`，运行公开行为测试并交付 Unit 的 review_evidence。
 - 对照 operators/<op>/test/testcase.csv 和 <op>_golden.py 核对所有 Unit、当前代码与测试资产，禁止只选择已通过的子集。
 - 构建完整实现，运行全部 Unit TDD、Golden、白盒及必要黑盒回归；使用 Skill 生成的测试入口和原生 case CSV，保留执行命令、退出码、逐例结果和失败日志。
 - 按冻结设计验证公开运行与导出共用编译工厂、Native 收集及产物实际命中，覆盖声明的编译变体；将执行命令、产物位置和结果纳入集成报告，失败进入实现修复。
-- 将完整结果和可定位的失败清单写入 `$WORK_DIR/operators/<op>/implementation/unit-integration-report.yaml`；失败时交由工作流回滚到实现修复节点。
+- 将完整结果和可定位的失败清单写入 `$WORK_DIR/implementation/<op>/unit-integration-report.yaml`；失败时交由工作流回滚到实现修复节点。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
+- 读取本 Skill 的 `references/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
 - 核对所有必测 Unit 和集成回归均实际执行且通过，报告覆盖每个 Unit 与绑定 case，版本和日志可复核。
 - 核对无跳过、空断言、未解释失败或通过修改测试判定换取的通过结论。
 - 核对全部 Unit 的输入条件、调用生命周期和联合数值/结构证据均对应当前版本；设计约束与补证清单无未闭合项，需要人工检查的源码/编译/设备证据已有明确结论。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
-- test -s "$WORK_DIR/operators/<op>/implementation/unit-integration-report.yaml"
+- test -s "$WORK_DIR/implementation/<op>/unit-integration-report.yaml"
 out_of_scope:
 - 不修改冻结设计、用例、Golden 或阈值，不执行全量设备精度与性能验证。

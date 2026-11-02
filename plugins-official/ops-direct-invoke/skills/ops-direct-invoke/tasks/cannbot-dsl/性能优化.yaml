@@ -2,15 +2,19 @@ title: M6｜性能摸底
 goal:
 - 在最终交付的算子实现上，完成全量适用 case 的性能摸底及 MFU、MBU 计算。
 approach:
-- 读取已验收的 `$WORK_DIR/environment/soc-info.yaml`、`$WORK_DIR/design/doc/REQUIREMENTS.md`、`$WORK_DIR/design/doc/DESIGN.md` 及 `$WORK_DIR/operators/<op>/test/testcase.csv`；列出 blackbox、whitebox、tdd 三组全部 active case，正常计算用例全部测量，预期异常或无设备计算等不适用项记录原因，不自造输入或按 shape 去重遗漏 case。
-- 在 `$WORK_DIR/performance/` 编写单进程串行采集脚本：以 `$WORK_DIR` 为 `PYTHONPATH`，按 `CANNBOTDSL_OP_MODULE=operators.<op>.<op>` 导入算子公开入口（入口非 `run` 时按 `CANNBOTDSL_OP_ENTRY`）；复用原 case 的输入/输出配方、seed 与 `<op>_golden.py` 的 `make_inputs`，沿用必要的预处理及输出参数约定。调用序列保持原顺序，按调用位置记录和统计；输入准备、输出初始化及必要的状态恢复放在计时区间外。
+- 读取本 Skill 的 `references/code-versions.md`，本节点 ID 为 `performance`；通过 `code_versions.py --work-dir "$WORK_DIR" status --node performance` 获取 CODE_DIR，WORK_DIR 保持原值。按协议在修改前 begin、验证前 checkpoint，并用 verify 保存当前提交的验证证据。
+- 先读取 $WORK_DIR/review-fix/selected.json，核对其 commit 与当前 HEAD 一致及整改/托底结论。采集脚本产生新提交后，核对 operators/ 子树与选定版本完全相同，记录选定源码 SHA 与最终完整代码 SHA 的关联；算子源码变化时停止并返回上游验证。
+- 读取已验收的 `$WORK_DIR/environment/soc-info.yaml`、`$WORK_DIR/design/doc/REQUIREMENTS.md`、`$WORK_DIR/design/doc/DESIGN.md` 及 `$CODE_DIR/operators/<op>/test/testcase.csv`；列出 blackbox、whitebox、tdd 三组全部 active case，正常计算用例全部测量，预期异常或无设备计算等不适用项记录原因，不自造输入或按 shape 去重遗漏 case。
+- 在 `$CODE_DIR/scripts/performance/` 编写单进程串行采集脚本：以 `$CODE_DIR` 为 `PYTHONPATH`，按 `CANNBOTDSL_OP_MODULE=operators.<op>.<op>` 导入算子公开入口（入口非 `run` 时按 `CANNBOTDSL_OP_ENTRY`）；复用原 case 的输入/输出配方、seed 与 `<op>_golden.py` 的 `make_inputs`，沿用必要的预处理及输出参数约定。调用序列保持原顺序，按调用位置记录和统计；输入准备、输出初始化及必要的状态恢复放在计时区间外。
 - 每个适用 case 只执行并采集一次，调用序列仅按原顺序执行一轮，不预热、不重复采样、不另行遍历预编译。优先沿用上游执行记录中最终交付版本的 `CANNBOTDSL_CACHE_DIR`，保持原解释器、CANN/DSL、设备及编译选项；未提供可用缓存时使用本次 `$WORK_DIR/performance/` 下的独立目录。缓存未命中由正常调用触发编译，记录实际缓存目录及命中/编译证据，Host 编译耗时不计入设备耗时。采集环境不得设置 `CANNBOTDSL_DUMP_*`、`CANNBOTDSL_PRINT_*`、`CANNBOTDSL_REUSE_ASCENDC`、`CANNBOTDSL_PIPE_STAGE`，被测代码不得残留 `cbd.print` 或 `dump_*`。
 - 用 msprof 包裹采集脚本：`msprof --aic-metrics=PipeUtilization --task-time=on --ai-core=on --application=<采集脚本及参数> --output=$WORK_DIR/performance/msprof_all_cases`；固定设备型号与 `ASCEND_RT_VISIBLE_DEVICES`，不与其他进程共用设备。标记用例分组、case_id 及序列调用位置，关联原始设备任务。
 - 保留全部设备 kernel 及源码启动点的对应关系，单独标识名称为 `metadata` 的算子；主算子为单 kernel 时使用其 `Task Duration`，多 kernel 时使用本次主算子完整设备执行区间的耗时。名称为 `metadata` 的算子范围的耗时不纳入统计，输入准备、Host 编译和测试辅助任务也不计入；保留原始样本并说明主算子的计时边界。
 - 由执行 Agent 根据算子语义、设计及实际 case 推导主算子的有效 FLOPs 与有效读写 Bytes，与排除名称为 `metadata` 的算子后的计时范围一致，直接使用 `soc-info.yaml` 中对应计算单元、精度及稠密/稀疏口径的峰值算力和主存峰值带宽。按 `MFU = 有效 FLOPs / (本次耗时秒数 × 峰值 FLOP/s) × 100%`、`MBU = 有效 Bytes / (本次耗时秒数 × 峰值 Byte/s) × 100%` 计算；统一单位，仅采用额定频率口径，不采集或修正实时频率，不对已有峰值算力再次乘频率。报告列出工作量推导、参数和来源，MBU 注明按有效访存量估算及本次缓存条件；无法可靠计算的指标标记 N/A 并说明原因，不用流水忙碌比例代替 MFU/MBU。
-- 将采集脚本、msprof 原始输出、逐例单次样本、缓存与运行记录、命令、退出码、设备与驱动环境及实现/用例版本保存到 `$WORK_DIR/performance/`，汇总报告固定为 `$WORK_DIR/performance/performance-report.md`。主表覆盖全部 active case，列出分组/case_id、Shape/DType、状态、不适用原因、主算子耗时及 MFU/MBU；对已确认性能目标仅作事实对照，不作达标放行判定。
+- 记录受管采集脚本路径与提交 SHA，将 msprof 原始输出、逐例单次样本、缓存与运行记录、命令、退出码、设备与驱动环境及实现/用例版本保存到 `$WORK_DIR/performance/`，汇总报告固定为 `$WORK_DIR/performance/performance-report.md`。主表覆盖全部 active case，列出分组/case_id、Shape/DType、状态、不适用原因、主算子耗时及 MFU/MBU；对已确认性能目标仅作事实对照，不作达标放行判定。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
+- 采集脚本提交后，以该提交运行本节点采集验证；若此前精度证据绑定不同提交，使用相同冻结测试入口补齐当前提交的精度验证证据，之后才交付该版本，不将旧 SHA 的通过记录标为当前版本通过。
 procedure:
+- 按 `references/code-versions.md` 核对当前提交、允许路径、冻结输入及原始证据；有代码写入时由 verifier 登记通过，提交成功不等于测试或验收通过。
 - 核对报告覆盖三组全部 active case，正常计算用例均已测量，不适用项有依据；输入/输出配方、seed、预处理和调用序列沿用原 case，未自造输入或遗漏同 shape 的不同用例。
 - 审查采集脚本和执行记录，确认每个适用 case 仅采集一次，序列仅执行一轮且按调用位置对应，无预热、重复采样或额外预编译；实际使用的缓存目录与命中/编译情况有记录，环境无缓存旁路或回读调试操作，设备固定且无并发竞争。
 - 对照 msprof 原始数据核对 case 与全部设备任务，确认耗时属于当前交付实现；单 kernel 使用主算子的 Task Duration，多 kernel 使用本次主算子完整设备执行区间，名称为 `metadata` 的算子范围的耗时未纳入统计，输入准备、Host 编译及测试辅助任务也未计入。
@@ -21,4 +25,4 @@ acceptance:
 - 'find "$WORK_DIR/performance" -maxdepth 1 -type d -name "msprof_*" | grep -q .'
 out_of_scope:
 - 不做性能优化，不修改算子实现、测试用例或性能测量数据。
-- 不修改已冻结的规格、Golden、测试阈值或设计事实，不改写上游硬件资料，不执行精度测试或断言。
+- 不修改已冻结的规格、Golden、测试阈值或设计事实，不改写上游硬件资料，仅为绑定新增采集脚本后的完整 SHA 复用既有冻结入口执行精度复验，不修改精度判据。

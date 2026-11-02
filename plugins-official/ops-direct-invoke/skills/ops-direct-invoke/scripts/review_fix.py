@@ -61,15 +61,20 @@ def committed_files(check, commit):
 
 
 class BaselineCheck:
-    def __init__(self, work):
+    def __init__(self, work, code_dir=None, commit=None, results_dir=None):
         self.work = Path(work).resolve()
+        self.code = Path(code_dir).resolve() if code_dir else None
+        self.commit = commit
+        self.results_dir = Path(results_dir).resolve() if results_dir else None
+        if self.code and (not commit or not self.results_dir):
+            raise ValueError("managed baseline requires commit and results-dir")
         spec = yaml.safe_load((self.work / "design/doc/spec.yaml").read_text())
         self.op = spec["op"]["name"]
         if not isinstance(self.op, str) or not re.fullmatch(
             r"[A-Za-z_][A-Za-z0-9_]*", self.op
         ):
             raise ValueError("spec.op.name must be a Python identifier")
-        self.operator = self.work / "operators" / self.op
+        self.operator = (self.code or self.work) / "operators" / self.op
         if self.operator.resolve() != self.operator:
             raise ValueError("operator work tree must not traverse a symlink")
         self.test = self.operator / "test"
@@ -104,13 +109,16 @@ class BaselineCheck:
         if args[0] not in {"rev-parse", "ls-tree", "show"}:
             raise ValueError("baseline checker only permits read-only Git commands")
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        result = subprocess.run(
-            [
-                shutil.which("git") or "/usr/bin/git",
+        location = (
+            ["-C", str(self.code)]
+            if self.code
+            else [
                 f"--git-dir={self.root / 'git'}",
                 f"--work-tree={self.operator}",
-                *args,
-            ],
+            ]
+        )
+        result = subprocess.run(
+            [shutil.which("git") or "/usr/bin/git", *location, *args],
             cwd=self.operator,
             env=env,
             capture_output=True,
@@ -139,17 +147,80 @@ class BaselineCheck:
             raise ValueError("all three logical sheets must be nonempty")
         return cases
 
+    def validate_managed_baseline(self, commit):
+        # Reuse the version manager's checks, without creating a second repository.
+        from code_versions import Versions
+
+        manager = Versions(self.work)
+        with manager.locked():
+            _, repo = manager.repo("precision-validation")
+            if repo != self.code or commit != self.commit:
+                raise ValueError(
+                    "baseline must use the registered CODE_DIR and full SHA"
+                )
+            manager.registered(commit)
+            manager.head(repo, commit)
+            manager.accepted_valid("precision-validation", set())
+            accepted = manager.state["accepted"]["precision-validation"]
+            attempt = manager.state["attempts"][accepted["attempt"]]
+            self.validate_precision_artifacts(manager, attempt, commit)
+
+    def validate_precision_artifacts(self, manager, attempt, commit):
+        artifacts = {}
+        for evidence in attempt["evidence"]:
+            if (
+                evidence["sha"] == commit
+                and evidence["valid"]
+                and evidence["exit_code"] == 0
+            ):
+                manager.check_artifacts(evidence)
+                artifacts.update(evidence.get("artifacts", {}))
+        prefix = f"operators/{self.op}/test/testcase_output/"
+        for sheet in SHEETS:
+            suffix = prefix + f"{sheet}/verify_result_{sheet}.csv"
+            result = self.results_dir / sheet / f"verify_result_{sheet}.csv"
+            if not result.is_file() or not any(
+                name.replace("\\", "/").endswith(suffix) and sha == digest(result)
+                for name, sha in artifacts.items()
+            ):
+                raise ValueError(
+                    "baseline results do not match current precision evidence"
+                )
+
+    def validate_baseline_inputs(self, baseline):
+        for directory in ("design/doc", "design/units", "environment", "precision"):
+            root = self.work / directory
+            for name, sha in inventory(root).items():
+                baseline["inputs"][f"{directory}/{name}"] = sha
+        for name in (
+            "precision/execution.yaml",
+            "precision/execution.log",
+            "precision/precision-report.md",
+        ):
+            if name not in baseline["inputs"]:
+                raise ValueError(f"missing baseline evidence: {name}")
+
     def baseline(self):
         files = inventory(self.operator)
         if f"{self.op}.py" not in files:
             raise ValueError("missing public operator module")
-        commit = self.git("rev-parse", "--verify", "baseline^{commit}")
+        commit = self.git(
+            "rev-parse", "--verify", (self.commit or "baseline") + "^{commit}"
+        )
         committed = committed_files(self, commit)
+        if self.code:
+            self.validate_managed_baseline(commit)
+            prefix = f"operators/{self.op}/"
+            committed = {
+                name.removeprefix(prefix): sha
+                for name, sha in committed.items()
+                if name.startswith(prefix)
+            }
         if committed != files:
             raise ValueError(
                 "baseline commit does not match all current source and test assets"
             )
-        result_root = self.test / "testcase_output"
+        result_root = self.results_dir or self.test / "testcase_output"
         with (result_root / "blackbox/verify_result_blackbox.csv").open(
             encoding="utf-8-sig", newline=""
         ) as stream:
@@ -170,17 +241,7 @@ class BaselineCheck:
         }
         if self.results(result_root, baseline) != "PASS":
             raise ValueError("baseline full-case evidence is incomplete or failed")
-        for directory in ("design/doc", "design/units", "environment", "precision"):
-            root = self.work / directory
-            for name, sha in inventory(root).items():
-                baseline["inputs"][f"{directory}/{name}"] = sha
-        for name in (
-            "precision/execution.yaml",
-            "precision/execution.log",
-            "precision/precision-report.md",
-        ):
-            if name not in baseline["inputs"]:
-                raise ValueError(f"missing baseline evidence: {name}")
+        self.validate_baseline_inputs(baseline)
         return baseline
 
 
@@ -188,9 +249,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("baseline",))
     parser.add_argument("--work-dir", required=True, type=Path)
+    parser.add_argument("--code-dir", type=Path)
+    parser.add_argument("--commit")
+    parser.add_argument("--results-dir", type=Path)
     args = parser.parse_args()
     try:
-        snapshot = BaselineCheck(args.work_dir).baseline()
+        snapshot = BaselineCheck(
+            args.work_dir, args.code_dir, args.commit, args.results_dir
+        ).baseline()
     except (
         OSError,
         ValueError,

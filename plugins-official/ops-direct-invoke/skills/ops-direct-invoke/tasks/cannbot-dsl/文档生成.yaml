@@ -2,12 +2,14 @@ title: M7｜文档生成与补充
 goal:
 - 为最终算子实现补齐接口、构建、运行、约束和验证文档。
 approach:
+- 读取本 Skill 的 `references/code-versions.md`，按其中协议处理版本；本节点 ID 为 `documentation`（Unit 以生成节点 ID 为准）。用 `code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
 - 读取 $WORK_DIR/review-fix/selected.json，围绕最终选定版本编写文档；基线托底时如实说明风格整改未通过及未解决意见，不引用失败候选的性能或功能结果。
 - 基于已通过验收的规格、设计、实现和测试证据编写文档，并标明环境与目标 SoC。
 - 将文档及其来源索引保存到 `$WORK_DIR/documentation/`；文档中的命令和路径须与交付代码一致。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
-- 核对交付件或报告的源码提交、选定模式和证据与 review-fix/selected.json 一致；基线托底与正常整改结论分别表述。
+- 读取本 Skill 的 `references/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
+- 核对交付件或报告的选定源码、模式和证据与 review-fix/selected.json 一致；最终完整 SHA 以性能节点当前提交为准，核对 operators/ 子树与选定版本一致及该最终 SHA 的复验记录；基线托底与正常整改结论分别表述。
 - 核对文档覆盖适用范围、参数、边界、构建运行步骤和验证结果，且与当前实现一致。
 - 抽查文档中的命令和路径与交付代码真实对应。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。

@@ -7,6 +7,13 @@
 - 新增 [perf-optimize](skills/ops-direct-invoke/workflows/ascendc/perf-optimize.yaml) 入口，用于已有 Ascend C 算子的性能优化。
 - 新增 [op-dev-with-perf](skills/ops-direct-invoke/workflows/ascendc/op-dev-with-perf.yaml) 入口，用于对算子开发有较高性能要求的任务。
 
+### 【2026-10-29】DSL Git 检查点
+
+- 新 DSL 运行在独立代码仓中保存每轮修改，验证证据绑定完整提交 SHA；失败尝试保留，按指定版本恢复并检查代码树一致性。
+- 并行 Unit 使用独立 worktree；依赖版本汇合后重新验证，旧依赖证据不能继续放行。
+- 新运行的源码根目录为 `CODE_DIR`，工作流报告仍在 `WORK_DIR`；已有运行不原地迁移。Git `rollback` 与 harness 返回节点返工分别处理。
+- 交付附 Git bundle 和版本清单。调用与恢复方法见 [代码版本协议](skills/ops-direct-invoke/references/code-versions.md)。这是任务契约与脚本校验，不是编辑工具强制拦截。
+
 ### 【2026-10-28】
 
 - 新增 **Kirin 平台 Ascend C 直调算子开发支持**：`ops-direct-invoke` 工作流覆盖 Kirin9030、KirinX90 直调算子的需求对齐、方案设计、实现、功能验收与交付。对齐 [cannbot-skills PR1518](https://gitcode.com/cann/cannbot-skills/pull/1518)：`npu-arch` 新增 Vector 编程模式（MemBase/RegBase/SIMT）与架构支持矩阵，修正 Kirin 端侧平台硬件参数；新增 `ops-kirin-simulator` Skill 提供 Kirin 仿真指南。所选 skills 版本需包含该 PR；统一 init 默认自动更新，指定 SHA 或本地 skills 仓时由调用方选择兼容版本。
@@ -16,7 +23,7 @@
 
 ### 【2026-10-14】
 
-- DSL 全量精度验证后新增 [review-fix 子图](skills/ops-direct-invoke/workflows/cannbot-dsl/review-fix.yaml)：由 Agent 管理独立 Git 基线、候选提交与恢复，脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并复跑全部 case；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可验收恢复的基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
+- DSL 全量精度验证后新增 [review-fix 子图](skills/ops-direct-invoke/workflows/cannbot-dsl/review-fix.yaml)：由 Agent 通过统一 code_versions 管理 Git 基线、候选提交与恢复，review_fix 脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并复跑全部 case；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可在恢复提交全量复验后验收基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
 - 固定子图随主图组装到本轮目录；性能摸底、文档和交付统一使用修复后通过的版本或恢复的基线。安装、启动与恢复命令不变。
 
 ### 【2026-10-13】
@@ -46,7 +53,7 @@
 
 ### 环境要求
 
-需要 Node.js 20.11+、Python 3、PyYAML 和已安装并配置好的 Agent CLI。默认后台启动还需要 tmux；工作流运行依赖支持 `procedure` 字段的 workflow-orchestrator，由安装器一并安装。目前工作流验证的客户端为 OpenCode、Codex、Claude Code；统一安装器还提供 TRAE、DSH 安装选项。
+需要 Git（支持 worktree 与 switch）、Node.js 20.11+、Python 3、PyYAML 和已安装并配置好的 Agent CLI。默认后台启动还需要 tmux；工作流运行依赖支持 `procedure` 字段的 workflow-orchestrator，由安装器一并安装。目前工作流验证的客户端为 OpenCode、Codex、Claude Code；统一安装器还提供 TRAE、DSH 安装选项。
 
 ### 安装入口与目标目录
 
