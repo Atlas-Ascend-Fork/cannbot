@@ -54,120 +54,15 @@ stages:
     pre:
     - type: auto
     fail-fast: true
-  stage_ci_reuse:
-    name: Prepare_checks
-    jobs:
-      JOB_ci_reuse_plan:
-        name: Prepare_checks
-        timeout-minutes: 5
-        outputs:
-          codecheck_mode: ${{ steps.rdv_ci_reuse_prepare.outputs.codecheck_mode }}
-          ut_mode: ${{ steps.rdv_ci_reuse_prepare.outputs.ut_mode }}
-          ut_suite_identity: ${{ steps.rdv_ci_reuse_prepare.outputs.ut_suite_identity }}
-          ut_image_version: ${{ steps.rdv_ci_reuse_prepare.outputs.ut_image_version }}
-          ut_runtime_identity: ${{ steps.rdv_ci_reuse_prepare.outputs.ut_runtime_identity }}
-        steps:
-          - name: rdv_ci_reuse_prepare
-            identifier: rdv_ci_reuse_prepare
-            env:
-              BASE_URL: https://cannbot.cloud
-              ADMIN_PASSWORD: ${{ secrets.ST_PLATFORM_ADMIN_PASSWORD }}
-              PR_NUMBER: ${{ atomgit.event.pull_request.number }}
-              CI_RUN_ID: ${{ atomgit.workflow_run_id }}
-              CI_RUN_ATTEMPT: ${{ atomgit.run_attempt }}
-              PR_HEAD_SHA: ${{ atomgit.event.pull_request.head.sha }}
-              PR_BASE_SHA: ${{ atomgit.event.pull_request.base.sha }}
-              PR_MERGE_SHA: ${{ atomgit.event.pull_request.merge_commit_sha }}
-              CI_REUSE_CI_PATH: ${{ vars.CI_PATH }}
-              CI_REUSE_PRECOMMIT_IMAGE: ${{ jobs.JOB_image.outputs.precommit }}
-              CI_REUSE_CODECHECK_IMAGE: ${{ jobs.JOB_image.outputs.codecheck }}
-              CI_REUSE_APPLY_LABEL: ${{ vars.APPLY_LABEL }}
-              CI_REUSE_PRECOMMIT_BLOCK: ${{ vars.PRECOMMIT_BLOCK }}
-              CI_REUSE_CODECHECK_STYLE_ENABLE: ${{ vars.CODECHECK_STYLE_ENABLE }}
-              CI_REUSE_PR_ISSUE: ${{ vars.PR_ISSUE }}
-              COMMENT_BODY: ${{ atomgit.event.comment.body }}
-              UT_IMAGE_VERSION: ubuntu24.04_x86:lv6_v1.1094
-              UT_GE_ST_RT2: ''
-            run: |
-              set -eu -o pipefail
-              client=$(mktemp)
-              client_sha=afbbf2de7d8373b135c2fbe2ee694b52e0eeac884488146a38a927f5675d1a8e
-              curl --disable --fail --silent --show-error --max-time 30 --output "$client" "https://cannbot.cloud/api/pr-ut/client/$client_sha"
-              printf '%s  %s\n' "$client_sha" "$client" | sha256sum --check --status
-              exec python3 -I "$client" reuse --action prepare --gitcode-repo cann/cannbot --pr-number "$PR_NUMBER" --run-id "$CI_RUN_ID" --attempt "$CI_RUN_ATTEMPT"
-        runs-on: [self-hosted, arch=x64, spec=small]
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/ubuntu24.04_x86:lv6_v1.1094
-    pre:
-    - type: auto
-    fail-fast: false
   stage2:
     name: CodeCheck
     jobs:
-      JOB_codecheck_execute:
-        name: CodeCheck_execute
-        if: ${{ jobs.JOB_ci_reuse_plan.outputs.codecheck_mode != 'REUSE' }}
+      JOB_codecheck:
+        name: CodeCheck
         uses: cann/.gitcode/.gitcode/workflows/codecheck_action.yml@master
         with:
           precommit_image_version: ${{ jobs.JOB_image.outputs.precommit }}
           codecheck_image_version: ${{ jobs.JOB_image.outputs.codecheck }}
-      JOB_codecheck_fresh:
-        name: CodeCheck_fresh
-        if: ${{ jobs.JOB_ci_reuse_plan.outputs.codecheck_mode == 'REUSE' }}
-        steps:
-          - name: Checkout
-            identifier: process_checkout
-            uses: checkout
-            with:
-              ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
-              allow-unsafe-pr-checkout: true
-          - name: download
-            uses: obs-download
-            with:
-              endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
-              bucket: "ascend-ci"
-              key: |
-                ${{ env.obs_path }}/pr_filelist.txt
-                ${{ env.obs_path }}/pr_filelist_mod.txt
-                ${{ env.obs_path }}/update_file_detail.txt
-              path: ${{ steps.process_checkout.outputs.path }}
-          - name: check-pr
-            identifier: check-pr
-            uses: cann/.gitcode/actions/check-pr@master
-            with:
-              repo_name: ${{ env.repo_name }}
-              workspace: ${{ steps.process_checkout.outputs.path }}
-              target_branch: ${{ env.TARGET_BRANCH }}
-              pr_number: ${{ atomgit.event.pull_request.number }}
-              git_token: ${{ secrets.GIT_TOKEN }}
-              pr_issue: ${{ vars.PR_ISSUE }}
-        runs-on: ["self-hosted", "arch=x64", "spec=slim"]
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.codecheck }}
-      JOB_codecheck:
-        name: CodeCheck
-        needs: [JOB_codecheck_execute, JOB_codecheck_fresh]
-        if: ${{ always() }}
-        timeout-minutes: 5
-        steps:
-          - name: rdv_ci_reuse_verify
-            identifier: rdv_ci_reuse_verify
-            env:
-              BASE_URL: https://cannbot.cloud
-              ADMIN_PASSWORD: ${{ secrets.ST_PLATFORM_ADMIN_PASSWORD }}
-              PR_NUMBER: ${{ atomgit.event.pull_request.number }}
-              CI_RUN_ID: ${{ atomgit.workflow_run_id }}
-              CI_RUN_ATTEMPT: ${{ atomgit.run_attempt }}
-            run: |
-              set -eu -o pipefail
-              client=$(mktemp)
-              client_sha=afbbf2de7d8373b135c2fbe2ee694b52e0eeac884488146a38a927f5675d1a8e
-              curl --disable --fail --silent --show-error --max-time 30 --output "$client" "https://cannbot.cloud/api/pr-ut/client/$client_sha"
-              printf '%s  %s\n' "$client_sha" "$client" | sha256sum --check --status
-              exec python3 -I "$client" reuse --action verify --gitcode-repo cann/cannbot --pr-number "$PR_NUMBER" --run-id "$CI_RUN_ID" --attempt "$CI_RUN_ATTEMPT"
-        runs-on: [self-hosted, arch=x64, spec=small]
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/ubuntu24.04_x86:lv6_v1.1094
     pre:
     - type: auto
     fail-fast: false
@@ -213,50 +108,13 @@ stages:
         runs-on:
           - self-hosted
           - runner_name=A5_skill_tester_02
-      JOB_ut:
-        if: ${{ jobs.JOB_ci_reuse_plan.outputs.ut_mode == 'RUN' }}
-        name: UT
-        uses: cann/cannbot/.gitcode/workflows/ut_action.yml@${{ atomgit.event.pull_request.head.sha }}
-        with:
-          image_version: ${{ jobs.JOB_ci_reuse_plan.outputs.ut_image_version }}
-          suite_identity: ${{ jobs.JOB_ci_reuse_plan.outputs.ut_suite_identity }}
-          runtime_identity: ${{ jobs.JOB_ci_reuse_plan.outputs.ut_runtime_identity }}
     pre:
     - type: auto
     fail-fast: false
-
-  stage4:
-    name: UT_Gate
-    jobs:
-      JOB_ut_gate:
-        name: UT_gate
-        if: ${{ always() }}
-        timeout-minutes: 5
-        steps:
-          - name: rdv_ut_gate
-            identifier: rdv_ut_gate
-            env:
-              BASE_URL: https://cannbot.cloud
-              ADMIN_PASSWORD: ${{ secrets.ST_PLATFORM_ADMIN_PASSWORD }}
-              PR_NUMBER: ${{ atomgit.event.pull_request.number }}
-              CI_RUN_ID: ${{ atomgit.workflow_run_id }}
-              CI_RUN_ATTEMPT: ${{ atomgit.run_attempt }}
-            run: |
-              set -eu -o pipefail
-              client=$(mktemp)
-              client_sha=afbbf2de7d8373b135c2fbe2ee694b52e0eeac884488146a38a927f5675d1a8e
-              curl --disable --fail --silent --show-error --max-time 30 --output "$client" "https://cannbot.cloud/api/pr-ut/client/$client_sha"
-              printf '%s  %s\n' "$client_sha" "$client" | sha256sum --check --status
-              exec python3 -I "$client" gate --gitcode-repo cann/cannbot --pr-number "$PR_NUMBER" --run-id "$CI_RUN_ID" --attempt "$CI_RUN_ATTEMPT"
-        runs-on: [self-hosted, arch=x64, spec=small]
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/ubuntu24.04_x86:lv6_v1.1094
-    pre:
-    - type: auto
-    fail-fast: false
+  
 
 post:
-  jobs:
-    job_post:
+  jobs: 
+    job_post: 
       name: Test_post
       uses: cann/.gitcode/.gitcode/workflows/post_action.yml@master
