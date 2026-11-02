@@ -1,6 +1,5 @@
 # Minimal op-develop workflow driving the shared workflow-orchestrator skill.
-# The orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
-# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+# The orchestrator wires the harness's project-level skill and agent configuration automatically.
 workflow: env-setup
 max_parallel: 10
 system_prompt: If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant to this task, as development reference.
@@ -15,10 +14,10 @@ nodes:
       - "Set up the cannbot-knowledge knowledge base at $WORK_DIR/cannbot-knowledge and query it for knowledge relevant to the operator in the task prompt; write the distilled findings to $WORK_DIR/cannbot-knowledge/artifacts/preflight.md."
     approach:
       - "The knowledge root is $WORK_DIR/cannbot-knowledge. If it has no .git subdirectory, run `git clone --depth 1 https://gitcode.com/cann/cannbot-knowledge.git $WORK_DIR/cannbot-knowledge`; otherwise skip the clone."
-      - "If $WORK_DIR/cannbot-knowledge/artifacts/indexes/knowledge.sqlite3 is missing, run `python3 -m pip install -r $WORK_DIR/cannbot-knowledge/requirements.txt`, `bash $WORK_DIR/cannbot-knowledge/get_resources.sh`, and `python3 $WORK_DIR/cannbot-knowledge/.agents/skills/knowledge-query/scripts/knowledge_index.py --knowledge-root $WORK_DIR/cannbot-knowledge build`; if the index already exists, skip all three."
-      - "Run `python3 $WORK_DIR/cannbot-knowledge/.agents/skills/knowledge-query/scripts/knowledge_query.py --knowledge-root $WORK_DIR/cannbot-knowledge discover` once, then query for the operator name, its math semantics, and the key CANN/Ascend C APIs mentioned in the task prompt."
+      - "If $WORK_DIR/cannbot-knowledge/artifacts/indexes/knowledge.sqlite3 is missing, run `python3 -m pip install -r $WORK_DIR/cannbot-knowledge/requirements.txt`, `bash $WORK_DIR/cannbot-knowledge/get_resources.sh`, and the knowledge-query skill's `scripts/knowledge_index.py` with `--knowledge-root $WORK_DIR/cannbot-knowledge build`; if the index already exists, skip all three."
+      - "Run the knowledge-query skill's `scripts/knowledge_query.py` with `--knowledge-root $WORK_DIR/cannbot-knowledge discover` once, then query for the operator name, its math semantics, and the key CANN/Ascend C APIs mentioned in the task prompt."
       - "For each promising hit, read the full card at the returned path; follow card resource/sources links only when the card is insufficient."
-      - "Write $WORK_DIR/cannbot-knowledge/artifacts/preflight.md: per topic, the distilled facts (API contracts, platform limits, tiling/UB constraints, known pitfalls), each citing its source card path. Record zero-hit queries explicitly as 'no coverage' — do not treat them as errors."
+      - "Write $WORK_DIR/cannbot-knowledge/artifacts/preflight.md: per topic, the distilled facts (API contracts, platform limits, tiling and UB constraints, known pitfalls), each citing its source card path. Record zero-hit queries explicitly as 'no coverage' — do not treat them as errors."
     acceptance:
       - "$WORK_DIR/cannbot-knowledge/artifacts/preflight.md exists and is non-empty."
       - "Every fact in it cites a card path under $WORK_DIR/cannbot-knowledge; queries with no hits are listed explicitly."
@@ -124,19 +123,19 @@ nodes:
     approach:
       - "Change into the cloned repo: `cd $WORK_DIR/ops-test-kit` (TTK commands must run from the ops-test-kit directory)."
       - "Run every command below in a login-environment shell (e.g. `bash -lc '<cmd>'`, or source /etc/profile in the current shell first). Agent shells are often non-login and can miss environment entries (PATH, LD_LIBRARY_PATH) that the python3 interpreter and native libraries need to load; an interpreter-level ImportError from a bare `python3 -m ttk` in such a shell is an environment issue, not a TTK result."
-      - "Create the output directory: `mkdir -p ttk-verify`."
-      - "Run the environment check and save its output: `python3 -m ttk info > ttk-verify/env-info.txt 2>&1`."
-      - "Pick the input files at runtime instead of hardcoding them: for kernel and geir pick any one file from `examples/case_store/kernel/*.csv`, for aclnn pick any one from `examples/case_store/aclnn/*.csv` (e.g. the first match of `ls <dir>/*.csv | head -1`). Record which file each command used."
-      - "Run the three runnable sample test paths in order with the picked files, each saving its full output to a log file under ttk-verify/ (skip the e2e path entirely — it is out of scope for this verification). For each path, append `--ti=0` to run only the first case in the picked CSV; do not run the full CSV:"
-      - "`python3 -m ttk kernel -i <picked-kernel.csv> --ti=0 > ttk-verify/kernel.log 2>&1`"
-      - "`python3 -m ttk geir -i <picked-kernel.csv> --ti=0 > ttk-verify/geir.log 2>&1`"
-      - "`python3 -m ttk aclnn -i <picked-aclnn.csv> --ti=0 > ttk-verify/aclnn.log 2>&1`"
+      - "Create the output directory: `mkdir -p $WORK_DIR/ops-test-kit/ttk-verify`."
+      - "Run the environment check and save its output: `python3 -m ttk info > $WORK_DIR/ops-test-kit/ttk-verify/env-info.txt 2>&1`."
+      - "Pick the input files at runtime instead of hardcoding them: for kernel and geir pick any one file from `$WORK_DIR/ops-test-kit/examples/case_store/kernel/*.csv`, for aclnn pick any one from `$WORK_DIR/ops-test-kit/examples/case_store/aclnn/*.csv` (for example, the first CSV in that directory). Record which file each command used."
+      - "Run the three runnable sample test paths in order with the picked files, each saving its full output to a log file under `$WORK_DIR/ops-test-kit/ttk-verify/` (skip the e2e path entirely — it is out of scope for this verification). For each path, append `--ti=0` to run only the first case in the picked CSV; do not run the full CSV:"
+      - "`python3 -m ttk kernel -i <picked-kernel.csv> --ti=0 > $WORK_DIR/ops-test-kit/ttk-verify/kernel.log 2>&1`"
+      - "`python3 -m ttk geir -i <picked-kernel.csv> --ti=0 > $WORK_DIR/ops-test-kit/ttk-verify/geir.log 2>&1`"
+      - "`python3 -m ttk aclnn -i <picked-aclnn.csv> --ti=0 > $WORK_DIR/ops-test-kit/ttk-verify/aclnn.log 2>&1`"
     acceptance:
       - "Every command was actually executed and its output saved: $WORK_DIR/ops-test-kit/ttk-verify/ contains env-info.txt (non-empty, with a `Found N device(s)` block) and the three logs kernel.log, geir.log, aclnn.log (each non-empty, containing a `TTK Test Summary` block). e2e.log is not required."
       - "The environment is verified OK: each of the three logs' `TTK Test Summary` block shows `FAIL     : 0` and `PassRate : 100.00%`. Any FAIL means the environment is not usable, so the task fails and the workflow exits."
     out_of_scope:
       - "Do not fix or work around any failure: do not edit example CSVs, docs, or source, do not modify or reinstall anything, and do not retry or patch commands to force a pass; report results exactly as produced."
-      - "Write outputs only under $WORK_DIR/ops-test-kit/ttk-verify/ (build/cache artifacts the repo generates under itself are expected)."
+      - "Write outputs only under $WORK_DIR/ops-test-kit/ttk-verify/ (build and cache artifacts the repo generates under itself are expected)."
     depends_on:
       - setup-ops-test-kit
     max_retries: 0

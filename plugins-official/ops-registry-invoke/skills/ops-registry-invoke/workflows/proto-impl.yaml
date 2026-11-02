@@ -5,12 +5,11 @@
 # torch adapter, then run the torch-API blackbox against the frozen golden. Minimal
 # dependence on solution design; nothing here writes under $WORK_DIR/op/ (that is
 # the ACLNN migration module's job). Input: a complete requirements-spec run's
-# frozen artifacts (spec/spec.yaml, golden.py, npu-arch.json, ops-test-kit).
+# frozen artifacts ($WORK_DIR/spec/spec.yaml, golden.py, npu-arch.json, ops-test-kit).
 # Output: the operator proven torch-E2E against the golden, per-dtype and across
 # the spec's boundary/extreme case suite. The chain is linear with a single entry
 # gate; NPU work is serialized by the one device, so only the harness bring-up is
-# build-heavy. The orchestrator wires the Codex layout ($WORK_DIR/.agents/skills
-# plus $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+# build-heavy. The orchestrator wires the harness's project-level skill and agent configuration automatically.
 workflow: proto-impl
 max_parallel: 10
 system_prompt: If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant to this task, as development reference.
@@ -22,7 +21,7 @@ nodes:
   title: Module boundary gate - verify the frozen prototype inputs (spec, golden, arch, toolkit)
   goal:
   - 'Prove the frozen upstream artifacts in $WORK_DIR satisfy the proto-impl module input contract before any prototype work starts: the operator spec exists and parses, the independent golden exists, the target NPU architecture is recorded, and the ops-test-kit tree is present — so every later node works from a known-good input set.'
-  - 'Completion gate: every input-contract file check passes, spec/spec.yaml parses as YAML carrying the fields the prototype is built from (op.name, math_semantics.formula, dtype_policy.supported_combinations, numerical_tolerance.per_dtype, plus boundary_conditions and extreme_inputs), and the frozen-input digest baseline is written so every later node can prove the frozen inputs were never silently edited.'
+  - 'Completion gate: every input-contract file check passes, $WORK_DIR/spec/spec.yaml parses as YAML carrying the fields the prototype is built from (op.name, math_semantics.formula, dtype_policy.supported_combinations, numerical_tolerance.per_dtype, plus boundary_conditions and extreme_inputs), and the frozen-input digest baseline is written so every later node can prove the frozen inputs were never silently edited.'
   approach:
   - 'This node verifies, never fixes: the inputs are frozen upstream products (the caller-supplied spec and golden). A failing check is a module-boundary violation, reported as FAILED with the failing check named — do not edit any input to make a check pass.'
   - 'Derive the operator name forms from spec.yaml: OP_SNAKE = op.name, OP_PASCAL = PascalCase (used by the harness and the runners).'
@@ -50,14 +49,14 @@ nodes:
   verifier: general-verifier
   title: Stand up the operator torch direct-invoke prototype harness (build + launch + torch binding green)
   goal:
-  - 'Create the operator standalone Ascend C direct-invoke torch prototype at $WORK_DIR/prototype/ from the ascendc-direct-invoke-template skill references/add_custom/ route — the <<<>>> direct-invoke recipe (a pure-kernel .asc, a host+main driver .asc doing ACL init / H2D / direct kernel launch / sync / D2H, a torch adapter .cpp with TORCH_LIBRARY registration, a dual-target standalone CMakeLists.txt, run.sh and scripts/) — renamed to the operator, plus ONE generic python entry $WORK_DIR/prototype/run_case.py exposing run_case(shapes, dtypes, attrs) -> output torch tensors. The operator ABI (input/output count and order, dtypes, attrs) is read from $WORK_DIR/spec/spec.yaml.'
+  - 'Create the operator standalone Ascend C direct-invoke torch prototype at $WORK_DIR/prototype/ from the direct-invoke recipe under `$WORK_DIR/cannbot-skills/ops/ascendc-direct-invoke-template/references/add_custom/` — the <<<>>> direct-invoke recipe (a pure-kernel .asc, a host+main driver .asc doing ACL init / H2D / direct kernel launch / sync / D2H, a torch adapter .cpp with TORCH_LIBRARY registration, a dual-target standalone CMakeLists.txt, run.sh and scripts/) — renamed to the operator, plus ONE generic python entry $WORK_DIR/prototype/run_case.py exposing run_case(shapes, dtypes, attrs) -> output torch tensors. The operator ABI (input/output count and order, dtypes, attrs) is read from $WORK_DIR/spec/spec.yaml.'
   - 'Completion gate: the harness toolchain is green end-to-end — the project builds for the architecture recorded in $WORK_DIR/npu-arch.json, the host driver launches the kernel directly and the torch extension loads and returns tensors — proven by the template own sample smoke (bash run.sh exits 0, both the direct and the torch path verify), and run_case.py exists and parses. The operator own compute and its wiring to $WORK_DIR/golden.py is the next task.'
   approach:
-  - 'Load the ascendc-direct-invoke-template skill (the concrete <<<>>> engineering recipe and its [MODIFY] markers); for sample retrieval, shallow-clone the samples corpus at runtime (if $WORK_DIR/cannbot-skills has no .git: git clone --depth 1 https://gitcode.com/cann/cannbot-skills.git $WORK_DIR/cannbot-skills) and consult its ops/samples (the cannbot-knowledge runtime-clone pattern); follow the skill''s references/add_custom/ route — do not inline or re-derive the kernel syntax from memory.'
+  - 'Use the concrete <<<>>> engineering recipe and its [MODIFY] markers from the canonical direct-invoke template; for sample retrieval, shallow-clone the samples corpus at runtime (if $WORK_DIR/cannbot-skills has no .git: git clone --depth 1 https://gitcode.com/cann/cannbot-skills.git $WORK_DIR/cannbot-skills) and consult its ops/samples (the cannbot-knowledge runtime-clone pattern); follow the canonical template''s `references/add_custom/` route — do not inline or re-derive the kernel syntax from memory.'
   - 'Enumerate the operator ABI from $WORK_DIR/spec/spec.yaml: inputs and outputs (name, count, order, dtypes) and attributes; these drive the host driver buffers and the torch adapter signature.'
-  - 'Resolve the template through the loaded ascendc-direct-invoke-template skill: TEMPLATE_DIR is the loaded skill''s own directory; test -f $TEMPLATE_DIR/SKILL.md && test -d $TEMPLATE_DIR/references/add_custom.'
+  - 'Set TEMPLATE_DIR=$WORK_DIR/cannbot-skills/ops/ascendc-direct-invoke-template; test -f $TEMPLATE_DIR/SKILL.md && test -d $TEMPLATE_DIR/references/add_custom.'
   - 'Copy the route: cp -a $TEMPLATE_DIR/references/add_custom/. $WORK_DIR/prototype/, then global-replace add_custom->OP_SNAKE and AddCustom->OP_PASCAL across file names and contents (the suffix _kernel/_torch/_tiling is fixed). Keep run.sh own OP_NAME and the CMake target/executable names in sync with the renamed operator — the template ships OP_NAME="add" against an add_custom target, so rename both or the sample smoke cannot locate its binary.'
-  - 'Set the build arch from $WORK_DIR/npu-arch.json (the template --npu-arch=dav-2201 default; dav-3510 uses the RegBase path the skill documents) — the target SoC comes from npu-arch.json, never guessed.'
+  - 'Set the build arch from $WORK_DIR/npu-arch.json (the template --npu-arch=dav-2201 default; dav-3510 uses the RegBase path the template documents) — the target SoC comes from npu-arch.json, never guessed.'
   - 'Keep the template proven sample compute in place as the toolchain bring-up kernel (its bundled sample golden is the bring-up oracle) and run bash run.sh to prove build + direct launch + torch binding green; save the full output to $WORK_DIR/prototype/harness.log.'
   - 'Add $WORK_DIR/prototype/run_case.py: a generic entry that builds the input torch tensors from (shapes, dtypes, attrs), invokes the exported torch.ops entry (the direct-invoke launch) and returns the output tensors — the single interface every later node and the blackbox runner call.'
   - 'Read-only on the frozen inputs: never modify $WORK_DIR/spec/spec.yaml, $WORK_DIR/golden.py, or $WORK_DIR/npu-arch.json.'
@@ -67,7 +66,7 @@ nodes:
   - 'Toolchain smoke green and recorded: cd $WORK_DIR/prototype && bash run.sh > harness.log 2>&1 exits 0 (the sample compute builds, launches through the direct kernel call, and both the direct and the torch path verify), and test -s $WORK_DIR/prototype/harness.log.'
   - 'Generic entry present: test -s $WORK_DIR/prototype/run_case.py && python3 -c "import ast; ast.parse(open(''$WORK_DIR/prototype/run_case.py'').read())" exits 0 && grep -qF "def run_case" $WORK_DIR/prototype/run_case.py.'
   - 'The torch adapter library was built: find $WORK_DIR/prototype/build -name "*ops*.so" | grep -q .'
-  - 'Frozen inputs untouched: sha256sum -c --quiet $WORK_DIR/.proto-impl/frozen-inputs.sha256 exits 0 (spec/spec.yaml, golden.py and npu-arch.json are byte-identical to the node-1 baseline).'
+  - 'Frozen inputs untouched: sha256sum -c --quiet $WORK_DIR/.proto-impl/frozen-inputs.sha256 exits 0 ($WORK_DIR/spec/spec.yaml, golden.py and npu-arch.json are byte-identical to the node-1 baseline).'
   out_of_scope:
   - 'Create or modify only files under $WORK_DIR/prototype/; do not write anything under $WORK_DIR/op/ (the ACLNN migration module job), and do not modify $WORK_DIR/spec/, $WORK_DIR/golden.py, $WORK_DIR/npu-arch.json, or $WORK_DIR/ops-test-kit/.'
   - 'Do not implement the operator compute nor wire the operator golden — the harness is brought up on the template sample kernel only.'
@@ -95,10 +94,10 @@ nodes:
   - 'Smoke driver present: test -s $WORK_DIR/prototype/smoke.py && python3 -c "import ast; ast.parse(open(''$WORK_DIR/prototype/smoke.py'').read())" exits 0.'
   - 'Per-dtype smoke green: cd $WORK_DIR/prototype && python3 smoke.py > kernel.log 2>&1 exits 0, and test -s kernel.log with ! grep -qE "^(FAIL|FAILED)" kernel.log and the PASS line count equal to the supported_combinations count of spec.yaml (checked by python3 over kernel.log and spec.yaml).'
   - 'Supported combinations covered: the dtype set printed in kernel.log equals the dtype set of spec.yaml dtype_policy.supported_combinations (the verifier re-derives the set from spec.yaml and re-greps the log).'
-  - 'No frozen-input mutation: sha256sum -c --quiet $WORK_DIR/.proto-impl/frozen-inputs.sha256 exits 0 (spec/spec.yaml, golden.py and npu-arch.json are used as-is).'
+  - 'No frozen-input mutation: sha256sum -c --quiet $WORK_DIR/.proto-impl/frozen-inputs.sha256 exits 0 ($WORK_DIR/spec/spec.yaml, golden.py and npu-arch.json are used as-is).'
   out_of_scope:
   - 'Modify only files under $WORK_DIR/prototype/; do not modify $WORK_DIR/spec/, $WORK_DIR/golden.py, $WORK_DIR/npu-arch.json, $WORK_DIR/ops-test-kit/, or anything under $WORK_DIR/op/.'
-  - 'Do not change the operator spec semantics or the golden to make a case pass; a dtype that cannot meet tolerance without deviating from the spec stays red with its attribution (a spec/oracle defect).'
+  - 'Do not change the operator spec semantics or the golden to make a case pass; a dtype that cannot meet tolerance without deviating from the spec stays red with its attribution (a spec or oracle defect).'
   depends_on:
   - gen-torch-harness
   max_retries: 2
@@ -128,7 +127,7 @@ nodes:
   - 'No frozen-input mutation: sha256sum -c --quiet $WORK_DIR/.proto-impl/frozen-inputs.sha256 exits 0.'
   out_of_scope:
   - 'Create or modify only files under $WORK_DIR/prototype/; do not modify $WORK_DIR/spec/, $WORK_DIR/golden.py, $WORK_DIR/npu-arch.json, $WORK_DIR/ops-test-kit/, or anything under $WORK_DIR/op/.'
-  - 'Do not shrink the case set, widen the fence, or relax the tolerance to make a failing case disappear; a case that stays red after prototype-side fixes is reported with its attribution (a spec/oracle defect).'
+  - 'Do not shrink the case set, widen the fence, or relax the tolerance to make a failing case disappear; a case that stays red after prototype-side fixes is reported with its attribution (a spec or oracle defect).'
   - 'No performance work here; this task only proves the operator torch-E2E correctness.'
   depends_on:
   - impl-prototype-kernel

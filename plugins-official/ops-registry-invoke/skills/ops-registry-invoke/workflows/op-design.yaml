@@ -1,6 +1,5 @@
 # Minimal op-design workflow driving the shared workflow-orchestrator skill.
-# The orchestrator wires the Codex layout ($WORK_DIR/.agents/skills plus
-# $WORK_DIR/.codex/agents) automatically via link_agent_config.py.
+# The orchestrator wires the harness's project-level skill and agent configuration automatically.
 workflow: op-design
 max_parallel: 10
 system_prompt: If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant to this task, as development reference.
@@ -138,7 +137,7 @@ nodes:
       - "Produce $WORK_DIR/design/DevView.md, $WORK_DIR/design/TilingKey.md, $WORK_DIR/design/TilingData.md, and $WORK_DIR/design/BranchRoute.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md."
     approach:
       - "Load the ops-design-paradigms skill first (mandatory), and load the paradigm patterns.md corresponding to $WORK_DIR/spec/spec.yaml's op.paradigms."
-      - "Before writing TilingKey.md / BranchRoute.md, load the ascendc-build-system skill and read references/tiling-key-encoding.md; encode every tilingKey with the paradigm's GET_TPL_TILING_KEY actual bit encoding (never self-invented logical sequence numbers)."
+      - "Before writing TilingKey.md / BranchRoute.md, load the ascendc-build-system skill and read its `references/tiling-key-encoding.md`; encode every tilingKey with the paradigm's GET_TPL_TILING_KEY actual bit encoding (never self-invented logical sequence numbers)."
       - "Copy the four templates the design-template skill's templates/design/{DevView,TilingKey,TilingData,BranchRoute}.md.templ to $WORK_DIR/design/, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml; BranchRoute.md.templ carries no {OP} and is copied as-is)."
       - "Write DevView.md (开发视图) from its template: describe the file organization strictly per the paradigm patterns.md — the {op}_package/ project tree (op_host/ {op}_def.cpp OpDef registration with dtype/format combos and .ValueDepend(OPTIONAL) on value-dependent inputs, {op}_infershape.cpp InferShape/InferDataType registration matching InferShapeDtype.md, arch35/ tiling entry + split functions and the {OP}CompileInfo header; op_kernel/ arch35/ kernel templates, empty-tensor template, tiling_data.h TilingData struct, struct.h TilingKey template params, and the kernel-entry source declaring the __global__ __aicore__ entry that instantiates all TilingKey combinations). Replace every `>` lead-in."
       - "Write TilingKey.md (TilingKey 模板划分) from its template, following its 须包含 checklist item by item: (1) the TilingKey C++ struct definition as ASCENDC_TPL_* code, with no TilingKeyIS numeric branches unless the paradigm requires them; (2) the TPL_SEL combination table listing every TilingKey value combination with its trigger condition and covered dtype/shape; (3) the template partition table and binary instance count, where every boundary-case routing row is an actually reachable branch. Keep the branch-split discipline: only real structural/path differences become separate tilingKeys, pure parameter differences are parameterized. The tilingKey set produced here is the single source for BranchRoute.md and BranchCatalog.md. Replace every `>` lead-in."
@@ -167,7 +166,7 @@ nodes:
       - "Produce $WORK_DIR/design/HostTiling.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md Host-side Tiling chapter."
     approach:
       - "Load the ops-design-paradigms skill first (mandatory); read the Host-side Tiling chapter of the paradigm patterns.md (or other tiling content if absent) to determine the subsection structure."
-      - "Read $WORK_DIR/spec/spec.yaml's determinism block (accumulation_order + bitwise_reproducible) and consult skills/ops-spec-gen/references/accumulation_order.md §0/§1/§3; make the split/tiling decisions consistent with it (stable_in_axis → partials merged in fixed order; bitwise_reproducible: true → document how the kernel path is fixed) and record this in the determinism guarantees subsection."
+      - "Read $WORK_DIR/spec/spec.yaml's determinism block (accumulation_order + bitwise_reproducible) and consult the ops-spec-gen skill's `references/accumulation_order.md` §0/§1/§3; make the split/tiling decisions consistent with it (stable_in_axis → partials merged in fixed order; bitwise_reproducible: true → document how the kernel path is fixed) and record this in the determinism guarantees subsection."
       - "Copy the design-template skill's templates/design/HostTiling.md.templ to $WORK_DIR/design/HostTiling.md, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml)."
       - "Fill each subsection per the template's 须包含 checklist (liveness-node analysis, framework prerequisites, input preprocessing/axis fusion, UB split, multi-core split, group/2D split, fill TilingData + set TilingKey, host registration, overall Tiling structure, determinism guarantees); replace every `>` lead-in line with actual content; do not touch any other design file."
     acceptance:
@@ -266,7 +265,7 @@ nodes:
       - "Read $WORK_DIR/design/BranchCatalog.md and produce $WORK_DIR/.workflow/design-sub-graph.yaml: one designer task per tilingKey writing $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md, each node satisfying the subgraph contract and carrying depends_on: [] (branches are independent)."
       - "Every generated node must carry an acceptance item requiring the branch design doc's code blocks to satisfy the DESIGN-BRANCH template's completeness contract: no '...'/'……'/省略 omission inside any code block, and every identifier the code uses (members, buffers, events, tiling-data fields) is declared in the doc. The design-verifier enforces this contract and rejects incomplete code blocks, so the requirement must be explicit in the node's acceptance."
     approach:
-      - "Read $ORCH_SKILL/templates/basic_workflow.yaml first (ORCH_SKILL=the workflow-orchestrator skill directory) — the annotated schema template; the node keys and their list/str/int requirements are documented inline there, so take the node shape from it."
+      - "Read the workflow-orchestrator skill's `templates/basic_workflow.yaml` first — the annotated schema template; the node keys and their list/str/int requirements are documented inline there, so take the node shape from it."
       - "Write the subgraph form: a mapping whose sole top-level key is nodes holding normal nodes only. Enumerate every tilingKey in BranchCatalog.md in registration order, one node per key, executor=designer / verifier=design-verifier, each writing $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md."
       - "Branch design nodes are independent — each writes its own file and shares no state — so every node's depends_on is []."
     acceptance:
