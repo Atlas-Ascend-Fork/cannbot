@@ -81,7 +81,7 @@ fi
 
 VENV_PYTHON="${VENV_DIR}/bin/python"
 PACKAGE_SPEC="${CANNBOT_OPMODEL_PACKAGE:-opmodel}"
-INDEX_URL="${CANNBOT_OPMODEL_INDEX_URL:-https://pypi.org/simple}"
+INDEX_URL="${CANNBOT_OPMODEL_INDEX_URL:-https://repo.huaweicloud.com/repository/pypi/simple}"
 PIP_ARGS=(--disable-pip-version-check install --upgrade --pre)
 if [[ -n "${CANNBOT_OPMODEL_WHEELHOUSE:-}" ]]; then
   if [[ ! -d "$CANNBOT_OPMODEL_WHEELHOUSE" ]]; then
