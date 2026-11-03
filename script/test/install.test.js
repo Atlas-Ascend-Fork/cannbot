@@ -389,7 +389,14 @@ for (const source of sources) {
         assert.equal(existsSync(join(installedSkill, "SKILL.md")), true, name);
         assertSkillInstallation(installedSkill, source, "ops-direct-invoke", name);
       }
-      assert.equal(record.agents.length, 3);
+      const declaredAgents = JSON.parse(readFileSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", ".claude-plugin", "plugin.json"), "utf8")).agents;
+      assert.equal(record.agents.length, declaredAgents.length);
+      const coordinator = tool === "codex" ? "ops-direct-invoke-perf-coordinator.toml" : "ops-direct-invoke-perf-coordinator.md";
+      assert.equal(existsSync(join(root, "agents", coordinator)), true);
+      for (const name of ["ops-perf-optimize-workflow", "ops-perf-baseline-evaluate", "ops-perf-preparation", "ops-perf-analysis", "ops-perf-implementation", "ops-perf-postprocess", "ops-perf-acceptance-criteria"]) {
+        assert.equal(existsSync(join(skillRoot(target, tool), name, "SKILL.md")), true, name);
+        assertSkillInstallation(join(skillRoot(target, tool), name), source, "ops-direct-invoke", name);
+      }
       assert.equal(record.sourcePackage, sourcePackage);
       assert.equal(record.source.kind, source);
       assert.equal(record.skillInstallMode, source === "repository" ? "symlink" : "copy");

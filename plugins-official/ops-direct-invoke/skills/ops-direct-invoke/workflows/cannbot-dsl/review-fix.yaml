@@ -1,5 +1,5 @@
 # CANNBot-DSL 全量精度验证后的可读性检视与修复子图
-use_when: 已完成全量精度验证的 CANNBotDSL 算子，在性能摸底前检视并修复可读性
+use_when: 已完成全量精度验证的 CANNBotDSL 算子，在性能优化前检视并修复可读性
 workflow: review-fix
 max_parallel: 1
 nodes:

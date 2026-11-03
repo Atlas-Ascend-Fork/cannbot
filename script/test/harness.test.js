@@ -106,7 +106,7 @@ for (const source of ['repository', 'package']) {
       const agents = join(box.target, clientDirectory, 'agents');
       const extension = tool === 'codex' ? '.toml' : '.md';
       assert.deepEqual(readdirSync(agents).filter((name) => name.startsWith('ops-direct-invoke-')).sort(),
-        ['architect', 'developer', 'verifier'].map((name) => `ops-direct-invoke-${name}${extension}`));
+        ['architect', 'developer', 'perf-coordinator', 'verifier'].map((name) => `ops-direct-invoke-${name}${extension}`));
       assert.ok(existsSync(join(agents, `perf-optimize${extension}`)));
       const instructionsPath = join(box.target, tool === 'claude' ? 'CLAUDE.md' : 'AGENTS.md');
       const instructions = readFileSync(instructionsPath, 'utf8');
@@ -490,10 +490,12 @@ test('ops-direct-invoke assembles and installs from a self-contained source layo
   cpSync(join(repository, 'LICENSE'), join(isolated, 'LICENSE'));
   cpSync(join(repository, 'plugins-official/LICENSE'), join(isolated, 'plugins-official/LICENSE'));
   cpSync(join(repository, sourceDirectory), join(isolated, sourceDirectory), { recursive: true });
-  // Share the declared framework, domain Skills and separately initialized performance plugin.
+  // Explicit performance dependency is shipped alongside the generation plugin.
+  cpSync(join(repository, 'plugins-official/ops-perf-optimize'),
+    join(isolated, 'plugins-official/ops-perf-optimize'), { recursive: true });
+  // Only the common framework and domain Skill repository are shared with the source tree.
   symlinkSync(join(repository, 'harness'), join(isolated, 'harness'), 'dir');
   symlinkSync(join(repository, 'vendor'), join(isolated, 'vendor'), 'dir');
-  symlinkSync(join(repository, 'plugins-official', performance), join(isolated, 'plugins-official', performance), 'dir');
   assert.equal(existsSync(join(isolated, 'plugins-community')), false);
   const bundles = assemblePlugins(isolated, join(box.root, 'dist'), [basename(sourceDirectory)]);
   assert.equal(bundles.length, 1);

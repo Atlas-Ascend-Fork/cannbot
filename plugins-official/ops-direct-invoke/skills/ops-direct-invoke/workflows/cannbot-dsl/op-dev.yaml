@@ -110,14 +110,11 @@ nodes:
   depends_on:
   - precision-validation
 - id: performance
-  task_type: normal
-  yaml: ../../tasks/cannbot-dsl/性能优化.yaml
+  task_type: subgraph
+  template: performance.yaml
+  file: perf-optimize/workflow.yaml
   depends_on:
   - review-fix
-  executor: ops-direct-invoke-developer
-  verifier: ops-direct-invoke-verifier
-  max_retries: 3
-  on_exhaust: exit
 - id: documentation
   task_type: normal
   yaml: ../../tasks/cannbot-dsl/文档生成.yaml

@@ -446,6 +446,7 @@ def assemble_complete_workflow(definition, base):
 DSL_ROLES = frozenset(
     {
         "ops-direct-invoke-architect",
+        "ops-direct-invoke-perf-coordinator",
         "ops-direct-invoke-developer",
         "ops-direct-invoke-verifier",
     }

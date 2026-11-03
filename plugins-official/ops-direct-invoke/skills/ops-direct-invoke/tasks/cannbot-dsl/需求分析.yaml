@@ -4,6 +4,7 @@ goal:
 approach:
 - 读取启动前已确认的 `$WORK_DIR/需求分析.md`、原始任务及输入约束，整理为下游规格所需的需求记录；本节点不重新调用交互式需求对齐 Skill。
 - 在 `$WORK_DIR/design/doc/REQUIREMENTS.md` 记录接口、输入输出、目标环境、精度与性能要求、边界条件和未决事项的来源。
+- 保留启动前已确认的性能优化目标或轮数、对标来源、环境、SoC 和实际 JIT/AOT 模式及确认来源，供性能节点创建原 Skill 请求；已有有效请求记录其路径。不用默认值覆盖用户明确选择，缺少必要确认时终止并报告 PM。
 - 发现影响规格生成的缺项或冲突时记录来源与影响并终止本节点，不自行决定，也不在运行中等待用户答复。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
@@ -11,6 +12,6 @@ procedure:
 - 核对接口、约束和验收口径与确认记录一致；仍有影响规格的缺项或冲突时不通过，标注阻塞不等于需求已就绪。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
-- 'test -s "$WORK_DIR/design/doc/REQUIREMENTS.md"'
+- test -s "$WORK_DIR/design/doc/REQUIREMENTS.md"
 out_of_scope:
 - 不生成 `spec.yaml`、设计方案、测试用例或算子实现。

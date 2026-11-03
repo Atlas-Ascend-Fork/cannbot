@@ -16,6 +16,7 @@
   "agents": [
     "./agents/ops-direct-invoke-architect.md",
     "./agents/ops-direct-invoke-developer.md",
-    "./agents/ops-direct-invoke-verifier.md"
+    "./agents/ops-direct-invoke-verifier.md",
+    "./agents/ops-direct-invoke-perf-coordinator.md"
   ]
 }

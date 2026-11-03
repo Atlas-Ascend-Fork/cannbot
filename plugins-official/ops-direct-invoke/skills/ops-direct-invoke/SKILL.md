@@ -120,6 +120,14 @@ PM 按调度 Skill 的要求等待、查询和转发进度，不持续通读产�
 
 缺少必要信息、权限或外部条件时如实汇报，不反复执行相同的无效流程。最终说明交付位置、验证结果和限制；模拟执行及接口回归不等于真实 Agent 或设备验证通过。
 
+### DSL 性能优化接入
+
+DSL op-dev 用原 `ops-perf-optimize-workflow` 替换摸底节点。PM 在首次需求对齐时读取实际安装版本的请求接入规则，收集轮数或可计算目标、对标来源、Python/CANN、SoC 与 JIT/AOT 模式；已有有效确认直接复用，记录到本轮需求中。不要硬编码轮数或把环境的 full/compile_only 当成 JIT/AOT。无交互运行必须提供这些已确认输入。
+
+主图的 performance 是静态子图；harness 调度专用 perf-coordinator 与独立 verifier。性能编排者只在该任务内部按原 Skill 派发通用阶段代理，外层 PM、developer 和其他节点的权限不变。阶段业务状态使用原 Skill 公开接口，外层状态仍由 harness 管理。恢复保留同一请求、run 和已用预算，不清空内部状态。
+
+性能输入适配与输出契约见 `tasks/cannbot-dsl/性能优化.yaml`。确定性库存转换使用 `scripts/prepare_dsl_performance.py`；功能全集来自冻结原用例，设备性能集合使用相同 case 的原输入配方。性能结果在 `perf-optimize/run/`，最终交接是 `perf-optimize/HANDOFF.md`；文档与交付使用回集成后的版本及证据，优化前 `review-fix/selected.json` 保留为来源记录。
+
 ## DSL 代码版本管理
 
 新 DSL 运行采用 [代码版本协议](references/code-versions.md)：由创建工作区节点初始化 `$WORK_DIR/code`，代码读写与测试使用 `CODE_DIR`，报告与 harness 状态仍在 `WORK_DIR`。所有代码写入节点按每轮尝试记录 Git 基线、提交与验证证据；并行 Unit 使用独立 worktree，汇合后重验。已有运行 YAML 与目录不迁移，启动新一轮使用此契约。`rollback_to` 仍为返工调度，Git 恢复必须指定完整 SHA。

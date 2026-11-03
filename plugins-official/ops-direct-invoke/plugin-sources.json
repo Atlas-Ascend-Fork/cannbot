@@ -33,6 +33,20 @@
     "vendor/cannbot-skills/ops/ops-simulator",
     "vendor/cannbot-skills/ops/ops-kirin-simulator",
     "vendor/cannbot-skills/ops/ops-spec-gen",
-    "vendor/cannbot-skills/ops/ops-design-paradigms"
+    "vendor/cannbot-skills/ops/ops-design-paradigms",
+    "plugins-official/ops-perf-optimize/skills/ascendc-performance-review",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-acceptance-criteria",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-analysis",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-baseline-evaluate",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-implementation",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-optimize-workflow",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-postprocess",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-preparation",
+    "plugins-official/ops-perf-optimize/skills/ops-perf-profile-feature-extractor",
+    "vendor/cannbot-skills/ops/ops-theoretical-performance-estimation",
+    "vendor/cannbot-skills/ops/ascendc-perf-optimize",
+    "vendor/cannbot-skills/ops/ascendc-blaze-migration",
+    "vendor/cannbot-skills/ops/ascendc-sync-audit",
+    "vendor/cannbot-skills/ops/ascendc-registry-invoke-template"
   ]
 }
