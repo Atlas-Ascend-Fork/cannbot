@@ -24,7 +24,7 @@ export function gitCommit(repository, revision = "HEAD") {
 function isRepositoryRoot(repository) {
   if (!existsSync(repository) || !statSync(repository).isDirectory()) return false;
   const top = gitOutput(repository, ["rev-parse", "--show-toplevel"]);
-  return top !== null && realpathSync(top) === realpathSync(repository);
+  return top !== null && realpathSync.native(top) === realpathSync.native(repository);
 }
 
 function runGit(repository, args) {

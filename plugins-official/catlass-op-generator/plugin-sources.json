@@ -8,6 +8,7 @@
     "ops/catlass-cpp-design",
     "ops/catlass-cpp-develop",
     "ops/catlass-cpp-test",
-    "ops/catlass-cpp-knowledge"
+    "ops/catlass-cpp-knowledge",
+    "ops/npu-arch"
   ]
 }

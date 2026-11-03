@@ -1,6 +1,6 @@
 # CATLASS 算子生成快速开始
 
-通过 CANNBot 安装 `catlass-op-generator`。安装器从 cannbot-skills 的 `ops/` 接入六个 `catlass-cpp-*` Skills，并从 cannbot-knowledge 提供 `knowledge/ops/catlass/`；项目中不生成私有知识副本。
+通过 CANNBot 安装 `catlass-op-generator`。安装器从 cannbot-skills 的 `ops/` 接入六个 `catlass-cpp-*` Skills 和共享的 `npu-arch` Skill，并从 cannbot-knowledge 提供 `knowledge/ops/catlass/`；项目中不生成私有知识副本。
 
 ## 环境要求
 
@@ -35,24 +35,23 @@ npx 默认拉取官方主仓最新源码及共享 Skills，再安装插件并下
 
 | 仓库 | 分支 | 资源 |
 |---|---|---|
-| `https://gitcode.com/cann/cannbot-skills.git` | 默认匹配主仓分支，不存在时使用 `master` | `vendor/cannbot-skills/ops/` 下六个 `catlass-cpp-*` Skills |
+| `https://gitcode.com/cann/cannbot-skills.git` | 默认匹配主仓分支，不存在时使用 `master` | `vendor/cannbot-skills/ops/` 下六个 `catlass-cpp-*` Skills 和 `npu-arch` |
 | `https://gitcode.com/cann/cannbot-knowledge.git` | `master` | `knowledge/ops/catlass/` 下的知识卡 |
 
 ```text
 <workspace>/
-├── .agents/skills/catlass-cpp-*        # Codex / OpenCode 的六个 Skill
+├── .agents/skills/catlass-cpp-*        # CATLASS C++ Skills
+├── .agents/skills/npu-arch              # 目标 SoC 架构查询 Skill
 └── .cannbot/dependencies/catlass-op-generator/
     └── cannbot-knowledge/knowledge/ops/catlass/
 ```
 
-六个 Skill 为 `catlass-cpp-interface`、`catlass-cpp-reference`、`catlass-cpp-design`、
-`catlass-cpp-develop`、`catlass-cpp-test`、`catlass-cpp-knowledge`。
 Claude Code 使用 `.claude/skills/`；其他客户端使用其对应 Skill 目录。
-项目配置目录下的 `cannbot-plugin.json` 记录知识库依赖路径及六个已安装 Skill 的路径。
-源码入口把 Skills 链接到主仓的 `vendor/cannbot-skills/ops/`；npx 安装复制到客户端 Skill 目录，并为 Codex 生成包含六个 Skill 的原生插件。
+项目配置目录下的 `cannbot-plugin.json` 记录知识库依赖路径及七个已安装 Skill 的路径。
+源码入口把 Skills 链接到主仓的 `vendor/cannbot-skills/ops/`；npx 安装复制到客户端 Skill 目录，并为 Codex 生成包含七个 Skill 的原生插件。
 
-六个 Skill 和知识库均为完整工作流所必需。安装后执行下面的知识读取验证，确认知识库可用。
-必需知识库不可用或缺少公共工作流指南时，安装器返回失败，在依赖检查通过前保留已有项目配置和 Skills。
+七个 Skill 和知识库均为完整工作流所必需。安装后执行下面的知识读取验证，确认知识库可用。
+必需知识库不可用或缺少上述入口时，安装器返回失败；依赖检查通过前，不替换当前已安装的 Skills 和知识内容。
 源码安装的 `--skills <SHA|path>` 可选择共享 Skills 版本，不改变知识库下载位置。
 
 本插件通过 `catlass-cpp-knowledge` 直接读取这些 Markdown 卡片，不要求另行执行知识仓的 `install.sh`、建立通用检索索引或下载全部外部文档归档。
@@ -67,10 +66,13 @@ cd /path/to/workspace
 python3 .agents/skills/catlass-cpp-knowledge/scripts/record_knowledge.py \
   initialize --project-root "$PWD"
 python3 .agents/skills/catlass-cpp-knowledge/scripts/record_knowledge.py \
-  query --project-root "$PWD" --type operators --family sparse_flash_mla --compact
+  query --project-root "$PWD" --type operators --family sparse_flash_mla \
+  --arch atlas_a2_a3 --compact
 ```
 
-初始化应返回 `status=passed` 和卡片数量。查询返回相对 `path` 后，传给同一脚本的 `get --project-root "$PWD" --path <返回路径>` 读取完整正文。
+初始化应返回 `status=passed` 和卡片数量。Operator 查询必须同时指定实际 `family` 和已冻结的
+`target_architecture`；查询返回相对 `path` 后，传给同一脚本的
+`get --project-root "$PWD" --path <返回路径>` 读取完整正文。
 如果配置了自定义知识根，以上命令会读取该配置；验证默认安装目录时先确认未设置其他根。
 
 ## 开始开发
@@ -80,14 +82,9 @@ python3 .agents/skills/catlass-cpp-knowledge/scripts/record_knowledge.py \
 ```bash
 bash <installed-catlass-cpp-interface>/scripts/init_operator_project.sh my_operator
 bash <installed-catlass-cpp-interface>/scripts/init_operator_project.sh my_attention --algorithm-family flash_attention
-bash <installed-catlass-cpp-interface>/scripts/init_operator_project.sh my_sage --algorithm-family flash_attention --algorithm-variant sageattention
 ```
 
-不指定家族时使用 `general`。初始化后依次完成 interface、reference、design、implementation、validation；每次继续前校验 `operators/<name>/docs/workflow.json`。设计阶段通过 `catlass-cpp-knowledge` 查询 `guides/` 与目标家族的 Operator 卡，按返回的完整路径读取正文。
-
-Skill 的 `scripts/workflow_state.py`，详见该 Skill 的 `references/workflow-gates.md`。恢复与验收时
-给 `validate_workflow.py` 同时传入 `--operator-root operators/<name>`；最终完成需要冻结用例计划、
-`docs/acceptance.json` 及本轮源码/构建/实际报告摘要，不能仅将 marker 改为 complete。
+不指定家族时使用 `general`。初始化后依次完成 interface、reference、design、implementation、validation；每次继续前校验 `operators/<name>/docs/workflow.json`，阶段验收后通过 `catlass-cpp-interface/scripts/transition_workflow.py` 更新状态。设计阶段通过 `catlass-cpp-knowledge` 查询 `guides/` 与目标家族的 Operator 卡，按返回的完整路径读取正文。
 
 启动客户端后可使用以下提示词，将路径和架构替换为实际值：
 

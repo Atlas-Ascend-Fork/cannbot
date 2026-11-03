@@ -15,7 +15,7 @@ const packageRoot = resolve(import.meta.dirname, "..");
 const repositoryRoot = resolve(packageRoot, "..");
 const pluginId = "catlass-op-generator";
 const pluginPath = join("plugins-official", pluginId);
-const names = ["interface", "reference", "design", "develop", "test", "knowledge"].map((part) => `catlass-cpp-${part}`);
+const names = ["interface", "reference", "design", "develop", "test", "knowledge"].map((part) => `catlass-cpp-${part}`).concat("npu-arch");
 const knowledgeFiles = ["knowledge/ops/catlass/index.md", "knowledge/ops/catlass/apis/block_mmad.md"];
 const sandboxes = new Set();
 test.afterEach(() => {
@@ -106,11 +106,11 @@ function assertFailure(f, pattern) {
 
 for (const packaged of [false, true]) {
   for (const tool of ["codex", "opencode", "claude", "trae", "dsh"]) {
-    test(`CATLASS ${packaged ? "package" : "source"} installs knowledge and six unchanged shared Skills for ${tool}`, () => {
+    test(`CATLASS ${packaged ? "package" : "source"} installs knowledge and seven unchanged shared Skills for ${tool}`, () => {
       const f = fixture({ packaged });
       const result = install(f, tool);
       assert.equal(result.status, 0, result.stderr || result.stdout);
-      assert.match(result.stdout, /skills: 6/);
+      assert.match(result.stdout, /skills: 7/);
       const skillDir = join(f.target, tool === "opencode" || tool === "codex" ? ".agents" : `.${tool}`, "skills");
       for (const name of names) {
         const original = join(f.repos["cannbot-skills"], "ops", name, "SKILL.md");
@@ -126,7 +126,7 @@ for (const packaged of [false, true]) {
       assert.equal(existsSync(checkout(f, "cannbot-skills")), false);
       const config = tool === "trae" ? ".trae" : `.${tool}`;
       const record = JSON.parse(readFileSync(join(f.target, config, "cannbot-plugin.json"))).plugins[0];
-      assert.equal(record.skills.length, 6);
+      assert.equal(record.skills.length, 7);
       assert.equal(git(checkout(f, "cannbot-knowledge"), "status", "--porcelain"), "");
     });
   }
@@ -171,7 +171,7 @@ for (const packaged of [false, true]) {
       unlinkSync(join(repos["cannbot-knowledge"], definition.dependencies[0].requiredPaths[1]));
       commit(repos["cannbot-knowledge"]);
     } });
-    assertFailure(f, /missing required file.*interface_and_golden_contract/);
+    assertFailure(f, /missing required file/);
   });
 }
 

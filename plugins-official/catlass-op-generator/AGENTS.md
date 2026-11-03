@@ -8,15 +8,23 @@ skills:
   - catlass-cpp-develop
   - catlass-cpp-test
   - catlass-cpp-knowledge
+  - npu-arch
 ---
 
 # CANNBot CATLASS C++ 算子生成
 
-对 CATLASS C++ 算子统一执行 interface → reference → design → implementation → validation 五阶段流程。每次开始或恢复时，先阅读当前阶段 Skill 的完整 `SKILL.md`，再校验 `operators/<name>/docs/workflow.json`；状态文件是跨会话的机器权威。
+对 CATLASS C++ 算子统一执行 interface → reference → design → implementation → validation 五阶段流程。每次开始或恢复时，先查找并校验 `operators/<name>/docs/workflow.json`，再根据 `stage` 阅读对应 Skill 的完整 `SKILL.md`；状态文件是跨会话的机器权威。
+
+## 存储术语
+
+- `GM` 表示设备全局内存，是物理存储层级。
+- `workspace` 表示算子执行期间在 GM 中额外申请的临时区域，不是独立存储层级。
+- 文档按用途写作 `GM（API 输入）`、`GM（API 输出）`、`GM（用户 workspace）`；
+  “用户额外 workspace”只统计最后一项，不包含固定系统 workspace。
 
 ## 数学分类
 
-根据已确认的数学公式、输入输出和稀疏/梯度语义选择 `algorithm_family`。已登记的专门家族为 `linear_attention`、`block_sparse_attention`、`sparse_flash_mla`、`block_sparse_attention_grad`、`flash_attention_grad`、`flash_attention`；其他 CATLASS 直调算子使用 `general`。信息不足时先补全 contract，不能只根据算子名称猜测算法。
+根据已确认的数学公式、输入输出和稀疏/梯度语义选择 `algorithm_family`。已登记的专门家族为 `linear_attention`、`block_sparse_attention`、`sparse_flash_mla`、`block_sparse_attention_grad`、`flash_attention_grad`、`flash_attention`；其他 CATLASS 直调算子使用 `general`。信息不足时先补全接口和计算语义，不能只根据算子名称猜测算法。
 
 - `block_sparse_attention` 是按 Q 块 × KV 块的二值 mask 选择 KV 块的前向注意力；带反向输入和梯度输出的对应计算是 `block_sparse_attention_grad`。
 - 共享 KV、窗口/压缩/索引注意力及配套 metadata 契约的 MLA 计算是 `sparse_flash_mla`。
@@ -36,25 +44,36 @@ ABI 与知识条目独立，不得互推结论。
 
 ## 启动与恢复
 
-1. 新工程使用已安装的 `catlass-cpp-interface/scripts/init_operator_project.sh <name> [--algorithm-family <family>]`；未指定家族时初始化为 `general`。已有工程在保留现有文件的前提下建立或校验 workflow marker。
-2. interface 阶段冻结 `target_architecture` 和 operator contract；reference 阶段冻结 golden contract。后续设计、开发与测试必须使用相同架构。
-3. `sparse_flash_mla`、`block_sparse_attention`、`flash_attention` 的现有知识主要覆盖 `atlas_a2_a3`；`block_sparse_attention_grad`、`flash_attention_grad` 覆盖 `ascend950`；`linear_attention` 与 `general` 按目标 contract 选择受支持架构。使用卡片前核对其 `platforms` 与状态。
-4. `catlass-cpp-knowledge` 从已安装的 cannbot-knowledge `knowledge/ops/catlass/` 查询。通用指南位于 `guides/`，接口卡位于 `apis/`，注意力 Operator 卡位于 `operators/direct/transformer/attention/`，通过家族前缀区分。注意力家族在设计阶段先 `query --family <family> --compact`，再对返回的完整路径执行 `get`；显式家族查询包括 draft 卡。`general` 按实际组件查询 `apis/`，读取 draft API 卡时显式传入 `--include-draft`。
-5. 严格按五阶段推进。使用 interface Skill 的 `scripts/workflow_state.py` 冻结契约和推进/恢复状态；每次恢复运行 `validate_workflow.py --workflow <operator>/docs/workflow.json --operator-root <operator>`。仅 schema 校验不代表工程验收。
-6. reference 阶段冻结 `reference/validation-plan.json` 的 case IDs 和性能要求；只有最终产物的 full 验收、冻结用例覆盖与 `docs/acceptance.json` 中的报告/源码/构建摘要全部通过，才允许 `complete`。调优改动必须重新构建和验收。
+1. 新工程使用已安装的 `catlass-cpp-interface/scripts/init_operator_project.sh <name> [--algorithm-family <family>]`；未指定家族时初始化为 `general`。工程缺少 workflow marker 时进入 interface，在保留现有文件的前提下建立状态；已有 marker 时先运行 workflow validator，校验失败则停止并修复状态，不得猜测当前阶段。
+2. interface 阶段验收接口并确定 `target_architecture`，reference 阶段验收 CPU 标杆和精度策略。后续设计、开发与测试必须使用相同架构。
+3. 所有已登记 `algorithm_family` 均可选择 `atlas_a2_a3` 或 `ascend950`；知识卡的现有覆盖范围不限制工作流支持范围。
+4. `catlass-cpp-knowledge` 从已安装的 cannbot-knowledge `knowledge/ops/catlass/` 查询。通用指南位于 `guides/`，接口卡位于 `apis/`，注意力 Operator 卡位于 `operators/direct/transformer/attention/`，通过家族前缀区分。注意力家族在设计阶段使用 `query --family <family> --arch <target_architecture> --compact`，再对返回的完整路径执行 `get`；返回结果还必须与冻结的计算语义匹配。查询结果为空时，不得移除 `--arch` 或读取其它架构卡片兜底；继续依据冻结的接口和标杆、目标芯片规则以及目标版本 CATLASS/CANN API 与源码设计。显式家族查询包括 draft 卡。`general` 按实际组件查询 `apis/`，读取 draft API 卡时显式传入 `--include-draft`。
+5. 校验通过后仅按 `stage` 路由；`issue_type` 只在定向精度调试和性能优化时分别使用 `precision_debug` 和 `performance_optimize`。
 
 | 状态 | Skill | 核心产物 |
 | --- | --- | --- |
-| interface | `catlass-cpp-interface` | `docs/api.md`、冻结的 operator contract |
+| interface | `catlass-cpp-interface` | 已验收的 `docs/api.md` 和目标架构 |
 | reference | `catlass-cpp-reference` | 唯一 `reference/reference.py`、definition、precision policy |
-| design | `catlass-cpp-design` | 完整推演与两章 `docs/design.md` |
+| design | `catlass-cpp-design` | 分芯片完整推演与六章 `docs/design.md` |
 | implementation | `catlass-cpp-develop` | Stage 实现、构建与定向精度证据 |
 | validation | `catlass-cpp-test` | 全量精度、性能和最终验收 |
+| complete | `catlass-cpp-test` | 复核已有最终验收记录 |
+
+每个阶段完成准出验收后，通过 `catlass-cpp-interface/scripts/transition_workflow.py` 执行对应事件，
+再返回本入口按新的 `stage` 路由。只有 validation 的 V1 全量验收和 V2 性能验收均通过才能进入
+`complete`；失败恢复和性能优化同样按更新后的 `stage` 重新进入对应阶段。
+
+目标产品改变时，无论当前状态，执行 `target_architecture_reset`，将状态重置为
+`interface / null`、`target_architecture=pending`，再从 01 重新确认接口和目标架构。
+
+恢复 `stage=complete` 的工程时，加载 `catlass-cpp-test`，只对已有 `docs/validation.md` 和
+`docs/workflow.json` 运行最终验收记录校验，不重复执行 V1/V2。校验通过后保持 `complete`；
+校验失败时执行 `complete_evidence_invalid` 返回 `validation / null`，重新进入 05 修复记录或验收。
 
 ## BSA Arch22 知识入口与条款
 
-`block_sparse_attention`（BSA / 块稀疏注意力，目标 DAV_2201）工程启动后，经
-`catlass-cpp-knowledge` 先 compact query family `sparse-attention`，先读 `sparse_attention_scope_and_evidence.md`
+`target_architecture=atlas_a2_a3` 的 `block_sparse_attention`（BSA / 块稀疏注意力，目标 DAV_2201）工程启动后，经
+`catlass-cpp-knowledge` 先使用 family `sparse-attention`、arch `atlas_a2_a3` 查询，先读 `sparse_attention_scope_and_evidence.md`
 与 `sparse_attention_blockxy_generalization.md`，再按各阶段需要读取其余条目（含任务边界同步、高吞吐结构规则、
 设备行为笔记等）。
 
@@ -66,19 +85,19 @@ ABI 与知识条目独立，不得互推结论。
 
 ## SparseFlashMLA 知识入口
 
-`sparse_flash_mla` 读取 `catlass-cpp-knowledge query --family sparse_flash_mla --compact` 返回的家族卡片，
+`sparse_flash_mla` 读取 `catlass-cpp-knowledge query --family sparse_flash_mla --arch <target_architecture> --compact` 返回的家族卡片，
 按当前阶段加载主算子、独立 metadata 及对应模式的知识；通用五阶段与恢复流程保持一致。
 
 ## BSAG Ascend 950 知识入口与条款
 
-`block_sparse_attention_grad` 工程使用 `catlass-cpp-knowledge` 以 family
+`target_architecture=ascend950` 的 `block_sparse_attention_grad` 工程使用 `catlass-cpp-knowledge` 以 family
 `block-sparse-attention-grad`、arch `ascend950` 查询，只读取
 `operators/direct/transformer/attention/block_sparse_attention_grad*.md` 下的领域知识。该知识包含反向公式、稀疏任务切分、
 五次 MMAD 数据链、FP32 workspace 与同步边界；不得写入或反向修改公共 workflow concept。
 
 ## FAG Ascend 950 知识入口与条款
 
-`flash_attention_grad` 工程使用 `catlass-cpp-knowledge` 以 family `flash-attention-grad`、arch
+`target_architecture=ascend950` 的 `flash_attention_grad` 工程使用 `catlass-cpp-knowledge` 以 family `flash-attention-grad`、arch
 `ascend950` 查询，只读取 `operators/direct/transformer/attention/flash_attention_grad*.md` 下的领域知识。该知识是 dense
 （KV 块全选、无 mask、无反向 metadata）反向模式：调用 ABI、反向公式、五次 MMAD 数据链、
 GQA/MQA 的 FP32 归约、workspace/同步边界与失败表现；C++ 侧的
@@ -88,7 +107,7 @@ workflow concept。
 
 ## FA A2/A3 知识入口与条款
 
-`flash_attention` 工程使用 `catlass-cpp-knowledge` 以 family `flash-attention`、arch `atlas_a2_a3`
+`target_architecture=atlas_a2_a3` 的 `flash_attention` 工程使用 `catlass-cpp-knowledge` 以 family `flash-attention`、arch `atlas_a2_a3`
 查询（SageAttention 量化路径为 ascend950，按其 concept 的 platforms 查询），只读取
 `operators/direct/transformer/attention/flash_attention*.md` 下的领域知识。该知识是 dense 前向模式：BNSD 公开接口与 host
 布局转换、online softmax 状态递推、AIC/AIV 分核与 CrossCoreFlag 同步协议、PAGED/尾块/mask 处理、
@@ -100,12 +119,12 @@ catlass/examples 样例对照。不得写入或反向修改公共 workflow conce
 ## 固定边界
 
 - `reference/reference.py` 是唯一可编辑标杆源码。
-- `workflow_id` 与 `algorithm_family` 必须匹配 `catlass-cpp-interface/scripts/validate_workflow.py` 中的映射；通用算子使用 `general` / `catlass-general-v1`。
+- `algorithm_family` 必须是 `catlass-cpp-interface/scripts/validate_workflow.py` 登记的家族；通用算子使用 `general`。
 - `target_architecture` 是架构分支的机器权威；A2/A3 使用 `atlas_a2_a3`，A5 使用 `ascend950`。
-- 技术知识从 cannbot-knowledge 的 `knowledge/ops/catlass/` 读取，按 `apis/`、`guides/` 与 `operators/` 分区。
-- `catlass-cpp-knowledge` 是横向能力，不是第六阶段；知识不能替代用户 contract、固定源码、CPU 标杆或实际运行证据。
+- CATLASS 专属知识从 `knowledge/ops/catlass/` 读取。涉及 AscendC 基础 API 时，直接在同一知识仓的 `knowledge/ops/ascendc/apis/` 中按 API 名称查找并完整阅读对应文档，核对目标产品和 CANN 版本的适用约束。
+- `catlass-cpp-knowledge` 是横向能力，不是第六阶段；知识不能替代已验收接口、固定源码、CPU 标杆或实际运行证据。
 - 性能不达标仍属于 validation，不能创建 optimize 阶段。
-- 状态恢复必须使用 validator 允许的 issue_type/resume_from 组合。
+- 状态更新必须使用统一转移脚本；不得手工组合 `stage` 和 `issue_type`。
 - 单用例连续运行 60 秒无返回视为 kernel 超时；清理进程和设备资源后记录现象、Stage、TilingKey 和 `blockDim`。
 
 始终使用中文交流。
