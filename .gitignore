@@ -3,4 +3,7 @@ node_modules/
 dist/
 __pycache__
 docs/superpowers/
-pre-commit_reports/
+codespell_reports/
+
+# OAT 远程 hook 报告目录
+oat_reports/
