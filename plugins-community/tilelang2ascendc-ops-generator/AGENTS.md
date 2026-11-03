@@ -119,7 +119,7 @@ Phase 3: 设计表达            (分支)
        Skill 依赖: tilelang-op-design + tilelang-op-develop + tilelang-perf-optimization
 Phase 4: AscendC 生成与验证   (分支)
   ├─ 简单算子: 开发实现 + 代码审查 + 修复循环 (ops-direct-invoke: 渐进式开发 + REVIEW.md + 最多3轮修复)
-  └─ 复杂算子: 转译          (tilelang2ascend-translator + 退化检测 + 迭代)
+  └─ 复杂算子: 转译          (本轮 TileLang 验证 PASS 后执行 workflows/kernel-generalization.md；其余情况使用 tilelang2ascend-translator)
 Phase 5: 性能分析            (ops-profiling --quick 模式; 只做测量归档, TileLang 调优已在 Phase 3 Step 4 完成)
 Phase 6: 全量验证            (恢复全量用例、验证、修复)
 Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md →
