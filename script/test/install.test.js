@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, dirname, join, resolve } from "node:path";
+import { isAbsolute, delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { assemblePlugins, pluginSourceDefinition } from "../lib/plugin-bundle.js";
@@ -80,7 +80,7 @@ function assertSkillInstallation(installedSkill, source, plugin, skill, pluginRo
   );
 }
 
-function installPlugin(plugin, tool, source = "repository") {
+function installPlugin(plugin, tool, source = "repository", env = {}) {
   const sandbox = createSandbox(`cannbot-${source}-${plugin}-${tool}-`);
   const target = join(sandbox, "project");
   mkdirSync(target);
@@ -105,10 +105,33 @@ function installPlugin(plugin, tool, source = "repository") {
       XDG_CACHE_HOME: join(sandbox, "cache"),
       CANNBOT_SKIP_CODEX_PLUGIN_ADD: "1",
       CANNBOT_SKIP_OPENCODE_PLUGIN_ADD: "1",
+      ...env,
     },
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return { sandbox, target, result };
+}
+
+for (const source of sources) {
+  test(`${source} registers the OpenCode package with plugin add`, () => {
+    const sandbox = createSandbox("cannbot-opencode-registration-");
+    const argsFile = join(sandbox, "args.txt");
+    writeFileSync(join(sandbox, "opencode"), `#!/bin/sh
+if [ "$1" != "plugin" ] || [ "$2" != "add" ]; then
+  echo 'Unknown opencode plugin subcommand' >&2
+  exit 1
+fi
+printf '%s\\n' "$@" > "$CANNBOT_OPENCODE_ARGS"
+`, { mode: 0o755 });
+    installPlugin("model-infer-optimize", "opencode", source, {
+      PATH: `${sandbox}${delimiter}${process.env.PATH}`,
+      CANNBOT_SKIP_OPENCODE_PLUGIN_ADD: "0",
+      CANNBOT_OPENCODE_ARGS: argsFile,
+    });
+    assert.deepEqual(readFileSync(argsFile, "utf8").trim().split("\n"), [
+      "plugin", "add", sourcePackage,
+    ]);
+  });
 }
 
 function installWithSourceInit(plugin, tool) {

@@ -809,7 +809,7 @@ function installCodexPlugin(plugin, skills, target, skillInstallMode) {
 
 function installOpenCodePlugin(target) {
   if (process.env.CANNBOT_SKIP_OPENCODE_PLUGIN_ADD !== "1") {
-    run("opencode", ["plugin", OPENCODE_PLUGIN_SPEC], target);
+    run("opencode", ["plugin", "add", OPENCODE_PLUGIN_SPEC], target);
   }
   return { package: OPENCODE_PLUGIN_SPEC };
 }
