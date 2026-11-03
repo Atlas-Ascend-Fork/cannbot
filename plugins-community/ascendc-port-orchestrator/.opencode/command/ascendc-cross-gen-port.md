@@ -1,5 +1,5 @@
 ---
-description: 跨代际 AscendC 算子移植入口（arch22→arch35，arch22→arch20）。参数包括：1） 必选。待port的arch22算子实现目录 2) 推荐。KernelBench风格 (model.py 和test_case.json) 的算子golden与测试集合。
+description: 跨代际 AscendC 算子移植入口（arch22→arch35，arch22→arch20，arch22→arch30）。参数包括：1） 必选。待port的arch22算子实现目录 2) 推荐。KernelBench风格 (model.py 和test_case.json) 的算子golden与测试集合。
 subtask: false
 ---
 
@@ -22,16 +22,19 @@ command。这里只负责：把用户的话翻成引擎的 `--port-a3-ops` mode 
    该输入原样冻结为真值，不做任何格式转换；输入尚非该格式时，请用户先由输入提供方准备为该格式并复核语义。
    常规 ops-nn 来源下为**推荐**（可显式改选 `a3_live`）；TileLang2AscendC 工程来源下为**必需**（唯一真值）。
 
-目标架构可用自然语言一并给出（`arch35` / `950PR` / `A5` / `arch20` / `310P` / `310P3` / `200x` / `dav-m200` /
-SoC 编号皆可）；来源架构由代码分析自动识别，无需指定。
+目标架构可用自然语言一并给出（芯片型号 / SoC 编号 / archXX / arch-token / 产品系列皆可，芯片概念按
+cannbot-skills `ops/npu-arch` 的 references/npu-hardware-params.md §0 产品映射表解析）；来源架构由代码分析自动识别，无需指定。
 
 ## 你要做的（三步）
 
-1. **归一目标**：把自然语言目标归一为 canonical target（arch35/950PR/A5/V300 → `a5`；
-   arch22/910C/A3/V220 → `a3`；arch20/310P/310P3/200x/dav-m200/Atlas 300I Duo → `310p`）。只归一目标，
-   不猜引擎路径。目标写入 `engine/workspace/.ascendc_env` 的 `TARGET=`：`a5` 用 `A5_*` 键；
-   `310p`（下移植，fuse chip、无 bf16/fp64 硬件，见 `kb/hardware/target/ascend310p.md`）用
-   `ASCEND310P_*` 键（如 `CONTAINER=local`、`SOC_VERSION=Ascend310P3`），**不得**沿用 A5_* 键。
+1. **归一目标**：芯片写法按 cannbot-skills `ops/npu-arch` 的 references/npu-hardware-params.md §0
+   产品映射表解析到 NpuArch，再归一为 canonical target：`DAV_2201→a3`、`DAV_3510→a5`、
+   `DAV_2002→310p`、`DAV_3002→310b`。这些映射只统一名称；目标是否受支持由引擎 `PORT_DESTINATIONS` 判定。
+   服务器/板卡代号 `910C/V220→a3`、`V300→a5`、`Atlas 300I Duo/200x→310p`、`300x→310b` 为插件语境别名。
+   只归一目标，不猜引擎路径。目标写入 `engine/workspace/.ascendc_env` 的 `TARGET=`：`a5` 用 `A5_*` 键；
+   `310p` 用 `ASCEND310P_*` 键（如 `CONTAINER=local`、`SOC_VERSION=Ascend310P3`）；
+   `310b` 用 `ASCEND310B_*` 键（如 `HOST=<310B 板 IP>`、
+   `CONTAINER=local`、`SOC_VERSION=Ascend310B1`），**不得**沿用 A5_* 键。
 
 2. **启动引擎**（`--port-a3-ops` mode，op 名自动取来源目录 basename）：
 

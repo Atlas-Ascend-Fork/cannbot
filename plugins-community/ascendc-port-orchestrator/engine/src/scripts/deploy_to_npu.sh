@@ -291,6 +291,13 @@ case "$_DEPLOY_TARGET" in
         DEPLOY_STAGE_HOST=${ASCEND310P_DEPLOY_STAGE_HOST:-/tmp}/${DEPLOY_STAGE_DIR}
         DEPLOY_STAGE_CONTAINER=${ASCEND310P_DEPLOY_STAGE_CONTAINER:-/tmp}/${DEPLOY_STAGE_DIR}
         ;;
+    310b)
+        # 310B: remote bare-metal deploy (board host, no docker) — host and
+        # container stage paths are the same host-direct path; override via
+        # ASCEND310B_DEPLOY_STAGE_HOST/_CONTAINER.
+        DEPLOY_STAGE_HOST=${ASCEND310B_DEPLOY_STAGE_HOST:-/tmp}/${DEPLOY_STAGE_DIR}
+        DEPLOY_STAGE_CONTAINER=${ASCEND310B_DEPLOY_STAGE_CONTAINER:-/tmp}/${DEPLOY_STAGE_DIR}
+        ;;
     *)
         echo "ERROR: unknown TARGET='$TARGET' for deploy_to_npu.sh" >&2
         exit 2
@@ -325,6 +332,7 @@ fi
 # resolve_target.sh / deploy_to_npu_lane.sh).
 case "$TARGET" in
     310p) _TDS_VAR="ASCEND310P_DOCKER_SUDO" ;;
+    310b) _TDS_VAR="ASCEND310B_DOCKER_SUDO" ;;
     *)    _TDS_VAR="${TARGET^^}_DOCKER_SUDO"
           _TDS_VAR="${_TDS_VAR//[^A-Z0-9_]/_}" ;;
 esac
@@ -345,6 +353,16 @@ _wrap_sudo() {  # $1 = remote command string; echoes wrapped-or-unchanged
 if [ ! -d "$LOCAL_TASK" ] || [ -z "$(ls -A "$LOCAL_TASK" 2>/dev/null)" ]; then
     echo "ERROR: $LOCAL_TASK is empty. Write files first." >&2
     exit 2
+fi
+
+# ─── Container-execution prefix (_DEXEC) ─────────────────────
+# CONTAINER=local on a remote host is remote bare-metal, so remote commands
+# run host-direct over SSH with an empty prefix — the ${_DEXEC:+$_DEXEC }
+# form below simply drops the wrapper.
+if [ "$CONTAINER" = "local" ]; then
+    _DEXEC=""
+else
+    _DEXEC="docker exec $CONTAINER"
 fi
 
 # ─── Local-mode fast path (A2 CONTAINER=local, no SSH/SCP/docker) ────
@@ -513,7 +531,7 @@ run_with_retry() {
 
 # ─── Pipeline steps ───────────────────────────────────────────────────
 echo "[deploy/$TARGET] Cleaning $HOST:$REMOTE_TASK/ ..."
-run_with_retry "ssh clean" "${SSH_CMD[@]}" "$(_wrap_sudo "docker exec $CONTAINER bash -c 'mkdir -p \"$REMOTE_TASK\" && find \"$REMOTE_TASK\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'")"
+run_with_retry "ssh clean" "${SSH_CMD[@]}" "$(_wrap_sudo "${_DEXEC:+$_DEXEC }bash -c 'mkdir -p \"$REMOTE_TASK\" && find \"$REMOTE_TASK\" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'")"
 rc=$?
 [ $rc -eq 10 ] && exit 10
 [ $rc -ne 0 ] && { echo "ERROR: clean step failed (non-infra)" >&2; exit 1; }
@@ -545,14 +563,14 @@ rc=$?
 [ $rc -ne 0 ] && { echo "ERROR: upload step failed (non-infra)" >&2; exit 1; }
 
 echo "[deploy/$TARGET] Extracting $TAR_NAME in $CONTAINER from $DEPLOY_STAGE_CONTAINER/ ..."
-run_with_retry "ssh extract" "${SSH_CMD[@]}" "$(_wrap_sudo "docker exec $CONTAINER bash -c 'mkdir -p $REMOTE_TASK && cd $REMOTE_TASK && tar xzf $DEPLOY_STAGE_CONTAINER/$TAR_NAME && rm -f $DEPLOY_STAGE_CONTAINER/$TAR_NAME'")"
+run_with_retry "ssh extract" "${SSH_CMD[@]}" "$(_wrap_sudo "${_DEXEC:+$_DEXEC }bash -c 'mkdir -p $REMOTE_TASK && cd $REMOTE_TASK && tar xzf $DEPLOY_STAGE_CONTAINER/$TAR_NAME && rm -f $DEPLOY_STAGE_CONTAINER/$TAR_NAME'")"
 rc=$?
 [ $rc -eq 10 ] && exit 10
 [ $rc -ne 0 ] && { echo "ERROR: extract step failed (non-infra)" >&2; exit 1; }
 
 # Verify file counts
 LOCAL_COUNT=$(find "$LOCAL_TASK" -type f | grep -v __pycache__ | grep -v '.pyc' | wc -l)
-REMOTE_COUNT=$("${SSH_CMD[@]}" "$(_wrap_sudo "docker exec $CONTAINER bash -c 'find $REMOTE_TASK -type f | grep -v __pycache__ | grep -v .pyc | grep -v build | wc -l'")" 2>/dev/null)
+REMOTE_COUNT=$("${SSH_CMD[@]}" "$(_wrap_sudo "${_DEXEC:+$_DEXEC }bash -c 'find $REMOTE_TASK -type f | grep -v __pycache__ | grep -v .pyc | grep -v build | wc -l'")" 2>/dev/null)
 echo "[deploy/$TARGET] Verify: local=$LOCAL_COUNT files, remote=$REMOTE_COUNT files"
 if [ "$LOCAL_COUNT" != "$REMOTE_COUNT" ]; then
     echo "WARNING: file count mismatch! Check for stale files." >&2
@@ -587,15 +605,22 @@ if [ "${1-}" = "--build" ]; then
     _DEBT197_STAGE="/tmp/_debt197_stage_$$"
     for _DEBT197_PIECE in build_ascendc.py build_capabilities cann_stubs; do
         _DEBT197_SRC="$SCRIPT_DIR/patches/$_DEBT197_PIECE"
-        # Idempotent: skip pieces already present in the container.
-        if "${SSH_CMD[@]}" "$(_wrap_sudo "docker exec $CONTAINER test -e $_DEBT197_BUILD_ROOT/utils/$_DEBT197_PIECE")" >/dev/null 2>&1; then
+        # Idempotent: skip pieces already present (host-direct via _DEXEC).
+        if "${SSH_CMD[@]}" "$(_wrap_sudo "${_DEXEC:+$_DEXEC }test -e $_DEBT197_BUILD_ROOT/utils/$_DEBT197_PIECE")" >/dev/null 2>&1; then
             continue
         fi
         # Nothing bundled to provision → fall through to the normal build error (fail-soft).
         [ -e "$_DEBT197_SRC" ] || continue
+        # Install leg: docker targets docker-cp; bare-metal scp already
+        # landed on the host, so a host-direct cp -r installs it.
+        if [ -n "$_DEXEC" ]; then
+            _DEBT197_INSTALL_CMD="docker exec $CONTAINER mkdir -p $_DEBT197_BUILD_ROOT/utils && docker cp $_DEBT197_STAGE/$_DEBT197_PIECE $CONTAINER:$_DEBT197_BUILD_ROOT/utils/$_DEBT197_PIECE && rm -rf $_DEBT197_STAGE/$_DEBT197_PIECE"
+        else
+            _DEBT197_INSTALL_CMD="mkdir -p $_DEBT197_BUILD_ROOT/utils && cp -r $_DEBT197_STAGE/$_DEBT197_PIECE $_DEBT197_BUILD_ROOT/utils/ && rm -rf $_DEBT197_STAGE/$_DEBT197_PIECE"
+        fi
         "${SSH_CMD[@]}" "mkdir -p $_DEBT197_STAGE" >/dev/null 2>&1 \
           && "${SCP_CMD[@]}" -r "$_DEBT197_SRC" "$USER@$HOST:$_DEBT197_STAGE/$_DEBT197_PIECE" >/dev/null 2>&1 \
-          && "${SSH_CMD[@]}" "$(_wrap_sudo "docker exec $CONTAINER mkdir -p $_DEBT197_BUILD_ROOT/utils && docker cp $_DEBT197_STAGE/$_DEBT197_PIECE $CONTAINER:$_DEBT197_BUILD_ROOT/utils/$_DEBT197_PIECE && rm -rf $_DEBT197_STAGE/$_DEBT197_PIECE")" >/dev/null 2>&1 \
+          && "${SSH_CMD[@]}" "$(_wrap_sudo "$_DEBT197_INSTALL_CMD")" >/dev/null 2>&1 \
           && echo "[deploy/$TARGET] DEBT-197 self-heal: provisioned bundle $_DEBT197_PIECE into $CONTAINER:$_DEBT197_BUILD_ROOT/utils/"
     done
     "${SSH_CMD[@]}" "rm -rf $_DEBT197_STAGE" >/dev/null 2>&1 || true
@@ -609,7 +634,7 @@ if [ "${1-}" = "--build" ]; then
         cd ${BENCHMARK_ROOT:-/root/AscendOpGenAgent} && \
         python3 utils/build_ascendc.py current_task -v $SOC_VERSION --build-type Release"
 
-    run_with_retry "build" "${SSH_CMD[@]}" "$(_wrap_sudo "docker exec $CONTAINER bash -c '$BUILD_CMD'")"
+    run_with_retry "build" "${SSH_CMD[@]}" "$(_wrap_sudo "${_DEXEC:+$_DEXEC }bash -c '$BUILD_CMD'")"
     rc=$?
 
     # ─── Archive build artifacts (GEPA design §15.2) ──────────────────
@@ -715,7 +740,7 @@ META_REMOTE" 2>/dev/null
         exit 1
     fi
 
-    SO_CHECK=$("${SSH_CMD[@]}" "$(_wrap_sudo "docker exec $CONTAINER bash -c 'ls $REMOTE_TASK/kernel/build/*.so 2>/dev/null | wc -l'")" 2>/dev/null)
+    SO_CHECK=$("${SSH_CMD[@]}" "$(_wrap_sudo "${_DEXEC:+$_DEXEC }bash -c 'ls $REMOTE_TASK/kernel/build/*.so 2>/dev/null | wc -l'")" 2>/dev/null)
     if [ "$SO_CHECK" = "0" ]; then
         echo "ERROR: Build returned OK but no .so produced." >&2
         echo "compile" > "$CLASS_MARKER"

@@ -618,6 +618,38 @@ def run_single_op(
     else:
         log.info(f"phase O0: {o0.summary}")
 
+    # O0 target-toolchain probe for a 310b destination: the board is a remote
+    # bare-metal target, so the compiler fingerprint, the arch-token dispatch
+    # (accept + reject controls) and the npu-smi identity are probed ON THE
+    # BOARD over SSH — any gap blocks the run here (fail-closed).
+    try:
+        from briefs._common import load_env as _load_env_probe
+        _probe_target_name = _load_env_probe().target
+    except Exception:
+        _probe_target_name = "a5"
+    from a5_target_capability import canonical_target_id as _canonical_target_id
+    if _canonical_target_id(_probe_target_name) == "310b":
+        try:
+            from a5_target_transport import _resolve_target
+            from npubench.npubench_target_toolchain import probe_310b_target_toolchain
+            _310b_probe = probe_310b_target_toolchain(_resolve_target(workspace, lane))
+            events.emit(workspace, "orchestrator.phase_o0_310b_probe", lane=lane,
+                        data=_310b_probe)
+            log.info(
+                "phase O0 310b probe: %s transport host=%s chip_seen=%s "
+                "observed_soc=%s arch_token=%s bisheng_sha256=%s..." % (
+                    _310b_probe.get("probe"), _310b_probe.get("host"),
+                    _310b_probe.get("chip_seen"), _310b_probe.get("observed_soc"),
+                    (_310b_probe.get("arch_token_accept") or {}).get("token"),
+                    str(_310b_probe.get("bisheng_sha256"))[:16],
+                )
+            )
+        except Exception as exc:
+            print(f"[phase O0] 310B target-toolchain probe FAILED: {exc}")
+            events.emit(workspace, "orchestrator.phase_o0_310b_probe", lane=lane,
+                        data={"status": "ERROR", "reason": str(exc)[:1024]})
+            return 8  # same fail-closed exit as the O0 infra gate
+
     # Phase O0.5 persists the mode seeded by the scoped entry command.  The
     # environment selects the target host only; it cannot switch the customer mode
     # or opt into another kernel-authoring backend.

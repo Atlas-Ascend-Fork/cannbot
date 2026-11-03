@@ -37,6 +37,7 @@ _ASCEND_910_RE = re.compile(
     r"^(?:ascend)?910(?:(?:[abc][a-z0-9]*)|(?:[_-][a-z0-9]+))*$"
 )
 _ASCEND_310P_RE = re.compile(r"^(?:ascend)?310p[a-z0-9]*$")
+_ASCEND_310B_RE = re.compile(r"^(?:ascend)?310b[1-4]?$")
 _NPU_SMI_DEVICE_RE = re.compile(
     r"^\|\s*(\d+)\s+\|?\s*([^|:]*[A-Za-z][^|:]*)\|"
 )
@@ -115,6 +116,11 @@ def soc_product_family(value: object) -> str | None:
     # token of the Name column, which on the 6x310P3 box is "310P3").
     if is_supported_310p_soc(value):
         return "ascend310p"
+    # 310b family; distinct from ascend310p — the configured-vs-observed
+    # family comparison must not collapse the two buckets (a 310P SoC seen
+    # on a configured-310B run is a wrong-box signal).
+    if is_supported_310b_soc(value):
+        return "ascend310b"
     return None
 
 
@@ -172,15 +178,15 @@ def _target_id(value: object) -> str:
     return lowered
 
 
-# Canonical arch-generation token per DESTINATION target (a5_ops KB naming:
-# AICORE 220→"arch22", 3510→"arch35", 200/DAV_2002/dav-m200→"arch20").
+# Canonical arch-generation token per DESTINATION target.
 # Destination-derived only — a3/a2 are port SOURCES and never appear as a
 # written state's target_arch.  ``arch_for_target`` keeps unknown/legacy
 # spellings byte-identical with the historical "arch35" metadata, so only
-# 310p destinations change what gets persisted.
+# 310p/310b destinations change what gets persisted.
 ARCH_BY_TARGET = {
     "a5": "arch35",
     "310p": "arch20",
+    "310b": "arch30",
 }
 
 
@@ -210,6 +216,15 @@ def is_destination_target_name(value: object) -> bool:
     return _target_id(value) in ARCH_BY_TARGET
 
 
+def canonical_target_id(value: object) -> str:
+    """Public spelling normalizer: id ("310b") or env prefix ("ASCEND310B") → id.
+
+    Single source of truth (TARGET_ENV_PREFIXES) — cross-module seams call
+    this instead of re-implementing the lookup.
+    """
+    return _target_id(value)
+
+
 def is_supported_310p_soc(value: object) -> bool:
     """Return whether *value* names the Ascend310P family (310P / 310P3 / ...).
 
@@ -219,6 +234,17 @@ def is_supported_310p_soc(value: object) -> bool:
     """
     normalized = _normalized_soc(value)
     return normalized is not None and _ASCEND_310P_RE.fullmatch(normalized) is not None
+
+
+def is_supported_310b_soc(value: object) -> bool:
+    """Return whether *value* names the Ascend310B family (310B / 310B1-B4).
+
+    Fail-closed like :func:`is_supported_310p_soc`: only the 310B product
+    family opens 310b validation — not a 310P-family SoC, not a module SKU
+    (SOC_VERSION must carry what npu-smi reports).
+    """
+    normalized = _normalized_soc(value)
+    return normalized is not None and _ASCEND_310B_RE.fullmatch(normalized) is not None
 
 
 # ``npu-smi info -m`` mapping-table row (multi-chip npu-smi generations, e.g.
@@ -280,31 +306,49 @@ def is_limited_soc(value: object, target: str = "a5") -> bool:
     a5: the legacy allowlist semantics (only explicitly recognized Ascend950
     SoCs open validation; 910/unknown stay limited).
     310p: only the Ascend310P family opens validation; anything else is limited.
+    310b: only the Ascend310B family opens validation; anything else is limited.
     """
-    if _target_id(target) == "310p":
+    tid = _target_id(target)
+    if tid == "310p":
         return not is_supported_310p_soc(value)
+    if tid == "310b":
+        return not is_supported_310b_soc(value)
     return is_limited_a5_soc(value)
 
 
 def is_known_soc_for_target(value: object, target: str) -> bool:
     """Target-parametric "recognized at all" check (limited + known-or-limited).
 
-    310p: the Ascend310P family. a5: the legacy 910/950 known set. Unknown
-    targets fall back to the a5 set — callers treat them as limited anyway.
+    310p: the Ascend310P family. 310b: the Ascend310B family. a5: the legacy
+    910/950 known set. Unknown targets fall back to the a5 set — callers
+    treat them as limited anyway.
     """
-    if _target_id(target) == "310p":
+    tid = _target_id(target)
+    if tid == "310p":
         return is_supported_310p_soc(value)
+    if tid == "310b":
+        return is_supported_310b_soc(value)
     return is_known_a5_soc(value)
 
 
 def limited_target_validation_error(soc: str, target: str = "a5") -> str:
     """Target-parametric terminal error for a limited SoC at the O5 gate."""
     display = soc if isinstance(soc, str) and soc else "<unset>"
-    if _target_id(target) == "310p":
+    tid = _target_id(target)
+    if tid == "310p":
         return (
             "310P_SOC_UNSUPPORTED_FOR_VALIDATION: direct-launch 310p validation "
             "requires an explicitly recognized Ascend310P-family SoC (e.g. "
             "Ascend310P3); configured SoC %s is missing, unknown, or malformed" % display
+        )
+    if tid == "310b":
+        return (
+            "310B_SOC_UNSUPPORTED_FOR_VALIDATION: direct-launch 310b "
+            "validation requires an explicitly recognized Ascend310B-family "
+            "SoC from npu-smi (e.g. Ascend310B1); configured SoC %s is "
+            "missing, unknown, or malformed (do NOT copy the module-SKU "
+            "spelling from sample docs — see cannbot-knowledge "
+            "target_ascend310b.md)" % display
         )
     return limited_a5_validation_error(soc)
 
@@ -318,6 +362,14 @@ def limited_target_warning(soc: str, target: str = "a5") -> str:
             "Direct-launch 310p validation will stop closed; configure a "
             "recognized Ascend310P-family SoC (e.g. ASCEND310P_SOC_VERSION="
             "Ascend310P3) for acceptance validation." % display
+        )
+    if _target_id(target) == "310b":
+        display = soc if isinstance(soc, str) and soc else "<unset>"
+        return (
+            "WARNING: 310b target SoC %s is missing, unknown, or malformed. "
+            "Direct-launch 310b validation will stop closed; configure the "
+            "npu-smi-reported Ascend310B-family SoC (e.g. "
+            "ASCEND310B_SOC_VERSION=Ascend310B1) for acceptance validation." % display
         )
     return limited_a5_warning(soc)
 

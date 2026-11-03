@@ -502,5 +502,68 @@ def test_non_multirank_port_a3_still_requires_binding(monkeypatch, tmp_path):
         getattr(agent_dispatch, "_resolve_dispatch_config")(ws, _Env())
 
 
+@pytest.mark.skipif(
+    graybox_sandbox.isolation_backend() != "bwrap",
+    reason="real-child graybox coverage requires bwrap",
+)
+def test_external_kb_query_governance_inputs_visible_in_real_graybox(
+    monkeypatch, tmp_path
+):
+    """Governed discover and 310b DataCopy search need every stale-check input."""
+    from briefs import external_kb
+
+    kb_root = tmp_path / "external-kb"
+    required = [
+        kb_root / "governance" / "schemas" / "registries.yaml",
+        kb_root / "governance" / "schemas" / "profiles.yaml",
+        kb_root / "governance" / "schemas" / "frontmatter.schema.json",
+        kb_root / "governance" / "contracts" / "knowledge.py",
+    ]
+    for path in required:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# governed fixture\n")
+    knowledge = kb_root / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "index.md").write_text("okf_version: '0.2'\n")
+    index = kb_root / "artifacts" / "indexes" / "knowledge.sqlite3"
+    index.parent.mkdir(parents=True)
+    index.write_bytes(b"governed index fixture")
+
+    monkeypatch.setattr(external_kb, "external_kb_root", lambda: kb_root)
+    monkeypatch.setattr(external_kb, "external_knowledge_dir", lambda: knowledge)
+    monkeypatch.setattr(external_kb, "external_index_file", lambda: index)
+    retained_runtime = []
+    original_cleanup = graybox_sandbox.cleanup_staged_plugin_runtimes
+    monkeypatch.setattr(
+        graybox_sandbox,
+        "cleanup_staged_plugin_runtimes",
+        lambda allow_ro, **_kwargs: retained_runtime.append(allow_ro),
+    )
+    captured, _workspace = _drive_dispatch(
+        monkeypatch,
+        tmp_path,
+        state_json='{"opgen_mode": "port_a3_to_a5", "graybox_sandbox": true}',
+    )
+    try:
+        prefix = captured["sandbox_prefix"]
+        for path in [knowledge, index, *required[:3], kb_root / "governance" / "contracts"]:
+            assert any(
+                prefix[offset:offset + 3] == ["--ro-bind", str(path), str(path)]
+                for offset in range(len(prefix) - 2)
+            ), path
+
+        probe = "set -eu; " + "; ".join(f"test -f {path}" for path in required)
+        completed = subprocess.run(
+            [*prefix, "/bin/sh", "-c", probe],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        assert completed.returncode == 0, completed.stderr
+    finally:
+        original_cleanup(retained_runtime[0])
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

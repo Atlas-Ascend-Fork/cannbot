@@ -248,6 +248,33 @@ def test_plan_has_no_cold_start_or_reference_side_effects(
     assert calls == []
 
 
+def test_310b_npubench_dtype_policy_uses_cli_dispatch(tmp_path, monkeypatch, capsys):
+    _write_ascendc_env(
+        tmp_path,
+        monkeypatch,
+        (
+            "TARGET=310b",
+            "ASCEND310B_CONTAINER=local",
+            "ASCEND310B_CANN_PATH=/opt/cann",
+            "ASCEND310B_SOC_VERSION=Ascend310B1",
+            "LOCAL_PROJECT=/tmp/project",
+        ),
+    )
+    op_dir = _op_dir(tmp_path, source="arch22")
+    task_root, task, _task_bytes, _sidecar_bytes = _npubench_task(tmp_path)
+    engine, calls = _fake_engine(tmp_path)
+    monkeypatch.setattr(commands, "_orch", lambda: engine)
+
+    task.with_suffix(".json").write_text('{"inputs": [{"dtype": "bfloat16"}]}\n')
+    assert _run_port_a3_npubench(op_dir, task, task_root, plan_only=True) == 2
+    assert "Ascend310B" in capsys.readouterr().out
+    assert calls == []
+
+    task.with_suffix(".json").write_text('{"inputs": [{"dtype": "float32"}]}\n')
+    assert _run_port_a3_npubench(op_dir, task, task_root, plan_only=True) == 0
+    assert calls == []
+
+
 def test_bare_port_a3_requires_explicit_reference_source(
     tmp_path, monkeypatch, a5_only_env, capsys
 ):

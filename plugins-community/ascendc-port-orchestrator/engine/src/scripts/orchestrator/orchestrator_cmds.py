@@ -1073,10 +1073,11 @@ def _staged_reference_endpoint(env, reference_source: str) -> tuple[bool, str]:
     """npubench staged-golden gate: a build/verify endpoint must exist for the
     ACTIVE destination.
 
-    The predicate is PORT_DESTINATIONS membership (a5 | 310p), NOT an "a5"
-    string prefix: ``env.host`` / ``env.container`` are already prefix-resolved
-    at load time (TARGET=310p → ASCEND310P_HOST / ASCEND310P_CONTAINER), so a
-    310p port with ASCEND310P_CONTAINER=local is an explicit local endpoint
+    The predicate is PORT_DESTINATIONS membership (a5 | 310p | 310b), NOT an
+    "a5" string prefix: ``env.host`` / ``env.container`` are already
+    prefix-resolved at load time (TARGET=310p → ASCEND310P_HOST /
+    ASCEND310P_CONTAINER, TARGET=310b → ASCEND310B_*), so a 310p/310b port
+    with <PREFIX>_CONTAINER=local is an explicit local endpoint
     exactly like A5_CONTAINER=local. Fail-closed semantics are unchanged: a
     destination with neither a host nor an explicit local container is rejected.
     The non-npubench (a3_live) branch keeps its legacy separate-host guard.
@@ -1339,27 +1340,33 @@ def _cmd_port_a3(
     if extra_lanes and resolved_reference_source != NPUBENCH:
         print("ERROR: --extra-lane is supported only with --reference-source npubench")
         return 2
-    # Target dtype policy at reference-binding time (fail-closed):
-    # Ascend310P has no bf16 hardware — a bfloat16-bearing frozen sidecar must
-    # stop HERE with an actionable reason, not surface 5 worker-spawns later
-    # as an inscrutable compile/precision failure on the 310P box.
+    # Target dtype policy at reference-binding time (fail-closed): neither
+    # 310P nor 310B declares bf16 capability, so a bfloat16-bearing sidecar
+    # stops HERE with an actionable reason (until the 310b knowledge card's
+    # capability matrix says otherwise).
     _dest_target = (env.target or "").strip().lower()
     if _dest_target.endswith("-ds"):
         _dest_target = _dest_target[:-3]
-    if npubench_args is not None and _dest_target == "310p":
+    if npubench_args is not None and _dest_target in {"310p", "310b"}:
         from npubench.npubench_inputs import assert_sidecar_dtype_supported
 
+        _bf16_reason = (
+            "Ascend310P (dav-m200) has no bf16 hardware (kb ascend310p.md). "
+            "Use an fp16/fp32 task or a different destination."
+            if _dest_target == "310p"
+            else "Ascend310B (dav-m300) has no bf16 capability declared "
+            "(kb ascend310b.md). Use an fp16/fp32 task or a different destination."
+        )
         try:
             assert_sidecar_dtype_supported(
                 npubench_args,
                 frozenset({"bfloat16"}),
-                "Ascend310P (dav-m200) has no bf16 hardware (compiler-measured; "
-                "kb ascend310p.md). Use an fp16/fp32 task or a different destination.",
+                _bf16_reason,
             )
         except Exception as exc:
             print(f"ERROR: {exc}")
             return 2
-    # Port destinations: a5 and 310p are legal build targets for
+    # Port destinations: a5, 310p and 310b are legal build targets for
     # port-a3-ops; anything else (a2/a3 — a3 is the port SOURCE) keeps the loud
     # warning. Must agree with a3_ref_common.PORT_DESTINATIONS / enforce_port_a3_target.
     from a3_ref_common import PORT_DESTINATIONS
@@ -1371,18 +1378,17 @@ def _cmd_port_a3(
             f"use the active target."
         )
     # NPUKernelBench target validation requires a validation-capable SoC on the
-    # ACTIVE destination.  Ascend910 remains useful for preflight and codegen on
-    # the a5 gate, but the final target gate is deliberately terminal for the
-    # explicit TileLang2AscendC source kind; the 310p gate accepts the
-    # Ascend310P family (full on-device validation destination).
+    # ACTIVE destination.  The final target gate is terminal for the explicit
+    # TileLang2AscendC source kind; the 310p/310b gates accept their own SoC
+    # families (full on-device validation destinations).
     if tilelang_source:
         from a5_target_capability import is_limited_soc, limited_target_warning
 
-        configured_soc = env.soc_version  # prefix-resolved (310p → ASCEND310P_*)
+        configured_soc = env.soc_version  # prefix-resolved (310p/310b → ASCEND310*_*)
         if is_limited_soc(configured_soc, env.target):
             print(limited_target_warning(configured_soc, env.target))
     # Staged external references need only the ACTIVE destination endpoint
-    # (a5 → A5_*; 310p → the prefix-resolved ASCEND310P_* block). The live-A3
+    # (a5 → A5_*; 310p/310b → the prefix-resolved ASCEND310*_* block). The live-A3
     # path retains its separate-host guard. CannBench is intentionally accepted
     # to persist an explicit unsupported-provider result without pretending an
     # evaluator exists yet.
@@ -1406,7 +1412,7 @@ def _cmd_port_a3(
 
     # Surface the plan regardless of --plan flag (cheap, informational).
     # Display must match the RUN's actual routing (env.archive_project +
-    # arch_for_target), not the historical a5 literals — a 310p run printing
+    # arch_for_target), never a5-only literals — a 310p/310b run printing
     # "arch22→arch35 / output/a3_to_a5_port/" is wrong-chip log provenance.
     from a5_target_capability import arch_for_target as _plan_arch
 
@@ -1664,9 +1670,7 @@ def _cmd_port_a3(
         "opgen_mode": "port_a3_to_a5",
         "graybox_sandbox": True,
         "source_arch": "arch35" if tilelang_source else "arch22",
-        # Destination-derived (a5→arch35, 310p→arch20): persisting a literal
-        # "arch35" here would stamp wrong-chip metadata into a 310P port's
-        # durable state and, via _inject_migration_metadata, verification.json.
+        # target_arch derives from arch_for_target(env.target); only the legacy tilelang lane pins arch35.
         "target_arch": "arch35" if tilelang_source else arch_for_target(env.target),
         "source_arch_detection": source_detection.state_payload(),
         "started_ts": _dt.datetime.now(_dt.timezone.utc)

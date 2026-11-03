@@ -54,12 +54,16 @@ _HERE = Path(__file__).resolve()
 _PLUGIN_ROOT = _HERE.parents[5]          # briefs→orchestrator→scripts→src→engine→plugin
 _PROJECT_KNOWLEDGE_ENV = Path(".cannbot") / "knowledge.env"
 
-# 插件目标名 → 知识仓 Registry 平台 ID（platform-identification.md：A5/950PR 必须
-# 归一为 `950`，不能传 `a5`）。
+# Plugin target name → knowledge-repo Registry platform id (A5/950PR must
+# normalize to `950`, never `a5`); 310p/310b each register as their own
+# platform id — a retrieval hitting the wrong platform makes the worker load
+# the wrong chip's knowledge cards.
 TARGET_TO_PLATFORM: dict[str, str] = {
     "a5": "950",
     "a3": "a3",
     "a2": "a2",
+    "310p": "310p",
+    "310b": "310b",
 }
 
 

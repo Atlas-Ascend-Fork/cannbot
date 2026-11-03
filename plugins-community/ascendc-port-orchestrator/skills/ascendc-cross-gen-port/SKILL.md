@@ -3,16 +3,17 @@ name: ascendc-cross-gen-port
 description: >
   跨代际 AscendC 算子移植入口。把一个 AscendC 算子从来源架构移植到用户指定的目标架构/产品，
   支持 arch22→arch35（如 910C/V220→950PR/V300）、arch22→arch20（如 910C→310P3/
-  Atlas 300I Duo）。用户用自然语言指定目标架构（arch35 / 950PR / A5 / arch20 / 310P / 310P3 / SoC编号 /
+  Atlas 300I Duo）、arch22→arch30。
+  用户用自然语言指定目标架构（arch35 / 950PR / A5 / arch20 / 310P / 310P3 / arch30 / 310B / SoC编号 /
   代际皆可）；来源架构由代码分析自动识别。参数包括：1） 必选。待port的arch22算子实现目录
   2) 推荐。KernelBench风格 (model.py 和test_case.json) 的算子golden与测试集合。
-  当需要把 arch22 AscendC 算子移植到 arch35 / arch20 目标芯片时使用。
+  当需要把 arch22 AscendC 算子移植到 arch35 / arch20 / arch30 目标芯片时使用。
 argument-hint: >
   必选：待移植的 arch22 算子实现目录（ops-nn 源算子目录，如 .../cann/ops-nn/activation/gelu；或
   TileLang2AscendC 工程目录 model_new_ascendc.py + kernel/）。
   推荐：KernelBench 风格 golden（算子实现 .py，如 model.py + 测试集合 test_case.json，同 stem
   JSON/JSONL sidecar）。
-  目标架构可用自然语言给出（arch35 / 950PR / A5 / arch20 / 310P / 310P3 / 200x / dav-m200），来源架构自动识别，无需指定。
+  目标架构可用自然语言给出（芯片型号 / SoC 编号 / archXX / arch-token / 产品系列皆可，芯片概念按 cannbot-skills `ops/npu-arch` 的 references/npu-hardware-params.md §0 产品映射表解析），来源架构自动识别，无需指定。
 ---
 
 # ascendc-cross-gen-port — 跨代际移植入口
@@ -70,18 +71,29 @@ argument-hint: >
 
 ## 职责（三步）
 
-1. **解析目标 + NPU 连接**：把用户自然语言目标归一为 canonical target（arch35/950PR/A5/V300→`a5`；
-   arch22/910C/A3/V220→`a3`；arch20/310P/310P3/200x/dav-m200/Atlas 300I Duo→`310p`，硬件约束见 cannbot-knowledge 的 `knowledge/common/platforms/concepts/target_ascend310p.md`）。本步只归一目标，
+1. **解析目标 + NPU 连接**：把用户自然语言目标归一为 canonical target：芯片写法（芯片型号 / SoC
+   编号 / archXX / arch-token / 产品系列）按 cannbot-skills `ops/npu-arch` 的
+   references/npu-hardware-params.md §0 产品映射表解析到 NpuArch，再归一为 canonical target：
+   `DAV_2201→a3`、`DAV_3510→a5`、`DAV_2002→310p`（硬件约束见 cannbot-knowledge 的
+   `knowledge/common/platforms/concepts/target_ascend310p.md`）、`DAV_3002→310b`（硬件约束见
+   cannbot-knowledge 的 `knowledge/common/platforms/concepts/target_ascend310b.md`）。
+   这些映射只统一名称；目标是否受支持由引擎 `PORT_DESTINATIONS` 判定。
+   服务器/板卡代号 `910C/V220→a3`、`V300→a5`、`Atlas 300I Duo/200x→310p`、`300x→310b` 为插件语境别名。
+   ⚠️ **310B 与 310P 一字母之差，NL 归一化必须显式互斥**（未知拼写维持强制回 `a5` 并大声警告）；
+   **产品号≠架构号**（如 "Atlas 200I/500 A2" 是 310B、"200x" 是 310P，逐芯片见 npu-arch
+   skill 的 references/npu-hardware-params.md §0）——勿按产品号里的数字猜架构。本步只归一目标，
    不猜测引擎路径；**来源架构由代码分析自动识别**，无需用户指定。目标写入
-   `$ENGINE_DIR/workspace/.ascendc_env` 的 `TARGET=`（`a5`/`310p`），310p 目标用 `ASCEND310P_*`
-   前缀键配置（HOST/USER/CONTAINER=local/SOC_VERSION=Ascend310P3…），**不得**沿用 A5_* 键。
+   `$ENGINE_DIR/workspace/.ascendc_env` 的 `TARGET=`（`a5`/`310p`/`310b`），310p 目标用 `ASCEND310P_*`
+   前缀键配置（HOST/USER/CONTAINER=local/SOC_VERSION=Ascend310P3…），310b 目标用 `ASCEND310B_*`
+   前缀键（如 HOST=<310B 板 IP>、CONTAINER=local、SOC_VERSION=Ascend310B1，
+   编译入口 `--cce-aicore-arch=dav-m300`），**不得**沿用 A5_* 键。
 2. **确定引擎根目录（禁止依赖 cwd 或全盘搜索）**：Skill loader 会回显
    `Base directory for this skill: <绝对路径>`。将该**原样绝对路径**替换到下方
    `<skill-base>`；插件级唯一 resolver 先读安装 manifest 中的 `engine_root`（兼容旧 manifest 的
    `hooks_settings_engine`），校验 `src/scripts/orchestrator/__main__.py`；未经过
    `init.sh` 的源树调用才回退到 `realpath(<skill-base>)/../../engine`。resolver 成功后必须检查
-   `$ENGINE_DIR/workspace/.ascendc_env` 已存在并配置目标（`TARGET=a5` 用 `A5_*` 键 或
-   `TARGET=310p` 用 `ASCEND310P_*` 键）；仅 `a3_live` 还要求来源 A3。下方启动示例把
+   `$ENGINE_DIR/workspace/.ascendc_env` 已存在并配置目标（`TARGET=a5` 用 `A5_*` 键、
+   `TARGET=310p` 用 `ASCEND310P_*` 键 或 `TARGET=310b` 用 `ASCEND310B_*` 键）；仅 `a3_live` 还要求来源 A3。下方启动示例把
    解析、检查和启动放在同一次 Bash tool call 中，shell 变量不跨调用复用。
    **不得**把 `<skill-base>` 本身当插件根、不得从当前目录猜测，也不得用 `find /`
    搜索引擎。

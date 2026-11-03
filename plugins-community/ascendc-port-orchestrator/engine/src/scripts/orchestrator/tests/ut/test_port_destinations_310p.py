@@ -32,67 +32,30 @@ These tests pin the destination-aware seams so the silent-wrong-chip class
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-import a5_target_capability as cap
-import a3_ref_common
-import finalize_pipeline  # noqa: F401 - initializes parent before dispatch re-export
-import finalize_dispatch
-
-# DEBT-47 hazard (bare-name collision): under some collection orders a
-# conftest-imported module (kb_invoke) prepends <scripts> to sys.path, so the
-# bare name ``orchestrator`` binds the PACKAGE (which re-exports nothing)
-# instead of orchestrator.py, and the enforce tests below die on
-# AttributeError when this file runs alone.  Undo a package binding and MOVE
-# the module dir to the front of sys.path — a plain ``not in sys.path`` guard
-# is useless here because the dir already sits DEEP in the list (behind
-# <scripts>), so only reordering decides which entry wins.  Import-time only,
-# so the parent conftest's per-test snapshots are unaffected; nothing in the
-# tree depends on the bare package binding (tests/conftest.py DEBT-47 note).
-
-_orch_dir = str(Path(__file__).resolve().parents[2])
-_bound = sys.modules.get("orchestrator")
-if _bound is not None and not str(getattr(_bound, "__file__", "")).endswith("orchestrator.py"):
-    del sys.modules["orchestrator"]
-if _orch_dir in sys.path:
-    sys.path.remove(_orch_dir)
-sys.path.insert(0, _orch_dir)
-
-import orchestrator as orch  # noqa: E402
-import phase_o5_runner  # noqa: E402
-from a3_ref_common import PORT_DESTINATIONS
-from briefs._common import TARGET_ENV_PREFIXES as BRIEF_PREFIXES
-from briefs._common import load_env, target_env_prefix
-from briefs.op_taxonomy import TARGET_HW_SPEC_MAP
-from npubench.npubench_inputs import (
+from _port_dst_env import (  # shared import-time header (fixup + seams live there)
+    BRIEF_PREFIXES,
     NpubenchInputError,
+    PORT_DESTINATIONS,
+    TARGET_HW_SPEC_MAP,
     assert_sidecar_dtype_supported,
+    cap,
+    load_env,
+    orch,
+    target_env_prefix,
     validate_cli_npubench_args,
+    _a5_build_cann_path,
+    _a5_build_container,
+    _a5_build_host,
+    _inject_migration_metadata,
+    _normalise_target,
+    _port_destination_prefix,
+    _seed_port_workspace,
+    _sidecar_args,
 )
-
-# These tests pin MODULE-PRIVATE seams of phase_o5_runner / finalize_dispatch
-# (the resolvers are internal by design). Naming module._attr makes the
-# checker's protected-access rule (G.CLS.11) fire per expression, so bind each
-# once here via getattr — the same convention as test_stop_gate_dispatch.py.
-# The bound objects resolve their module globals at call time, so behavior is
-# identical to attribute access.
-_port_destination_prefix = getattr(phase_o5_runner, "_port_destination_prefix")
-_normalise_target = getattr(phase_o5_runner, "_normalise_target")
-_a5_build_host = getattr(phase_o5_runner, "_a5_build_host")
-_a5_build_container = getattr(phase_o5_runner, "_a5_build_container")
-_a5_build_cann_path = getattr(phase_o5_runner, "_a5_build_cann_path")
-_inject_migration_metadata = getattr(finalize_dispatch, "_inject_migration_metadata")
-
-
-def _seed_port_workspace(tmp_path: Path) -> Path:
-    """Seed a workspace the port_a3 plugin claims (opgen_mode marker only)."""
-    (tmp_path / ".opgen_state.json").write_text(
-        json.dumps({"opgen_mode": "port_a3_to_a5"})
-    )
-    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +87,11 @@ def test_target_env_prefix_never_uppercases_310p():
 
 def test_target_env_prefix_rejects_unknown():
     with pytest.raises(ValueError):
-        target_env_prefix("310b")
+        target_env_prefix("310x")
 
 
 def test_port_destinations_contents():
-    assert PORT_DESTINATIONS == frozenset({"a5", "310p"})
+    assert PORT_DESTINATIONS == frozenset({"a5", "310p", "310b"})
     # a3 is the port SOURCE, never a destination.
     assert "a3" not in PORT_DESTINATIONS
 
@@ -234,7 +197,8 @@ def test_enforce_forces_a5_for_source_or_unknown():
     effective, warning = orch.enforce_port_a3_target("port_a3_to_a5", "a3")
     assert effective == "a5"
     assert warning
-    effective, warning = orch.enforce_port_a3_target("port_a3_to_a5", "310b")
+    # a genuinely unknown spelling must still be forced back with a warning.
+    effective, warning = orch.enforce_port_a3_target("port_a3_to_a5", "310x")
     assert effective == "a5"
     assert warning
 
@@ -279,7 +243,7 @@ def test_limited_target_validation_error_310p():
 # 4. destination-derived arch metadata
 # ---------------------------------------------------------------------------
 def test_arch_by_target_map():
-    assert cap.ARCH_BY_TARGET == {"a5": "arch35", "310p": "arch20"}
+    assert cap.ARCH_BY_TARGET == {"a5": "arch35", "310p": "arch20", "310b": "arch30"}
 
 
 def test_arch_for_target_spellings():
@@ -421,15 +385,6 @@ def test_archive_project_claim_yields_a5_namespace_only_for_a5():
 # ---------------------------------------------------------------------------
 # 6. bf16 sidecar policy (no bf16 hardware on 310P)
 # ---------------------------------------------------------------------------
-def _sidecar_args(tmp_path: Path, sidecar_text: str):
-    task = tmp_path / "task.py"
-    task.write_text("import torch\n")
-    (tmp_path / "task.json").write_text(sidecar_text)
-    args = validate_cli_npubench_args(task, tmp_path)
-    assert args is not None
-    return args
-
-
 def test_bf16_sidecar_rejected_at_binding(tmp_path):
     args = _sidecar_args(tmp_path, '{"inputs": [{"dtype": "bfloat16"}]}')
     with pytest.raises(NpubenchInputError) as excinfo:

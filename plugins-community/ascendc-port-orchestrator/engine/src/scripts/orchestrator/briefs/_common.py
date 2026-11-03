@@ -168,7 +168,11 @@ def _normalize_block_transports(targets: dict) -> None:
                 f"{prefix}_EXEC must be one of {'/'.join(EXEC_MODES)}; "
                 f"got {cfg.exec_mode!r}"
             )
-        if cfg.container.lower() == "local":
+        # Explicit remote means SSH host-direct and takes precedence over the
+        # retired CONTAINER=local marker, which legacy raw transports may carry.
+        if cfg.exec_mode == "remote":
+            cfg.container = ""
+        elif cfg.container.lower() == "local":
             # Legacy local shorthand (master-era templates/scripts write
             # A5_CONTAINER=local as the canonical local form): map it onto
             # EXEC=local with a migration nudge; EXEC stays authoritative.
@@ -390,27 +394,27 @@ class AscendCEnv:
 
     @property
     def cann_path(self) -> str:
-        return self._active().cann_path or self.target_config("a5").cann_path
+        return self._with_legacy_a5_fallback(self._active().cann_path, "cann_path")
 
     @property
     def container(self) -> str:
-        return self._active().container or self.target_config("a5").container
+        return self._with_legacy_a5_fallback(self._active().container, "container")
 
     @property
     def host(self) -> str:
-        return self._active().host or self.target_config("a5").host
+        return self._with_legacy_a5_fallback(self._active().host, "host")
 
     @property
     def password(self) -> str:
-        return self._active().password or self.target_config("a5").password
+        return self._with_legacy_a5_fallback(self._active().password, "password")
 
     @property
     def soc_version(self) -> str:
-        return self._active().soc_version or self.target_config("a5").soc_version
+        return self._with_legacy_a5_fallback(self._active().soc_version, "soc_version")
 
     @property
     def user(self) -> str:
-        return self._active().user or self.target_config("a5").user
+        return self._with_legacy_a5_fallback(self._active().user, "user")
 
     @staticmethod
     def _fold_legacy_blocks(
@@ -496,16 +500,20 @@ class AscendCEnv:
     def _active(self) -> TargetConfig:
         return self.target_config(self._target_base)
 
+    def _with_legacy_a5_fallback(self, value: str, attr: str) -> str:
+        """Keep A5 fallback exclusive to the legacy-compatible targets."""
+        if value or self._target_base not in _GENERIC_COMPAT_TARGETS:
+            return value
+        return getattr(self.target_config("a5"), attr)
 
-# Targets allowed to fall back to generic keys (SOC_VERSION/CANN_PATH) and to
-# the legacy A5_* block when their own prefix keys are absent. 310p is
-# deliberately absent: a 310p env must carry ASCEND310P_* keys — inheriting an
-# A5 environment by accident names the WRONG chip (build/verify would target
-# 950PR silicon with a 200x toolchain assumption).
+
+# Targets allowed to fall back to generic keys and the legacy A5_* block.
+# 310p/310b are deliberately absent: inheriting an A5 environment by accident
+# names the WRONG chip (authoritative rationale; see also target_env_map.py).
 _GENERIC_COMPAT_TARGETS = frozenset(("a5", "a3", "a2"))
 
 # Sentinel fallback key that can never exist in a parsed env — used to
-# suppress generic/A5 fallback for non-compat targets (310p) without
+# suppress generic/A5 fallback for non-compat targets (310p/310b) without
 # special-casing _resolve_target_first's signature.
 _NO_KEY = "__NO_SUCH_KEY__"
 
@@ -536,16 +544,19 @@ def _parse_env_kv(env_file: Path) -> "dict[str, str]":
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        # Fail loud on the legacy illegal-key spelling for 310p. Must run
-        # BEFORE the KEY regex below: "310P_*" starts with a digit, so it can
-        # never match `^([A-Z_]...)` — without this check the line is
-        # SILENTLY SKIPPED, the value disappears, and the resolver proceeds
-        # with an empty ASCEND310P_* block (the shell-side source fails on
-        # such lines, the Python side must fail equally loud).
+        # Fail loud on the digit-led 310P_/310B_ spellings BEFORE the KEY
+        # regex below — they can never match it, so without this check the
+        # value silently disappears (the shell-side source fails on such
+        # lines; the Python side fails equally loud here).
         if re.match(r"^310P_[A-Za-z0-9_]*=", line):
             raise ValueError(
                 f"LEGACY_310P_ENV_KEYS at {env_file}: '310P_*' keys are not "
                 "legal; use ASCEND310P_*"
+            )
+        if re.match(r"^310B_[A-Za-z0-9_]*=", line):
+            raise ValueError(
+                f"LEGACY_310B_ENV_KEYS at {env_file}: '310B_*' keys are not "
+                "legal; use ASCEND310B_*"
             )
         m = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", line)
         if not m:
@@ -584,16 +595,19 @@ def _resolve_env_identity(kv: "dict[str, str]") -> tuple:
         raise ValueError(
             f"OPGEN_MODE may only be port_a3_to_a5 or backward; got {env_mode!r}"
         )
-    # Archive namespace is DESTINATION-aware: a 310p port archives under its
-    # own project (a3_to_310p_port) so the a5 namespace stays the a5-destination contract — mixing destinations in one
-    # output tree makes "which chip was this ported for" unanswerable from the
+    # Archive namespace is destination-aware: a 310p/310b port archives under
+    # its own project, so mixing destinations in one output tree never makes
+    # "which chip was this ported for" unanswerable from the
     # archive layout. Must agree with a3_ref_common.PORT_DESTINATIONS and the
     # port_a3 plugin's archive_project_claim.
     _dest = (target or "").strip().lower()
     if _dest.endswith("-ds"):
         _dest = _dest[:-3]
     archive_project = {
-        "port_a3_to_a5": "a3_to_310p_port" if _dest == "310p" else "a3_to_a5_port",
+        "port_a3_to_a5": {
+            "310p": "a3_to_310p_port",
+            "310b": "a3_to_310b_port",
+        }.get(_dest, "a3_to_a5_port"),
         "backward": "backward_ops",
     }.get(kv.get("OPGEN_MODE", ""), "generated_ops")
     return target, source_arch, archive_project, _tmatch.group(1)
@@ -609,10 +623,10 @@ def _apply_generic_key_fallback(
     loud migration warning; a conflicting generic key is named and ignored
     (DEBT-227 semantics preserved). Generic keys never reach non-active
     blocks — write A<n>_* keys for those.
-    Generic keys are a legacy-compat affordance for a5/a3/a2 only — a 310p
-    block (ASCEND310P_*) must NOT inherit generic values: an empty 310p
-    field means "misconfigured", not "use whatever generic says" (naming
-    the WRONG chip — 950PR silicon with a 200x toolchain assumption)."""
+    Generic keys are a legacy-compat affordance for a5/a3/a2 only — 310p/310b
+    blocks must NOT inherit generic values: an empty field means
+    "misconfigured", not "use whatever generic says" (naming the WRONG chip —
+    950PR silicon with a 200x/300x toolchain assumption)."""
     _generic_compat = base_generation in _GENERIC_COMPAT_TARGETS
     _generic_fallback = (
         ("host", "HOST"),

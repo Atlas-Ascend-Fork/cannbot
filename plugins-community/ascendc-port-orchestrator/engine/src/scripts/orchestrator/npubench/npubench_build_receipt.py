@@ -219,6 +219,14 @@ def _classify_controlled_compile_failure(stdout: str, stderr: str) -> str:
                 return "candidate_contract"
     if re.search(r"(?m)/usr/bin/ld: |collect2: error: ld returned", diagnostics):
         return "candidate_contract"
+    # Backend aborts lack file:line diagnostics; require a candidate TU in the
+    # gmake cascade so SDK and toolchain failures remain target_build.
+    if re.search(
+        r"(?m)^\s*fatal error: error in backend:", diagnostics
+    ) and re.search(
+        r"(?m)^gmake\[\d+\]: \*\*\* \[[^\]]*/kernel/[^\]]+\] Error", diagnostics
+    ):
+        return "candidate_contract"
     return "target_build"
 
 

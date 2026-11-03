@@ -39,6 +39,96 @@ from build_capabilities.baseline_per_source_defines import (  # noqa: E402
 )
 
 
+# ---------------------------------------------------------------------------
+# 310B arch-token build path: the bisheng soc-version dispatch table has no
+# 310B entry — the only compiler entry is the dav-m300 arch token.  The CMake
+# chain derives the same token internally; SOC_VERSION stays its CMake-side
+# carrier and the runtime identity (npu-smi-reported).
+# The npu-arch skill keeps the cross-chip token register at
+# references/npu-hardware-params.md section 0 (cannbot-skills repo).
+# ---------------------------------------------------------------------------
+ASCENDC_ARCH_TOKEN_BY_TARGET = {"310b": "dav-m300"}
+
+# The CMake soc dispatch table accepts exactly these lower-case spellings;
+# anything else 310B-ish dies deep inside CMake with no hint — fail here
+# with an actionable message instead.
+_CMAKE_310B_SOC_LIST = (
+    "ascend310b1",
+    "ascend310b2",
+    "ascend310b3",
+    "ascend310b4",
+)
+
+
+class BuildPreflightError(RuntimeError):
+    """A 310B build preflight invariant failed; the build must not proceed."""
+
+
+def _is_310b_family_soc(soc_version: str) -> bool:
+    lowered = (soc_version or "").strip().lower()
+    return lowered.startswith("ascend310b") or lowered.startswith("310b")
+
+
+def _validate_310b_soc(soc_version: str) -> None:
+    """Fail closed (actionable) when a 310B SoC is outside the CMake table."""
+    lowered = (soc_version or "").strip().lower()
+    if lowered in _CMAKE_310B_SOC_LIST:
+        return
+    raise BuildPreflightError(
+        f"[build_ascendc] SOC_VERSION={soc_version!r} is not one of the CMake "
+        f"ascend310b_list spellings {_CMAKE_310B_SOC_LIST}. 310B compiles via "
+        "the arch token dav-m300 (the bisheng soc-version dispatch has no "
+        "310B); configure ASCEND310B_SOC_VERSION with the npu-smi-reported "
+        "value (e.g. Ascend310B1), not a module-SKU spelling."
+    )
+
+
+def _310b_arch_token_preflight(ascend_path: Path, soc_version: str) -> None:
+    """Direct bisheng arch-token TU probe before CMake (fail-closed).
+
+    Proves on the machine that builds (the 310B board) that bisheng accepts
+    the dav-m300 token and defines the identity macros (``-xcce`` required
+    for device-side dumps).  Identity is asserted on ``__DAV_M300__``, never
+    on the numeric ``__CCE_AICORE__`` (dav-m310 and dav-c310 both report 310).
+    """
+    token = ASCENDC_ARCH_TOKEN_BY_TARGET["310b"]
+    bisheng = ascend_path / "tools" / "bisheng_compiler" / "bin" / "bisheng"
+    if not bisheng.is_file():
+        raise BuildPreflightError(
+            f"[build_ascendc] 310B build requires {bisheng} (tools/"
+            "bisheng_compiler) under ASCEND_CANN_PACKAGE_PATH={ascend_path}"
+        )
+    probe_tu = Path(os.environ.get("TMPDIR", "/tmp")) / "build_ascendc_310b_probe.cce"
+    probe_tu.write_text("int main(){return 0;}\n", encoding="utf-8")
+    probe = subprocess.run(
+        [
+            str(bisheng),
+            f"--cce-aicore-arch={token}",
+            "-xcce",
+            "-dM",
+            "-E",
+            str(probe_tu),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    try:
+        probe_tu.unlink()
+    except OSError:
+        pass
+    if probe.returncode != 0 or "__DAV_M300__" not in (probe.stdout or ""):
+        detail = (probe.stderr or probe.stdout or "").strip().splitlines()
+        suffix = detail[-1] if detail else "no diagnostic"
+        raise BuildPreflightError(
+            f"[build_ascendc] 310B arch-token preflight FAILED for {token} "
+            f"on {bisheng}: {suffix}. The 310B compile entry is the arch "
+            "token (soc-version dispatch has no 310B); fix the CANN install "
+            f"(SOC_VERSION={soc_version})."
+        )
+
+
 def _resolve_task_dir(op: str) -> Path:
     op_path = Path(op)
     if op_path.is_dir():
@@ -394,6 +484,11 @@ def build(
     ascend_path = _detect_ascend_path()
     merged = _merge_build_contributions(kernel_dir, sources, ascend_path, soc_version)
 
+    # Fail-closed 310B preflight before CMake, with an actionable message.
+    if _is_310b_family_soc(soc_version):
+        _validate_310b_soc(soc_version)
+        _310b_arch_token_preflight(ascend_path, soc_version)
+
     if clean and build_dir.exists():
         shutil.rmtree(build_dir)
 
@@ -447,4 +542,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BuildPreflightError as error:
+        print(f"[build_ascendc] {error}", file=sys.stderr)
+        sys.exit(2)

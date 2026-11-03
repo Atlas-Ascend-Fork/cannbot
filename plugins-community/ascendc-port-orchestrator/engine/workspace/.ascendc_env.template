@@ -114,3 +114,23 @@ CANNBOT_KNOWLEDGE_ROOT=
 # NPU_INFO_CMD=/opt/site/bin/npu_info.sh
 # A5_NPU_INFO_CMD=/opt/site/bin/npu_info_a5.sh
 # A3_NPU_INFO_CMD=/opt/site/bin/npu_info_a3.sh
+
+# ─── 310B port destination (TARGET=310b) ─────────────────────────────────────
+# Ascend310B family (DAV_3002 / dav-m300 / 300x; per-chip spellings live in
+# the npu-arch skill). A different arch family from 310P (200x / dav-m200):
+# never share configs or copy spec values between the two. The prefix is
+# ASCEND310B_* (NOT 310B_* — keys starting with a digit are illegal shell
+# identifiers and are rejected at parse time). Typical shape is remote direct:
+# EXEC=remote is authoritative for parsed config; CONTAINER=local remains the
+# direct marker for legacy raw transports. A board that runs containers uses
+# EXEC=remote-container and a container name instead.
+# TARGET=310b
+# ASCEND310B_HOST=<310B board IP>
+# ASCEND310B_USER=root
+# ASCEND310B_PASSWORD=
+# ASCEND310B_EXEC=remote
+# ASCEND310B_CONTAINER=local
+# ASCEND310B_CANN_PATH=/usr/local/Ascend/cann-8.5.1
+# ASCEND310B_SOC_VERSION=Ascend310B1
+# ASCEND310B_NPU_PYTHON_BIN=/usr/bin
+# ASCEND310B_NPU_SMI_BIN=             # optional npu-smi override path; auto-detected on the board by default

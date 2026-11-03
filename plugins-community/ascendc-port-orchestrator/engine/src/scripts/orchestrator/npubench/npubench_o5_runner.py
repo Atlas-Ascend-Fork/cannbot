@@ -196,8 +196,8 @@ def _receipt_target_state(
     npubench_target = importlib.import_module("npubench.npubench_target")
     from npubench.npubench_target import (
         _probe_target_soc,
-        _resolve_cann_set_env,
         _target,
+        _target_canonical_set_env,
         _target_identity,
     )
 
@@ -217,7 +217,7 @@ def _receipt_target_state(
         try:
             current_observed_soc = _probe_target_soc(
                 current_target,
-                _resolve_cann_set_env(Path(current_target.cann_path).expanduser()),
+                _target_canonical_set_env(current_target),
             )
         except (OSError, npubench_target.TargetTransportError):
             return None
@@ -239,7 +239,7 @@ def _receipt_build_identity_matches(
     npubench_target = importlib.import_module("npubench.npubench_target")
     from npubench.npubench_target import (
         _candidate_build_identity,
-        _resolve_cann_set_env,
+        _target_canonical_set_env,
         _target_python,
     )
 
@@ -260,9 +260,9 @@ def _receipt_build_identity_matches(
         current_target,
         current_soc,
         current_observed_soc,
-        _target_python(current_target.env),
+        _target_python(current_target.env, current_target.name),
         script,
-        _resolve_cann_set_env(Path(current_target.cann_path).expanduser()),
+        _target_canonical_set_env(current_target),
         identity_schema=contract.get("identity_schema", ""),
     )
     return dict(build_identity) == expected_identity
@@ -478,13 +478,10 @@ def _controlled_build_precheck(workspace: Path, lane: int):
     limited_target_soc: str | None = None
     target_env = _read_ascendc_env(workspace)
     # Target-parametric capability stop: read the SoC through the ACTIVE
-    # target's prefix (a5 → A5_SOC_VERSION, 310p → ASCEND310P_SOC_VERSION) and
-    # judge "limited" per target family. The a5
-    # branch is byte-identical to the previous is_limited_a5_soc call; 310p is
-    # a FULL on-device validation destination (D1=A), so a recognized
-    # Ascend310P-family SoC opens precision/perf acceptance instead of
-    # stopping at the codegen smoke check.
-    target_id = _normalise_target(target_env)[1]  # env-key prefix (A5/ASCEND310P)
+    # target's prefix key and judge "limited" per target family — 310p/310b
+    # are full on-device validation destinations, so a recognized family SoC
+    # opens precision/perf acceptance.
+    target_id = _normalise_target(target_env)[1]  # env-key prefix (A5/ASCEND310P/ASCEND310B)
     target_soc = soc_version_for_target(target_env, target_id)
     if is_limited_soc(target_soc, target_id):
         # Ascend910 may compile a candidate as a code-generation smoke

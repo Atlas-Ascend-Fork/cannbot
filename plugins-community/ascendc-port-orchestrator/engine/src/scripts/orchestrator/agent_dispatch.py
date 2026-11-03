@@ -733,10 +733,13 @@ def _external_kb_governance_binds(_kb_root: Optional[Path]) -> list:
     if _kb_root is None:
         return binds
     try:
-        for _gov_name in ("registries.yaml", "profiles.yaml"):
+        for _gov_name in ("registries.yaml", "profiles.yaml", "frontmatter.schema.json"):
             _gov = _kb_root / "governance" / "schemas" / _gov_name
             if _gov.is_file():
                 binds.append(_gov)
+        _contracts = _kb_root / "governance" / "contracts"
+        if _contracts.is_dir():
+            binds.append(_contracts)
     except Exception as exc:
         logging.getLogger(__name__).debug(
             "external-kb governance bind resolution skipped: %s", exc

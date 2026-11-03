@@ -1085,11 +1085,12 @@ class PortA3Plugin(BasePlugin):
         """Destination-scoped claim on the archive project namespace.
 
         The a3_to_a5_port namespace is the A5-destination contract only. For
-        any other declared destination (310p) the env-derived target-aware
-        project in briefs._common.load_env decides (a3_to_310p_port) —
-        claiming the a5 project for a 310p port would archive the op under a
-        namespace that says "ported for A5", which is a wrong-chip record no
-        downstream consumer can detect. Returns None for non-a5 destinations.
+        any other declared destination (310p/310b) the env-derived
+        target-aware project in briefs._common.load_env decides
+        (a3_to_310p_port / a3_to_310b_port) — claiming the a5 project for a
+        310p/310b port would archive the op under a namespace that says
+        "ported for A5", which is a wrong-chip record no downstream consumer
+        can detect. Returns None for non-a5 destinations.
         """
         target = (getattr(env, "target", "a5") or "").strip().lower()
         if target.endswith("-ds"):

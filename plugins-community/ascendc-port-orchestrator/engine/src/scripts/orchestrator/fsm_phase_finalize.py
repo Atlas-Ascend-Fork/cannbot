@@ -726,7 +726,7 @@ def _promote_and_route(ctx: OrchestratorContext) -> HandlerResult:
         return static_result
     # Destination-aware archive namespace: pass the RUN's resolved
     # archive_project (briefs target-aware map — a3_to_a5_port stays for a5,
-    # a3_to_310p_port for 310p) so finalize routes
+    # a3_to_310p_port for 310p, a3_to_310b_port for 310b) so finalize routes
     # the op into the destination's own output project instead of the plugin's
     # static a5-destination default. Never read the global env file here: the
     # run context is the authority (a stale global TARGET must not re-route a

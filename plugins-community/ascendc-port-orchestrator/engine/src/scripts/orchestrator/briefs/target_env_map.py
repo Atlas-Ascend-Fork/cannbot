@@ -18,9 +18,13 @@ stdlib-only, and top-level modules already import briefs submodules
 (agent_dispatch.py imports briefs._common at module level).
 
 The map is EXPLICIT, never derived by uppercasing: "310p" must resolve to
-ASCEND310P_*, never the illegal "310P_*" shell identifier — a naive
+ASCEND310P_* and "310b" to ASCEND310B_* — never the illegal digit-led
+310P_/310B_ shell identifier spellings — a naive
 f"{target.upper()}_..." lookup always misses and silently falls back to
-A5_* (the DEBT-336 bug class).
+A5_* (the DEBT-336 bug class). 310p and 310b are DIFFERENT architecture
+families: the two configs must never be shared or copied between blocks
+(per-chip spellings: npu-arch skill, references/npu-hardware-params.md
+section 0).
 
 tests/ut/test_port_destinations_310p.py::test_prefix_map_anti_drift_between_copies
 pins both import sites to this single object.
@@ -32,4 +36,5 @@ TARGET_ENV_PREFIXES = {
     "a3": "A3",
     "a2": "A2",
     "310p": "ASCEND310P",
+    "310b": "ASCEND310B",
 }

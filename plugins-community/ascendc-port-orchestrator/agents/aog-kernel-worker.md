@@ -94,14 +94,14 @@ respect them throughout. They come from `src/scripts/resolve_target.sh` which re
 `workspace/.ascendc_env`'s active `TARGET`.
 
 ```
-TARGET={a5|a3|a2|310p}
-SOC_VERSION={Ascend950PR_9589 | Ascend910_9382 | Ascend910B3 | Ascend310P3 | …}
-PLATFORM_SIMT={true|false}     # true only for a5; false for a3/a2 (V220, no SIMT path) and 310p (dav-m200, no SIMT)
-ARCH_CODE={arch35|arch22|arch20}
-NPU_ARCH={3510|2201|2002}
-UB_PER_AIV_KB={256|192|256}
-L0C_KB={256|128|256}
-HARDWARE_REF=$CANNBOT_KNOWLEDGE_ROOT/knowledge/common/platforms/concepts/target_{ascend950pr|ascend910c|ascend910b|ascend310p}.md
+TARGET={a5|a3|a2|310p|310b}
+SOC_VERSION={Ascend950PR_9589 | Ascend910_9382 | Ascend910B3 | Ascend310P3 | Ascend310B1 | …}
+PLATFORM_SIMT={true|false}     # true only for a5; false for a3/a2 (V220, no SIMT path), 310p (dav-m200, no SIMT) and 310b (dav-m300, no SIMT)
+ARCH_CODE={arch35|arch22|arch20|arch30}
+NPU_ARCH={3510|2201|2002|3002}
+UB_PER_AIV_KB={256|192|256|248}
+L0C_KB={256|128|256|128}
+HARDWARE_REF=$CANNBOT_KNOWLEDGE_ROOT/knowledge/common/platforms/concepts/target_{ascend950pr|ascend910c|ascend910b|ascend310p|ascend310b}.md
 HOST=… USER=… PASSWORD=… CONTAINER=… CANN_PATH=…
 ```
 
@@ -115,6 +115,13 @@ HOST=… USER=… PASSWORD=… CONTAINER=… CANN_PATH=…
      won't compile — 310P/dav-m200 has no SIMT path) and **do NOT** load
      `v220-common` (those entries are V220-chip-specific quirks, not 310P).
      310P facts live in `$HARDWARE_REF` (target_ascend310p.md in cannbot-knowledge).
+   - TARGET=310b → load `all` ONLY + the 310b card. **Do NOT** load `a5-only`
+     (310B/dav-m300 has no SIMT path) and **do NOT** load `v220-common` (V220
+     chip-specific quirks, not 310B). 310B facts live in `$HARDWARE_REF`
+     (target_ascend310b.md). arch-guard checks **identity macros**
+     (`__DAV_M300__`), never `__CCE_AICORE__` numbers (values collide across
+     generations; see patches/build_ascendc.py). Kernel launch goes through
+     the **raw-ACLRT** path.
    Read the target card named by `HARDWARE_REF`; do not infer another chip's facts.
 
 2. **SIMT-rejection (when PLATFORM_SIMT=false)** — if the source you're porting OR

@@ -61,6 +61,7 @@ _DEFAULT_KB_SECTIONS_BASE: list[str] = [
 # TARGET — A3/A2 op-gen on DS env was loading A5 specs (UB size, AIV count,
 # atomics, register file all wrong for V220). DS-flagged when reviewing
 # whether ascend950pr.md could be removed.
+
 TARGET_HW_SPEC_MAP: dict[str, str] = {
     "a5": "knowledge/common/platforms/concepts/target_ascend950pr.md",  # V351 / arch35
     "a3": "knowledge/common/platforms/concepts/target_ascend910c.md",   # V220 / 910C
@@ -70,16 +71,18 @@ TARGET_HW_SPEC_MAP: dict[str, str] = {
     # marker). Falling back to the a5 page is forbidden: 950pr core counts /
     # UB / atomics describe a chip whose cube+vec share one core and which has
     # no MIX mode — a wrong page that loads cleanly is worse than a missing one.
-    "310p": "knowledge/common/platforms/concepts/target_ascend310p.md",  # Ascend310P3 — 200x / dav-m200
+    "310p": "knowledge/common/platforms/concepts/target_ascend310p.md",  # Ascend310P3
+    "310b": "knowledge/common/platforms/concepts/target_ascend310b.md",
 }
 
 
 def default_kb_sections(target: str = "a5") -> list[str]:
     """Return the default KB-manifest list for the given target chip.
 
-    target: "a5" | "a3" | "a2" | "310p" (case-insensitive). DS-env variants
-    like "a3-ds" / "a2-ds" normalize via `.rstrip("-ds")` per AscendCEnv
-    convention (DS isolation suffix doesn't change hardware family).
+    target: "a5" | "a3" | "a2" | "310p" | "310b" (case-insensitive). DS-env
+    variants like "a3-ds" / "a2-ds" normalize via `.rstrip("-ds")` per
+    AscendCEnv convention (DS isolation suffix doesn't change hardware
+    family).
 
     Falls back to A5 for unknown targets (warn-don't-error policy:
     op-gen on a brand-new chip should still proceed with the closest

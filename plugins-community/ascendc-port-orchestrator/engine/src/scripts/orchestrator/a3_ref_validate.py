@@ -1160,9 +1160,7 @@ def _write_a3_reference_runnable_json(workspace: Path, rep: O25A3Report) -> Path
     }
     try:
         state = json.loads((workspace / ".opgen_state.json").read_text())
-        # Destination-derived expectation (a5→arch35, 310p→arch20): the
-        # informational migration block must never claim arch35 for a 310P
-        # port run (wrong-chip provenance; see a5_target_capability).
+        # expected_arch comes from arch_for_target() — never assume arch35 for a non-A5 destination.
         from a5_target_capability import arch_for_target
 
         expected_arch = arch_for_target(state.get("target"))

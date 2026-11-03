@@ -40,6 +40,10 @@ _IGNORED_DIRS = {
     "install",
     "output",
 }
+# "dav_c310" is an A5/Ascend950 target-name marker; the "310" in its spelling
+# is a lettering coincidence rather than a 310-family chip — chip identity is
+# judged by the __DAV_*__ macros, and the per-chip registry lives in npu-arch
+# references/npu-hardware-params.md section 0.
 _TARGET_NAME_MARKERS = ("arch35", "ascend950", "dav_c310", "v351")
 _BINARY_SUFFIXES = {".a", ".bin", ".o", ".pyc", ".so"}
 # A frozen NPUKernelBench task is the only functional oracle.  The separately
@@ -573,8 +577,9 @@ def stage_source_tree(
     symlinks and compiled artifacts fail closed.  The durable state must point
     only at the returned snapshot, never at the original customer checkout.
     ``target_arch`` records the INTENDED destination generation in the stage
-    manifest (a5→"arch35", 310p→"arch20" — see a5_target_capability.
-    ARCH_BY_TARGET); the default keeps legacy callers byte-identical.
+    manifest (a5→"arch35", 310p→"arch20", 310b→"arch30" — see
+    a5_target_capability.ARCH_BY_TARGET); the default keeps legacy callers
+    byte-identical.
     """
     source_root = source_root.expanduser().resolve(strict=True)
     op_name = require_safe_op_name(source_root.name)

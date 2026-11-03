@@ -23,14 +23,17 @@
 #
 # Capability rules (derived, not user-editable):
 #   PLATFORM_SIMT=true    only when TARGET=a5
-#   PLATFORM_SIMT=false   for a2/a3 (V220 arch — SIMD-only) and 310p (dav-m200 — no SIMT)
+#   PLATFORM_SIMT=false   for a2/a3 (V220 arch — SIMD-only), 310p (dav-m200) and 310b (dav-m300 — no SIMT)
 #   ARCH_CODE=arch35      for a5
 #   ARCH_CODE=arch22      for a2/a3
 #   ARCH_CODE=arch20     for 310p
+#   ARCH_CODE=arch30     for 310b (300x / DAV_3002 / dav-m300)
 #   UB_PER_AIV_KB=256     for a5
 #   UB_PER_AIV_KB=192     for a2/a3
 #   UB_PER_AIV_KB=256     for 310p
 #   L0C_KB=256            for 310p
+#   UB_PER_AIV_KB=248     for 310b
+#   L0C_KB=128            for 310b
 set -e
 
 # Find .ascendc_env relative to caller's PROJECT root (LOCAL_PROJECT) or cwd
@@ -80,9 +83,9 @@ case "$TARGET" in
 esac
 
 case "$TARGET" in
-    a5|a3|a2|310p) ;;
+    a5|a3|a2|310p|310b) ;;
     *)
-        echo "resolve_target.sh: invalid TARGET='$TARGET' (must be a5|a3|a2|310p)" >&2
+        echo "resolve_target.sh: invalid TARGET='$TARGET' (must be a5|a3|a2|310p|310b)" >&2
         return 1 2>/dev/null || exit 1
         ;;
 esac
@@ -97,11 +100,21 @@ case "$(grep -cE '^310P_[A-Za-z0-9_]+=' "$ENV_FILE" 2>/dev/null)" in
        return 1 2>/dev/null || exit 1
        ;;
 esac
+# 310b env keys use the ASCEND310B_ prefix ("310B_*" starts with a digit —
+# not a legal shell identifier). Fail loud if the legacy spelling is present
+# so a silent A5_* fallback can never name the wrong chip.
+case "$(grep -cE '^310B_[A-Za-z0-9_]+=' "$ENV_FILE" 2>/dev/null)" in
+    0) ;;
+    *) echo "resolve_target.sh: LEGACY_310B_ENV_KEYS in $ENV_FILE — '310B_*' keys are not legal; use ASCEND310B_*" >&2
+       return 1 2>/dev/null || exit 1
+       ;;
+esac
 
 # Env-key prefix per target. Explicit case — never derived by tr 'a-z' 'A-Z'
 # (310p → "310P" would produce the illegal ${310P_*} expansions above).
 case "$TARGET" in
     310p) UPPER="ASCEND310P" ;;
+    310b) UPPER="ASCEND310B" ;;
     *) UPPER="$(echo "$TARGET" | tr '[:lower:]' '[:upper:]')" ;;
 esac
 
@@ -154,6 +167,17 @@ case "$TARGET" in
         UB_PER_AIV_KB=256
         L0C_KB=256
         ;;
+    310b)
+        # Ascend310B family — 300x / dav-m300, a different arch family from
+        # 310p (independent intrinsic implementation): config and spec values
+        # are never shared. The compile entry is the dav-m300 arch token (the
+        # soc-version dispatch has no 310B spelling).
+        PLATFORM_SIMT=false
+        ARCH_CODE=arch30
+        NPU_ARCH=3002
+        UB_PER_AIV_KB=248
+        L0C_KB=128
+        ;;
 esac
 
 export TARGET HOST USER PASSWORD CONTAINER CANN_PATH SOC_VERSION
@@ -179,10 +203,28 @@ if [ "$TARGET" = "310p" ]; then
             ;;
     esac
 fi
+# 310b: same rule — SoC must name the 310B family as npu-smi reports it;
+# 310P/310B are one letter apart and the families are mutually exclusive.
+if [ "$TARGET" = "310b" ]; then
+    case "$SOC_VERSION" in
+        Ascend310B|Ascend310B[1-4]) ;;
+        *)
+            echo "resolve_target.sh: TARGET_SOC_MISMATCH: TARGET=310b requires ASCEND310B_SOC_VERSION=Ascend310B or Ascend310B1-B4 (npu-smi-reported, e.g. Ascend310B1); got '$SOC_VERSION'" >&2
+            return 1 2>/dev/null || exit 1
+            ;;
+    esac
+fi
 # 310p requires an explicit CANN path (no generic CANN_PATH fallback —
 # a multi-CANN host could otherwise resolve 9.1.0-vs-8.x by accident).
 if [ "$TARGET" = "310p" ] && [ -z "$CANN_PATH" ]; then
     echo "resolve_target.sh: TARGET=310p requires ASCEND310P_CANN_PATH (no generic fallback)" >&2
+    return 1 2>/dev/null || exit 1
+fi
+# 310b requires an explicit CANN path (no generic CANN_PATH fallback — the
+# board carries multiple CANN trees with the compiler under
+# tools/bisheng_compiler; the wrong tree breaks the compile entry).
+if [ "$TARGET" = "310b" ] && [ -z "$CANN_PATH" ]; then
+    echo "resolve_target.sh: TARGET=310b requires ASCEND310B_CANN_PATH (no generic fallback)" >&2
     return 1 2>/dev/null || exit 1
 fi
 

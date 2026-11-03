@@ -48,11 +48,11 @@ _A3_CONTAINER_HOME_DEFAULT = "/home/npu_user"
 # 2026-06-05). The invariant is "the target is a supported DESTINATION", of which the
 # original `target != "a5"` test was the one-element stand-in.
 #
-# `310p` (Ascend310P3 / 200x / dav-m200): unlike a5 it
-# does NOT require an A3 reference capture or a distinct A5 build host — the port runs
-# local-mode on the 310P box (ASCEND310P_* keys; never A5_* fallback). The set is named
-# PORT_DESTINATIONS to match a5_ops.
-PORT_DESTINATIONS = frozenset({"a5", "310p"})
+# `310p` (dav-m200) and `310b` (dav-m300): neither requires an A3 reference
+# capture or a distinct build host — the port runs on the destination's own
+# box (ASCEND310P_* / ASCEND310B_* keys, never an A5_* fallback). The two
+# are DIFFERENT architecture families and never share a config block.
+PORT_DESTINATIONS = frozenset({"a5", "310p", "310b"})
 
 
 def _ascendc_env_path() -> Path:

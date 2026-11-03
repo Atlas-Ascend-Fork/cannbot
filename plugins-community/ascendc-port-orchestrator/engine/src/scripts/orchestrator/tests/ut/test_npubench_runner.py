@@ -762,19 +762,16 @@ def test_evaluate_single_lane_keeps_one_binding_for_both_reports(tmp_path: Path,
     assert report["precision"]["binding_sha256"] == report["performance"]["binding_sha256"]
 
 
-def test_archive_retained_profiles_is_durable_and_missing_profile_fails(tmp_path: Path) -> None:
-    from npubench.npubench_runner import _archive_retained_profiles, _expected_profile_dir
-    workspace = tmp_path / "workspace"
-    adapter = tmp_path / "adapter"
-    workspace.mkdir()
-    profile_root = tmp_path / "prof"
-    run_id = "run-1"
+def _stage_quick_profile_fixture(profile_root: Path, run_id: str) -> dict:
+    """Stage retained ref/asc profile dirs and return the quick-mode summary."""
+    from npubench.npubench_runner import _expected_profile_dir
+
     ref = _expected_profile_dir(profile_root, run_id, 0, "ref") / "PROF_ref"
     asc = _expected_profile_dir(profile_root, run_id, 0, "asc") / "PROF_asc"
     for raw in (ref, asc):
         raw.mkdir(parents=True)
         (raw / "task_time.csv").write_text("duration\n1\n", encoding="utf-8")
-    summary = {
+    return {
         "profiling_mode": "quick",
         "gate_eligible": True,
         "warmup": 3,
@@ -782,6 +779,16 @@ def test_archive_retained_profiles_is_durable_and_missing_profile_fails(tmp_path
         "profiler_artifacts_retained": True,
         "per_case": [{"case": 0, "ref_prof_dir": str(ref), "asc_prof_dir": str(asc)}],
     }
+
+
+def test_archive_retained_profiles_is_durable_and_missing_profile_fails(tmp_path: Path) -> None:
+    from npubench.npubench_runner import _archive_retained_profiles
+    workspace = tmp_path / "workspace"
+    adapter = tmp_path / "adapter"
+    workspace.mkdir()
+    profile_root = tmp_path / "prof"
+    run_id = "run-1"
+    summary = _stage_quick_profile_fixture(profile_root, run_id)
 
     relative, digest = _archive_retained_profiles(
         workspace,
@@ -806,6 +813,41 @@ def test_archive_retained_profiles_is_durable_and_missing_profile_fails(tmp_path
             profile_root=profile_root,
             source_profile_root=profile_root,
         )
+
+
+def test_archive_retained_profiles_accepts_relative_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A target runner invoked with ``--workspace .`` must still archive.
+
+    The board runner runs with the staged root as cwd; the
+    publication-relative path must be computed against the resolved
+    workspace, never via a raw relative_to on Path(".").
+    """
+    from npubench.npubench_runner import _archive_retained_profiles
+
+    workspace = tmp_path / "workspace"
+    adapter = tmp_path / "adapter"
+    workspace.mkdir()
+    profile_root = tmp_path / "prof"
+    run_id = "run-rel"
+    summary = _stage_quick_profile_fixture(profile_root, run_id)
+
+    monkeypatch.chdir(workspace)
+    relative, digest = _archive_retained_profiles(
+        Path("."),
+        adapter,
+        run_id,
+        summary,
+        expected_valid_case_indices=[0],
+        profile_root=profile_root,
+        source_profile_root=profile_root,
+    )
+
+    assert relative == f"{runner.EVIDENCE_DIRNAME}/profiles/{run_id}"
+    archive = workspace / relative
+    assert archive.is_dir()
+    assert runner.profile_tree_sha256(archive) == digest
 
 
 def test_strict_performance_rejects_unpinned_custom_profiler(tmp_path: Path, monkeypatch) -> None:

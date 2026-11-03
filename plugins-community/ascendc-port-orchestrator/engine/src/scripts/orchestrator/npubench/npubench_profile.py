@@ -343,7 +343,10 @@ def _archive_retained_profiles(
         os.replace(incoming, destination)
         _make_tree_read_only(destination)
         digest = profile_tree_sha256(destination)
-        relative = destination.relative_to(Path(workspace)).as_posix()
+        # Compare in one resolved frame: a target runner invoked with a
+        # relative workspace and its working directory at the staged root
+        # would otherwise reject mixed path forms.
+        relative = destination.relative_to(Path(workspace).resolve()).as_posix()
         return relative, digest
     finally:
         if incoming.exists():

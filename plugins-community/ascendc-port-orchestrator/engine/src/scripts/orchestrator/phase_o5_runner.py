@@ -62,6 +62,7 @@ from typing import Optional
 
 from phase_o5 import MeasuredResult
 from lane_health import resolve_healthy_device
+from a5_target_transport import host_direct_mode, is_local_host
 
 
 _HERE = Path(__file__).resolve()
@@ -109,7 +110,7 @@ def _port_destination_prefix(target_prefix: str) -> bool:
     """True when the env-key PREFIX names a port DESTINATION chip.
 
     `target` arrives at the `_a5_build_*` resolvers as the PREFIX from
-    `_normalise_target` (A5 / A3 / A2 / ASCEND310P). Membership is decided
+    `_normalise_target` (A5 / A3 / A2 / ASCEND310P / ASCEND310B). Membership is decided
     against `a3_ref_common.PORT_DESTINATIONS` through the canonical prefix map,
     so this predicate and `orchestrator.enforce_port_a3_target` can never
     disagree (the guard admits a destination ⇔ the resolver follows it).
@@ -121,8 +122,9 @@ def _port_destination_prefix(target_prefix: str) -> bool:
 
 def _a5_build_host(env: dict, workspace: Path, target: str) -> str:
     """Port build/verify host. In port_a3 mode the build site belongs to the
-    DESTINATION chip: a destination target reads its own keys (for 310p that is
-    ASCEND310P_HOST — NEVER an A5_* fallback, the silent-wrong-chip class), and
+    DESTINATION chip: a destination target reads its own keys (for 310p/310b
+    that is ASCEND310P_HOST / ASCEND310B_HOST — NEVER an A5_* fallback, the
+    silent-wrong-chip class), and
     the split A3-ref-host / A5-build-host case (TARGET=a3 agent, the port's
     SOURCE) keeps the explicit A5_HOST precedence from task#24-item2. Outside
     port_a3 the legacy `{target}_HOST or A5_HOST` is byte-identical."""
@@ -172,8 +174,8 @@ def _normalise_target(env: dict) -> tuple[str, str]:
 
     The prefix comes from the explicit map in briefs._common.TARGET_ENV_PREFIXES
     (lazy import — briefs must not be pulled into phase_o5's import cycle).
-    It must NEVER be `target.upper()`: for TARGET=310p that yields the illegal
-    digit-led key `310P_*` which no parser ever populates, so every
+    It must NEVER be `target.upper()`: for TARGET=310p/310b that yields the
+    illegal digit-led keys `310P_*`/`310B_*` which no parser ever populates, so every
     `{prefix}_HOST` lookup silently misses and falls back to A5_* — the O5-layer
     instance of the DEBT-336 bug class (fixed in resolve_target.sh,
     deploy_to_npu_lane.sh, deploy_to_npu.sh, and briefs/_common.py).
@@ -323,10 +325,12 @@ def ssh_runner(workspace: Path, op: str, lane: int = 0) -> MeasuredResult:
         return MeasuredResult(runner_error="missing .ascendc_env")
     target, target_upper = _normalise_target(env)
     container = (env.get(f"{target_upper}_CONTAINER") or env.get("A5_CONTAINER", "")).strip().lower()
-    # ``A5_CONTAINER=local`` is an explicit controller-as-target deployment.
-    # It has no SSH host by design, so select it before validating remote-host
-    # credentials.  All other paths retain the fail-closed host requirement.
-    if container == "local":
+    host = (env.get(f"{target_upper}_HOST") or env.get("A5_HOST", "")).strip()
+    # Host-locality gate: ``local`` CONTAINER pins controller-as-target only
+    # for an empty/localhost HOST; every other pairing is judged by
+    # host_direct_mode (non-local endpoints keep the fail-closed host
+    # requirement below).
+    if container == "local" and is_local_host(host):
         return _run_verifier_local(workspace, op, env, lane=lane)
     host_key = f"{target_upper}_HOST"
     if not env.get(host_key) and not env.get("A5_HOST"):
@@ -606,7 +610,9 @@ def _probe_resync_resident_files(
     a5_container: str, benchmark_root: str,
 ) -> set[str]:
     """Best-effort inventory of files already present in current_task."""
-    host_mode = str(env.get("A5_HOST_MODE", "")).strip() in ("1", "true", "yes")
+    # Shared host-direct derivation: A5_HOST_MODE opt-in or remote bare-metal
+    # both run host-direct.
+    host_mode = host_direct_mode(env, a5_host, a5_container)
     current_task = f"{benchmark_root}/current_task"
     list_command = f"ls -1 {current_task} 2>/dev/null"
     if not host_mode:
@@ -737,7 +743,8 @@ def _publish_resync_tar(
         f"rm -rf {benchmark_root}/current_task/{path}" for path in instrument_dirs
     ]
     remove_instrument = (" && ".join(remove_instruments) + " && ") if remove_instruments else ""
-    host_mode = str(env.get("A5_HOST_MODE", "")).strip() in ("1", "true", "yes")
+    # Bare-metal extraction skips the docker hop and untars host-direct.
+    host_mode = host_direct_mode(env, a5_host, a5_container)
     if host_mode:
         remote_command = (
             f"mkdir -p {benchmark_root}/current_task && cd {benchmark_root}/current_task && "

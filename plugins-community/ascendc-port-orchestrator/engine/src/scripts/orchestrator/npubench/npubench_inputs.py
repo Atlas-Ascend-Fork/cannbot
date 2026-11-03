@@ -221,9 +221,10 @@ def assert_sidecar_dtype_supported(
 ) -> None:
     """Fail closed when the frozen sidecar declares a dtype the target lacks.
 
-    310p destination policy: Ascend310P has NO bf16 hardware
+    310p/310b destination policy: Ascend310P has NO bf16 hardware
     (compiler-measured — a passing fp16 control and a dav-NOSUCH negative
-    control; see cannbot-knowledge target_ascend310p.md). A
+    control; see cannbot-knowledge target_ascend310p.md); Ascend310B likewise
+    declares no bf16 capability (see cannbot-knowledge target_ascend310b.md). A
     bfloat16-bearing sidecar must be rejected AT BINDING TIME with an explicit
     reason, not discovered 5 worker-spawns later as an inscrutable
     compile/precision failure. The sidecar is the case authority for the

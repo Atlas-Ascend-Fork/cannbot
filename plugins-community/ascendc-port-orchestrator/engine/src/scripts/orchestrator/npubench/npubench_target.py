@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
 import shlex
@@ -56,6 +57,7 @@ from a5_target_transport import (
     _resolve_target,
     _scp_command,
     _ssh_command,
+    is_local_host,
 )
 from a5_target_transport import _run as _a5_run
 from npubench.npubench_inputs import NPUBENCH_SOURCE, verify_npubench_stage
@@ -139,6 +141,7 @@ from npubench.npubench_target_toolchain import (  # noqa: F401
     _positive_timeout_from_env,
     _probe_target_soc,
     _process_output_text,
+    _remote_cann_set_env,
     _resolve_cann_set_env,
     _run_direct_build_process,
     _target_python,
@@ -319,6 +322,27 @@ def _build_controlled_candidate_on_target(
         return _controlled_build_error(build, abort.reason, **abort.fields)
 
 
+def _is_remote_baremetal_target(target: _Target) -> bool:
+    """True for the remote bare-metal deployment (CONTAINER=local + remote HOST).
+
+    CANN installed directly on a remote host, no docker; the build runs ON
+    the board over SSH — never on the controller.
+    """
+    return target.container.strip().lower() == "local" and not is_local_host(target.host)
+
+
+def _target_canonical_set_env(target: _Target) -> Path | None:
+    """Resolve set_env.sh on the machine that performs the target build."""
+    if _is_remote_baremetal_target(target):
+        return _remote_cann_set_env(target)
+    return _resolve_cann_set_env(Path(target.cann_path).expanduser())
+
+
+def _resolve_controlled_build_set_env(build: _ControlledBuild) -> Path | None:
+    """Resolve the CANN set_env.sh on the machine that will build."""
+    return _target_canonical_set_env(build.target)
+
+
 def _run_controlled_candidate_build(build: _ControlledBuild) -> dict[str, Any]:
     """Drive the controlled build stages in their fixed order."""
     _resolve_controlled_source_digest(build)
@@ -330,9 +354,9 @@ def _run_controlled_candidate_build(build: _ControlledBuild) -> dict[str, Any]:
     _record_best_effort_candidate_digests(build)
     proof = _validate_controlled_candidate(build, source_manifest, prebuild_identity)
     _require_controlled_build_script(build, script, missing_script_name)
-    set_env = _resolve_cann_set_env(Path(build.target.cann_path).expanduser())
+    set_env = _resolve_controlled_build_set_env(build)
     _probe_controlled_build_soc(build, set_env)
-    python = _target_python(build.target.env)
+    python = _target_python(build.target.env, build.target.name)
     reusable = _reusable_controlled_receipt(build, python, script, set_env)
     if reusable is not None:
         return reusable
@@ -354,20 +378,22 @@ def _resolve_controlled_source_digest(build: _ControlledBuild) -> None:
 
 
 def _require_local_controlled_target(build: _ControlledBuild) -> None:
+    # Board-style deployment (SSH host, no container wrapper) is accepted —
+    # the compile happens remotely and its outputs are retrieved before the
+    # receipt is written; a remote CONTAINER is rejected (no receipt protocol
+    # covers that form).
     if build.target.container.lower() == "local":
         return
     _abort_controlled_build(
-        "target build requires a local target workspace; remote target build receipt protocol is not enabled",
+        "target build requires a local or remote bare-metal target workspace; "
+        "remote CONTAINER target build receipt protocol is not enabled",
         **_digest_fields(build),
     )
 
 
 def _require_known_controlled_soc(build: _ControlledBuild) -> None:
-    # Target-parametric: the gate reads the ACTIVE target's SoC (a5 →
-    # A5_SOC_VERSION, 310p → ASCEND310P_SOC_VERSION via the canonical prefix
-    # map — `310P_*` is an illegal key no parser populates) and judges it
-    # against that target's family. Legacy a5 runs
-    # resolve identically to the previous a5_soc_version/is_known_a5_soc pair.
+    # Target-parametric: the gate reads the ACTIVE target's SoC key (via the
+    # canonical prefix map) and judges it against that target's family.
     build.soc = soc_version_for_target(build.target.env, build.target.name)
     if not is_known_soc_for_target(build.soc, build.target.name):
         _abort_controlled_build(
@@ -395,9 +421,9 @@ def _controlled_prebuild_identity(build: _ControlledBuild, script: Path) -> dict
         build.target,
         build.soc,
         None,
-        _target_python(build.target.env),
+        _target_python(build.target.env, build.target.name),
         script,
-        _resolve_cann_set_env(Path(build.target.cann_path).expanduser()),
+        _resolve_controlled_build_set_env(build),
         identity_schema=_contract_value(build.contract, "identity_schema"),
     )
 
@@ -519,7 +545,29 @@ def _run_controlled_build_preflight(build: _ControlledBuild, python: Path) -> No
 def _controlled_build_command(
     build: _ControlledBuild, python: Path, script: Path, set_env: Path | None
 ) -> tuple[str, dict[str, str]]:
-    """Compose the controlled build shell command and its process environment."""
+    """Compose the controlled build shell command and its process environment.
+
+    For a remote bare-metal target the command is a BOARD-side script (run
+    from the staged root over SSH); the CANN env is sourced inside it,
+    nothing local is exported.
+    """
+    if _is_remote_baremetal_target(build.target):
+        q = shlex.quote
+        cann = Path(build.target.cann_path).expanduser()
+        sourcing = (
+            f"if [ -f {q(str(set_env))} ]; then source {q(str(set_env))} || true; fi; "
+            if set_env is not None
+            else ""
+        )
+        remote_command = (
+            f"set +eu; set +o pipefail; {sourcing}"
+            f"export ASCEND_INSTALL_PATH={q(str(cann))}; "
+            f"export ASCEND_HOME_PATH={q(str(cann))}; "
+            f"export PATH={q(os.path.dirname(str(python)).rstrip('/'))}:$PATH; "
+            f"cd ./ && {q(str(python))} {q('utils/' + script.name)} "
+            f"workspace -v {q(str(build.soc))} --clean"
+        )
+        return remote_command, dict(os.environ)
     command = [str(python), str(script), str(build.workspace), "-v", str(build.soc), "--clean"]
     env = os.environ.copy()
     cann_path = Path(build.target.cann_path).expanduser()
@@ -535,8 +583,15 @@ def _controlled_build_command(
 def _run_controlled_build_command(
     build: _ControlledBuild, shell_command: str, env: Mapping[str, str], script: Path
 ) -> subprocess.CompletedProcess[str]:
-    timeout_sec = _positive_timeout_from_env("CANNBOT_DIRECT_BUILD_TIMEOUT_SEC", 1200)
+    remote_baremetal = _is_remote_baremetal_target(build.target)
+    # Remote default is higher: the 3-core ARM board builds slower than the
+    # controller-side budget.
+    timeout_sec = _positive_timeout_from_env(
+        "CANNBOT_DIRECT_BUILD_TIMEOUT_SEC", 1800 if remote_baremetal else 1200
+    )
     try:
+        if remote_baremetal:
+            return _run_remote_direct_build(build, shell_command, script, timeout_sec)
         return _run_direct_build_process(
             shell_command,
             cwd=build.workspace,
@@ -559,6 +614,294 @@ def _run_controlled_build_command(
         _abort_controlled_build(
             f"candidate build failed to start: {type(exc).__name__}: {exc}",
             **_identity_fields(build),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Remote bare-metal controlled build (310B board): the authored candidate and
+# the build script are tarred, scp'd and built host-direct ON the board, and
+# the kernel/build tree is fetched back to the single evidence store (R7) —
+# nothing is ever compiled on the controller.
+# ---------------------------------------------------------------------------
+def _stage_remote_build_bundle(workspace: Path, script: Path) -> Path:
+    """Tar the authored candidate + controlled build script for the board."""
+    root = Path(workspace).resolve()
+    entry = root / "model_new_ascendc.py"
+    kernel = root / "kernel"
+
+    def keep_stage(member: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        path = PurePosixPath(member.name)
+        if "__pycache__" in path.parts or path.name.endswith(".pyc"):
+            return None
+        # kernel/build is a build product — never ship stale products.
+        if "build" in path.parts[2:]:
+            return None
+        if member.issym() or member.islnk() or not (member.isdir() or member.isfile()):
+            raise TargetTransportError("remote build stage contains a non-regular entry")
+        return member
+
+    if entry.is_symlink() or not entry.is_file():
+        raise TargetTransportError("remote build stage: model_new_ascendc.py is missing or unsafe")
+    if kernel.is_symlink() or not kernel.is_dir():
+        raise TargetTransportError("remote build stage: kernel directory is missing or unsafe")
+    if script.is_symlink() or not script.is_file():
+        raise TargetTransportError(f"remote build stage: build script is missing: {script}")
+    with tempfile.NamedTemporaryFile(prefix="cannbot_build_stage_", suffix=".tar", delete=False) as file:
+        archive = Path(file.name)
+    try:
+        with tarfile.open(archive, "w") as tar:
+            tar.add(str(entry), arcname="workspace/model_new_ascendc.py", filter=keep_stage)
+            tar.add(str(kernel), arcname="workspace/kernel", filter=keep_stage)
+            tar.add(str(script), arcname=f"utils/{script.name}", filter=keep_stage)
+            module_dir = Path(__file__).resolve().parent
+            for module_name in (
+                "__init__.py",
+                "npubench_target_base.py",
+                "npubench_candidate_contract.py",
+            ):
+                tar.add(
+                    str(module_dir / module_name),
+                    arcname=f"utils/npubench/{module_name}",
+                    filter=keep_stage,
+                )
+        return archive
+    except BaseException as exc:
+        cleanup_error = _unlink(archive)
+        if cleanup_error is not None:
+            _audit_cleanup_errors(exc, [cleanup_error])
+        raise
+
+
+def _run_remote_build_step(
+    target: _Target, remote_command: str, *, timeout: int, what: str
+) -> subprocess.CompletedProcess[str]:
+    """Run one board-side step over SSH with the build timeout contract."""
+    argv = _ssh_command(remote_command, target)
+    try:
+        return subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _DirectBuildTimeout(
+            timeout,
+            _process_output_text(exc.stdout),
+            _process_output_text(exc.stderr),
+        ) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise TargetTransportError(f"{what}: {type(exc).__name__}: {exc}") from exc
+
+
+def _extract_remote_archive_member(
+    tar: tarfile.TarFile, member: tarfile.TarInfo, staged: Path
+) -> None:
+    """Validate one archive entry (paths, prefix, entry type) and extract it."""
+    path = PurePosixPath(member.name)
+    if not member.name or path.is_absolute() or any(
+        part in ("", ".", "..") for part in path.parts
+    ):
+        raise TargetTransportError("remote build archive has an unsafe path")
+    if path.parts[:3] != ("workspace", "kernel", "build"):
+        raise TargetTransportError(
+            f"remote build archive has an unexpected entry: {member.name}"
+        )
+    if member.issym() or member.islnk() or not (member.isdir() or member.isfile()):
+        raise TargetTransportError("remote build archive has a link or special entry")
+    out = staged / path
+    if member.isdir():
+        out.mkdir(parents=True, exist_ok=True)
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    source = tar.extractfile(member)
+    if source is None:
+        raise TargetTransportError("cannot read remote build archive entry")
+    with source, out.open("xb") as file:
+        shutil.copyfileobj(source, file)
+
+
+def _import_remote_build_artifacts(workspace: Path, archive: Path) -> None:
+    """Extract the fetched kernel/build tree into the local workspace."""
+    root = Path(workspace).resolve()
+    build_dir = root / "kernel" / "build"
+    with tempfile.TemporaryDirectory(prefix=".cannbot_build_import_", dir=root) as tmp:
+        staged = Path(tmp)
+        with tarfile.open(archive, "r") as tar:
+            for member in tar.getmembers():
+                _extract_remote_archive_member(tar, member, staged)
+        fetched = staged / "workspace" / "kernel" / "build"
+        if not fetched.is_dir():
+            raise TargetTransportError("remote build archive omitted kernel/build")
+        if build_dir.exists() or build_dir.is_symlink():
+            _remove_tree(build_dir, required=True)
+        os.replace(fetched, build_dir)
+
+
+def _cleanup_remote_build_side_effects(
+    stage: Path | None,
+    result: Path | None,
+    remote_paths: tuple[str, str, str],
+    target: _Target,
+) -> None:
+    """Best-effort cleanup of local scratch files and the remote build tree."""
+    remote_root, remote_stage, remote_result = remote_paths
+    q = shlex.quote
+    cleanup_errors: list[BaseException] = []
+    if stage is not None:
+        _collect_cleanup_error(
+            cleanup_errors,
+            f"unlink remote build stage tar {stage}",
+            lambda bound=stage: _unlink(bound, required=True, cleanup_errors=cleanup_errors),
+        )
+    if result is not None:
+        _collect_cleanup_error(
+            cleanup_errors,
+            f"unlink fetched build archive {result}",
+            lambda bound=result: _unlink(bound, required=True, cleanup_errors=cleanup_errors),
+        )
+    if os.environ.get("CANNBOT_KEEP_NPUBENCH_TARGET_WORKSPACE") != "1":
+        _collect_cleanup_error(
+            cleanup_errors,
+            "remote build cleanup",
+            lambda: _must(
+                _run(
+                    _ssh(
+                        f"rm -rf {q(remote_root)}; rm -f {q(remote_stage)} {q(remote_result)}",
+                        target,
+                    ),
+                    "remote build cleanup",
+                    timeout=60,
+                ),
+                "remote build cleanup",
+            ),
+        )
+    if cleanup_errors:
+        logging.getLogger(__name__).warning(
+            "remote build cleanup issues (non-fatal): %s", cleanup_errors
+        )
+
+
+def _upload_and_extract_remote_stage(
+    stage: Path, remote_root: str, remote_stage: str, target: _Target
+) -> None:
+    """Upload the stage tar and unpack it into the remote build root."""
+    q = shlex.quote
+    _must(
+        _run(
+            _scp(str(stage), f"{target.user}@{target.host}:{remote_stage}", target),
+            "remote build stage upload",
+            timeout=300,
+        ),
+        "remote build stage upload",
+    )
+    _must(
+        _run(
+            _ssh(
+                f"rm -rf {q(remote_root)} && mkdir -p {q(remote_root)} && "
+                f"tar -xf {q(remote_stage)} -C {q(remote_root)} && rm -f {q(remote_stage)}",
+                target,
+            ),
+            "remote build stage extract",
+            timeout=120,
+        ),
+        "remote build stage extract",
+    )
+
+
+def _fetch_remote_build_result(remote_result: str, target: _Target) -> None:
+    """Pull the board-built kernel/build archive back to the controller."""
+    _must(
+        _run(
+            _scp(f"{target.user}@{target.host}:{remote_result}", remote_result, target),
+            "remote build artifact fetch",
+            timeout=600,
+        ),
+        "remote build artifact fetch",
+    )
+
+
+def _remote_candidate_build_command(
+    build: _ControlledBuild,
+    remote_root: str,
+    remote_result: str,
+    remote_build_command: str,
+) -> str:
+    """Wrap the build with before/after candidate identity checks."""
+    q = shlex.quote
+    digest_program = (
+        "import json,sys;"
+        "from npubench.npubench_candidate_contract import "
+        "_authored_cmake_sha256,_candidate_source_digest;"
+        "root=sys.argv[1];"
+        "print(json.dumps({"
+        "'authored_cmake_sha256':_authored_cmake_sha256(root),"
+        "'candidate_digest':_candidate_source_digest(root)"
+        "},sort_keys=True,separators=(',',':')))"
+    )
+    expected_identity = json.dumps(
+        {
+            "authored_cmake_sha256": build.authored_cmake_sha256,
+            "candidate_digest": build.candidate_digest,
+        },
+        sort_keys=True, separators=(",", ":"),
+    )
+    python = _target_python(build.target.env, build.target.name)
+    digest_command = (
+        f"PYTHONPATH={q('utils')} {q(str(python))} "
+        f"-c {q(digest_program)} {q('workspace')}"
+    )
+    return (
+        f"cd {q(remote_root)} || exit 1; "
+        f"before=$({digest_command}); digest_rc=$?; "
+        "if [ $digest_rc -ne 0 ]; then "
+        "echo 'remote candidate digest failed before build' >&2; exit $digest_rc; fi; "
+        f"if [ \"$before\" != {q(expected_identity)} ]; then "
+        "echo 'remote staged candidate does not match the controlled candidate before build' "
+        ">&2; exit 96; fi; "
+        f"({remote_build_command}); rc=$?; "
+        f"after=$({digest_command}); digest_rc=$?; "
+        "if [ $digest_rc -ne 0 ]; then "
+        "echo 'remote candidate digest failed after build' >&2; exit $digest_rc; fi; "
+        f"if [ \"$after\" != {q(expected_identity)} ]; then "
+        "echo 'remote authored candidate or CMake changed during controlled candidate build' "
+        ">&2; exit 97; fi; "
+        f"if [ $rc -eq 0 ]; then "
+        f"tar -cf {q(remote_result)} -C {q(remote_root)} workspace/kernel/build; "
+        f"fi; exit $rc"
+    )
+
+
+def _run_remote_direct_build(
+    build: _ControlledBuild,
+    remote_build_command: str,
+    script: Path,
+    timeout_sec: int,
+) -> subprocess.CompletedProcess[str]:
+    """Stage, build, and fetch back one controlled build on the board."""
+    target = build.target
+    token = uuid.uuid4().hex
+    remote_root = f"{target.benchmark_root.rstrip('/')}/cannbot_build/{token}"
+    remote_stage = f"/tmp/cannbot_build_{token}.tar"
+    remote_result = f"/tmp/cannbot_build_result_{token}.tar"
+    stage: Path | None = None
+    result: Path | None = None
+    try:
+        stage = _stage_remote_build_bundle(build.workspace, script)
+        _upload_and_extract_remote_stage(stage, remote_root, remote_stage, target)
+        completed = _run_remote_build_step(
+            target,
+            _remote_candidate_build_command(
+                build, remote_root, remote_result, remote_build_command
+            ),
+            timeout=timeout_sec,
+            what="remote candidate build",
+        )
+        if completed.returncode == 0:
+            _fetch_remote_build_result(remote_result, target)
+            result = Path(remote_result)
+            _import_remote_build_artifacts(build.workspace, Path(remote_result))
+        return completed
+    finally:
+        _cleanup_remote_build_side_effects(
+            stage, result, (remote_root, remote_stage, remote_result), target
         )
 
 
@@ -932,7 +1275,10 @@ def _execute(
             raise TargetTransportError("target evaluation has no candidate")
         candidate = _snapshot(workspace, candidate)
     target = _target(workspace, lane)
-    if target.container.lower() == "local":
+    # Host-locality gate: only a controller-named HOST takes the local
+    # branch; any other host goes the SSH route below, where
+    # ``host_direct_mode`` decides the execution prefix.
+    if target.container.lower() == "local" and is_local_host(target.host):
         _ensure_local_cann_environment(target)
         returned = (
             npubench_runner.preflight_workspace(workspace)
@@ -1235,7 +1581,18 @@ def _target_command(
             f"npubench_runner.py {argv}"
         )
         return _ssh(_sudo(f"docker exec {q(target.container)} bash -c {q(inside)}", target), target)
-    python = str(env.get("A5_HOST_PYTHON") or "python3")
+    # Host-direct python: {TARGET}_HOST_PYTHON / A5_HOST_PYTHON name an
+    # executable; the {TARGET}_NPU_PYTHON_BIN contract names a bin DIRECTORY.
+    # Remote paths — no local-filesystem probing here.
+    _host_python_cfg = str(
+        env.get(f"{target.name}_HOST_PYTHON") or env.get("A5_HOST_PYTHON") or ""
+    ).strip()
+    if _host_python_cfg:
+        python = _host_python_cfg
+    elif npu_python:
+        python = npu_python.rstrip("/") + "/python3"
+    else:
+        python = "python3"
     home = os.path.dirname(os.path.dirname(python))
     libraries = (
         f"{extra_ld + ':' if extra_ld else ''}{home}/lib/python3.11/site-packages/torch/lib:"
@@ -1596,8 +1953,8 @@ def _receipt_basics(receipt: Mapping[str, Any], reference: Mapping[str, Any]) ->
         raise TargetTransportError("target receipt identity is invalid")
     ssh_without_host = receipt.get("transport") == "ssh_target" and not target.get("host")
     # Destination names are the env-prefix spellings of the ARCH_BY_TARGET
-    # destination set ("A5", "ASCEND310P"); a3/a2 are port sources and can
-    # never be the endpoint that produced this evidence.
+    # destination set ("A5", "ASCEND310P", "ASCEND310B"); a3/a2 are port
+    # sources and can never be the endpoint that produced this evidence.
     if not is_destination_target_name(str(target.get("name", ""))) or ssh_without_host:
         raise TargetTransportError("target receipt identity is invalid")
     _device(target.get("lane"), "target lane")
@@ -1659,6 +2016,8 @@ def _must(result: subprocess.CompletedProcess[str], what: str) -> None:
 
 
 def _timeout() -> int:
+    # 1800s default: the remote round trip covers stage/run/pack, and the
+    # 3-core ARM board is slower than a controller hop.
     try:
         return max(60, int(os.environ.get("CANNBOT_NPUBENCH_TARGET_TIMEOUT", "1800")))
     except ValueError:

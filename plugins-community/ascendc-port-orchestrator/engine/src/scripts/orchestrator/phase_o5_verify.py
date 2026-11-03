@@ -49,6 +49,7 @@ from typing import Optional
 
 import phase_o5_runner  # qualified access to monkeypatched fns (patch-bite preservation)
 from phase_o5 import MeasuredResult
+from a5_target_transport import host_direct_mode
 from phase_o5_runner import (  # non-patched build/config helpers + project root
     _a5_build_host, _a5_build_container, _a5_build_cann_path,
     _PROJECT_ROOT,
@@ -631,6 +632,21 @@ def _verify_runner_independence(workspace: Path, script_name: str) -> Optional[s
     return None
 
 
+def _host_direct_python(env: dict, target: "_RemoteTarget", npu_python: str) -> str:
+    """Resolve the host-direct verifier interpreter, target-parametric.
+
+    ``{TARGET}_HOST_PYTHON`` wins, then the legacy ``A5_HOST_PYTHON``, then
+    ``{TARGET}_NPU_PYTHON_BIN/python3`` (a bin DIRECTORY on the 310b board),
+    then the legacy miniconda default (kept last for legacy runs).
+    """
+    return (
+        str(env.get(f"{target.name}_HOST_PYTHON") or "").strip()
+        or str(env.get("A5_HOST_PYTHON") or "").strip()
+        or (f"{npu_python}/python3" if npu_python else "")
+        or "/home/miniconda3/envs/msmodelslim-wr/bin/python"
+    )
+
+
 def _build_remote_verifier_command(
     workspace: Path,
     env: dict,
@@ -655,12 +671,14 @@ def _build_remote_verifier_command(
         f"{cann_setenv} && {container_setup}{container_python} {script_name}{argument_suffix}"
     )
 
-    host_mode = str(env.get("A5_HOST_MODE", "")).strip() in ("1", "true", "yes")
+    # Opt-in (A5_HOST_MODE) or board-style deployment: host-direct, no
+    # docker exec wrapper.
+    host_mode = host_direct_mode(env, target.host, target.container)
     if not host_mode:
         remote_cmd = f"docker exec {target.container} bash -c {_shell_quote(docker_cmd)}"
         return _maybe_sudo_wrap_remote(remote_cmd, env, target.name), host_mode
 
-    host_python = env.get("A5_HOST_PYTHON") or "/home/miniconda3/envs/msmodelslim-wr/bin/python"
+    host_python = _host_direct_python(env, target, npu_python)
     host_python_root = os.path.dirname(os.path.dirname(host_python))
     host_extra_ld = (
         f"{extra_ld + ':' if extra_ld else ''}"
@@ -676,7 +694,7 @@ def _build_remote_verifier_command(
         f"if [ -f {target.cann_path}/set_env.sh ]; then source {target.cann_path}/set_env.sh || true; fi; "
         f"export LD_LIBRARY_PATH={host_extra_ld}:${{LD_LIBRARY_PATH:-}}; "
         f"export PATH={os.path.dirname(host_python)}:$PATH; "
-        f"export ASCEND_RT_VISIBLE_DEVICES={lane}; "
+        f"export ASCEND_RT_VISIBLE_DEVICES={visible_device}; "
         f"cd {benchmark_root}/current_task && {host_python} {script_name}{argument_suffix}"
     )
     return host_cmd, host_mode
@@ -830,12 +848,13 @@ def _build_remote_canonical_command(
         f">/dev/null 2>&1; cat {json_path} 2>/dev/null; rm -f {json_path}"
     )
 
-    host_mode = str(env.get("A5_HOST_MODE", "")).strip() in ("1", "true", "yes")
+    # Same locality derivation as above: no docker exec wrapper.
+    host_mode = host_direct_mode(env, target.host, target.container)
     if not host_mode:
         remote_cmd = f"docker exec {target.container} bash -c {_shell_quote(docker_cmd)}"
         return _maybe_sudo_wrap_remote(remote_cmd, env, target.name), host_mode
 
-    host_python = env.get("A5_HOST_PYTHON") or "/home/miniconda3/envs/msmodelslim-wr/bin/python"
+    host_python = _host_direct_python(env, target, npu_python)
     host_python_root = os.path.dirname(os.path.dirname(host_python))
     host_extra_ld = (
         f"{extra_ld + ':' if extra_ld else ''}"
@@ -851,7 +870,7 @@ def _build_remote_canonical_command(
         f"if [ -f {target.cann_path}/set_env.sh ]; then source {target.cann_path}/set_env.sh || true; fi; "
         f"export LD_LIBRARY_PATH={host_extra_ld}:${{LD_LIBRARY_PATH:-}}; "
         f"export PATH={os.path.dirname(host_python)}:$PATH; "
-        f"export ASCEND_RT_VISIBLE_DEVICES={lane}; cd {benchmark_root}/current_task && "
+        f"export ASCEND_RT_VISIBLE_DEVICES={visible_device}; cd {benchmark_root}/current_task && "
         f"{host_python} {script_name} . --json {json_path} --quiet {precision_suffix}>/dev/null 2>&1; "
         f"cat {json_path} 2>/dev/null; rm -f {json_path}"
     )

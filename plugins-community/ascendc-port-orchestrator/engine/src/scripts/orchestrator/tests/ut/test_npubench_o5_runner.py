@@ -33,6 +33,12 @@ import fsm_phase_finalize as finalize_fsm
 import state_executor
 from fsm_context import OrchestratorContext
 
+# Bind module-private seams once via getattr for the protected-access checker.
+_target_identity = getattr(target, "_target_identity")
+_build_contract = getattr(target, "_build_contract")
+_receipt_target_state = getattr(bridge, "_receipt_target_state")
+_receipt_build_identity_matches = getattr(bridge, "_receipt_build_identity_matches")
+
 
 def _prepare_tilelang2ascendc_workspace(tmp_path, monkeypatch, soc: str) -> Path:
     """Create a workspace whose durable state selects the TileLang2AscendC port route."""
@@ -296,6 +302,89 @@ def test_generic_candidate_receipt_flows_through_bridge(tmp_path, monkeypatch) -
     assert _receipt_payload_valid(receipt, workspace)
 
 
+def _make_remote_310b_target():
+    """Return a remote host-direct 310B endpoint."""
+    from npubench.npubench_target import _Target
+
+    return _Target(
+        name="ASCEND310B",
+        host="board.example.test",
+        user="tester",
+        password="",
+        container="local",
+        cann_path="/opt/Ascend/cann",
+        benchmark_root="/benchmark-root",
+        host_mode=False,
+        visible_device=0,
+        ssh_options=(),
+        env={
+            "ASCEND310B_SOC_VERSION": "Ascend310B1",
+            "ASCEND310B_NPU_PYTHON_BIN": "/usr/bin",
+        },
+    )
+
+
+def test_remote_baremetal_receipt_classification_resolves_on_the_board(
+    tmp_path, monkeypatch
+) -> None:
+    """Remote receipt checks resolve Python and CANN on the build host."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    endpoint = _make_remote_310b_target()
+    monkeypatch.setattr(target, "_target", lambda *_args: endpoint)
+    board_set_env = Path("/opt/Ascend/cann/set_env.sh")
+    monkeypatch.setattr(target, "_remote_cann_set_env", lambda _t: board_set_env)
+    seen: dict[str, object] = {}
+
+    def controller_resolution(_cann_path):
+        seen["controller_set_env"] = True
+        return Path("/controller/Ascend/cann/set_env.sh")
+
+    monkeypatch.setattr(target, "_resolve_cann_set_env", controller_resolution)
+
+    def probe_soc(_t, set_env):
+        seen["probe_set_env"] = set_env
+        return "Ascend310B1"
+
+    monkeypatch.setattr(target, "_probe_target_soc", probe_soc)
+
+    def python_with_name(_env, name=None):
+        seen["python_target"] = name
+        return Path("/usr/bin/python3")
+
+    monkeypatch.setattr(target, "_target_python", python_with_name)
+
+    receipt = {
+        "soc": "Ascend310B1",
+        "observed_soc": "Ascend310B1",
+        "target": _target_identity(endpoint),
+    }
+    state = _receipt_target_state(workspace, receipt, lane=0)
+
+    assert state is not None
+    assert seen["probe_set_env"] == board_set_env
+
+    from npubench.npubench_build_receipt import _candidate_build_identity
+
+    script = Path(target.__file__).resolve().parents[2] / "patches" / "build_tilelang2ascendc.py"
+    contract = _build_contract(None)
+    receipt["build_identity"] = _candidate_build_identity(
+        endpoint,
+        "Ascend310B1",
+        "Ascend310B1",
+        Path("/usr/bin/python3"),
+        script,
+        board_set_env,
+        identity_schema=contract["identity_schema"],
+    )
+
+    assert _receipt_build_identity_matches(
+        receipt, "candidate_contract", contract=contract, target_state=state
+    )
+    assert seen["python_target"] == "ASCEND310B"
+    assert "controller_set_env" not in seen
+
+
 def test_compile_failure_classifier_routes_candidate_rooted_include_cascade() -> None:
     """An SDK-header error cascade rooted below kernel/ is a candidate failure."""
     from npubench.npubench_build_receipt import _classify_controlled_compile_failure
@@ -408,6 +497,45 @@ def test_compile_failure_classifier_routes_candidate_cmake_configure_error() -> 
     assert (
         _classify_controlled_compile_failure("", link_stderr)
         == "candidate_contract"
+    )
+
+
+def test_compile_failure_classifier_routes_backend_abort_on_candidate_tu() -> None:
+    """A backend abort on a candidate TU routes to candidate repair."""
+    from npubench.npubench_build_receipt import _classify_controlled_compile_failure
+
+    stage = (
+        "/benchmark-root/cannbot_build/929097c39619476da8ae00fdb3ddaa7e"
+        "/workspace/kernel"
+    )
+    backend_abort_stderr = (
+        "fatal error: error in backend: not support bf16 type cast\n"
+        "bisheng: error: clang frontend command failed with exit code 70 "
+        "(use -v to see invocation)\n"
+        f"gmake[5]: *** [CMakeFiles/m300_obj.dir/build.make:76: "
+        f"CMakeFiles/m300_obj.dir/{stage}/kernels.cpp.o] Error 1\n"
+        "gmake[4]: *** [CMakeFiles/Makefile2:115: CMakeFiles/m300_obj.dir/all] Error 2\n"
+    )
+    assert (
+        _classify_controlled_compile_failure("", backend_abort_stderr)
+        == "candidate_contract"
+    )
+    # The same abort on an SDK TU (or with no gmake candidate evidence at all)
+    # stays a target failure: a backend bug in the toolchain is not authored code.
+    sdk_tu_stderr = (
+        "fatal error: error in backend: not support bf16 type cast\n"
+        "gmake[5]: *** [CMakeFiles/m300_obj.dir/build.make:76: CMakeFiles/"
+        "m300_obj.dir/usr/local/Ascend/cann-8.5.1/include/kernel.o] Error 1\n"
+    )
+    assert (
+        _classify_controlled_compile_failure("", sdk_tu_stderr) == "target_build"
+    )
+    bare_abort_stderr = (
+        "fatal error: error in backend: not support bf16 type cast\n"
+        "bisheng: error: clang frontend command failed with exit code 70\n"
+    )
+    assert (
+        _classify_controlled_compile_failure("", bare_abort_stderr) == "target_build"
     )
 
 

@@ -98,9 +98,7 @@ def _inject_migration_metadata(workspace: Path) -> None:
                 "semantic": "tilelang2ascendc_project_context",
             }
         else:
-            # Destination-derived expectation (a5→arch35, 310p→arch20):
-            # injecting a literal "arch35" migration block into a 310P port's
-            # customer-visible verification.json would be wrong-chip provenance.
+            # arch_for_target() owns the target→arch mapping; a hardcoded "arch35" block would be wrong-chip provenance.
             from a5_target_capability import arch_for_target
 
             expected_arch = arch_for_target(state.get("target"))
@@ -930,6 +928,7 @@ def _archive_root_for_plugin(
     ``archive_project`` (optional, from the RUN's resolved env — never the
     global env file at finalize time) names the destination-aware project
     (briefs._common target-aware map: a3_to_a5_port / a3_to_310p_port /
+    a3_to_310b_port /
     backward_ops). When absent (CLI callers, legacy paths) the plugin's static
     default applies, byte-identical to the previous behavior.
     """

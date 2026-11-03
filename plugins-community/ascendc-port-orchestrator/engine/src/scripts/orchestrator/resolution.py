@@ -174,10 +174,8 @@ def _detect_max_lane() -> int:
         # of 4 then wrongly rejects those lanes.
         log.info(f"npu-smi probe failed ({e}); "
               f"falling back to default lane max for {target_base}")
-        # 310p deliberately conservative: under-claiming lanes on a 6-device
-        # 310P host is recoverable (the npu-smi probe above supplies the real
-        # count when it can run); over-claiming on a smaller box wedges lanes.
-        return {"a5": 7, "a3": 2, "a2": 4, "310p": 2}.get(target_base, 2)
+        # Conservative defaults; npu-smi results take precedence when available.
+        return {"a5": 7, "a3": 2, "a2": 4, "310p": 2, "310b": 1}.get(target_base, 2)
 
     # Parse `npu-smi info` output. The device table prints one device per
     # two rows; the FIRST row carries the numeric NPU ID and the chip-model
@@ -210,10 +208,8 @@ def _detect_max_lane() -> int:
     if not npu_ids:
         log.info("npu-smi output parse yielded 0 NPUs; "
               "falling back to default lane max")
-        # 310p deliberately conservative: under-claiming lanes on a 6-device
-        # 310P host is recoverable (the npu-smi probe above supplies the real
-        # count when it can run); over-claiming on a smaller box wedges lanes.
-        return {"a5": 7, "a3": 2, "a2": 4, "310p": 2}.get(target_base, 2)
+        # Conservative defaults; npu-smi results take precedence when available.
+        return {"a5": 7, "a3": 2, "a2": 4, "310p": 2, "310b": 1}.get(target_base, 2)
 
     max_lane = max(npu_ids)
     log.info(f"detected {len(npu_ids)} NPU(s) via npu-smi; max lane = {max_lane}")

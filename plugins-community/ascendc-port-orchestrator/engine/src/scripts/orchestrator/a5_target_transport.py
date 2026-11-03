@@ -26,6 +26,34 @@ class A5TargetTransportError(RuntimeError):
     """A5 target endpoint resolution or remote command execution failed."""
 
 
+_LOCAL_HOST_SPELLINGS = frozenset({"", "localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def is_local_host(host: object) -> bool:
+    """True when *host* names the controller itself (no SSH hop needed).
+
+    Empty counts as local (the legacy A5 deployment has no host key);
+    targets that must never assume that should gate on an explicit host first.
+    """
+    return isinstance(host, str) and host.strip().lower() in _LOCAL_HOST_SPELLINGS
+
+
+def host_direct_mode(
+    env: Mapping[str, object], host: object, container: object
+) -> bool:
+    """Decide host-direct (no docker exec) execution for a remote command.
+
+    True when ``A5_HOST_MODE`` opts in OR the deployment is remote
+    bare-metal (``CONTAINER=local`` on a non-controller HOST); a remote
+    container target keeps docker exec.
+    """
+    flag = str(env.get("A5_HOST_MODE", "") or "").strip().lower()
+    if flag in ("1", "true", "yes"):
+        return True
+    container_text = container if isinstance(container, str) else ""
+    return container_text.strip().lower() == "local" and not is_local_host(host)
+
+
 @dataclass(frozen=True)
 class _Target:
     """Resolved A5 endpoint without credentials in any persisted artifact."""
@@ -41,6 +69,17 @@ class _Target:
     visible_device: int
     ssh_options: tuple[str, ...]
     env: Mapping[str, str]
+
+
+# Static ssh hardening flags shared by every target connection (key opts are
+# resolved per target and prepended by the caller).
+_SSH_FIXED_OPTIONS = (
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "ConnectTimeout=60",
+    "-o", "LogLevel=ERROR",
+    "-o", "ControlMaster=no",
+)
 
 
 def _resolve_target(workspace: Path, lane: int) -> _Target:
@@ -61,32 +100,23 @@ def _resolve_target(workspace: Path, lane: int) -> _Target:
     env = _read_ascendc_env(workspace)
     if not env:
         raise A5TargetTransportError("missing .ascendc_env for A5 target resolution")
-    _target_lower, target_name = _normalise_target(env)
+    _, target_name = _normalise_target(env)
     host = _a5_build_host(env, workspace, target_name)
     container = _a5_build_container(env, workspace, target_name)
     if not host and container.lower() != "local":
         raise A5TargetTransportError(f"missing {target_name}_HOST (and no A5_HOST fallback)")
     cann_path = _a5_build_cann_path(env, workspace, target_name)
     benchmark_root = _lane_aware_benchmark_root(env, lane)
-    host_mode = str(env.get("A5_HOST_MODE", "")).strip().lower() in (
-        "1", "true", "yes",
-    )
-    # A direct local target does not need (and may not permit) an SSH health
-    # probe.  Its lane is already the target-visible device.  Remote targets
-    # retain O5's health-aware device routing.
+    host_mode = host_direct_mode(env, host, container)
+    # A direct local target needs no SSH health probe (its lane is already
+    # the visible device); remote targets keep O5's health-aware device
+    # routing.
     visible_device = (
-        lane if container.lower() == "local" else _resolve_visible_device(env, workspace, lane)
+        lane
+        if container.lower() == "local" and is_local_host(host)
+        else _resolve_visible_device(env, workspace, lane)
     )
-    ssh_options = tuple(
-        [
-            *_resolve_ssh_key_opts(env, target_name),
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "ConnectTimeout=60",
-            "-o", "LogLevel=ERROR",
-            "-o", "ControlMaster=no",
-        ]
-    )
+    ssh_options = (*_resolve_ssh_key_opts(env, target_name), *_SSH_FIXED_OPTIONS)
     return _Target(
         name=target_name,
         host=host,
