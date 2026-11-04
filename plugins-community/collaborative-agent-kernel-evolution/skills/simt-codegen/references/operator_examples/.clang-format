@@ -1,0 +1,17 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# 本目录是 SIMT 轨的算子参考示例。四个 .cpp / .h / .asc 是 simt-codegen 实际产出的
+# kernel、host tiling 与算子注册代码，SKILL.md 与 references/ 的多处正文按行引用它们
+# 说明「生成结果应该长什么样」。重排会使示例不再等于生成器的真实输出，模型据以学习
+# 的写法随之失真——与 tilelang-kernel-baseline/templates/、dsl-easyasc-post/references/
+# migration_examples/ 两处的理由相同。
+DisableFormat: true
+SortIncludes: Never

@@ -158,6 +158,27 @@ This file records notable changes to the CANNBot plugin orchestration and delive
   bundler rewrites the value as before.
 - Community plugins are not stamped with a plugin-root licence; each keeps the licence it
   ships with, and `plugins-community/` carries none.
+- cake Skill `simt-codegen` and agent `cake-partial-simt`, the SIMT route for Ascend
+  950PR, imported flat from CAKE2 `918b31c6` (PR #538). The skill carries the route's own
+  measured material: the Ascend 950PR ISA probes, three pass models, and four operator
+  examples. It is kept whole rather than deduplicated against `ops/ascendc-simt-*`: a
+  token comparison of its 20 reference files against those 15 puts the overlap at 3–14%,
+  and its four largest references have no counterpart there, so the two are not
+  interchangeable. `ops/ascendc-simt-*` stays the general SIMT knowledge; this is the
+  generation route's own corpus.
+- Third-party attribution for the SIMT route: one reference header emitted by MindStudio's
+  operator project generator keeps its Mulan PSL v2 notice and is recorded in
+  `README.OpenSource` with an `OAT.xml` filteritem exempting it from the CANN-2.0 header
+  policy. Nine ISA probe records had `verify_cmd` lines naming an absolute path under the
+  probe author's home directory; the scripts there ship with neither this plugin nor
+  CAKE2, so those paths now read `${PROBE_WORKSPACE}` and `isa_matrix.md` says the
+  commands record how a probe was reproduced rather than something to run.
+- Four operator example files under the SIMT route carried no licence header and now carry
+  the CANN-2.0 one; the fifth keeps its MindStudio notice. `references/operator_examples/`
+  gets a `.clang-format` that turns formatting off, as the TileLang templates and the
+  EasyAsc migration examples already do: these files are what the generator actually
+  emits and several pages quote them line by line, so reflowing them — 272 lines across
+  the four — would make the example stop matching the generator.
 - Five cake reference files take the `cann/cannbot-skills` master version, picking up the
   spelling corrections of `bb72f983` that the import source predates. Four are ordinary
   English words now spelled `category`, `cannot`, `Double` and `requirement`; the fifth is

@@ -34,5 +34,14 @@
     "Owner": "Chart.js Contributors",
     "Upstream URL": "https://www.chartjs.org",
     "Description": "Vendored minified UMD build used by the op-dashboard skill to render evaluation charts offline. The MIT notice is retained in the file banner."
+  },
+  {
+    "Name": "MindStudio operator tiling header template",
+    "License": "Mulan PSL v2",
+    "License File": "skills/simt-codegen/references/operator_examples/torch_gather_20_20/gather_custom_tiling.h",
+    "Version Number": "vendored",
+    "Owner": "Huawei Technologies Co., Ltd",
+    "Upstream URL": "https://www.hiascend.com/developer/mindstudio",
+    "Description": "skills/simt-codegen/references/operator_examples/torch_gather_20_20/gather_custom_tiling.h is the operator tiling header emitted by MindStudio's operator project generator and kept as a reference example for the SIMT route. It retains the upstream Mulan PSL v2 notice and the license URL."
   }
 ]

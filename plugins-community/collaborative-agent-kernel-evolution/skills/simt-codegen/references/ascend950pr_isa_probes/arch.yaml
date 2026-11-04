@@ -1,0 +1,418 @@
+# =============================================================================
+# arch.yaml  —  book/_meta/arch.yaml   (dav-3510 / Ascend950PR-9599)
+# =============================================================================
+# Machine-readable single-source of dav-3510 hardware parameters for the 950PR book.
+# Default tier: 🟢T1-cfg (oracle = the TOML the cycle-accurate sim is configured from).
+# A few values are 🟢T1-sim (trace-measured): they carry tier: T1-sim + a trace oracle
+# instead of a config key+line, because the quantity is model-internal (no TOML key).
+#
+# ---------------------------------------------------------------------------
+# STATUS — BANKED (constitution v0.2.3 ratified 2026-06-03; §1 micro-arch scope).
+#   Single-source of dav-3510 hardware params for PB-5/PB-7 + entry §PERF.
+#   Derived by the 2026-06-03 verify panel (probes/hw_verify_20260603/verify_*.md,
+#   the verification records); every banked value re-cites its oracle config key+line.
+# ---------------------------------------------------------------------------
+#
+# INCLUSION DISCIPLINE (enforced top-to-bottom):
+#   - Only verdict=confirmed claims (verify findings A/B/C/D, 2026-06-03) or the
+#     already-verified §1/§2 micro-arch list are banked as fact.
+#   - Every banked value carries its oracle: config key + file:line for T1-cfg,
+#     or a trace JSON path for T1-sim. NO value is banked without an oracle.
+#   - Anything still_UN or refuted is NOT banked; it is enumerated in the TODO
+#     block at the bottom with its closing experiment. NEVER bank a refuted/UN value.
+#   - Where this file DISAGREES with the prior probes/arch_extract/arch_950pr_t1cfg.yaml,
+#     the disagreement is called out inline (search "DISAGREES").
+#
+# OUT OF SCOPE FOR THIS FILE (consciously scoped out, not dropped):
+#   - ISA capability/constraint matrix  -> book/_meta/isa_matrix.md (its own artifact).
+#   - cannprof analyzer names / observability -> probes/hw_verify_20260603/verify_A_observability.md (+ PB-4 when authored).
+#   These are not hardware parameters and have no home in the closed structure below.
+#
+# ORACLE FILES (physical paths; dav_3510/lib is the symlink target of every Ascend950PR_95xx):
+#   PEM   = /usr/local/Ascend/cann-9.1.0-beta.1/tools/simulator/dav_3510/lib/1982_cloud_config.toml
+#   MODEL = /usr/local/Ascend/cann-9.1.0-beta.1/tools/simulator/dav_3510/lib/Ascend950pr_9599_model.toml
+#   STARS = /usr/local/Ascend/cann-9.1.0-beta.1/tools/simulator/dav_3510/lib/Ascend950pr_9599_stars_ffts_plus.toml
+#   FFTS  = /usr/local/Ascend/cann-9.1.0-beta.1/tools/simulator/dav_3510/lib/Ascend950pr_9599_ffts_plus.toml
+#   TRACE = probes/simd_arith_sweep/golden5/evidence/*.json  (Chrome trace, harvested; for T1-sim values)
+#   (citations below: PEM:<line> / MODEL:<line> / STARS:<line> / FFTS:<line>, or trace path.)
+#
+# UNITS: PEM latency/depth entries are core-clock CYCLES unless the file's own comment
+#   says otherwise (B = bytes). The DDR/L2 memory latencies have NO oracle-stated time
+#   domain (see TODO close-6b) — banked as raw, domain UNRESOLVED.
+# =============================================================================
+
+provenance:
+  target: dav-3510 (Ascend950PR, model_name Ascend950PR_9599)
+  soc_version: {model_name: Ascend950PR_9599, cube_cores: 32, vec_cores: 64}
+  contamination_check: "every Ascend950PR_95xx symlink under tools/simulator/ resolves to dav_3510; no 910/m200/c100 guard relied on"
+  default_tier: 🟢T1-cfg
+  verify_basis: "probes/hw_verify_20260603/verify_{A,B,C,D}_*.md (2026-06-03 adversarial verify panel)"
+
+# =============================================================================
+# 1. MICRO-ARCH  — FU classes + alloc, dual-issue exq0/exq1, dispatch, reg files
+#    Tier 🟢T1-cfg. Oracle keys spot-verified from PEM this session.
+# =============================================================================
+micro_arch:
+  # --- Issue / dispatch (RVEC vector engine front-end) ---
+  single_issue:        false   # PEM:275
+  issue_option:        3       # PEM:276  "3: group in fu, exq0/1 one by one in fu group"
+  dispatch_size:       2       # PEM:287  instrs/cycle (IFU dispatch)
+  I1_slot_num:         2       # PEM:366  "1 single issue, 2 exu dual issue"
+
+  # --- Dual-issue execution queues (exq0 + exq1, each 1-wide => 2/tick) ---
+  dual_issue:
+    exq0_iss_width:    1       # PEM:868  "ex_iss_width per que"
+    exq1_iss_width:    1       # PEM:870
+    issues_per_tick:   2       # = exq0_iss_width + exq1_iss_width (dual-issue ceiling)
+    ooo_to_exq_ostd:   2       # PEM:944  "dual_issue"
+    # CROSS-CHECK (T1-sim, NOT config): f32/f16 dual-issue is structurally observed in
+    # traces — co-issued same-name events carry DISTINCT slot tags AND distinct pc
+    # (two real instrs). f32 add: 756 dt=0 cycles / 2023 VADD, peak 2/cy. f16 add 207,
+    # f16 mul 208. (verify_D_ilp_trace.md claim 2, 🟢T1-sim.)  NOTE: the "u8 add is NOT
+    # dual-issue" claim is REFUTED — u8 dual-issues at 32 chains (176 dt=0 pairs); the
+    # 1/cy seen at 8 chains is a chain-pressure artifact, not an intrinsic limit. So no
+    # per-dtype dual-issue restriction is banked.
+
+  # --- Vector functional-unit (FU) classes + per-class allocation across exq0/exq1 ---
+  fu_classes: [ADD_CONV, MUL, MOV, LUT, LNEXP, SLIDE, SFU]   # 7 classes (PEM:913/919 comments)
+  fu_alloc_option:     [2, 2, 2, 2, 2, 0, 0]   # PEM:919  per-class queue: 0=exq0, 1=exq1, 2=exq0+exq1
+                                               # => ADD_CONV/MUL/MOV/LUT/LNEXP on both queues; SLIDE/SFU on exq0 only.
+  fu_instr_limit:      [13, 13, 13, 13, 13, 13, 13]   # PEM:913  per-class in-flight instr limit (13 each)
+  # NOTE: the slot->FU-class binding is config-only (this alloc table); it is NOT
+  #   observable in any trace (traces carry generic RVECEX_SLOT00..14 — 15 distinct
+  #   slot tags, the vadd entry trace reaches SLOT14 — zero FU-class tags). See TODO
+  #   close-D5 — banked as config, observability is UN.
+
+  # --- Scheduler reg-ready binning thresholds (route by VALU latency; NOT a vadd op latency) ---
+  valu_latency_binning:
+    shq_spclt_valu_ltcy_thres: 4   # PEM:909  route dst reg to shq rdy tbl if valu_lat <= 4
+    exq_spclt_valu_ltcy_thres: 7   # PEM:910  route if 4 < valu_lat <= 7
+    # CAVEAT: these are scheduler binning thresholds, NOT per-FU op latencies.
+
+  # --- Scheduler queue depths (ISU) ---
+  queue_depths:
+    shq_depth:         58      # PEM:853
+    exq_depth:         13      # PEM:854
+    ldq_depth:         24      # PEM:855
+
+  # --- RVEC / SIMD register files (DISTINCT from the SIMT reg file in simt_block) ---
+  register_files:
+    vreg_length_bytes: 256     # PEM:828 — UNIT IS BYTES (= 64 f32 / 128 f16 / 256 u8 lanes per RV_VADD; 256 *bits* would be 8 f32 lanes, contradicting the verified 64-lane width, kernel_utils_constants.h:172). The "_bits" name in the prior extract was a stale inference.
+    phy_vreg_num:      68      # PEM:829  (file comment "# 52" is a stale prior value; live = 68)
+    phy_preg_num:      32      # PEM:830  "64 available, simd only use 32"
+    # NB: phy_preg_num=32 here is the RVEC/SIMD predicate file (PEM:830). The SIMT
+    #   pipeline has its OWN predicate count total_phy_p_reg=32 at PEM:1054 (different
+    #   line, different block) — see simt_block. Do not conflate the two.
+
+# =============================================================================
+# 2. MEMORY HIERARCHY  — UB / L1 / L0A / L0B / L0C, DCACHE / Icache
+#    Tier 🟢T1-cfg unless noted. (verify_B_memory_scheduler.md claims 1a,2,3,4,6a)
+# =============================================================================
+memory_hierarchy:
+
+  UB:                          # PEM [UB] — vector-engine working store (vadd src/dest)
+    total_size_bytes:  262144  # PEM:761  "# 256KB"  (confirmed, verify_B claim 1a)
+    # read/write latency are PER-REQUESTER vectors, core-clock CYCLES (UB header), UB_ARB excluded.
+    # read_latency order:  [LSU_R, GSU_R, VEC_SU_R, AIC_SU_R, AIV_SU_R, MTE_R, SFU_R, SIMT_R, BHU_R]
+    read_latency:      [3, 6, 5, 5, 5, 5, 5, 7, 3]   # PEM:774  -> VEC_SU_R = 5 (idx 2)
+    # write_latency order: [LSU_W, GSU_W, VEC_SU_W, AIC_SU_W, AIV_SU_W, MTE_W, SFU_W, SIMT_W, BHU_W]
+    write_latency:     [2, 2, 2, 2, 2, 2, 2, 3, 6]   # PEM:776  -> VEC_SU_W = 2 (idx 2)
+    vec_su_read_latency:  5    # PEM:774 idx2  (the VEC datapath read latency)
+    vec_su_write_latency: 2    # PEM:776 idx2
+    # ---------------------------------------------------------------------
+    # UB GEOMETRY (banks / groups / line size) IS NOT BANKED HERE — see TODO close-B1b.
+    #   DISAGREES WITH probes/arch_extract/arch_950pr_t1cfg.yaml, which lists
+    #   buffer_line_size=32 / buffer_bank_count=16 / bank_group_number=8 (PEM:763/765/767)
+    #   as if operative. verify_B claim 1b REFUTES that: those are the
+    #   ub_area_reduce=FALSE (inactive) layout; the config sets ub_area_reduce=true
+    #   (PEM:785), whose own comment reads "true: 32 bank group, 8-B bank_line;
+    #   false: 16 bank group, 32-B bank_line" (+ subbank_line_size=8 PEM:764). So the
+    #   "32 B line / 16 banks / 8 groups" presentation is contradicted. The operative
+    #   geometry (32 bank-groups / 8-B line) vs whether the literal keys are overridden
+    #   at runtime cannot be settled read-only -> TODO close-B1b.
+    # ---------------------------------------------------------------------
+
+  L1:                          # PEM [L1]  (verify_B claim 2)
+    total_size_bytes:  524288  # PEM:749  "# 512KB"
+    read_port_num:     1       # PEM:757
+    write_port_num:    2       # PEM:758
+    core_access_width_bytes: 256   # PEM:755
+    dmac_access_width_bytes: 256   # PEM:756
+
+  L0A:                         # PEM [L0A]  (verify_B claim 3)
+    total_size_bytes:  65536   # PEM:729  "# 64" KB
+
+  L0B:                         # PEM [L0B]  (verify_B claim 3)
+    total_size_bytes:  65536   # PEM:734  "# 64 KB"
+
+  L0C:                         # PEM [L0C]  (verify_B claim 3)
+    total_size_bytes:  262144  # PEM:738  "# 256KB"
+    bank_count:        32      # PEM:740
+
+  DCACHE:                      # PEM [DCACHE]  scalar data cache (verify_B claim 4)
+    aic_dc_size_kb:    32      # PEM:417  "dc_size = line*way*set" -> 64*4*128 = 32768 = 32KB
+    aiv_dc_size_kb:    32      # PEM:418
+    aic_dc_way_size:   4       # PEM:421  (4-way)
+    aiv_dc_way_size:   4       # PEM:422
+
+  Icache:                      # PEM [IFU]  (verify_B claim 4)
+    aic_ic_size_bytes: 32768   # PEM:293  AIC icache 32KB
+    aiv_ic_size_bytes: 16384   # PEM:294  AIV icache 16KB
+
+  # --- DDR / L2 timing block. Raw values confirmed (verify_B claim 6a); TIME DOMAIN UNRESOLVED. ---
+  # DISAGREES WITH probes/arch_extract: that file labels these "(soc-domain; not core cycles)".
+  #   verify_B claim 6b: that label is an unverified INFERENCE — the physical [DDR]/[L2] lines
+  #   carry NO unit/domain comment (grep: 0 domain annotations on any latency key). Numbers are
+  #   real; the domain qualifier is NOT banked. See TODO close-B6b.
+  DDR_timing:                  # PEM [DDR]
+    min_read_latency:  330     # PEM:183  (raw; time domain UNRESOLVED — see TODO close-B6b)
+    min_write_latency: 330     # PEM:185  (raw; time domain UNRESOLVED)
+  L2_timing:                   # PEM [L2]  (on-die L2 timing/window block — see SIM-ONLY for sizes)
+    min_read_latency:  216     # PEM:198  (raw; time domain UNRESOLVED)
+    min_write_latency: 238     # PEM:200  (raw; time domain UNRESOLVED)
+
+# =============================================================================
+# 3. MTE BANDWIDTHS  — memory transfer engine (DMA-class) paths + fixpipe latencies
+#    Tier 🟢T1-cfg. (verify_B_memory_scheduler.md claim 5 — all 11 sub-values exact)
+# =============================================================================
+mte_bandwidths:
+  ub_to_l1_intf_bandwidth_bpc:  256   # PEM:488  bytes/cycle (merged intf width; ub_to_l1_merge=1 PEM:487 merges 2x128B)
+  l1_to_ub_bandwidth_bpc:       128   # PEM:491  bytes/cycle (l1_to_ub_merge=0 PEM:489 -> reverse stays 128; the 256/128 asymmetry is the merge knobs, not a discrepancy)
+  l1_to_l0a_bandwidth_bpc:      256   # PEM:499
+  l1_to_l0b_bandwidth_bpc:      256   # PEM:500
+  l1_to_l0c_bandwidth_bpc:      64    # PEM:503
+  biu_to_l1_bandwidth_bpc:      256   # PEM:521
+  biu_port_width_bytes:         128   # PEM:222  ([BIU])
+  biu_burst_bytes:              [512, 256, 128]   # PEM:475
+  # fixpipe latencies (cycles):
+  fixp_head_latency:            3     # PEM:567
+  fixp_ub_increment_latency:    7     # PEM:568
+  fixp_out_increment_latency:   4     # PEM:569
+
+# =============================================================================
+# 4. CUBE GEOMETRY  — matrix / MMAD engine (closes ledger P-05)
+#    Tier 🟢T1-cfg + header-anchored. (task §1/§2 list; lines re-verified this session)
+# =============================================================================
+cube_geometry:
+  cube_spec_npe:        256    # PEM:692  MAC PEs
+  C0_K_size:            32     # PEM:695  K-fractal depth (16-bit/8-bit); fp32 uses 16 (header-anchored)
+  m_frac_size:          16     # PEM:696  M fractal
+  n_frac_size:          16     # PEM:697  N fractal
+  cube_stage_num:       26     # PEM:706  cube pipeline depth (cycles)
+  fp32_fp16_mac_ratio:  16     # PEM:694  "only 4, 16 supported"  (FP32:FP16 MAC ratio)
+  fp_partial_columns:   4      # PEM:693  "only 4(full), 2, 1 supported"
+
+# =============================================================================
+# 5. SIMT BLOCK  — separate SIMT front-end pipeline ([SIMT.*] sections)
+#    Tier 🟢T1-cfg. (verify_B_memory_scheduler.md claim 8 — all exact)
+# =============================================================================
+simt_block:
+  num_cores:           2       # PEM:1050
+  max_warp_num:        64      # PEM:1057  (64 warps)
+  thread_num_per_warp: 32      # PEM:1058  (x 32 threads)
+  issue_num:           4       # PEM:1059  issue width
+  total_reg_num:       131072  # PEM:1053  (SIMT reg file — DISTINCT from micro_arch.register_files)
+  total_phy_p_reg:     32      # PEM:1054  SIMT predicate regs (NB: micro_arch.phy_preg_num=32 is a DIFFERENT file at PEM:830)
+  total_phy_v_reg:     26      # PEM:1055  SIMT vector regs
+  divergence_stack_entry_num: 16   # PEM:1132  ([SIMT.DVG])
+  dcache_line_size_bytes: 128  # PEM:1162  ([SIMT.DCACHE])
+  dcache_way_num:      4       # PEM:1164
+  separate_front_end:  true    # corroborated: separate_arch=1 (PEM:72) + dedicated [SIMT.IFU] block PEM:1111
+  # SIMT EXU reg-access latencies: value CONFIRMED (verify_B claim 8), but the config
+  #   file annotates both with '# TBC' (to-be-confirmed) — banked with that caveat noted.
+  exu_reg_rd_latency:  10      # PEM:1156  ([SIMT.EXU]; config annotates "# TBC")
+  exu_reg_wr_latency:  10      # PEM:1157  ([SIMT.EXU]; config annotates "# TBC")
+
+# =============================================================================
+# 6. SCHEDULER  — STARS / FFTS+ (David mode)
+#    Tier 🟢T1-cfg. (verify_B_memory_scheduler.md claim 7)
+# =============================================================================
+scheduler:
+  active_mode:           David   # STARS:18 ffts_mode=3 "0:FFTS 1:FFTS+ 3:David" -> active mode is David(3)
+  STARS:
+    num_rtsq:            1024    # STARS:6   (SIM-ONLY — see quarantine; a simulator-config value, never a silicon fact)
+    num_notify:          1024    # STARS:9
+    core_kickstart_latency: 200  # STARS:20  unit = "hwts cycles" (per file comment)
+    cross_core_latency_recv: [0] # STARS:21  cross-core set-flag latency = 0
+    cross_core_latency_send: [0] # STARS:22
+  FFTS_plus:                     # FFTS+ notify-FIFO infrastructure (configured/present)
+    notify_fifo1_depth:  16     # FFTS:15  "notify table to FFTS+ FIFO"
+    notify_fifo2_depth:  64     # FFTS:16
+
+# =============================================================================
+# 7. TRACE-MEASURED VALUES (🟢T1-sim)  — model-internal, NO TOML key
+#    These are NOT config-keyed. Oracle = harvested Chrome trace JSON. Tier T1-sim.
+#    The execute latency is model-internal (keyed by valu_option=9, PEM:1074); it does
+#    NOT exist as a TOML value, so NO PEM line is fabricated for it.
+# =============================================================================
+trace_measured:
+  per_op_execute_dur:          # confirmed (verify_D claim 1; verify_A trace-facts)
+    tier: 🟢T1-sim
+    oracle: "probes/simd_arith_sweep/golden5/evidence/*.json  (Chrome trace X-event 'dur' field)"
+    field_semantics: "'dur' is a genuine per-op trace field that varies by op (a fixed glyph would be constant)"
+    add_sub:   7   # RV_VADD dur=0.007 (x1604 uniform); RV_VSUB=0.007 (sub from int-div trace only — weaker provenance)
+    mul:       8   # RV_VMUL dur=0.008 (x839)
+    div_f32:   17  # RV_VDIV dur=0.017 (x643)
+    div_f16:   22  # RV_VDIV dur=0.022 (x640)
+    units_caveat: >
+      Values shown as integers per the project convention, but the raw trace 'dur' is
+      µs-scale (0.007 etc.). The "= cycles" reading rests on a 1 ns = 1 cycle pin the
+      sibling isa_cost doc marks NOT discriminable from the trace alone. dur is a
+      confirmed FIELD; "dur ~= execute cycles" is still_UN (see TODO close-A/D-durcy).
+  # NOT BANKED (still_UN): latency = dur-3, and lanes/cy (cannsim 256 / hw 128).
+  #   See TODO close-D4 and close-D6. Both fail the inclusion discipline -> TODO only.
+
+# =============================================================================
+# SIM-ONLY QUARANTINE BLOCK  — these are SIMULATOR-CONFIG values, NEVER silicon claims.
+#   Constitution §8. A consumer of this file MUST NOT present any
+#   value below as a hardware/silicon parameter. (verify_B_memory_scheduler.md claim 9)
+# =============================================================================
+SIM_ONLY:
+  _warning: "NEVER cite any value in this block as a silicon/hardware fact. Simulator config only."
+  l2_size_model_bytes:   754974720   # MODEL:2   = 720 MB  (NOT silicon; simulator-config only)
+  l2_size_window_bytes:  67108864    # PEM:194   = 64 MB   ([L2] timing-block size; distinct from MODEL 720MB)
+  l2_as_cache_disabled:  true        # PEM:1229 [L2CACHE] cache_enable=0 (also PEM:204 [L2] l2c_op=0 "no l2c")
+  ddr_size_bytes:        1073741824  # MODEL:3   = 1 GB    (NOT silicon HBM capacity)
+  num_die:               1           # MODEL:5   (sim flattens package to single die)
+  num_aicpu:             1           # MODEL:9   (NOT the silicon AI-CPU count)
+  num_rtsq:              1024        # STARS:6   (NOT the silicon stream count)
+  note: >
+    None of the L2 figures here (720 MB top-level / 64 MB window) is a silicon
+    fact; all are simulator-config artifacts. l2_as_cache_disabled means
+    the [L2CACHE] model block is inert in 9599 runs.
+
+# =============================================================================
+# TODO  — still_UN items NOT banked as fact, each with its CLOSING EXPERIMENT.
+#   A value moves from here into the fact blocks ONLY when its experiment confirms it.
+# =============================================================================
+TODO:
+
+  - id: close-B1b
+    item: "Operative UB geometry: bank count / bank-group count / bank-line size."
+    status: RAN_2026-06-08 + P-19-CLOSED_2026-06-09 — not trace-resolvable AND the UB bank-conflict COUNT is absent from the msprof-sim export too (visualize_data.bin "UB Read/Write Conflict" field = -1 in all 3 sim metric modes, SIMD+SIMT; probes/simt_profiling/P19_aggregate.md). Residual = MindStudio-Insight or data-dominant-N only
+    why: >
+      The literal keys buffer_bank_count=16 (PEM:765), bank_group_number=8 (PEM:767),
+      buffer_line_size=32 (PEM:763) describe the ub_area_reduce=FALSE layout, but the
+      config sets ub_area_reduce=true (PEM:785), whose comment gives the active layout
+      as 32 bank-groups / 8-B line (+ subbank_line_size=8 PEM:764). "32 B line" is
+      directly contradicted. Whether area_reduce=true overrides the literal keys at
+      runtime is not decidable from the TOML alone.
+    ran_2026-06-08: >
+      Probe probes/hw_runprobe_B/ (RESULTS.md). FOUND a working non-destructive config
+      override: env CORE_SIM_CFG=<copy> applies file VALUES (proven: single_issue=true
+      collapses dual-issue). So ub_area_reduce / bank_group_number ARE A/B-toggleable.
+      BUT the bank-conflict observable is not on the trace/cycle surface: the positive
+      control (bank_group_number=1 -> 2 banks) produced ZERO change in trace dur / span /
+      cycle on the vadd (cycle stayed 419). The bank-conflict COUNT surfaces only in the
+      analyzer chart data (memory_sim_view SVG / shared_bank_conflicts HTML = open probe
+      P-19), which is degenerate at overhead-bound N. Not claiming "no observable exists"
+      (only a sequential-access kernel was tried, whose null is expected).
+    closing_experiment: >
+      NOT independently trace-resolvable -> now COUPLED to P-19 (decode analyzer chart
+      data) + the data-dominant-N (>=1M) re-sweep. Needs a bank-stressing (scatter/strided)
+      kernel at data-dominant N whose conflict count is read from the P-19 chart data
+      (a 2 MB DMA run did not finish in 205 s here -> data-dominant sweep is wall-clock
+      expensive). The CORE_SIM_CFG knob makes that future A/B constructible.
+
+  - id: close-B6b
+    item: "Time domain of DDR/L2 memory latencies (330 / 216 / 238)."
+    status: RAN_2026-06-08 — not trace-resolvable; reclassified P-19 + data-dominant-N coupled
+    why: >
+      The raw values are confirmed (verify_B claim 6a), but the [DDR]/[L2] lines carry
+      NO unit/domain comment (grep: zero domain annotations on any latency key). The
+      "soc-domain, not core cycles" label in the prior arch_extract is an inference,
+      not oracle-shown. soc_period=105 vs core_period=200 (MODEL:12,14) make a soc-vs-core
+      distinction plausible but not confirmed.
+    ran_2026-06-08: >
+      Probe probes/hw_runprobe_B/ (RESULTS.md). Scaled DDR.min_read/write_latency 330->30000
+      (x91) via CORE_SIM_CFG (proven-applied override): ZERO change in the vadd trace
+      dur / span / cycle (cycle stayed 419). The [DDR]/[L2] libpem keys do not drive the
+      observable trace/cycle timeline. The active DDR model crosses clock domains
+      (liblpddrsim/libdramsim: ClockDomain + ClockDomainCrosser; "lpddr5 1900 Mbps" device
+      sim, USE_BAILU=1) and the model runs distinct periods (CoreWrapper ref_period=0.40 /
+      self_period=0.61; MODEL soc_period=105 vs core_period=200). The latency time domain
+      is NOT exposed in the trace/cycle observables. (NOT claiming "bailu governs / [DDR]
+      vestigial" — a single null is consistent with several causes; unproven positive cause.)
+    closing_experiment: >
+      NOT trace-resolvable -> COUPLED to P-19 (the only memory-timing observable is the
+      memory_sim_view chart data, degenerate at overhead-bound N) + the data-dominant-N
+      (>=1M) re-sweep (wall-clock expensive: a 2 MB DMA run did not finish in 205 s). Even
+      then the chart exposes bandwidth (GB/s) / requests, which may not directly label the
+      latency clock domain. Honest residual: domain unmeasured; keys non-governing on the
+      observable timeline.
+
+  - id: close-D4
+    item: "latency = dur - 3 (i.e. 7->4, 8->5, 17->14, 22->19)."
+    status: still_UN
+    why: >
+      The dur side {7,8,17,22} is confirmed (trace_measured above), but the "-3 ->
+      golden latency" bridge fails twice: (a) {4,5,14,19} are an EXTERNAL user-supplied
+      hardware golden, not a trace field; (b) the stated mechanism ("-3 = UB read/write")
+      is REFUTED by config — UB VEC_SU read 5 + write 2 = 7, not 3, so if UB r/w were the
+      excluded part the offset would be -7. The dur-3 match is an arithmetic tautology.
+    closing_experiment: >
+      A source that DIRECTLY labels the vector execute latency (or the valu_option=9
+      model-internal latency table), independent of the external golden. NOT resolvable
+      by re-running the sim (a fresh run re-emits the same dur field, not a labeled latency).
+
+  - id: close-D5
+    item: "RVECEX slot -> FU-class binding observable in traces?"
+    status: still_UN
+    why: >
+      The 7 FU classes + fu_alloc_option are confirmed CONFIG (banked in micro_arch),
+      but traces carry only generic numbered slot tags RVECEX_SLOT00..14 (15 distinct
+      tags; vadd entry trace reaches SLOT14) — grep for ADD_CONV/MUL/MOV/LUT/LNEXP/
+      SLIDE/SFU across ALL harvested traces = ZERO hits. The slot->class binding is
+      config-only, not trace-observable.
+    closing_experiment: >
+      NOT resolvable by a sim run (a fresh run emits the same fields with no FU-class
+      tag — a trace-format limitation). Needs either a trace field that labels the FU
+      class per slot, or model-internal documentation of the slot->class map.
+
+  - id: close-D6
+    item: "Lanes/cycle: cannsim ~256, hardware ~128."
+    status: still_UN
+    why: >
+      No lanes/cy event exists in any trace. cannsim-256 is DERIVED (lanes/op by dtype x
+      ops/cy from dual-issue), not a raw measurement. hardware-128 is a user-EXTERNAL
+      golden, unverifiable from the toolchain by construction.
+    closing_experiment: >
+      cannsim-256: state it only as a derived synthesis, never "directly measured" — no
+      trace field carries it. hardware-128: needs an external silicon source; NOT
+      obtainable from the simulator/toolchain.
+
+  - id: close-A-durcy
+    item: "'dur ~= execute cycles' (the cycle interpretation of the trace dur field)."
+    status: split_2026-06-08    # cycle-COUNT half CONFIRMED (cross-oracle); absolute-CLOCK half still_UN
+    why: >
+      dur is a confirmed trace FIELD whose raw value is µs-scale (Chrome stores µs;
+      displayTimeUnit:ns renders it). The closing_experiment was RUN 2026-06-08 (P-20,
+      probes/msprof_oracle/): msprof simulation (`msprof op simulator` / msopprof, the SAME
+      Ascend950PR_9599 camodel as cannsim) emits an explicitly cycle-labeled per-op `cycles`
+      column. CROSS-ORACLE RESULT (cold re-derivation 2026-06-09, REVALIDATION.md): deterministic ops
+      EXACT (ADD 4<->4, MADD 5<->5); cold-memory ops are OVERLAPPING, NON-identical ranges —
+      cannsim LD dur*1000 in [414..614] vs msprof cycles in [377..510]
+      (evidence/crosscheck_dur_vs_cycles.tsv). Never exact on every op. => dur ENCODES the per-op cycle COUNT (CONFIRMED,
+      no longer an assumption). BUT the absolute cycle->wall-time CLOCK is still_UN: cannsim's
+      'ns' label encodes 1 cy = 1 ns (1.0 GHz); msprof applies ~1.78 GHz (cycles/running_time,
+      a conversion constant — NOT a config value). No ~1786 MHz clock exists in the camodel
+      config (only unlabeled *_period keys: core_period=200, soc_period=105). So '1 ns = 1
+      cycle' is shown NON-CANONICAL (a second CANN tool uses a different rate), but the true
+      clock is not pinned. R-01 ('never assert dur=integer cycles') was softened to the cycle-COUNT-confirmed
+      split — RATIFIED in constitution v0.2.5 (2026-06-09; planning/staging_amend_v0.2.5).
+    closing_experiment: >
+      DONE for the cycle-count half (msprof-sim `cycles` column, P-20). REMAINING for the
+      absolute clock: a silicon time source, or config documentation of the trace clock /
+      the *_period unit (core_period=200 / soc_period=105 candidate). Until then bank
+      'dur encodes the cycle count' (cross-oracle confirmed) but NOT a ns->time clock.
+
+# =============================================================================
+# RECONCILIATION NOTES vs probes/arch_extract/arch_950pr_t1cfg.yaml
+#   (values present in the prior extract but intentionally NOT banked here, so the
+#    reconciliation is visibly complete rather than a silent drop)
+# =============================================================================
+reconciliation_notes:
+  - "UB geometry (buffer_line_size/buffer_bank_count/bank_group_number, PEM:763/765/767): prior extract banks them as operative; NOT banked here — refuted as the inactive area_reduce=FALSE layout (verify_B 1b). See TODO close-B1b."
+  - "DDR/L2 latencies: prior extract labels them '(soc-domain; not core cycles)'; banked here as RAW with domain UNRESOLVED — the domain label is an unverified inference (verify_B 6b). See TODO close-B6b."
+  - "UB port_num [8,8,16,1,...] (PEM:770) and buffer_depth (PEM:772): present in prior extract; intentionally NOT banked — outside the verify-confirmed set and the §1/§2 list (no verdict ran on them)."
+  - "Many secondary PEM knobs in the prior extract (e.g. SIMT.SCH/LSU/REG sub-latencies, GSU pipe_stage_latency, SCALAR_Buf/SSBuf) are intentionally NOT banked — outside the verify-confirmed scope of this file. The prior extract remains the broader read-only inventory; this file banks only verify-confirmed + §1/§2 facts."

@@ -11,6 +11,7 @@
   "agents": [
     "./agents/cake.md",
     "./agents/cake-evo.md",
-    "./agents/cake-partial.md"
+    "./agents/cake-partial.md",
+    "./agents/cake-partial-simt.md"
   ]
 }

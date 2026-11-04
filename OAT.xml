@@ -38,6 +38,7 @@
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/cake-docs-search/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/op-dashboard/assets/chart.umd.min.js" desc="Third-party Chart.js 4.4.7 (MIT), vendored minified build; keeps its upstream notice."/>
+                <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/simt-codegen/references/operator_examples/torch_gather_20_20/gather_custom_tiling.h" desc="Part of the MindStudio project, offered under Mulan PSL v2; the file retains the upstream notice, exempt from CANN-2.0 header policy."/>
                 <filteritem type="filepath" name="plugins-community/model-recommend-infer-optimize/framework/.*" desc="Bundled GE_SESSION_DEMO inference sample retains upstream Apache-2.0 licensing (LICENSE/NOTICE shipped under framework/); exempt from repository CANN-2.0 header policy."/>
 </filefilter>
             <filefilter name="copyrightPolicyFilter" desc="Filters for copyright header policies">
@@ -50,6 +51,7 @@
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/cake-docs-search/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/op-dashboard/assets/chart.umd.min.js" desc="Third-party Chart.js 4.4.7 (MIT), vendored minified build; keeps its upstream notice."/>
+                <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/simt-codegen/references/operator_examples/torch_gather_20_20/gather_custom_tiling.h" desc="Part of the MindStudio project; the file retains the upstream Huawei copyright line from MindStudio rather than this repository's own."/>
                 <filteritem type="filepath" name="plugins-community/model-recommend-infer-optimize/framework/.*" desc="Bundled GE_SESSION_DEMO inference sample retains upstream Apache-2.0 licensing (LICENSE/NOTICE shipped under framework/); exempt from repository CANN-2.0 header policy."/>
 </filefilter>
             <filefilter name="licenseFileNamePolicyFilter" desc="Explicitly licensed components excluded from the repository default license policy">
@@ -109,6 +111,7 @@
                             <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/README.OpenSource" desc="Third-party component register in JSON; a header would break the array."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
                 <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/cake-docs-search/requirements.txt" desc="pip requirements file; a header would be parsed as a dependency line."/>
+                <filteritem type="filepath" name="plugins-community/collaborative-agent-kernel-evolution/skills/simt-codegen/references/operator_examples/torch_gather_20_20/gather_custom_tiling.h" desc="Part of the MindStudio project, offered under Mulan PSL v2; the file retains the upstream notice, exempt from CANN-2.0 header policy."/>
 </filefilter>
             <filefilter name="readmeFileNamePolicyFilter" desc="Filters for README file policies">
             </filefilter>
