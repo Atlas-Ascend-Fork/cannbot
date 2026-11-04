@@ -52,14 +52,8 @@ python scripts/analysis_engine/workflow.py run --op fastgelu --mode interactive
 
 ### 运行优化
 ```bash
-# Interactive模式（推荐）
+# Interactive模式（当前版本 run 仅支持 interactive 模式）
 python scripts/analysis_engine/workflow.py run --op <operator> --mode interactive
-
-# Auto模式（自动化）
-python scripts/analysis_engine/workflow.py run --op <operator> --mode auto
-
-# 指定max-iter（默认5）
-python scripts/analysis_engine/workflow.py run --op <operator> --max-iter 10
 ```
 
 ### 恢复Session
@@ -126,47 +120,47 @@ python scripts/analysis_engine/session_manager.py info <session_id>
 ### 场景2: 并发优化多个算子
 
 ```bash
-# Terminal 1
-python scripts/analysis_engine/workflow.py run --op fastgelu --mode auto &
+# Terminal 1（当前版本 run 仅支持 interactive 模式）
+python scripts/analysis_engine/workflow.py run --op fastgelu &
 
 # Terminal 2
-python scripts/analysis_engine/workflow.py run --op matmul --mode auto &
+python scripts/analysis_engine/workflow.py run --op matmul &
 
 # Terminal 3
-python scripts/analysis_engine/workflow.py run --op layernorm --mode auto &
+python scripts/analysis_engine/workflow.py run --op layernorm &
 
 # 查看所有sessions（完全隔离，无冲突）
 python scripts/analysis_engine/session_manager.py list
 
 # 输出:
-# 🔄 20260225_150000_fastgelu_auto_a1b2    (running)
-# 🔄 20260225_150005_matmul_auto_c3d4      (running)
-# 🔄 20260225_150010_layernorm_auto_e5f6   (running)
+# 🔄 20260225_150000_fastgelu_interactive_a1b2    (running)
+# 🔄 20260225_150005_matmul_interactive_c3d4      (running)
+# 🔄 20260225_150010_layernorm_interactive_e5f6   (running)
 ```
 
 ### 场景3: 多次迭代优化
 
 ```bash
 # 第1次尝试
-python scripts/analysis_engine/workflow.py run --op fastgelu --mode auto
-# → Session 1: 20260225_100000_fastgelu_auto_a1b2 (获得30%提升)
+python scripts/analysis_engine/workflow.py run --op fastgelu
+# → Session 1: 20260225_100000_fastgelu_interactive_a1b2 (获得30%提升)
 
 # 第2次尝试（不同策略）
-python scripts/analysis_engine/workflow.py run --op fastgelu --mode auto
-# → Session 2: 20260225_110000_fastgelu_auto_c3d4 (获得45%提升)
+python scripts/analysis_engine/workflow.py run --op fastgelu
+# → Session 2: 20260225_110000_fastgelu_interactive_c3d4 (获得45%提升)
 
 # 第3次尝试（激进优化）
-python scripts/analysis_engine/workflow.py run --op fastgelu --mode auto
-# → Session 3: 20260225_120000_fastgelu_auto_e5f6 (获得55%提升)
+python scripts/analysis_engine/workflow.py run --op fastgelu
+# → Session 3: 20260225_120000_fastgelu_interactive_e5f6 (获得55%提升)
 
 # 对比所有尝试
 python scripts/utils/compare_sessions.py --op fastgelu --top 10
 
 # 输出:
-# #  Session ID                          Status      Duration    Improvement  Target
-# 1  20260225_120000_fastgelu_auto_e5f6  ✅ completed 3240.12 us     55.3%    ✅
-# 2  20260225_110000_fastgelu_auto_c3d4  ✅ completed 3950.45 us     45.6%    ✅
-# 3  20260225_100000_fastgelu_auto_a1b2  ✅ completed 5040.78 us     30.2%    ✅
+# #  Session ID                              Status      Duration    Improvement  Target
+# 1  20260225_120000_fastgelu_interactive_e5f6  ✅ completed 3240.12 us     55.3%    ✅
+# 2  20260225_110000_fastgelu_interactive_c3d4  ✅ completed 3950.45 us     45.6%    ✅
+# 3  20260225_100000_fastgelu_interactive_a1b2  ✅ completed 5040.78 us     30.2%    ✅
 ```
 
 ### 场景4: 迁移旧数据
