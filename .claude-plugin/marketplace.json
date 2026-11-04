@@ -13,7 +13,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.0.5",
@@ -51,7 +51,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "infra",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.1.0",
@@ -74,7 +74,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "model",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.2.0",
@@ -186,7 +186,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "community/model",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.0.0",
@@ -273,7 +273,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "communication",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.2.13",
@@ -336,7 +336,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.0.0",
@@ -363,7 +363,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "plugins-community/cannbot-knowledge/skills",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.0.0",
@@ -404,7 +404,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "4.1.0",
@@ -476,7 +476,7 @@
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
         "path": "ops",
-        "sha": "c35e9609c758bf605fb7e651b915b8af841626a8"
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
       },
       "strict": false,
       "version": "1.2.0",
@@ -517,6 +517,60 @@
       "category": "development",
       "dependencies": [
         "tilelang-op-orchestrator-skills"
+      ]
+    },
+    {
+      "name": "shmem-ops-skills",
+      "description": "SHMEM 自定义通信算子开发 Skills（10 个）。覆盖设计、代码生成、编译调试、正确性评估、HCCL 对比评测、性能优化、代码审查和 PyTorch 绑定。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "community/ops",
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
+      },
+      "strict": false,
+      "version": "0.1.0",
+      "author": {
+        "name": "CANNBot Community"
+      },
+      "keywords": [
+        "shmem",
+        "communication",
+        "collective",
+        "hccl",
+        "ascendc"
+      ],
+      "category": "skills",
+      "skills": [
+        "./shmem-ops-dev",
+        "./shmem-ops-design",
+        "./shmem-ops-testcase-gen",
+        "./shmem-ops-code-gen",
+        "./shmem-ops-compile-debug",
+        "./shmem-ops-correctness-eval",
+        "./shmem-ops-performance-eval",
+        "./shmem-ops-performance-optim",
+        "./shmem-ops-code-review",
+        "./shmem-ops-torch-bind"
+      ]
+    },
+    {
+      "name": "shmem-ops-generator",
+      "source": "./plugins-community/shmem-ops-generator",
+      "description": "基于 SHMEM 的 Ascend 自定义集体通信算子端到端开发插件，涵盖需求到性能优化的完整工作流。",
+      "version": "0.1.0",
+      "author": {
+        "name": "CANNBot Community"
+      },
+      "keywords": [
+        "shmem",
+        "communication",
+        "collective",
+        "operator"
+      ],
+      "category": "development",
+      "dependencies": [
+        "shmem-ops-skills"
       ]
     }
   ]

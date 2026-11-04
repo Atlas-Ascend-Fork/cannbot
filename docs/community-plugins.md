@@ -11,6 +11,7 @@
 | [`tilelang2ascendc-ops-generator`](../plugins-community/tilelang2ascendc-ops-generator/) | Ascend C 算子自动生成（双路径设计表达 + AscendC 转译） |
 | [`triton-auto-evolve`](../plugins-community/triton-auto-evolve/) | Triton-Ascend 算子多轮自动优化 |
 | [`triton-optimizer`](../plugins-community/triton-optimizer/) | Triton Ascend NPU 算子优化与 PyTorch 算子转换 |
+| [`shmem-ops-generator`](../plugins-community/shmem-ops-generator/) | Ascend SHMEM 通信与通算融合算子开发、正确性验证、性能评测与优化 |
 
 ## ascendc-port-orchestrator
 

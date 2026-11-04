@@ -1,0 +1,17 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "preserveSkillInvocationPolicy": true,
+  "skills": [
+    "community/ops/shmem-ops-dev",
+    "community/ops/shmem-ops-design",
+    "community/ops/shmem-ops-testcase-gen",
+    "community/ops/shmem-ops-code-gen",
+    "community/ops/shmem-ops-compile-debug",
+    "community/ops/shmem-ops-correctness-eval",
+    "community/ops/shmem-ops-performance-eval",
+    "community/ops/shmem-ops-performance-optim",
+    "community/ops/shmem-ops-code-review",
+    "community/ops/shmem-ops-torch-bind"
+  ]
+}
