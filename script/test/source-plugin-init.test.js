@@ -14,7 +14,7 @@ const entry = join(packageRoot, "bin", "source-plugin-init.sh");
 const minimumMajor = Number(JSON.parse(readFileSync(join(packageRoot, "package.json"))).engines.node.match(/^>=(\d+)$/)[1]);
 const bash = spawnSync("bash", ["-c", "command -v bash"], { encoding: "utf8" }).stdout.trim();
 
-function fixture(t, version, versionExit = 0) {
+function fixture(t, version, versionExit = 0, tool = "codex") {
   const root = mkdtempSync(join(tmpdir(), "cannbot-node-preflight-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
@@ -43,7 +43,7 @@ function fixture(t, version, versionExit = 0) {
     ].join("\n"));
     chmodSync(node, 0o755);
   }
-  const result = spawnSync(bash, [entry, plugin, "project", "codex", join(root, "target")], {
+  const result = spawnSync(bash, [entry, plugin, "project", tool, join(root, "target")], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -82,3 +82,11 @@ for (const major of [minimumMajor, minimumMajor + 2]) {
     assert.deepEqual(args.slice(0, 4), ["install", "fixture", "--tool", "codex"]);
   });
 }
+
+test("source init forwards CodeArts to the unified installer", (t) => {
+  const { capture, result } = fixture(t, `v${minimumMajor}.0.0`, 0, "codearts");
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(capture)).slice(0, 4), [
+    "install", "fixture", "--tool", "codearts",
+  ]);
+});

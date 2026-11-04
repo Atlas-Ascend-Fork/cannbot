@@ -5,7 +5,7 @@
 本仓库维护：
 
 - 官方插件的 Agents、Workflows、Hooks、客户端清单与安装声明；
-- 面向 OpenCode、Codex、Claude Code、TRAE 和 DSH 的统一安装器；
+- 面向 OpenCode、Codex、Claude Code、TRAE、DSH 和 CodeArts 的统一安装器；
 - npm 自包含发布包的组装、测试与发布流程。
 
 可复用 Skill 源码由 [cannbot-skills](https://gitcode.com/cann/cannbot-skills) 维护。本仓库通过 Git submodule 锁定 Skill 版本，并通过插件声明选择所需能力。

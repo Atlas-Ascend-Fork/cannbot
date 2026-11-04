@@ -58,6 +58,20 @@ try {
   ]) {
     if (!existsSync(path)) throw new Error(`packaged install is missing: ${path}`);
   }
+  run(executable, ["install", "model-infer-optimize", "--tool", "codearts", "--target", target], consumer, {
+    ...process.env,
+    HOME: join(sandbox, "home"),
+    XDG_CACHE_HOME: join(sandbox, "cache"),
+    CANNBOT_SKIP_DEPENDENCY_REPOS: "1",
+  });
+  for (const path of [
+    join(target, ".codeartsdoer", "skills", "model-infer-fusion", "SKILL.md"),
+    join(target, ".codeartsdoer", "agents", "model-infer-analyzer.md"),
+    join(target, ".codeartsdoer", "cannbot-plugin.json"),
+    join(target, "AGENTS.md"),
+  ]) {
+    if (!existsSync(path)) throw new Error(`CodeArts packaged install is missing: ${path}`);
+  }
   run(executable, ["install", "ops-direct-invoke", "--tool", "claude", "--target", target], consumer, {
     ...process.env,
     HOME: join(sandbox, "home"),

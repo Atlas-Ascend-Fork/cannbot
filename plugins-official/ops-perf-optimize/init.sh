@@ -52,7 +52,7 @@ resolve_source_install_context() {
     fi
     case "$argument" in
       --skills) skip_next=1 ;;
-      opencode|codex|claude|trae|dsh) SOURCE_TOOL="$argument" ;;
+      opencode|codex|claude|trae|dsh|codearts) SOURCE_TOOL="$argument" ;;
       --help|-h) SOURCE_HELP=1 ;;
       project|global|--*) ;;
       *) if [[ -z "$SOURCE_TARGET" ]]; then SOURCE_TARGET="$argument"; fi ;;

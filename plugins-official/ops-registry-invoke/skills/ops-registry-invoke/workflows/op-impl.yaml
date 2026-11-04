@@ -494,10 +494,11 @@ nodes:
     as one long string.'
   - 'Enumerate the tilingKeys in BranchCatalog.md registration order, m = 1..M; per key (with its DESIGN-BRANCH-<key>.md),
     generate these five chained nodes (ids branch-<m>-<step>):'
+  - 'Before whitebox generation, run the dependency preflight in the st-verifier skill''s `references/README.md`; include its checks in each whitebox-gen approach and acceptance.'
   - '1. branch-<m>-whitebox-gen — executor whitebox-designer, verifier st-verifier: generate this branch''s TTK kernel-mode
-    whitebox case set under $WORK_DIR/op/tests/whitebox/branch-<m>/ (design_doc_cases.json + ttk_design_doc_cases.csv) from
+    whitebox case set under $WORK_DIR/op/tests/whitebox/branch-<m>/ (native S2P1/S5 artifacts + ttk_design_doc_cases.csv) from
     $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md §9 branch-verification points and $WORK_DIR/design/Validation.md''s matrix
-    rows for this branch; expected values computed by the independent golden $WORK_DIR/golden.py; coverage audit passes; no
+    rows for this branch; expected values computed by the independent golden $WORK_DIR/golden.py; native checks and independent coverage/shape review in the st-verifier skill''s `references/README.md` pass; no
     hardcoded case counts or hand-written CSV. Every design verification point routed to this branch must have at least one
     case whose generated inputs actually exercise it (the value ranges and special values the design doc specifies for that
     point — a case that only references a point without feeding it exercising inputs does not cover it), and the csv rows
@@ -508,7 +509,7 @@ nodes:
   - 'Include this reuse rule in every whitebox-gen approach and acceptance: reuse successfully generated cases for export-only,
     ordering or notes changes without repeating Golden probes. Record fingerprints of the case model, generation inputs,
     Golden and generator; changes to any of these or case content require full regeneration. For export-only changes,
-    use cases-to-ttk <cases.json> <opspec.json> <cases.csv> in a separate directory, with helper-supported thresholds within
+    use the native export command in the st-verifier skill''s `references/README.md` in a separate directory, within
     task resource limits. Preserve every required case and the complete record multiset across main CSV and oversized sidecar,
     including all fields and duplicate counts; sorting moves whole records. Retain successful full-generation evidence and
     recheck coverage, execution eligibility and CSV validity after reuse.'
@@ -585,7 +586,7 @@ nodes:
     rows, cumulative).
   - Every whitebox-gen node carries the reuse rule in approach and acceptance; its verifier checks successful generation and
     unchanged-content evidence for reuse alongside all existing coverage, shape, CSV, actual-input-pattern and priority gates.
-  - "Every generated bringup/batch node must include this acceptance in addition to its existing precision/rejection gates: Check Const/Dynamic instrumentation in this run and resolve CHECKER to the ops-registry-invoke skill's `workflows/scripts/check_runtime_result.py`; python3 \"$CHECKER\" oom --cases <branch CSV> --case-names <all selected positive names> --attempt <result CSV> <TTK log> exits 0 (repeat --attempt oldest to newest for split/repaired results). Keep original compilation/results/logs; precision PASS cannot replace OOM PASS."
+  - "Every generated bringup/batch node must include this acceptance in addition to its existing precision/rejection gates: Check Const/Dynamic instrumentation in this run and resolve CHECKER to the st-verifier skill's `scripts/check_runtime_result.py`; python3 \"$CHECKER\" oom --cases <branch CSV> --case-names <all selected positive names> --attempt <result CSV> <TTK log> exits 0 (repeat --attempt oldest to newest for split/repaired results). Keep original compilation/results/logs; precision PASS cannot replace OOM PASS."
   out_of_scope:
   - Do not create or modify any file other than $WORK_DIR/.workflow/kernel-sub-graph.yaml; do not execute any branch task;
     do not write kernel code.

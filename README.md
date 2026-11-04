@@ -15,7 +15,7 @@ CANNBot 是 [CANN](https://hiascend.com/software/cann) 社区的 Infra 智能体
 ### npm 安装
 
 ```bash
-npx @cannbot-plugin/cannbot@latest install ${plugin} --tool opencode
+npx @cannbot-plugin/cannbot@latest install ${plugin} --tool ${tool}
 ```
 
 ### 源码安装
@@ -27,6 +27,8 @@ bash init.sh
 ```
 
 `${plugin}`：插件名称，见[官方插件](#官方插件)，例如 `ops-direct-invoke`。
+
+`${tool}`：客户端，可选 `opencode`、`codex`、`claude`、`trae`、`dsh`、`codearts`。
 
 ## 📦 官方插件
 

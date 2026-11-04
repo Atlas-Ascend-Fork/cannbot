@@ -35,6 +35,7 @@ const TOOL_DIRECTORIES = Object.freeze({
   claude: { configDirs: [".claude"], defaultConfigDir: ".claude" },
   trae: { configDirs: [".traecli", ".marscode", ".trae", ".trae-cn"], defaultConfigDir: ".trae" },
   dsh: { configDirs: [".dsh"], defaultConfigDir: ".dsh" },
+  codearts: { configDirs: [".codeartsdoer"], defaultConfigDir: ".codeartsdoer" },
 });
 const TOOL_NAMES = Object.keys(TOOL_DIRECTORIES);
 const LAUNCH_COMMANDS = Object.freeze({
@@ -43,6 +44,7 @@ const LAUNCH_COMMANDS = Object.freeze({
   claude: "claude",
   trae: "trae",
   dsh: "dsh",
+  codearts: "CodeArts CLI / IDE",
 });
 const USAGE_GUIDES = Object.freeze({
   "ops-perf-optimize": `选择使用方式（将 /path/to/... 和目标 SoC 替换为实际配置）：
@@ -1192,7 +1194,7 @@ function install(options, initializing = []) {
     dependencies,
     dependencyAssets,
     nativePlugin,
-    unsupported: existsSync(join(pluginDir, "hooks")) && options.tool === "dsh" ? ["hooks"] : [],
+    unsupported: existsSync(join(pluginDir, "hooks")) && ["dsh", "codearts"].includes(options.tool) ? ["hooks"] : [],
   };
   record.knowledgeIndex = installKnowledgeConsumer(provisioned, options.target, options.tool) ? "ready" : "pending";
   updateInstallRegistry(join(configDir, "cannbot-plugin.json"), record);

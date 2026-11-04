@@ -15,7 +15,7 @@ const repositoryRoot = resolve(packageRoot, "..");
 const cli = join(packageRoot, "bin", "cannbot.js");
 const installerPackage = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 const sourcePackage = `${installerPackage.name}@${installerPackage.version}`;
-const tools = ["opencode", "codex", "claude", "trae", "dsh"];
+const tools = ["opencode", "codex", "claude", "trae", "dsh", "codearts"];
 const sources = ["repository", "package"];
 process.env.CANNBOT_SKIP_DEPENDENCY_REPOS = "1";
 const temporarySandboxes = new Set();
@@ -56,7 +56,7 @@ test("model-train-precision-diagnose resolves its community Skill sources", () =
 });
 
 function configRoot(target, tool) {
-  return join(target, tool === "opencode" ? ".opencode" : `.${tool}`);
+  return join(target, tool === "codearts" ? ".codeartsdoer" : `.${tool}`);
 }
 
 function skillRoot(target, tool) {

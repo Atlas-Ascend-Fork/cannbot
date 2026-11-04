@@ -41,7 +41,7 @@ PLUGIN_ID="$(node -p 'require(process.argv[1]).name' "${PLUGIN_DIR}/.claude-plug
 
 usage() {
   cat >&2 <<EOF
-Usage: bash init.sh [project] [opencode|codex|claude|trae|dsh] [install_path] [--skills <SHA|path>]
+Usage: bash init.sh [project] [opencode|codex|claude|trae|dsh|codearts] [install_path] [--skills <SHA|path>]
 
 Installs ${PLUGIN_ID} from this source checkout. The default tool is opencode
 and the default install path is the source repository root.
@@ -65,8 +65,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     project) LEVEL="project" ;;
     global) LEVEL="global" ;;
-    opencode|codex|claude|trae|dsh) TOOL="$1" ;;
-    cursor|copilot|codearts)
+    opencode|codex|claude|trae|dsh|codearts) TOOL="$1" ;;
+    cursor|copilot)
       echo "cannbot: $1 is not supported by the unified installer" >&2
       exit 1
       ;;

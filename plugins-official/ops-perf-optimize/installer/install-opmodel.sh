@@ -37,6 +37,7 @@ case "$TOOL" in
     "${TARGET}/.trae-cn/skills/ops-opmodel-toolkit"
   ) ;;
   dsh) SKILL_CANDIDATES=("${TARGET}/.dsh/skills/ops-opmodel-toolkit") ;;
+  codearts) SKILL_CANDIDATES=("${TARGET}/.codeartsdoer/skills/ops-opmodel-toolkit") ;;
   *) SKILL_CANDIDATES=() ;;
 esac
 

@@ -58,6 +58,18 @@ bash plugins-official/ops-direct-invoke/init.sh project codex /absolute/project 
 
 `CANNBOT_SKIP_DEPENDENCY_REPOS=1` 跳过依赖仓及 consumer；`CANNBOT_SKIP_KNOWLEDGE_INDEX=1` 仅跳过 consumer 初始化。显式离线、仅消费知识卡时使用 `CANNBOT_SKIP_KNOWLEDGE_RESOURCES=1`，会映射到 consumer 的 `--skip-resources`，仍准备并检查检索索引。Python 解释器可通过知识仓支持的 `CANNBOT_PYTHON` 指定。索引生命周期由知识仓当前安装器管理，旧版 `CANNBOT_REBUILD_KNOWLEDGE_INDEX` 不再控制索引构建；正常调优与查询不自动重建索引。
 
+## CodeArts 安装
+
+指定 `--tool codearts` 安装插件，例如：
+
+```bash
+npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool codearts --target /absolute/project
+```
+
+Skills、Markdown Agent 和安装记录分别位于 `.codeartsdoer/skills/`、`.codeartsdoer/agents/` 和
+`.codeartsdoer/cannbot-plugin.json`；插件提供的项目指令写入根目录 `AGENTS.md`。随后通过 CodeArts CLI / IDE 打开该项目。
+使用通用入口的源码插件也支持 `bash init.sh project codearts /absolute/project`。当前不安装 CodeArts 权限 Hook。
+
 ## 算子领域
 
 ### 算子生成
@@ -119,7 +131,7 @@ npx @cannbot-plugin/cannbot install tilelang-op-orchestrator --tool codex
 bash plugins-official/tilelang-op-orchestrator/init.sh project codex --skills /absolute/cannbot-skills
 ```
 
-`--tool` 支持 `opencode`、`codex`、`claude`、`trae`、`dsh`。启动客户端后描述需求，例如：
+`--tool` 支持 `opencode`、`codex`、`claude`、`trae`、`dsh`、`codearts`。启动客户端后描述需求，例如：
 
 ```text
 使用 tilelang-op-orchestrator 开发一个 float16 的 Abs 算子。先识别本机芯片，按对应平台流程完成设计、生成与测试。
