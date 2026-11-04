@@ -28,10 +28,12 @@ def api_names(path):
         )
 
 
-def attr_keys(path):
+def attr_keys(path, api=None):
     keys = set()
     with open(path, newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
+            if api is not None and row.get("api_name") != api:
+                continue
             raw = (row.get("attributes") or "").strip()
             if not raw:
                 continue
@@ -250,7 +252,7 @@ def _validate_attributes(args, api, signature):
     if not params:
         return True
     ok = True
-    for key in attr_keys(args.csv):
+    for key in attr_keys(args.csv, api):
         if key in params:
             continue
         candidates = [
