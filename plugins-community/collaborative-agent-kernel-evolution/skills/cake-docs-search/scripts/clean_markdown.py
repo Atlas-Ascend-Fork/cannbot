@@ -8,8 +8,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 #
-# Self-developed. First published in CAKE2 on 2026-03-24 as the ascendc-docs-search
-# skill, renamed to cake-docs-search here; third-party repositories carry downstream
+# First published in CAKE2 on 2026-03-24 as the ascendc-docs-search skill,
+# renamed to cake-docs-search here; third-party repositories carry downstream
 # copies of the same content.
 """
 Markdown 文件清理脚本
@@ -22,9 +22,7 @@ import sys
 import logging
 import argparse
 import shutil
-from pathlib import Path
 from html.parser import HTMLParser
-from html.entities import name2codepoint
 
 logger = logging.getLogger(__name__)
 

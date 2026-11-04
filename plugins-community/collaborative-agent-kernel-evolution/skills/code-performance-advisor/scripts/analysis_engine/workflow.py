@@ -141,7 +141,7 @@ def _route_path_and_confidence(raw_score: float, coverage: float) -> tuple:
 def _decide_route(valid_rules: list) -> RouteDecision:
     """从有效规则中选出 top rule 并给出路由决策。"""
     if not valid_rules:
-        logger.info(f"  ⚠️  No valid rules matched")
+        logger.info("  ⚠️  No valid rules matched")
         return RouteDecision(
             path="deep",
             max_score=0.0,
@@ -163,7 +163,7 @@ def _decide_route(valid_rules: list) -> RouteDecision:
     # ✅ 如果 top rule 是 redundant，发出警告（但仍然使用其 raw_score 路由）
     if top_rule.get("redundant", False):
         logger.info(f"  ⚠️  Top rule '{rule_id}' is redundant (already applied)")
-        logger.info(f"     Will explore alternative optimizations in SUGGEST phase")
+        logger.info("     Will explore alternative optimizations in SUGGEST phase")
 
     return RouteDecision(
         path=path,
@@ -265,7 +265,7 @@ def _top_rules_lines(top_rules: list) -> list:
 
 def _confirm_improvement_manually() -> bool:
     """自动对比无法确定时，退回到交互确认。"""
-    logger.info(f"  ⚠️  Performance comparison requires manual analysis")
+    logger.info("  ⚠️  Performance comparison requires manual analysis")
     try:
         response = input("  Performance improved and target met? (y/n): ")
     except EOFError:
@@ -305,7 +305,7 @@ def _validate_tag_format(tag_file):
         domain_tags = _as_tag_list(tags.get("domain_tags") or tags.get("domain"))
         symptom_tags = _as_tag_list(tags.get("symptom_tags") or tags.get("symptoms"))
         context_tags = _as_tag_list(tags.get("context_tags") or tags.get("context"))
-        logger.info(f"  ✅ Tag file valid")
+        logger.info("  ✅ Tag file valid")
         logger.info(f"     Domain tags: {len(domain_tags)}")
         logger.info(f"     Symptom tags: {len(symptom_tags)}")
         logger.info(f"     Context tags: {len(context_tags)}")
@@ -332,25 +332,25 @@ def _validate_tag_taxonomy(tag_file):
 def _announce_subskill(route, suggestions_dir) -> str:
     """Print the subskill the agent must invoke for this route; returns its name."""
     if route.path == "fast":
-        logger.info(f"📚 Required subskill: [suggest]")
-        logger.info(f"   Read: subskills/suggest.md")
+        logger.info("📚 Required subskill: [suggest]")
+        logger.info("   Read: subskills/suggest.md")
         logger.info(f"   Explore rule: assets/rules/special_rules/{route.top_rule_id}/")
-        logger.info(f"   Reference: references/standards/op_summary_header_guide.md")
+        logger.info("   Reference: references/standards/op_summary_header_guide.md")
         return "suggest"
     if route.path == "moderate":
-        logger.info(f"📚 Required subskill: [deep_research]")
-        logger.info(f"   Read: subskills/deep_research.md")
-        logger.info(f"   5-Step Logic: Bound Analysis → Memory → Pipeline → Tiling → Sync")
+        logger.info("📚 Required subskill: [deep_research]")
+        logger.info("   Read: subskills/deep_research.md")
+        logger.info("   5-Step Logic: Bound Analysis → Memory → Pipeline → Tiling → Sync")
         return "deep_research"
     if route.path == "scalar_locked":
-        logger.info(f"📚 Required subskill: [algorithm_redesign]")
-        logger.info(f"   Read: subskills/algorithm_redesign.md")
+        logger.info("📚 Required subskill: [algorithm_redesign]")
+        logger.info("   Read: subskills/algorithm_redesign.md")
         logger.info(f"   Input: latest suggestion / deep_research output in {suggestions_dir}/")
-        logger.info(f"   Goal: eliminate scalar dependency chains — not pattern-level fixes")
-        logger.info(f"   Required output: equivalence class + numerical error bound before code change")
+        logger.info("   Goal: eliminate scalar dependency chains — not pattern-level fixes")
+        logger.info("   Required output: equivalence class + numerical error bound before code change")
         return "algorithm_redesign"
-    logger.info(f"📚 Required subskill: [deep_research]")
-    logger.info(f"   5-Step Logic: Bound Analysis → Memory → Pipeline → Tiling → Sync")
+    logger.info("📚 Required subskill: [deep_research]")
+    logger.info("   5-Step Logic: Bound Analysis → Memory → Pipeline → Tiling → Sync")
     return "deep_research"
 
 
@@ -447,7 +447,7 @@ class WorkflowEngine:
         """上次以 ERROR 状态结束：回到出错的阶段重试，阶段不可识别则从 INIT 重来。"""
         error_phase = self.state.context.get(CK.ERROR, {}).get("phase")
         if not error_phase:
-            logger.info(f"[WORKFLOW] Previous run failed (phase unknown), restarting from INIT")
+            logger.info("[WORKFLOW] Previous run failed (phase unknown), restarting from INIT")
             self.state.phase = Phase.INIT
             return
         try:
@@ -473,7 +473,7 @@ class WorkflowEngine:
                 created_at=datetime.now(timezone.utc).isoformat(),
                 updated_at=datetime.now(timezone.utc).isoformat()
             )
-            logger.info(f"[WORKFLOW] Starting new workflow")
+            logger.info("[WORKFLOW] Starting new workflow")
             return
 
         self.state = self._load_state()
@@ -497,7 +497,7 @@ class WorkflowEngine:
         logger.info("")
         logger.info("⏸️  Workflow paused — waiting for agent action")
         logger.info(f"   Reason: {e}")
-        logger.info(f"   After completing the required action, resume with:")
+        logger.info("   After completing the required action, resume with:")
         logger.info(f"   python workflow.py resume --op {self.op_name}")
         self._save_state()
 
@@ -521,7 +521,7 @@ class WorkflowEngine:
 
     def _phase_init(self):
         """Phase INIT: 检查前置条件"""
-        logger.info(f"[PHASE: INIT] Checking prerequisites...")
+        logger.info("[PHASE: INIT] Checking prerequisites...")
 
         # ✅ 使用PathManager获取路径
         input_dir = self.pm.get_input_dir(self.op_name)
@@ -550,7 +550,7 @@ class WorkflowEngine:
     def _auto_init_workspace(self, input_dir):
         """输入目录缺失时，尝试自动从 CAKE2/output/{op}/ 初始化。"""
         logger.info(f"  ⚠️  Input directory not found: {input_dir}")
-        logger.info(f"  🔄 Attempting auto-initialization from CAKE2 output/...")
+        logger.info("  🔄 Attempting auto-initialization from CAKE2 output/...")
         init_script = ROOT / "scripts" / "analysis_engine" / "init_workspace.py"
         if not init_script.exists():
             raise WorkflowError(
@@ -581,7 +581,7 @@ class WorkflowEngine:
     def _load_baseline_profiling(self, input_dir, profiling_dir):
         """提取 baseline profiling 数据并写入 context；任何一步失败都退化为 code-only 分析。"""
         if not profiling_dir.exists():
-            logger.info(f"  ⚠️  Profiling data not found (will use code-only analysis)")
+            logger.info("  ⚠️  Profiling data not found (will use code-only analysis)")
             self.state.context[CK.PROFILING_DATA] = None
             return
 
@@ -599,7 +599,7 @@ class WorkflowEngine:
             self.state.context[CK.PROFILING_DATA] = None
             return
 
-        logger.info(f"  ✅ Profiling extracted:")
+        logger.info("  ✅ Profiling extracted:")
         logger.info(f"     Source: {csv_path.relative_to(input_dir)}")
         logger.info(f"     Task Type: {profiling_data.task_type}")
         logger.info(f"     Duration: {profiling_data.task_duration_us} us")
@@ -614,7 +614,7 @@ class WorkflowEngine:
 
     def _phase_tag(self):
         """Phase TAG: 代码标注"""
-        logger.info(f"[PHASE: TAG] Extracting code tags...")
+        logger.info("[PHASE: TAG] Extracting code tags...")
 
         # ✅ 使用PathManager
         tag_file = self.pm.get_tag_file(self.op_name)
@@ -624,7 +624,7 @@ class WorkflowEngine:
         ctx_force_retag = self.state.context.get(CK.FORCE_RETAG, False)
         if ctx_force_retag:
             self.state.context[CK.FORCE_RETAG] = False  # 消费掉，只触发一次
-            logger.info(f"  🔄 Forced retag (previous profiling did not meet target)")
+            logger.info("  🔄 Forced retag (previous profiling did not meet target)")
         should_force = self.force_retag or ctx_force_retag
 
         resolved_tag = self._resolve_tag_file(tag_file, tags_dir, should_force)
@@ -666,13 +666,13 @@ class WorkflowEngine:
         """代码 hash 比对：单一判据，避免 mtime + 行数多因子误判。"""
         sidecar_file = resolved_tag.with_suffix(".code_hash")
         if not sidecar_file.exists():
-            logger.info(f"  ✅ Tag cache hit")
+            logger.info("  ✅ Tag cache hit")
             return
         if sidecar_file.read_text().strip() == self._compute_code_hash():
-            logger.info(f"  ✅ Tag cache hit (code hash unchanged)")
+            logger.info("  ✅ Tag cache hit (code hash unchanged)")
             return
-        logger.info(f"  ⚠️  Code has changed since last tag (hash mismatch)")
-        logger.info(f"     Reusing cached tag — use --force-retag to regenerate")
+        logger.info("  ⚠️  Code has changed since last tag (hash mismatch)")
+        logger.info("     Reusing cached tag — use --force-retag to regenerate")
 
     def _reject_auto_generated_tag(self, resolved_tag, tags_dir):
         """质量检测：拒绝 auto_tag.py 生成的低质量缓存。"""
@@ -684,8 +684,8 @@ class WorkflowEngine:
             _conf = _cached.get("confidence", "?")
             logger.info(f"  ❌ Tag cache rejected: generated by auto_tag.py "
                         f"(heuristic, confidence={_conf})")
-            logger.info(f"  📌 REQUIRED: Run [code_tag] subskill for LLM-quality tags:")
-            logger.info(f"     Read: subskills/code_tag.md")
+            logger.info("  📌 REQUIRED: Run [code_tag] subskill for LLM-quality tags:")
+            logger.info("     Read: subskills/code_tag.md")
             logger.info(f"     Output to: {tags_dir}")
             logger.info(f"     Then resume with --force-retag: "
                         f"workflow.py resume --op {self.op_name} --force-retag")
@@ -703,8 +703,8 @@ class WorkflowEngine:
         """TAG 阶段必须由 Agent 调用 code_tag subskill（LLM 驱动）；
         auto_tag.py 已废弃，不再作为 fallback。本方法必定抛出 WorkflowPaused。"""
         logger.info(f"  ⚠️  {'Tag cache invalidated (force_retag)' if should_force else 'Tag file not found'}.")
-        logger.info(f"  📌 REQUIRED: Run [code_tag] subskill for LLM-quality tags:")
-        logger.info(f"     Read: subskills/code_tag.md")
+        logger.info("  📌 REQUIRED: Run [code_tag] subskill for LLM-quality tags:")
+        logger.info("     Read: subskills/code_tag.md")
         logger.info(f"     Output to: {tags_dir}")
         logger.info(f"     Then resume with: workflow.py resume --op {self.op_name}")
         logger.info("")
@@ -716,7 +716,7 @@ class WorkflowEngine:
 
     def _phase_score(self):
         """Phase SCORE: 规则评分"""
-        logger.info(f"[PHASE: SCORE] Scoring rules...")
+        logger.info("[PHASE: SCORE] Scoring rules...")
 
         tag_file = self.state.context[CK.TAG_FILE]
         output_file = self.session_dir / "scored_results.json"
@@ -737,10 +737,10 @@ class WorkflowEngine:
                 cache_valid = False
 
         if cache_valid:
-            logger.info(f"  ✅ Scoring cache hit (index + tag unchanged, skipping re-score)")
+            logger.info("  ✅ Scoring cache hit (index + tag unchanged, skipping re-score)")
         else:
             if output_file.exists():
-                logger.info(f"  ⚠️  Cache miss (index or tag changed) — re-scoring...")
+                logger.info("  ⚠️  Cache miss (index or tag changed) — re-scoring...")
             # 直接调用 score_rules（原为 subprocess 调用 cli.py，现改为直接 import）
             from cli import score_rules
             logger.info(f"  🔄 Scoring rules (index: {index_path.name}, tag: {Path(tag_file).name})...")
@@ -760,7 +760,7 @@ class WorkflowEngine:
             except Exception as e:
                 # 缓存键写失败不阻断主流程，仅记录便于排查
                 logger.debug("Failed to write score cache key: %s", e)
-            logger.info(f"  ✅ Scoring completed")
+            logger.info("  ✅ Scoring completed")
 
         # 读取 session 隔离的结果
         with open(output_file) as _scored_fp:
@@ -771,7 +771,7 @@ class WorkflowEngine:
 
     def _phase_route(self):
         """Phase ROUTE: 路由决策"""
-        logger.info(f"[PHASE: ROUTE] Making routing decision...")
+        logger.info("[PHASE: ROUTE] Making routing decision...")
 
         # Fix: scored_results uses "results" not "rules"
         results = self.state.context[CK.SCORED_RESULTS].get("results", [])
@@ -795,7 +795,7 @@ class WorkflowEngine:
         scalar_locked_signals = self._check_scalar_locked(route)
         if not scalar_locked_signals:
             return route
-        logger.info(f"  🔒 Scalar-Locked override → route upgraded to: scalar_locked")
+        logger.info("  🔒 Scalar-Locked override → route upgraded to: scalar_locked")
         for sig in scalar_locked_signals:
             logger.info(f"     • {sig}")
         return RouteDecision(
@@ -814,7 +814,7 @@ class WorkflowEngine:
         # ── Resume 路径：Agent 已调用 subskill，建议文件已存在 ──
         suggestion_files = list(suggestions_dir.glob("*.md"))
         if suggestion_files:
-            logger.info(f"[PHASE: SUGGEST] Suggestion file found:")
+            logger.info("[PHASE: SUGGEST] Suggestion file found:")
             for f in suggestion_files:
                 logger.info(f"  - {f.name}")
             self.state.context[CK.SUGGESTION_FILE] = str(suggestion_files[0])
@@ -825,16 +825,16 @@ class WorkflowEngine:
         route = RouteDecision(**self.state.context[CK.ROUTE])
         profiling_data = self.state.context.get(CK.PROFILING_DATA)
 
-        logger.info(f"[PHASE: SUGGEST] Waiting for subskill invocation")
+        logger.info("[PHASE: SUGGEST] Waiting for subskill invocation")
         logger.info("")
-        logger.info(f"=== Current Context ===")
+        logger.info("=== Current Context ===")
         logger.info(f"Operator: {self.op_name}")
         logger.info(f"Route: {route.path} path (confidence: {route.confidence})")
         if route.path == "fast":
             logger.info(f"Top rule: {route.top_rule_id} (score={route.max_score:.3f})")
 
         if profiling_data:
-            logger.info(f"\nProfiling:")
+            logger.info("\nProfiling:")
             logger.info(f"  Task Type: {profiling_data['task_type']}")
             logger.info(f"  Task Duration: {profiling_data['task_duration_us']} us")
             logger.info(f"  Bottleneck Hint: {profiling_data.get('bottleneck_hint', 'N/A')}")
@@ -858,11 +858,11 @@ class WorkflowEngine:
 
     def _phase_apply(self):
         """Phase APPLY: 应用建议"""
-        logger.info(f"[PHASE: APPLY] Applying suggestion...")
+        logger.info("[PHASE: APPLY] Applying suggestion...")
 
         suggestion_file = self.state.context.get(CK.SUGGESTION_FILE, "")
         logger.info(f"  📄 Suggestion: {suggestion_file or '(none)'}")
-        logger.info(f"  ⚠️  Apply changes manually to:")
+        logger.info("  ⚠️  Apply changes manually to:")
         logger.info(f"     {self.state.context[CK.INPUT_DIR]}/code/")
         try:
             response = input("  Apply completed? (y/n): ")
@@ -877,8 +877,8 @@ class WorkflowEngine:
         if pre_hash:
             current_hash = self._compute_code_hash()
             if current_hash == pre_hash:
-                logger.info(f"  ⚠️  WARNING: 代码文件未发生变更（哈希与 suggestion 生成前一致）")
-                logger.info(f"     请确认已将 suggestion 文件中的修改写入代码：")
+                logger.info("  ⚠️  WARNING: 代码文件未发生变更（哈希与 suggestion 生成前一致）")
+                logger.info("     请确认已将 suggestion 文件中的修改写入代码：")
                 logger.info(f"     {suggestion_file}")
                 try:
                     confirm = input("  仍然继续 BUILD？(y/n，默认 n): ")
@@ -893,15 +893,15 @@ class WorkflowEngine:
                 # 代码已变更，记录新哈希供 COMPARE 阶段的死循环检测使用
                 self.state.context[CK.POST_APPLY_CODE_HASH] = current_hash
 
-        logger.info(f"  ✅ Code modification completed")
+        logger.info("  ✅ Code modification completed")
         self._transition_to(Phase.BUILD)
 
     def _phase_build(self):
         """Phase BUILD: 编译"""
-        logger.info(f"[PHASE: BUILD] Building operator...")
+        logger.info("[PHASE: BUILD] Building operator...")
 
         if self.skip_build:
-            logger.info(f"  ⏭️  Skipping build (--skip-build flag set)")
+            logger.info("  ⏭️  Skipping build (--skip-build flag set)")
             logger.info(f"  ℹ️  Using existing compiled artifacts in output/{self.op_name}/")
             self._transition_to(Phase.EVALUATE)
             return
@@ -932,12 +932,12 @@ class WorkflowEngine:
                 logger.info(output)
             raise WorkflowError("Build failed")
 
-        logger.info(f"  ✅ Build successful")
+        logger.info("  ✅ Build successful")
 
         # ✅ 使用PathManager获取.run包路径
         run_file = self.pm.get_run_package_path(self.op_name)
         if run_file.exists():
-            logger.info(f"  🔄 Installing .run package...")
+            logger.info("  🔄 Installing .run package...")
             os.chmod(
                 run_file,
                 os.stat(run_file).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
@@ -953,29 +953,29 @@ class WorkflowEngine:
                 if output:
                     logger.info(output)
                 raise WorkflowError("Installation failed")
-            logger.info(f"  ✅ Installation completed")
+            logger.info("  ✅ Installation completed")
 
         self._transition_to(Phase.EVALUATE)
 
     def _phase_evaluate(self):
         """Phase EVALUATE: 评测性能"""
-        logger.info(f"[PHASE: EVALUATE] Evaluating performance...")
+        logger.info("[PHASE: EVALUATE] Evaluating performance...")
 
-        logger.info(f"  🔄 Running ascendc_evaluation skill...")
+        logger.info("  🔄 Running ascendc_evaluation skill...")
         # 这里应该调用 ascendc_evaluation skill
-        logger.info(f"  ⚠️  Requires skill invocation")
+        logger.info("  ⚠️  Requires skill invocation")
 
         try:
             input("  Press Enter after evaluation completes...")
         except EOFError:
             pass
 
-        logger.info(f"  ✅ Evaluation completed")
+        logger.info("  ✅ Evaluation completed")
         self._transition_to(Phase.COMPARE)
 
     def _phase_compare(self):
         """Phase COMPARE: 对比性能"""
-        logger.info(f"[PHASE: COMPARE] Comparing performance...")
+        logger.info("[PHASE: COMPARE] Comparing performance...")
 
         # 追踪优化轮次，防止无限循环
         max_rounds = 5
@@ -1024,11 +1024,11 @@ class WorkflowEngine:
             return fresh_candidates[0]
 
         if csv_candidates:
-            logger.info(f"  ⚠️  未找到比 baseline 更新的 profiling 数据")
+            logger.info("  ⚠️  未找到比 baseline 更新的 profiling 数据")
             logger.info(f"     最新 CSV：{csv_candidates[0].name}（与 baseline 相同或更旧）")
         else:
             logger.info(f"  ⚠️  {output_profiling_dir} 下未找到 op_summary*.csv")
-        logger.info(f"     请先运行 ascendc_evaluation 生成新 profiling 数据，再 resume")
+        logger.info("     请先运行 ascendc_evaluation 生成新 profiling 数据，再 resume")
         return None
 
     def _evaluate_improvement(self, latest_csv):
@@ -1037,14 +1037,14 @@ class WorkflowEngine:
         extractor = ProfilingExtractor(latest_csv, target_op_name=self.op_name)
         new_duration = extractor.extract().task_duration_us
         if not (baseline_us and baseline_us > 0 and new_duration > 0):
-            logger.info(f"  ⚠️  Auto-compare: baseline duration not recorded, skipping auto-compare")
+            logger.info("  ⚠️  Auto-compare: baseline duration not recorded, skipping auto-compare")
             return None
 
         improvement = (baseline_us - new_duration) / baseline_us
         goal = self.state.context.get(CK.PERFORMANCE_GOAL, {})
         target = goal.get("relative_improvement", 0.2) if goal else 0.2
 
-        logger.info(f"  ✅ Auto-comparison result:")
+        logger.info("  ✅ Auto-comparison result:")
         logger.info(f"     Baseline : {baseline_us:.3f} us")
         logger.info(f"     Current  : {new_duration:.3f} us")
         logger.info(f"     Improvement: {improvement:+.1%}  (target: {target:.0%})")
@@ -1076,8 +1076,8 @@ class WorkflowEngine:
         code_was_changed = (pre_apply_hash is None) or (self._compute_code_hash() != pre_apply_hash)
         if not code_was_changed:
             # 代码未变更 → 用户没有真正应用修改，不需要 retag，暂停等待
-            logger.info(f"  ⚠️  代码文件未变更（哈希与 suggestion 生成前一致）")
-            logger.info(f"     请先将 suggestion 文件中的修改写入代码，重新 BUILD + EVALUATE，再 resume")
+            logger.info("  ⚠️  代码文件未变更（哈希与 suggestion 生成前一致）")
+            logger.info("     请先将 suggestion 文件中的修改写入代码，重新 BUILD + EVALUATE，再 resume")
             raise WorkflowPaused(
                 f"代码未变更，请应用 {self.session_dir / 'suggestions'} 中的修改，"
                 f"重建并重新评估后 resume: workflow.py resume --op {self.op_name}"
@@ -1095,13 +1095,13 @@ class WorkflowEngine:
 
     def _phase_update(self):
         """Phase UPDATE: 更新 baseline"""
-        logger.info(f"[PHASE: UPDATE] Updating baseline...")
+        logger.info("[PHASE: UPDATE] Updating baseline...")
 
         if self.state.context.get(CK.PERFORMANCE_IMPROVED):
-            logger.info(f"  🔄 Updating baseline code and profiling...")
+            logger.info("  🔄 Updating baseline code and profiling...")
             # 调用 auto_optimize.py update-baseline
-            logger.info(f"  ⚠️  Baseline update requires manual execution")
-            logger.info(f"  ✅ Baseline updated")
+            logger.info("  ⚠️  Baseline update requires manual execution")
+            logger.info("  ✅ Baseline updated")
 
         self._transition_to(Phase.DONE)
 
@@ -1322,7 +1322,7 @@ class WorkflowEngine:
         """
         import hashlib
         code_dir = self.pm.get_input_dir(self.op_name) / "code"
-        hasher = hashlib.md5()
+        hasher = hashlib.md5(usedforsecurity=False)
         if code_dir.exists():
             cpp_files = sorted(code_dir.rglob("*.cpp"))
             h_files = sorted(code_dir.rglob("*.h"))
@@ -1434,7 +1434,7 @@ def cmd_resume(args):
     else:
         # 旧方式: 查找算子的最新session
         if not args.op:
-            logger.info(f"[ERROR] Either --op or --session-id must be provided")
+            logger.info("[ERROR] Either --op or --session-id must be provided")
             raise CommandExit(1)
 
         latest = sm.get_latest_session(args.op)
@@ -1467,7 +1467,7 @@ def cmd_resume(args):
         if is_stale_date or is_done:
             reason = "from a previous day" if is_stale_date else f"already DONE (phase={actual_phase})"
             logger.info(f"[WORKFLOW] ⚠️  Latest session '{latest.session_id}' is {reason}.")
-            logger.info(f"[WORKFLOW]    Starting a NEW session instead.")
+            logger.info("[WORKFLOW]    Starting a NEW session instead.")
             logger.info(
                 f"[WORKFLOW]    To force-resume the old session: workflow.py resume --session-id {latest.session_id}")
             engine = WorkflowEngine(args.op,
@@ -1518,14 +1518,14 @@ def cmd_status(args):
         logger.info(f"  Workflow Phase: {current_phase}")
         logger.info(f"  Phases Completed: {len(phases_completed)}/10")
         logger.info("")
-        logger.info(f"  Performance:")
+        logger.info("  Performance:")
         logger.info(f"    Improvement: {info.performance['improvement_pct']:.1f}%")
         logger.info(f"    Target Met: {'✅' if info.performance['target_met'] else '❌'}")
         return
 
     # 按算子名查询最新session
     if not args.op:
-        logger.info(f"[ERROR] Either --op or --session-id must be provided")
+        logger.info("[ERROR] Either --op or --session-id must be provided")
         raise CommandExit(1)
 
     latest = sm.get_latest_session(args.op)

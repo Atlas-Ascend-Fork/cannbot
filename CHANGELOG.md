@@ -158,6 +158,43 @@ This file records notable changes to the CANNBot plugin orchestration and delive
   bundler rewrites the value as before.
 - Community plugins are not stamped with a plugin-root licence; each keeps the licence it
   ships with, and `plugins-community/` carries none.
+- Five cake reference files take the `cann/cannbot-skills` master version, picking up the
+  spelling corrections of `bb72f983` that the import source predates. Four are ordinary
+  English words now spelled `category`, `cannot`, `Double` and `requirement`; the fifth is
+  a directory reference in `code-performance-advisor/references/README.md` that now reads
+  `architecture/`, the name the directory actually has. Trailing whitespace in the same
+  files is removed by the same upstream commit.
+- The three scanner findings `cann/cannbot-skills` cleared in `804ef4af` are cleared here
+  too: `hashlib.md5()` in `code-performance-advisor`'s `init_workspace.py` and
+  `workflow.py` now passes `usedforsecurity=False` (B324), and the Jinja2 environment in
+  `suggest_template.py` sets `autoescape=select_autoescape(enabled_extensions=("html",
+  "htm", "xml"), default=False)` (B701). The render target is Markdown, so escaping stays
+  off for it and the rendered output is unchanged; a future HTML template would get
+  escaping rather than silently losing it.
+- The four `cake-docs-search` scripts no longer open with `Self-developed.`. The rest of
+  the banner stays: first published in CAKE2 on 2026-03-24 as `ascendc-docs-search`,
+  renamed here, and third-party repositories carry downstream copies. That is what the
+  SCA whitelist request for !15 established, and that request claims no copyright either.
+  CAKE2 itself carries no repository-level LICENSE, COPYING or NOTICE, and its 387
+  commits come from 24 authors of whom two use a huawei.com address, so the authorship
+  the dropped sentence asserted has no basis on record. The banner keeps its three lines
+  and the four files keep their line counts, so the CodeCheck suppressions and SCA
+  whitelist approved for !15 still point at the same lines.
+- Two defects `ruff` reported on files this release touches are fixed, and both predate it.
+  `code-performance-advisor`'s `suggest_template.py` used `re.search` in two module-level
+  helpers while importing `re` only inside one method, so `_identify_primary_bottleneck`
+  raised `NameError` as soon as it delegated to them; `re` is now imported at module level
+  and the method-local import is gone. `cake-docs-search`'s `ascend_content_fetcher.py`
+  assigned `code_lower` and never read it. The remaining `ruff check` findings on those
+  files — unused imports and f-strings without placeholders — are fixed by `ruff --fix`.
+- `ruff format` is turned off for `cake-docs-search/scripts/` and
+  `code-performance-advisor/scripts/analysis_engine/` through a `ruff.toml` in each, which
+  records why. Formatting those files expands compact expressions across lines, and
+  CodeCheck counts lines: a trial run put `_clean_text` at 89 lines and `cmd_resume` at 67
+  against a limit of 50, split a comprehension's `if` clause in two against G.EXP.04, and
+  grew two blocks into an 11-line duplicate pair. None of those findings exists unformatted,
+  and none corresponds to a defect. `ruff check` still runs on both directories with nothing
+  exempted.
 
 ### Removed
 

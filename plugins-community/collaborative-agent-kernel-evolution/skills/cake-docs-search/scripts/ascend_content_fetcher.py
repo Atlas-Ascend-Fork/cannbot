@@ -7,8 +7,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-# Self-developed. First published in CAKE2 on 2026-03-24 as the ascendc-docs-search
-# skill, renamed to cake-docs-search here; third-party repositories carry downstream
+# First published in CAKE2 on 2026-03-24 as the ascendc-docs-search skill,
+# renamed to cake-docs-search here; third-party repositories carry downstream
 # copies of the same content.
 
 """
@@ -25,7 +25,7 @@ import re
 import sys
 import html
 from urllib.parse import urljoin
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import requests
 from bs4 import BeautifulSoup
@@ -172,8 +172,6 @@ class AscendContentFetcher:
     @staticmethod
     def _detect_code_language(code_text: str) -> str:
         """检测代码语言"""
-        code_lower = code_text.lower()
-
         if re.search(r'#include\s*<', code_text):
             return "C++"
         elif re.search(r'def\s+\w+\s*\(|import\s+\w+', code_text):

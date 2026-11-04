@@ -1,0 +1,28 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# ── 本目录不做 ruff-format ──────────────────────────────────────────────
+# 仓库同时跑 pre-commit 的 ruff-format 与 CodeCheck，两者在本目录的文件上结论相反：
+# ruff-format 把紧凑写法展开成多行，而 CodeCheck 按行数与子句数判定。实测（MR !101）
+# 对本目录执行 ruff format 后，CodeCheck 新增了下列发现，格式化前一条都没有：
+#
+#   超大函数[PYTHON]            _clean_text()  38 → 89 行（阈值 50）
+#   超大函数[PYTHON]            cmd_resume()   50 → 67 行（阈值 50）
+#   G.EXP.04 推导式过于复杂      if 子句被折成两行
+#   重复代码[PYTHON]            两处 11 行块展开后互相匹配
+#
+# 这些发现由格式化本身制造，不对应任何代码缺陷。在两个门禁的取舍定下来之前，
+# 本目录以 CodeCheck 为准，不做格式化。ruff-check 照常执行，不豁免任何规则。
+#
+# force-exclude 用于让下面的 exclude 对 pre-commit 显式传入的路径生效。
+force-exclude = true
+
+[format]
+exclude = ["*.py"]

@@ -7,8 +7,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-# Self-developed. First published in CAKE2 on 2026-03-24 as the ascendc-docs-search
-# skill, renamed to cake-docs-search here; third-party repositories carry downstream
+# First published in CAKE2 on 2026-03-24 as the ascendc-docs-search skill,
+# renamed to cake-docs-search here; third-party repositories carry downstream
 # copies of the same content.
 
 """Ascend Search Client 华为昇腾社区文档搜索客户端"""

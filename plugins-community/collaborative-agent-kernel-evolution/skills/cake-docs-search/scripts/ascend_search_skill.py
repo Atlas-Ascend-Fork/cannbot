@@ -7,13 +7,12 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-# Self-developed. First published in CAKE2 on 2026-03-24 as the ascendc-docs-search
-# skill, renamed to cake-docs-search here; third-party repositories carry downstream
+# First published in CAKE2 on 2026-03-24 as the ascendc-docs-search skill,
+# renamed to cake-docs-search here; third-party repositories carry downstream
 # copies of the same content.
 
 """Ascend社区文档搜索技能 - 提供Ascend社区文档搜索功能"""
 import base64
-import json
 import logging
 from urllib.parse import urljoin, quote
 
