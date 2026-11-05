@@ -799,8 +799,26 @@ function installDependencyAssets(provisioned, plugin, target, tool) {
   return installed;
 }
 
-function installCodexPlugin(plugin, skills, target, skillInstallMode) {
+function loadCodexMarketplace() {
   const userHome = resolve(process.env.HOME || homedir());
+  const marketplacePath = join(userHome, ".agents", "plugins", "marketplace.json");
+  const marketplace = existsSync(marketplacePath)
+    ? readJson(marketplacePath)
+    : { name: "personal", interface: { displayName: "Personal" }, plugins: [] };
+  if (!marketplace || typeof marketplace !== "object" || Array.isArray(marketplace)) {
+    fail(`invalid Codex marketplace: ${marketplacePath}`);
+  }
+  if (typeof marketplace.name !== "string" || !marketplace.name) {
+    fail(`Codex marketplace is missing a name: ${marketplacePath}`);
+  }
+  if (!Array.isArray(marketplace.plugins)) {
+    fail(`Codex marketplace plugins must be an array: ${marketplacePath}`);
+  }
+  return { userHome, marketplacePath, marketplace };
+}
+
+function installCodexPlugin(plugin, skills, target, skillInstallMode, context) {
+  const { userHome, marketplacePath, marketplace } = context;
   const pluginRoot = join(userHome, "plugins", plugin.name);
   const pluginSkills = join(pluginRoot, "skills");
   rmSync(pluginRoot, { recursive: true, force: true });
@@ -836,19 +854,6 @@ function installCodexPlugin(plugin, skills, target, skillInstallMode) {
   };
   writeJsonAtomic(join(pluginRoot, ".codex-plugin", "plugin.json"), manifest);
 
-  const marketplacePath = join(userHome, ".agents", "plugins", "marketplace.json");
-  const marketplace = existsSync(marketplacePath)
-    ? readJson(marketplacePath)
-    : { name: "personal", interface: { displayName: "Personal" }, plugins: [] };
-  if (!marketplace || typeof marketplace !== "object" || Array.isArray(marketplace)) {
-    fail(`invalid Codex marketplace: ${marketplacePath}`);
-  }
-  if (typeof marketplace.name !== "string" || !marketplace.name) {
-    fail(`Codex marketplace is missing a name: ${marketplacePath}`);
-  }
-  if (!Array.isArray(marketplace.plugins)) {
-    fail(`Codex marketplace plugins must be an array: ${marketplacePath}`);
-  }
   marketplace.interface ??= { displayName: "Personal" };
   const entry = {
     name: plugin.name,
@@ -1178,6 +1183,7 @@ function install(options, initializing = []) {
   if (initializing.includes(options.pluginId)) {
     fail(`plugin initialization cycle: ${[...initializing, options.pluginId].join(" -> ")}`);
   }
+  if (options.tool === "codex") loadCodexMarketplace();
   const sourceRoot = options.source ?? process.env.CANNBOT_SOURCE_ROOT ?? process.env.CANNBOT_SKILLS_PATH;
   const sourceRepositoryRoot = sourceRoot ? resolve(sourceRoot) : null;
   const selectedDirectory = options.pluginDir
@@ -1240,6 +1246,8 @@ function install(options, initializing = []) {
     install({ ...options, pluginId: prerequisite, pluginDir: undefined, overrideSkills: undefined,
       skills: sharedSkills?.root ?? options.skills }, [...initializing, plugin.name]);
   }
+  // Prerequisite plugins can add their own catalogue entries during initialization.
+  const codexMarketplace = options.tool === "codex" ? loadCodexMarketplace() : null;
   // Resolve required repositories before replacing any live Skills or instructions.
   const provisioned = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
   const skillsDir = toolSkillsDir(options.target, options.tool);
@@ -1271,7 +1279,7 @@ function install(options, initializing = []) {
     }))),
   ];
   const nativePlugin = options.tool === "codex"
-    ? installCodexPlugin(plugin, nativeSkills, options.target, skillInstallMode)
+    ? installCodexPlugin(plugin, nativeSkills, options.target, skillInstallMode, codexMarketplace)
     : options.tool === "opencode"
       ? installOpenCodePlugin(options.target)
       : { initializer: null, discovery: `${toolConfigDir("", options.tool)}/skills` };
