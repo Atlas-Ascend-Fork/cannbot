@@ -52,3 +52,11 @@ The client-specific `cannbot-plugin.json` records `source.revisions.cannbot` and
 Updating the submodule may mark its Gitlink as changed in the CANNBot worktree. All source installations use live symlinks, including fixed-SHA installations: subsequent updates to a shared checkout affect earlier installations. Revision records describe installation-time commits, not frozen copies; dirty content is not reproduced by its commit alone. Use independent checkouts with `--skills <path>` for separate project versions.
 
 `--plugin-dir` selects a specific plugin directory when its folder name differs from its manifest name. Relative paths resolve from `--source` for source installs, or the installer package root for packaged installs. The requested install ID must match the manifest; installed assets and registry records always use that ID.
+
+Reinstalling a native permission guard fills in all tool names declared by the
+installer, while retaining existing matcher alternatives, hooks, and settings.
+An empty matcher or `*` retains its existing match-all scope. Run the isolated
+installer regression with `node --test test/hook-matchers.test.js` from `script/`.
+It exercises real CLI installations against temporary plugin/configuration
+fixtures and calls registerSettingsHook directly to check matcher merging and
+idempotence; it does not execute client hooks or NPU workloads.

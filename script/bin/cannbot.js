@@ -1057,7 +1057,7 @@ function installRuntimeSettings(pluginDir, target, options) {
   return settingsPath;
 }
 
-function registerSettingsHook(settingsPath, hookRef, matcher) {
+export function registerSettingsHook(settingsPath, hookRef, matcher) {
   let existing = {};
   if (existsSync(settingsPath)) {
     try {
@@ -1075,8 +1075,12 @@ function registerSettingsHook(settingsPath, hookRef, matcher) {
     for (const hook of group?.hooks ?? []) {
       const blob = `${hook.command ?? ""} ${(hook.args ?? []).join(" ")}`;
       if (blob.includes("permission-guard.js")) {
-        if (current.includes(matcher.split("|").at(-1))) return false;
-        group.matcher = `${current}|${matcher.split("|").at(-1)}`;
+        // A match-all group already covers every required tool.
+        if (current === "" || current === "*") return false;
+        const present = current.split("|");
+        const missing = matcher.split("|").filter((tool) => !present.includes(tool));
+        if (missing.length === 0) return false;
+        group.matcher = `${current}|${missing.join("|")}`;
         writeJsonAtomic(settingsPath, existing);
         return true;
       }
@@ -1343,8 +1347,10 @@ function install(options, initializing = []) {
   }
 }
 
-try {
-  install(parseArgs(process.argv.slice(2)));
-} catch (error) {
-  fail(error.message);
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    install(parseArgs(process.argv.slice(2)));
+  } catch (error) {
+    fail(error.message);
+  }
 }
