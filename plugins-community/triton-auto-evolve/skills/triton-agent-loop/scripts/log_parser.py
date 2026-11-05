@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 def _strip_prefix(line: str) -> str:
-    if line.startswith("[sub-agent stdout] "):
-        return line[len("[sub-agent stdout] "):]
-    if line.startswith("[sub-agent stderr] "):
-        return line[len("[sub-agent stderr] "):]
+    for prefix in ("[sub-agent stdout] ", "[sub-agent stderr] "):
+        if line.startswith(prefix):
+            start = len(prefix)
+            return line[start:]
     return line
 
 
@@ -93,6 +93,8 @@ class StreamJsonReadableParser:
         self.out = out
         self.thinking_buffer: List[str] = []
         self.text_buffer: List[str] = []
+        self._stream_message_id: Optional[str] = None
+        self._streamed_blocks: Dict[int, Dict[str, str]] = {}
 
     def feed_line(self, line: str) -> None:
         stripped = _strip_prefix(line).strip()
@@ -124,38 +126,24 @@ class StreamJsonReadableParser:
             return
 
         if etype == "stream_event":
-            se = event.get("event", {})
-            stype = se.get("type")
-
-            if stype == "thinking_delta":
-                delta = se.get("thinking", "")
-                if delta:
-                    self.thinking_buffer.append(delta)
-
-            elif stype == "text":
-                delta = se.get("text", "")
-                if delta:
-                    self.text_buffer.append(delta)
-
-            elif stype == "message_stop":
-                self._flush_thinking()
-                self._flush_text()
-
-            return
+            self._handle_stream_event(event)
 
     def flush(self) -> None:
         self._flush_thinking()
         self._flush_text()
 
-    def _handle_assistant(self, msg: dict) -> None:
-        for block in msg.get("content", []):
+    def _handle_assistant(self, msg: Dict[str, Any]) -> None:
+        for index, block in enumerate(msg.get("content", [])):
             btype = block.get("type")
             if btype == "tool_use":
                 self._write_tool(block.get("name", ""), block.get("input", {}))
-            elif btype == "text":
-                text = block.get("text", "").strip()
-                if text:
-                    self.text_buffer.append(text)
+            elif btype in ("text", "thinking"):
+                text = self._completed_block_suffix(msg, index, block)
+                if text.strip():
+                    buffer = (
+                        self.text_buffer if btype == "text" else self.thinking_buffer
+                    )
+                    buffer.append(text)
 
     def _flush_thinking(self) -> None:
         if self.thinking_buffer:
@@ -185,6 +173,64 @@ class StreamJsonReadableParser:
         self.out.write(f"[结果] {_format_tool_result(result)}\n")
         self.out.flush()
 
+    def _completed_block_suffix(
+        self, msg: Dict[str, Any], index: int, block: Dict[str, Any]
+    ) -> str:
+        kind = block.get("type")
+        text = block.get(kind, "")
+        streamed = self._streamed_blocks.get(index, {})
+        if msg.get("id") != self._stream_message_id or streamed.get("type") != kind:
+            return text
+        previous = streamed.get("text", "")
+        start = len(previous)
+        return text[start:] if text.startswith(previous) else text
+
+    def _handle_stream_event(self, event: Dict[str, Any]) -> None:
+        se = event.get("event", {})
+        stype = se.get("type")
+
+        if stype == "message_start":
+            self._stream_message_id = se.get("message", {}).get("id")
+            self._streamed_blocks = {}
+        elif stype == "content_block_start":
+            block = se.get("content_block", {})
+            self._append_stream_block(
+                se.get("index", 0),
+                block.get("type", ""),
+                block.get(block.get("type", ""), ""),
+            )
+        elif stype == "content_block_delta":
+            delta = se.get("delta", {})
+            dtype = delta.get("type")
+            if dtype == "text_delta":
+                self._append_stream_block(
+                    se.get("index", 0), "text", delta.get("text", "")
+                )
+            elif dtype == "thinking_delta":
+                self._append_stream_block(
+                    se.get("index", 0), "thinking", delta.get("thinking", "")
+                )
+        elif stype == "thinking_delta":
+            delta = se.get("thinking", "")
+            if delta:
+                self.thinking_buffer.append(delta)
+        elif stype == "text":
+            delta = se.get("text", "")
+            if delta:
+                self.text_buffer.append(delta)
+        elif stype == "message_stop":
+            self._flush_thinking()
+            self._flush_text()
+
+    def _append_stream_block(self, index: int, kind: str, text: str) -> None:
+        if kind not in ("text", "thinking"):
+            return
+        block = self._streamed_blocks.setdefault(index, {"type": kind, "text": ""})
+        block["text"] += text
+        if text:
+            buffer = self.text_buffer if kind == "text" else self.thinking_buffer
+            buffer.append(text)
+
 
 def parse_stream_json_log(raw_path: str, readable_path: str) -> None:
     if not raw_path or not readable_path:
@@ -192,7 +238,10 @@ def parse_stream_json_log(raw_path: str, readable_path: str) -> None:
     if not Path(raw_path).exists():
         return
     os.makedirs(os.path.dirname(readable_path), exist_ok=True)
-    with open(raw_path, "r", encoding="utf-8") as f_in, open(readable_path, "w", encoding="utf-8") as f_out:
+    with (
+        open(raw_path, "r", encoding="utf-8") as f_in,
+        open(readable_path, "w", encoding="utf-8") as f_out,
+    ):
         parser = StreamJsonReadableParser(f_out)
         for line in f_in:
             parser.feed_line(line)
