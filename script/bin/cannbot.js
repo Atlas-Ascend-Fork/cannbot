@@ -220,13 +220,25 @@ function installSkill(source, destination, mode) {
   cpSync(source, destination, { recursive: true, dereference: true });
 }
 
+function isWithin(root, candidate) {
+  const path = relative(root, candidate);
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
 function installPluginAssets(pluginDir, plugin, target, sourceDefinition, skillRewrites, sharedSkills) {
   const relativeRoot = `.cannbot/plugins/${plugin.name}`;
   const destinationRoot = join(target, relativeRoot);
-  rmSync(destinationRoot, { recursive: true, force: true });
-  mkdirSync(destinationRoot, { recursive: true });
   const assets = { destinationRoot, relativeRoot };
-  let installed = false;
+  const missing = [];
+  let existing = resolve(destinationRoot);
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) fail(`cannot resolve asset destination: ${destinationRoot}`);
+    missing.unshift(basename(existing));
+    existing = parent;
+  }
+  const canonicalDestination = resolve(realpathSync(existing), ...missing);
+  const sources = [];
   for (const name of ["workflows", "scripts", "agents", "hooks", "config.json", "framework", "quickstart.md", "LICENSE", "SKILLS_LICENSE"]) {
     let source = join(pluginDir, name);
     if (name === "SKILLS_LICENSE" && sharedSkills) {
@@ -238,10 +250,18 @@ function installPluginAssets(pluginDir, plugin, target, sourceDefinition, skillR
       source = join(sharedSkills?.root ?? resolve(pluginDir, "..", "..", sourceDefinition.skillsRepository), "LICENSE");
     }
     if (!existsSync(source)) continue;
-    cpSync(source, join(destinationRoot, name), { recursive: true, dereference: true });
-    installed = true;
+    const canonicalSource = realpathSync(source);
+    if (isWithin(canonicalDestination, canonicalSource) || isWithin(canonicalSource, canonicalDestination)) {
+      fail(`plugin asset source overlaps its destination: ${source}`);
+    }
+    sources.push({ name, source });
   }
-  if (!installed) {
+  rmSync(destinationRoot, { recursive: true, force: true });
+  mkdirSync(destinationRoot, { recursive: true });
+  for (const { name, source } of sources) {
+    cpSync(source, join(destinationRoot, name), { recursive: true, dereference: true });
+  }
+  if (!sources.length) {
     rmSync(destinationRoot, { recursive: true, force: true });
     return null;
   }
@@ -1108,6 +1128,11 @@ function install(options, initializing = []) {
     if (options.skills !== undefined) args.push("--skills", options.skills);
     run("bash", args, process.cwd());
     return;
+  }
+  const assetRoot = resolve(options.target, ".cannbot", "plugins", plugin.name);
+  if (isWithin(assetRoot, resolve(pluginDir))
+      || (existsSync(assetRoot) && isWithin(realpathSync(assetRoot), realpathSync(pluginDir)))) {
+    fail(`plugin source is inside its assets destination: ${pluginDir}`);
   }
   const sharedSkills = prepareSharedSkills(sourceRepositoryRoot, sourceDefinition, options.skills);
   mkdirSync(options.target, { recursive: true });
