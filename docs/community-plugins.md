@@ -5,6 +5,7 @@
 | 插件 | 场景 |
 |------|------|
 | [`ascendc-port-orchestrator`](../plugins-community/ascendc-port-orchestrator/) | AscendC 算子跨代际移植与反向算子生成 |
+| [`collaborative-agent-kernel-evolution` (CAKE2)](../plugins-community/collaborative-agent-kernel-evolution/) | AscendC 算子生成、评估与进化式性能优化 |
 | [`model-train-precision-diagnose`](../plugins-community/model-train-precision-diagnose/) | PyTorch on Ascend NPU 训练精度异常诊断 |
 | [`pypto-pro-op-orchestrator`](../plugins-community/pypto-pro-op-orchestrator/) | PyPTO-Pro 算子开发、验证与性能优化（主 agent 按需调度 6 个专职 subagent） |
 | [`model-recommend-infer-optimize`](../plugins-community/model-recommend-infer-optimize/) | 推荐 / 搜索 / 排序 / 视觉编码类模型的整网推理优化（条目 0-14 + 双门禁持续优化循环，内置 GE_SESSION_DEMO 框架） |
@@ -22,6 +23,10 @@
 - **正向→反向生成**（`ascendc-backward-gen`）：由可微 PyTorch 正向规格生成并验证 AscendC 反向（梯度）算子。
 
 安装见 [quickstart.md](../plugins-community/ascendc-port-orchestrator/quickstart.md)。
+
+## collaborative-agent-kernel-evolution (CAKE2)
+
+从算子描述生成并评估 AscendC 实现，支持多轮进化式性能优化。该社区插件在 Claude Code marketplace 中以 `cake` 名称提供；安装与环境要求见[插件 README](../plugins-community/collaborative-agent-kernel-evolution/README.md)。
 
 ## model-train-precision-diagnose
 
