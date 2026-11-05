@@ -10,6 +10,7 @@ skills:
   - ascendc-evolution-knowledge
   - ascendc-evolution-strategies
   - ascendc-evolution-world-model
+  - tilelang2ascend-translator
 permission:
   external_directory: allow
 ---

@@ -8,6 +8,7 @@ skills:
   - npu-arch
   - ops-profiling
   - ascendc-evolution-report
+  - tilelang2ascend-translator
 tools: Agent(lingxi-partial), Agent(general-purpose), Read, Write, Edit, Bash, Glob, Grep, Task, WebSearch
 ---
 
@@ -57,9 +58,11 @@ tools: Agent(lingxi-partial), Agent(general-purpose), Read, Write, Edit, Bash, G
 - **策略选择协议（分层检索）**: 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md` 后按序选择：
   · **Step 1 — L0 通用策略 (必选)**: 查"按算子类型快速查表"的 L0 列，选择所有匹配的 D/P/A 策略
   · **Step 2 — L1 高级策略 (按需)**: 按算子特征判断 — Cube+Vector 融合（matmul+vector 后处理）→ CV Matmul 行；Flash Attention 模式 → Flash Attention 行；量化/反量化 → Quantization 行+P48/P49；MoE 专家并行 → CV FFN (MoE) 行+P50；多核 M×N 分块 → P47；AIC/AIV 混合 → P51
-  · **Step 3 — 瓶颈驱动 (Refine 阶段)**: profiling_evidence 可用时，查"按瓶颈类型查表"追加/替换策略。**原则**: L0 保证基本正确性和性能，L1 针对特定场景提供 2-5x 额外提升；Init 阶段优先 L0 + 少量 L1，Refine 阶段根据 profiling 证据精准追加 L1
+  · **Step 3 — L2 已发现策略 (按需)**: 查 strategy-index.md 中 L2 (Discovered, X1+) 行，按 When to Apply 列匹配本算子特征选取——X 卡是历史进化运行验证并回流的算子族专属结论，同类算子优先复用，避免重复推导
+  · **Step 4 — 瓶颈驱动 (Refine 阶段)**: profiling_evidence 可用时，查"按瓶颈类型查表"追加/替换策略。**原则**: L0 保证基本正确性和性能，L1 针对特定场景提供 2-5x 额外提升，L2 复用已验证结论；Init 阶段优先 L0 + 少量 L1 + 匹配的 L2，Refine 阶段根据 profiling 证据精准追加 L1/L2
+  · **P/D/A/R 程序化候选（补充，不替代 L0/L1/L2）**: 精编卡仍以 `strategy-index.md` 手工分层选择为主；需要按瓶颈/算子族扩展候选时，运行 `python3 .claude/skills/ascendc-evolution-strategies/scripts/query_strategies.py --bottleneck "{bottleneck}" --op-family "{family}" --limit 15`，取输出 `matched` 作为补充候选。写入 `strategy_combination` 前先用 `python3 .claude/skills/ascendc-evolution-world-model/scripts/wm_ops.py filter-candidates --candidate-ids "..." --kernel-dir ".../shared/kernel"` 剔除 Preconditions 不适用项（结果写入 `node.filtered_by`）；不要跳过 filter 直接写入。
 - **知识库查询协议**: `.claude/skills/ascendc-evolution-knowledge/references/a3/` 渐进式披露，先读 guide.md 按需深入。
-  **Init 必读**: `a3/hardware/guide.md`、`a3/optimization_patterns/guide.md`、按算子族读 `a3/algorithm_insights/{family}.md`（匹配时）
+  **Init 必读**: `a3/hardware/guide.md`、`a3/optimization_patterns/guide.md`、按算子族读 `a3/algorithm_insights/` 下对应文件（attention→`attention_family.md`、reduction→`reduction_ops.md`、elementwise→`elementwise_fusion.md`，以 `algorithm_insights/INDEX.md` 为准）（匹配时）
   **子 agent prompt 参考**: `a3/ascendc_api/guide.md`（避坑提醒）；**策略提炼查阅**: `a3/proven_solutions/INDEX.md`（判断新颖性、避免重复）
   **检索优先级**: 知识库 → 策略库 → proven_solutions → WebSearch
 - **读取参考实现**: open_exploration 节点被选中时，主动读取同类算子的已知高性能实现作为灵感来源
@@ -162,7 +165,7 @@ python3 .claude/skills/ascendc-evolution-world-model/scripts/session_anchor.py w
 1. **使用 `ops-profiling` skill 的对比模式评估基线性能**（确保目录包含 `model.py` PyTorch参考实现、`model_new_ascendc.py` AscendC实现、测试用例 `*.json`/`*.jsonl`）:
 
    ```bash
-   bash ops/ops-profiling/scripts/msprof_profile_run.sh \
+   bash .claude/skills/ops-profiling/scripts/msprof_profile_run.sh \
        --quick \
        --output-dir={baseline_kernel_path} \
        --warm-up=3 \
@@ -269,8 +272,8 @@ with open('$EVO_DIR/shared/call_spec.json', 'w') as f:
 **执行过程**:
 
 1. 读取 `output/{op_name}_evo_{timestamp}/shared/model.py` 和 `shared/design/tile_level/`
-2. **必读知识库**: 读取 `.claude/skills/ascendc-evolution-knowledge/references/a3/hardware/guide.md` 和 `a3/optimization_patterns/guide.md`；算子匹配特定族（attention/reduction/elementwise）时额外读取 `a3/algorithm_insights/{family}.md`；`a3/proven_solutions/INDEX.md` 中有同类算子方案时读取对应条目
-3. 分析算子特性: 内存密集型 vs 计算密集型？尾块对齐问题（形状非32字节整数倍）？数据类型特殊处理（FP16/BF16精度）？并读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md` 识别最相关策略
+2. **必读知识库**: 读取 `.claude/skills/ascendc-evolution-knowledge/references/a3/hardware/guide.md` 和 `a3/optimization_patterns/guide.md`；算子匹配特定族（attention/reduction/elementwise）时额外读取 `a3/algorithm_insights/` 下对应文件（attention→`attention_family.md`、reduction→`reduction_ops.md`、elementwise→`elementwise_fusion.md`，以 `algorithm_insights/INDEX.md` 为准）；`a3/proven_solutions/INDEX.md` 中有同类算子方案时读取对应条目
+3. 分析算子特性: 内存密集型 vs 计算密集型？尾块对齐问题（形状非32字节整数倍）？数据类型特殊处理（FP16/BF16精度）？并读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md` 识别最相关策略；精编卡候选可用 `query_strategies.py --bottleneck/--op-family` 程序化扩展，写入 `strategy_combination` 前先跑 `wm_ops.py filter-candidates`，避免选中即被 Preconditions 过滤。
 4. **模式B特殊处理**: `baseline_performance` 填入实际测量值（来自步骤3B.3），**必须包含 `time_us` 字段**（ascendc-evolution-report 读取的关键字段）:
    ```json
    "baseline_performance": { "speedup": {baseline_speedup}, "precision_passed": {baseline_precision_passed}, "compilation_success": {baseline_compilation_success}, "time_us": {baseline_time_us} }
@@ -674,7 +677,122 @@ python3 .claude/skills/ascendc-evolution-world-model/scripts/wm_ops.py diagnose 
 
 脚本自动处理：`impl_error` 且 retry<2 → 生成修复子节点；`strategy_infeasible` 或 retry>=2 → 封锁节点(difficulty=5)。
 
-**4.4.3 深度 Profiling 分析（条件触发，指令级空泡诊断）**
+**4.4.2b 失败模式自动沉淀（local staging，未审核）**
+
+对每个失败节点，在完成 `diagnose` 后自动判断是否把“可复用的失败教训”沉淀为 failure_pattern 卡。目标是让同类算子下次在 partial 启动前收到 anti 提示，而不是只在本节点的世界模型里留一条失败记录。
+
+**触发条件（满足任一，且 `strategy_combination` 非空）**：
+- `failure_type="strategy_infeasible"`（策略方向被证伪，最常见）；
+- `failure_type="impl_error"` 且 `retry_count >= 2`，并且 LLM 判断是**可复用的 API/工具链陷阱**（不是一次性 typo）；
+- `pending_diagnosis.phenomenon="impl_verdict_infeasible"`（passed 节点在 implementation_note 里记录了“验证不可行”）。
+
+**不要沉淀**：首次 `impl_error`（retry<2）且只是一次性实现错误；没有明确可复用根因的失败。
+
+**1) 先查重（两级）**
+
+```bash
+# 知识仓/INDEX 已有：按失败组合反查（默认查 active，staging 还未入库）
+python3 .claude/skills/ascendc-evolution-knowledge/scripts/query.py \
+  --kind failure_pattern --failed-combination "{strategy_combination_csv}" --status all
+
+# 本地 staging/promoted 已有：按策略 ID 粗查
+ls .cannbot/knowledge-local/staging/f*.md .cannbot/knowledge-local/promoted/f*.md 2>/dev/null
+grep -l "failed_combination:.*{strategy_id_1}.*{strategy_id_2}" \
+  .cannbot/knowledge-local/staging/f*.md .cannbot/knowledge-local/promoted/f*.md 2>/dev/null
+```
+
+任一命中且 `failed_combination` 相同/被覆盖 → 跳过，不重复写卡。
+
+**2) 计算下一个 F 编号**
+
+```bash
+NEXT_F=$( { \
+  ls "$CANNBOT_KNOWLEDGE_ROOT"/knowledge/contrib/ascendc/optimizations/evolution_strategies/failure_patterns/f*.md 2>/dev/null; \
+  ls .cannbot/knowledge-local/{staging,promoted,rejected}/f*.md 2>/dev/null; \
+} | grep -oE '/f[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1 )
+NEXT_F=$(( ${NEXT_F:-0} + 1 ))
+FID="F${NEXT_F}"
+```
+
+**3) 生成 staging 草稿 `/tmp/${FID}.md`**
+
+frontmatter 必须包含 `knowledge_local.py` 校验的 9 个字段（`type/title/description/tags/status/sources/created_at/updated_at/platforms`）；failure pattern 的结构化元数据放在正文引用块里，promote 时再同步到 `okf_compat.json`。
+
+```markdown
+---
+type: Optimization
+title: "F{n}: {failed_combination_csv}:{op_family}:{short_cause}"
+description: "{一句话现象 + 根因}"
+tags:
+  - task.debugging
+  - {topic_tag}          # topic.precision / topic.compilation / topic.data_movement / topic.architecture / topic.tiling
+status: draft
+sources: []
+created_at: "{UTC_RFC3339_Z}"
+updated_at: "{UTC_RFC3339_Z}"
+platforms:
+  - {platform}           # a2 / a3 / 950，取 hw_params 或 npu-smi
+---
+
+# F{n}: {title}
+
+> 进化失败模式元数据（staging 草稿；promote 时同步到 okf_compat.json）：
+> key: "{failed_combination_csv}:{op_family}:{short_cause}"
+> phenomenon: {compile_error|precision_failure|perf_regression|unknown}
+> severity: {blocking|major|minor}
+> failed_combination: {JSON 列表，如 ["P22", "A1"]}
+> operator_type: {JSON 列表，如 ["reduction"]}
+> occurrences: 1
+> run_id: "{session_id}"
+> node_id: "{node_id}"
+> solution_ref: "{node.solution_ref}"
+
+## Symptom
+{从 implementation_note / 错误日志提炼的现象}
+
+## Root cause class
+{LLM 诊断出的可复用根因类别}
+
+## Failed combination
+- {策略 ID 列表}
+
+## Resolution
+{下次应改用的路径 / 规避方式}
+
+## Evidence
+- run_id / round / parallel / node_id
+- 日志或 profiling 文件相对路径
+- 合成 kernel 前置条件检查结果（如有）
+```
+
+**4) 写入本地 staging**
+
+```bash
+python3 .claude/skills/ascendc-evolution-strategies/scripts/knowledge_local.py add \
+  --project "$(pwd)" \
+  --id "$FID" --kind failure_pattern \
+  --file "/tmp/${FID}.md" \
+  --op "{op_name}" --run-id "{session_id}"
+```
+
+**5) 回写世界模型与台账**
+
+- 在 `world_model.json` 的 `open_questions` 追加一条：`"${FID} {key}（node {node_id}, run {session_id}）"`；
+- 在对应 `implementation_note.txt` 末尾追加：`[failure_pattern] ${FID} {key}`；
+- 若节点已有 `diagnosis`，在 `diagnosis_text` 末尾追加：`；已沉淀为 failure pattern ${FID}`。
+
+**6) 边界**
+
+- 运行期只写 `.cannbot/knowledge-local/staging/`；**不要**直接改 `cannbot-knowledge`、不要改 `strategy-index.md`、不要重建 `INDEX.json`。
+- staging 不参与检索；需要让 F 卡生效时，走 `knowledge_local.py promote` → `pr --kind failure_pattern --execute`。该命令会自动：
+  1) 把正文复制到 `knowledge/contrib/ascendc/optimizations/evolution_strategies/failure_patterns/`；
+  2) 把 `key/phenomenon/severity/failed_combination/operator_type` 合并进 skills 侧 `okf_compat.json` 的 `failure_patterns` 段；
+  3) 重建知识仓检索索引 + skills `INDEX.json`，并跑 `check.sh`；
+  4) 打印 commit/push 命令，由人工确认后提交 PR。
+- 若 `CANNBOT_KNOWLEDGE_ROOT` 未设置，先用 `.cannbot/knowledge.env` 或 `knowledge_root.py --print` 解析；解析失败则跳过沉淀并输出 `[WARN] failure_pattern 沉淀跳过：知识仓根未知`，不阻断进化。
+
+
+**4.4.3 深度 Profiling 分析（条件触发，指令级空泡诊断；指令级采集脚本未交付时降级为 pipeline 合成口径）**
 
 **执行时机**: 4.4.1 完成后。**防护门控**（不满足则直接跳过）: `max_rounds - r >= 1`（至少还有1轮可使用结果）且本轮有 passed 节点。**执行范围**: 仅对本轮 `best_score` 最高的 **1 个** passed 节点（控制开销）。
 
@@ -684,16 +802,17 @@ python3 .claude/skills/ascendc-evolution-world-model/scripts/wm_ops.py diagnose 
 - C3 停滞破局：`stagnation_count >= 1` 且 `r - last_deep_profiling_round >= 2`（冷却期防止频繁触发）
 - C4 用户显式要求：用户在步骤1中显式要求深度 profiling 分析
 
-**执行流程**（使用 ops-profiling 的 msprof_perf_summary.py）：
+**执行流程**（证据生成与写回由 `wm_ops.py deep-profiling` 一步完成）：
 
-1. **运行深度 profiling 分析（诊断模式）**：
+1. **准备深度 profiling 数据**：`wm_ops.py deep-profiling` 基于该节点 `evaluation_results.json` 的 `evolved.pipeline` 合成 `profiling_evidence`（指令级采集脚本 `run_deep_profiling.py` 未随三仓交付时自动降级为 pipeline 合成口径；`d_class_pct` / `dma_efficiency` 等指令级字段按缺省值处理）。仅当该节点尚未采集 `--compare` 数据（无 `profiling/PROF_GROUP_*/PROF_*/op_summary_*.csv`）时，先补采并归置：
    ```bash
-   python3 ops/ops-profiling/scripts/msprof_perf_summary.py --diagnose \
-       --profiling-dir "output/{op_name}_evo_{timestamp}/{node.solution_ref}/profiling" \
-       --task-type {task_type} \
-       --output "output/{op_name}_evo_{timestamp}/{node.solution_ref}/deep_profiling_result.json"
+   python3 .claude/skills/ops-profiling/scripts/msprof_perf_summary.py --compare \
+       --output-dir "output/{op_name}_evo_{timestamp}/{node.solution_ref}"
+   mkdir -p "output/{op_name}_evo_{timestamp}/{node.solution_ref}/profiling"
+   cp -r "output/{op_name}_evo_{timestamp}/{node.solution_ref}/PROF_GROUP_*" \
+         "output/{op_name}_evo_{timestamp}/{node.solution_ref}/profiling/"
    ```
-   若诊断运行失败（msprof 不可用、超时、脚本报错等）：输出警告 `"[注意] 深度分析失败，跳过该节点"`，跳过该节点。
+   若补采失败（msprof 不可用、超时、脚本报错等）：输出警告 `"[注意] 深度分析失败，跳过该节点"`，跳过该节点。
 
 2. **写入 world_model.json（wm_ops.py 一步完成）**：
    ```bash
@@ -705,22 +824,22 @@ python3 .claude/skills/ascendc-evolution-world-model/scripts/wm_ops.py diagnose 
        --merge-children
    ```
 
-3. **对比上次深度分析（差异检测）**: 若 `last_deep_profiling_round >= 1`（非首次），对上次与本次的 simulator_dir 各跑一次 `msprof_perf_summary.py --diagnose`（输出到 `{node.solution_ref}/diff_before.json` / `diff_after.json`），将对比结果摘要写入 `open_questions`。
+3. **对比上次深度分析（差异检测）**: 若 `last_deep_profiling_round >= 1`（非首次），对上次与本次节点的 profiling 数据（`profiling/PROF_GROUP_*/PROF_*/op_summary_*.csv` / `perf_report.md` 的 pipe 比值）各做一次解析对比（无 `--diagnose` 命令，直接对比两次的 pipe 比值与 op_summary 指标），结果写入 `{node.solution_ref}/diff_before.json` / `diff_after.json`，将对比摘要写入 `open_questions`。
 
-4. **更新冷却标记** `last_deep_profiling_round = r`，并**输出诊断摘要**（读取 `deep_profiling_result.json`）：
+4. **更新冷却标记** `last_deep_profiling_round = r`，并**输出诊断摘要**（读取 `world_model.json` 中该节点的 `profiling_evidence`）：
    ```
    [分析] 深度 Profiling 分析完成 [{node_id}]:
-     瓶颈类型: {result.primary_bottleneck}
-     D类空泡: {result.d_class_pct:.1f}%
-     流水线分解: {result.pipeline_breakdown}
+     瓶颈类型: {profiling_evidence.bottleneck_type}
+     建议策略: {profiling_evidence.suggested_strategies}
+     证据来源: {profiling_evidence.synthesis_source}
    ```
-   若有 diff 对比结果，追加：`vs 上次深度分析（Round {last_round}）: D类空泡变化: {d_class_reduction_pct:+.1f}% | 判定: {verdict}`
+   若有 diff 对比结果，追加：`vs 上次深度分析（Round {last_round}）: 瓶颈变化: {before} → {after} | 判定: {verdict}`
 
 **错误处理**：深度分析的任何步骤失败均不阻断进化——输出警告、`profiling_evidence` 保持 null、继续执行 4.4.4。
 
 **4.4.4 Profiling 完整性检查（不可跳过）**
 
-进入 4.5 REACT 前执行：对本轮 `profiling_insight is null` 的 passed 节点，输出「[注意] 以下节点缺少 profiling_insight，补执行 CSV Profiling」并逐个补跑 `msprof_perf_summary.py --diagnose`（同 4.4.1 流程）写入 `node.profiling_insight`。补跑后仍缺失的，输出「[注意] {n} 个节点 CSV Profiling 失败，profiling_insight 保持 null。后续 SELECT 中这些节点的子节点将不获得 w_evidence 加分」——不填充默认值，保持 null。
+进入 4.5 REACT 前执行：对本轮 `profiling_insight is null` 的 passed 节点，输出「[注意] 以下节点缺少 profiling_insight，补执行 CSV Profiling」并逐个补跑 `msprof_perf_summary.py --compare --output-dir {node.solution_ref}`（当前脚本无 `--diagnose`；同 Phase 1.5 完整采集，并归置 op_summary 到 `profiling/`），从 `perf_report.md` / `op_summary_*.csv` 提炼写入 `node.profiling_insight`。补跑后仍缺失的，输出「[注意] {n} 个节点 CSV Profiling 失败，profiling_insight 保持 null。后续 SELECT 中这些节点的子节点将不获得 w_evidence 加分」——不填充默认值，保持 null。
 
 **4.4.5 世界模型分析（Analyze）**
 
@@ -865,26 +984,24 @@ base_speedup: {score}x
 
 检查当前全局最优节点（`best_score` 对应的节点）是否已有 `profiling_insight`：若已有 → 跳过进入 4.6.3.2；若为 null → 强制执行 CSV 级 Profiling，结果写入 `best_node.profiling_insight` 并写回 `world_model.json`：
   ```bash
-  python3 ops/ops-profiling/scripts/msprof_perf_summary.py --diagnose \
-      --profiling-dir "output/{op_name}_evo_{timestamp}/{best_node.solution_ref}/profiling" \
-      --task-type {task_type} \
-      --output "output/{op_name}_evo_{timestamp}/{best_node.solution_ref}/csv_profiling.json"
+  python3 .claude/skills/ops-profiling/scripts/msprof_perf_summary.py --compare \
+      --output-dir "output/{op_name}_evo_{timestamp}/{best_node.solution_ref}"
   ```
-  输出：「补全 CSV Profiling：{profiling_one_liner}」
+  从新产出的 `perf_report.md` / `op_summary_*.csv` 提炼 `best_node.profiling_insight`（当前脚本无 `--diagnose` 命令；记得归置 `PROF_GROUP_*` 到该节点 `profiling/` 下）。输出：「补全 CSV Profiling：{profiling_one_liner}」
 
 **4.6.3.2 深度 Profiling 决策（Agent 自主判断）**
 
 若 `last_deep_profiling_round >= 1`（已执行过）→ 跳过，进入 4.6.3.3。若从未执行过，Agent 自主判断：`best_score < target_speedup × 0.8`（距目标仍有较大差距）→ 倾向执行；最优节点 `profiling_insight.bottleneck = "balanced"`（CSV级无法定位瓶颈）→ 倾向执行；`best_score >= target_speedup × 0.95`（已非常接近目标）→ 倾向跳过。
 
-若决定执行：对 `best_node` 执行 4.4.3 的两条命令（`msprof_perf_summary.py --diagnose` + `wm_ops.py deep-profiling --merge-children`，路径中的 `{node.solution_ref}`/`{node_id}` 替换为 best 节点对应值），输出：「[分析] 补全深度 Profiling：{profiling_evidence 摘要}」。若决定跳过，输出：「[INFO] 跳过深度 Profiling（{跳过理由}）」
+若决定执行：对 `best_node` 执行 4.4.3 的流程（先按需补跑 `msprof_perf_summary.py --compare --output-dir {best_node.solution_ref}`，再 `wm_ops.py deep-profiling --merge-children`，路径中的 `{node.solution_ref}`/`{node_id}` 替换为 best 节点对应值），输出：「[分析] 补全深度 Profiling：{profiling_evidence 摘要}」。若决定跳过，输出：「[INFO] 跳过深度 Profiling（{跳过理由}）」
 
 **4.6.3.3 延长判定**
 
 基于 4.6.3.1/4.6.3.2 的 profiling 结果，判断是否存在明确的新优化方向。**判定为"有新方向"**（满足任意一项）：
 - CSV Profiling 发现之前未针对的瓶颈类型（`profiling_insight.bottleneck` 与已尝试策略的 `optimization_type` 不匹配）
 - 深度 Profiling 的 `profiling_evidence.suggested_strategies` 包含从未尝试过的策略
-- 深度 Profiling 发现 `d_class_pct > 30%` 或 `c_class_pct > 20%`（显著可优化空泡）
-- 深度 Profiling 发现 `dma_efficiency.mte2_short_pct > 40%`（大量短搬运可合并）
+- 深度 Profiling 发现 `d_class_pct > 30%` 或 `c_class_pct > 20%`（显著可优化空泡；降级合成口径下这些指令级字段缺省为 0，本条不触发）
+- 深度 Profiling 发现 `dma_efficiency.mte2_short_pct > 40%`（大量短搬运可合并；同上，降级口径下不触发）
 
 **若有新方向**：基于 profiling 结果生成 2-3 个新 open 节点（策略组合来自 `suggested_strategies`）加入决策树；`max_rounds += 2`，`profiling_extension_used = true`，`should_continue = true`，`r` 保持当前值；输出「 Profiling 门控延长：发现新优化方向，延长 2 轮（max_rounds: {old} → {new}）」；**返回步骤4.1 GATE** 继续主循环。**若无新方向**：输出「[通过] Profiling 分析完成，未发现显著新方向，进入最终结果」，进入步骤5。
 
@@ -921,7 +1038,7 @@ python3 .claude/skills/ascendc-evolution-world-model/scripts/wm_ops.py session-v
 3. 若最优变体的 `evaluation_results.json` 中 `n_cases_total` **等于** shared 全量 case 数 → 门禁通过
 4. 否则（case 数不符或字段缺失）→ 在 `best_dir` 下基于全量 case 重新执行精度验证：
    ```bash
-   bash ops-lab/tilelang-to-ascendc/skills/tilelang2ascend-translator/scripts/evaluate_ascendc.sh "$best_dir"
+   bash .claude/skills/tilelang2ascend-translator/scripts/evaluate_ascendc.sh "$best_dir"
    ```
    - 验证通过 → 更新该变体 `evaluation_results.json` 后继续
    - 验证失败 → **不得**向用户宣称该变体成功；改取次优变体重走本门禁；所有 passed 变体均不通过时，向用户如实汇报"进化产出的变体在全量 case 下精度不通过"

@@ -70,10 +70,22 @@ Arguments:
 Options:
   --help                   - Show this help message
   --knowledge-root <dir>   - cannbot-knowledge 仓根（显式绑定，写入 <project>/.cannbot/knowledge.env）
-  --knowledge-install      - 绑定失败时自动安装 cannbot-knowledge（默认官方 install.sh，需要网络）
-  --knowledge-installer <path|url> - 指定知识仓安装脚本（本地路径或 URL，配合 --knowledge-install）
-  --skills-repo <dir>      - cannbot-skills 仓根（默认 vendor/cannbot-skills 或兄弟检出）
+  --knowledge-install      - 自动安装 cannbot-knowledge（默认已开启）
+  --no-knowledge-install   - 关闭 knowledge 仓自动安装
+  --knowledge-installer <path|url> - 指定知识仓安装脚本（本地路径或 URL）
+  --knowledge-repo-url <url> - 指定 cannbot-knowledge 仓 URL（传给知识仓 install.sh）
+  --skills-repo <dir>      - cannbot-skills 仓根（显式指定，优先于自动获取）
+  --skills-install         - 自动获取 cannbot-skills（默认已开启）
+  --no-skills-install      - 关闭 cannbot-skills 自动获取
+  --skills-url <url>       - cannbot-skills 仓 URL（默认官方 GitCode）
+  --skills-dir <dir>       - 自动克隆目标目录（默认 vendor/ 或 ~/.cannbot/repos/cannbot-skills）
+  --offline                - 不访问网络；仅使用已有 --skills-repo / --knowledge-root
   --project <dir>          - 写入知识配置的项目根（默认当前目录）
+
+默认行为：如果找不到 cannbot-skills，先尝试初始化 vendor/cannbot-skills 子模块，
+失败则 git clone --depth 1 到 vendor/ 或 ~/.cannbot/repos/；如果找不到
+cannbot-knowledge，则调用官方 install.sh 自动 clone/更新并绑定。全程无需手动
+git clone，也无需逐步确认。
 
 Examples:
   init.sh                      # Project-level, OpenCode
@@ -101,8 +113,14 @@ EOF
 LEVEL="project"
 TOOL="opencode"
 KNOWLEDGE_ROOT_ARG=""
-KNOWLEDGE_INSTALL=""
+# 默认自动安装 knowledge 仓；--no-knowledge-install 可关闭
+KNOWLEDGE_INSTALL="1"
 KNOWLEDGE_INSTALLER="https://raw.gitcode.com/cann/cannbot-knowledge/raw/master/install.sh"
+KNOWLEDGE_REPO_URL=""
+# 默认自动获取 skills 仓；--no-skills-install 可关闭
+SKILLS_INSTALL="1"
+SKILLS_URL="https://gitcode.com/cann/cannbot-skills.git"
+SKILLS_DIR=""
 SKILLS_REPO_ARG=""
 PROJECT_ROOT_ARG="$PWD"
 
@@ -110,64 +128,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$SCRIPT_DIR"
 # Agents: use local agents/ directory (migrated with plugin)
 LOCAL_AGENT_ROOT="$PLUGIN_ROOT/agents"
-# Skills 本体由 cannbot-skills 仓维护（community/ops 五个插件 skill + ops 两个共享 skill），
-# cannbot 仓经 vendor/cannbot-skills 子模块携带同一棵树；独立 cannbot-skills 检出布局作回退。
-if [ -n "$SKILLS_REPO_ARG" ]; then
-  SKILLS_REPO_ROOT="$SKILLS_REPO_ARG"
-elif [ -d "$PLUGIN_ROOT/../../vendor/cannbot-skills/community/ops" ]; then
-  SKILLS_REPO_ROOT="$PLUGIN_ROOT/../../vendor/cannbot-skills"
-elif [ -d "$PLUGIN_ROOT/../../../cannbot-skills/community/ops" ]; then
-  # 三仓分离布局：cannbot / cannbot-skills / cannbot-knowledge 同级检出
-  SKILLS_REPO_ROOT="$(cd "$PLUGIN_ROOT/../../../cannbot-skills" && pwd)"
-else
-  SKILLS_REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd)"
-fi
-COMMUNITY_SKILL_ROOT="$SKILLS_REPO_ROOT/community/ops"
-SHARED_SKILL_ROOT="$SKILLS_REPO_ROOT/ops"
-if [ ! -d "$COMMUNITY_SKILL_ROOT" ] && [ ! -d "$SHARED_SKILL_ROOT" ]; then
-  err "无法定位 cannbot-skills 仓：$SKILLS_REPO_ROOT"
-  echo "       请用 --skills-repo <cannbot-skills 路径> 指定，或检出 vendor/cannbot-skills 子模块。" >&2
-  exit 2
-fi
-# 去重后的 skill 源目录列表（community/ops 优先，避免与 ops/ 同名时被覆盖）
-SKILL_SOURCE_DIRS="$COMMUNITY_SKILL_ROOT $SHARED_SKILL_ROOT"
 
-# Parse skill dependencies from AGENTS.md and agents/*.md frontmatter
-if [ -f "$PLUGIN_ROOT/AGENTS.md" ]; then
-  INCLUDED_SKILLS=$(python3 -c "
-import re, sys
-from pathlib import Path
-
-plugin_root = Path('$PLUGIN_ROOT')
-all_skills = set()
-
-md_files = [plugin_root / 'AGENTS.md']
-agents_dir = plugin_root / 'agents'
-if agents_dir.is_dir():
-    md_files.extend(sorted(agents_dir.glob('*.md')))
-
-for md_file in md_files:
-    if not md_file.is_file():
-        continue
-    content = md_file.read_text()
-    m = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
-    if m:
-        fm = m.group(1)
-        sm = re.search(r'^skills:\n((?:\s+-\s.+\n?)*)', fm, re.MULTILINE)
-        if sm:
-            all_skills.update(re.findall(r'^\s+-\s+(.+)$', sm.group(0), re.MULTILINE))
-
-print(' '.join(sorted(all_skills)))
-" 2>/dev/null)
-  if [ -z "$INCLUDED_SKILLS" ]; then
-    warn "Failed to parse skill dependencies from AGENTS.md, using fallback"
-    INCLUDED_SKILLS="npu-arch ops-profiling ascendc-ops-evaluation ascendc-evolution-report ascendc-evolution-knowledge ascendc-evolution-strategies ascendc-evolution-world-model"
-  fi
-else
-  err "AGENTS.md not found at $PLUGIN_ROOT/AGENTS.md"
-  exit 1
-fi
-
+# --- Parse arguments first: --skills-repo / --knowledge-root must take effect before repo lookup ---
 while [ $# -gt 0 ]; do
     case "$1" in
         --help)             show_help; exit 0 ;;
@@ -175,14 +137,24 @@ while [ $# -gt 0 ]; do
         opencode|claude|trae|cursor|codearts) TOOL="$1"; shift ;;
         --knowledge-root)   KNOWLEDGE_ROOT_ARG="$2"; shift 2 ;;
         --knowledge-install) KNOWLEDGE_INSTALL=1; shift ;;
+        --no-knowledge-install) KNOWLEDGE_INSTALL=0; shift ;;
         --knowledge-installer) KNOWLEDGE_INSTALLER="$2"; shift 2 ;;
+        --knowledge-repo-url) KNOWLEDGE_REPO_URL="$2"; shift 2 ;;
+        --skills-install)   SKILLS_INSTALL=1; shift ;;
+        --no-skills-install) SKILLS_INSTALL=0; shift ;;
+        --skills-url)       SKILLS_URL="$2"; shift 2 ;;
+        --skills-dir)       SKILLS_DIR="$2"; shift 2 ;;
         --skills-repo)      SKILLS_REPO_ARG="$2"; shift 2 ;;
+        --offline)          SKILLS_INSTALL=0; KNOWLEDGE_INSTALL=0; shift ;;
         --project)          PROJECT_ROOT_ARG="$2"; shift 2 ;;
         --knowledge-root=*) KNOWLEDGE_ROOT_ARG="${1#*=}"; shift ;;
         --knowledge-installer=*) KNOWLEDGE_INSTALLER="${1#*=}"; shift ;;
+        --knowledge-repo-url=*) KNOWLEDGE_REPO_URL="${1#*=}"; shift ;;
+        --skills-url=*)     SKILLS_URL="${1#*=}"; shift ;;
+        --skills-dir=*)     SKILLS_DIR="${1#*=}"; shift ;;
         --skills-repo=*)    SKILLS_REPO_ARG="${1#*=}"; shift ;;
         --project=*)        PROJECT_ROOT_ARG="${1#*=}"; shift ;;
-        *)  echo "Error: Unknown argument '$1'. Valid: global, project, opencode, claude, trae, cursor, codearts, --knowledge-root, --knowledge-install, --knowledge-installer, --skills-repo, --project, --help." >&2
+        *)  echo "Error: Unknown argument '$1'. Valid: global, project, opencode, claude, trae, cursor, codearts, --knowledge-root, --knowledge-install, --no-knowledge-install, --knowledge-installer, --knowledge-repo-url, --skills-install, --no-skills-install, --skills-url, --skills-dir, --skills-repo, --offline, --project, --help." >&2
             exit 1 ;;
     esac
 done
@@ -232,11 +204,159 @@ echo "  Level:     $LEVEL"
 echo "  Path:      $CONFIG_ROOT"
 echo ""
 
-# --- Knowledge repo binding (cannbot-knowledge) ---
-# 显式绑定优先；未提供时按统一解析链（env / .cannbot / 兄弟检出）尝试。
-# 显式 --knowledge-root 无效 => exit 2（fail-loud）；完全未找到 => 告警但不阻塞安装。
-# --knowledge-install：绑定失败时自动调用知识仓 install.sh（默认官方 URL，可用
-# --knowledge-installer 指定本地路径/URL），安装完成后再绑定。
+# --- Skill dependencies (needed before repo completeness checks) ---
+if [ -f "$PLUGIN_ROOT/AGENTS.md" ]; then
+  INCLUDED_SKILLS=$(python3 -c "
+import re, sys
+from pathlib import Path
+
+plugin_root = Path('$PLUGIN_ROOT')
+all_skills = set()
+
+md_files = [plugin_root / 'AGENTS.md']
+agents_dir = plugin_root / 'agents'
+if agents_dir.is_dir():
+    md_files.extend(sorted(agents_dir.glob('*.md')))
+
+for md_file in md_files:
+    if not md_file.is_file():
+        continue
+    content = md_file.read_text()
+    m = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
+    if m:
+        fm = m.group(1)
+        sm = re.search(r'^skills:\n((?:\s+-\s.+\n?)*)', fm, re.MULTILINE)
+        if sm:
+            all_skills.update(re.findall(r'^\s+-\s+(.+)$', sm.group(0), re.MULTILINE))
+
+print(' '.join(sorted(all_skills)))
+" 2>/dev/null)
+  if [ -z "$INCLUDED_SKILLS" ]; then
+    warn "Failed to parse skill dependencies from AGENTS.md, using fallback"
+    INCLUDED_SKILLS="npu-arch ops-profiling ascendc-ops-evaluation ascendc-evolution-report ascendc-evolution-knowledge ascendc-evolution-strategies ascendc-evolution-world-model tilelang2ascend-translator"
+  fi
+else
+  err "AGENTS.md not found at $PLUGIN_ROOT/AGENTS.md"
+  exit 1
+fi
+
+# --- Skill repo resolution / auto-fetch ---
+# 三仓分离后，plugin 不再假定用户已经手工检出 cannbot-skills。
+# 解析顺序：--skills-repo > vendor/cannbot-skills 子模块 > 同级 cannbot-skills > 自动 clone。
+# 关键：子模块可能钉在旧 commit（缺少 ascendc-evolution-* 等插件 skill），必须按
+# AGENTS.md 声明的 skill 列表校验完整性，不完整就跳过并改用完整检出/克隆。
+fetch_repo() {
+    local url="$1" target="$2"
+    if [ -e "$target" ] && [ ! -d "$target" ]; then
+        err "目标路径存在但不是目录：$target"
+        return 1
+    fi
+    if [ -d "$target/.git" ]; then
+        ok "复用已有检出：$target"
+        return 0
+    fi
+    if [ -d "$target" ] && [ -n "$(ls -A "$target" 2>/dev/null)" ]; then
+        err "目标目录非空且不是 git 仓库：$target"
+        return 1
+    fi
+    mkdir -p "$(dirname "$target")" || return 1
+    info "git clone --depth 1 $url -> $target"
+    GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch "$url" "$target"
+}
+
+skills_repo_has_required() {
+    local root="$1" missing="" name
+    for name in $INCLUDED_SKILLS; do
+        if [ -d "$root/community/ops/$name" ] || [ -d "$root/ops/$name" ]; then
+            :
+        else
+            missing="$missing $name"
+        fi
+    done
+    if [ -n "$missing" ]; then
+        warn "skills 仓不完整（缺少：$missing）：$root"
+        return 1
+    fi
+    return 0
+}
+
+ensure_skills_repo() {
+    local repo_root target
+    repo_root="$(cd "$PLUGIN_ROOT/../.." 2>/dev/null && pwd || true)"
+
+    if [ -n "$SKILLS_REPO_ARG" ]; then
+        SKILLS_REPO_ROOT="$SKILLS_REPO_ARG"
+        if ! skills_repo_has_required "$SKILLS_REPO_ROOT"; then
+            err "指定的 --skills-repo 不完整：$SKILLS_REPO_ROOT"
+            return 1
+        fi
+    else
+        # 1) 先看 vendor 子模块 / 同级检出，但只接受完整仓。
+        if [ -d "$PLUGIN_ROOT/../../vendor/cannbot-skills/community/ops" ]; then
+            if skills_repo_has_required "$PLUGIN_ROOT/../../vendor/cannbot-skills"; then
+                SKILLS_REPO_ROOT="$PLUGIN_ROOT/../../vendor/cannbot-skills"
+            fi
+        fi
+        if [ -z "${SKILLS_REPO_ROOT:-}" ] && [ -d "$PLUGIN_ROOT/../../../cannbot-skills/community/ops" ]; then
+            if skills_repo_has_required "$PLUGIN_ROOT/../../../cannbot-skills"; then
+                SKILLS_REPO_ROOT="$(cd "$PLUGIN_ROOT/../../../cannbot-skills" && pwd)"
+            fi
+        fi
+
+        # 2) 仍缺失且允许自动获取：先尝试 submodule，再浅克隆。
+        if [ -z "${SKILLS_REPO_ROOT:-}" ] && [ "$SKILLS_INSTALL" = "1" ]; then
+            if [ -n "$repo_root" ] && [ -f "$repo_root/.gitmodules" ] && grep -q 'vendor/cannbot-skills' "$repo_root/.gitmodules" 2>/dev/null; then
+                step "[0/4] Initializing cannbot-skills submodule..."
+                if GIT_TERMINAL_PROMPT=0 git -C "$repo_root" submodule update --init --recursive vendor/cannbot-skills >/dev/null 2>&1; then
+                    if skills_repo_has_required "$repo_root/vendor/cannbot-skills"; then
+                        SKILLS_REPO_ROOT="$repo_root/vendor/cannbot-skills"
+                        ok "cannbot-skills submodule ready: $SKILLS_REPO_ROOT"
+                    else
+                        warn "vendor/cannbot-skills 子模块版本过旧，缺少插件所需 skill；改用完整检出/克隆"
+                    fi
+                fi
+            fi
+            if [ -z "${SKILLS_REPO_ROOT:-}" ]; then
+                target="$SKILLS_DIR"
+                if [ -z "$target" ]; then
+                    if [ -n "$repo_root" ] && [ -d "$repo_root/vendor" ] && [ -w "$repo_root/vendor" ] && [ ! -f "$repo_root/.gitmodules" ]; then
+                        target="$repo_root/vendor/cannbot-skills"
+                    else
+                        target="${HOME:?}/.cannbot/repos/cannbot-skills"
+                    fi
+                fi
+                step "[0/4] Fetching cannbot-skills -> $target ..."
+                if fetch_repo "$SKILLS_URL" "$target"; then
+                    if skills_repo_has_required "$target"; then
+                        SKILLS_REPO_ROOT="$target"
+                    else
+                        err "克隆的 cannbot-skills 不完整（缺少插件所需 skill）：$target"
+                        return 1
+                    fi
+                else
+                    err "无法获取 cannbot-skills：$SKILLS_URL"
+                    return 1
+                fi
+            fi
+        fi
+    fi
+
+    if [ -z "${SKILLS_REPO_ROOT:-}" ]; then
+        err "无法定位可用的 cannbot-skills 仓"
+        echo "       可用 --skills-repo <本地路径> 指定已有完整检出；或检查网络/代理后重跑（--skills-url 可换源）。" >&2
+        return 1
+    fi
+    COMMUNITY_SKILL_ROOT="$SKILLS_REPO_ROOT/community/ops"
+    SHARED_SKILL_ROOT="$SKILLS_REPO_ROOT/ops"
+    # 去重后的 skill 源目录列表（community/ops 优先，避免与 ops/ 同名时被覆盖）
+    SKILL_SOURCE_DIRS="$COMMUNITY_SKILL_ROOT $SHARED_SKILL_ROOT"
+}
+
+ensure_skills_repo || exit $?
+
+# --- Knowledge repo binding / auto-install (cannbot-knowledge) ---
+# 显式绑定优先；缺失时默认调用知识仓 install.sh 自动 clone/更新并绑定。
+# 完全未找到时告警但不阻塞 skill 安装；显式 --knowledge-root 无效 => exit 2。
 KNOWLEDGE_HELPER="$COMMUNITY_SKILL_ROOT/ascendc-evolution-strategies/scripts/knowledge_root.py"
 
 bind_knowledge() {
@@ -246,52 +366,117 @@ bind_knowledge() {
 }
 
 install_knowledge() {
-    local installer="$1" target="$2" tmp=""
+    local installer="$1" target="$2" tmp_script="" tmp_project="" extra=()
+    # 知识仓安装器不支持 codearts；此时直接返回让调用方走 clone+bind 兜底。
+    case "$TOOL" in
+        claude|opencode|trae|cursor) ;;
+        *) return 1 ;;
+    esac
     if [[ "$installer" =~ ^https?:// ]]; then
-        tmp="$(mktemp -t cannbot-knowledge-install.XXXXXX.sh)" || return 1
-        if ! curl -fsSL -o "$tmp" "$installer"; then
-            rm -f "$tmp"; return 1
+        tmp_script="$(mktemp -t cannbot-knowledge-install.XXXXXX.sh)" || return 1
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL -o "$tmp_script" "$installer" || { rm -f "$tmp_script"; return 1; }
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$tmp_script" "$installer" || { rm -f "$tmp_script"; return 1; }
+        else
+            rm -f "$tmp_script"; return 1
         fi
-        installer="$tmp"
+        installer="$tmp_script"
     fi
     if [ ! -f "$installer" ]; then
-        rm -f "$tmp"; return 1
+        rm -f "$tmp_script"; return 1
     fi
-    bash "$installer" "$TOOL" "$PROJECT_ROOT_ARG" consumer --knowledge-root "$target"
+    # 插件项目的 CLAUDE.md 是 -> AGENTS.md 的软链，知识仓 install.sh 会拒绝修改
+    # 软链 prompt；用临时项目根跑安装，只保留知识仓 clone/索引/依赖，丢弃临时 prompt。
+    tmp_project="$(mktemp -d -t cannbot-knowledge-project.XXXXXX)" || { rm -f "$tmp_script"; return 1; }
+    [ -n "$KNOWLEDGE_REPO_URL" ] && extra+=(--repository-url "$KNOWLEDGE_REPO_URL")
+    local install_args=(--knowledge-root "$target")
+    grep -q -- '--skip-resources' "$installer" 2>/dev/null && install_args+=(--skip-resources)
+    GIT_TERMINAL_PROMPT=0 bash "$installer" "$TOOL" "$tmp_project" consumer \
+        "${install_args[@]}" "${extra[@]}"
     local rc=$?
-    rm -f "$tmp"
+    rm -rf "$tmp_project"
+    rm -f "$tmp_script"
     return $rc
 }
 
-if [ -f "$KNOWLEDGE_HELPER" ]; then
+fetch_knowledge_repo() {
+    local target="$1" url="${KNOWLEDGE_REPO_URL:-https://gitcode.com/cann/cannbot-knowledge.git}"
+    if [ -d "$target/.git" ]; then
+        ok "复用已有检出：$target"
+        return 0
+    fi
+    if [ -e "$target" ] && [ ! -d "$target" ]; then
+        err "目标路径存在但不是目录：$target"
+        return 1
+    fi
+    if [ -d "$target" ] && [ -n "$(ls -A "$target" 2>/dev/null)" ]; then
+        err "目标目录非空且不是 git 仓库：$target"
+        return 1
+    fi
+    mkdir -p "$(dirname "$target")" || return 1
+    info "git clone --depth 1 $url -> $target"
+    GIT_TERMINAL_PROMPT=0 git clone --depth 1 --single-branch "$url" "$target"
+}
+
+build_knowledge_index() {
+    local root="$1" index="$1/.agents/skills/knowledge-query/scripts/knowledge_index.py"
+    [ -f "$index" ] || return 0
+    step "[0/4] Building knowledge search index..."
+    if python3 "$index" --knowledge-root "$root" build >/dev/null 2>&1; then
+        ok "knowledge index ready"
+    else
+        warn "知识索引构建失败；可运行：python3 $index --knowledge-root $root build"
+    fi
+}
+
+ensure_knowledge() {
+    if [ ! -f "$KNOWLEDGE_HELPER" ]; then
+        warn "knowledge_root.py 不可用（skills 仓未就绪），跳过知识配置"
+        return 0
+    fi
     step "[0/4] Binding knowledge repository..."
     if bind_knowledge; then
         ok "knowledge root -> $PROJECT_ROOT_ARG/.cannbot/knowledge.env"
-    else
-        if [ "$KNOWLEDGE_INSTALL" = "1" ]; then
-            KR_TARGET="$KNOWLEDGE_ROOT_ARG"
-            [ -z "$KR_TARGET" ] && KR_TARGET="$HOME/.cannbot/cannbot-knowledge"
-            step "[0/4] Installing knowledge repository -> $KR_TARGET ..."
-            if install_knowledge "$KNOWLEDGE_INSTALLER" "$KR_TARGET"; then
-                KNOWLEDGE_ROOT_ARG="$KR_TARGET"
-                if bind_knowledge; then
-                    ok "knowledge root -> $PROJECT_ROOT_ARG/.cannbot/knowledge.env（新安装）"
-                else
-                    warn "知识仓安装完成但绑定失败，请检查 $KR_TARGET 布局"
-                fi
-            else
-                warn "知识仓自动安装失败（installer=$KNOWLEDGE_INSTALLER）；可手动安装后重跑 init.sh"
-            fi
-        elif [ -n "$KNOWLEDGE_ROOT_ARG" ]; then
-            err "指定的 --knowledge-root 无效：$KNOWLEDGE_ROOT_ARG"
-            exit 2
-        else
-            warn "未找到 cannbot-knowledge，跳过知识配置（可用 --knowledge-root 重新绑定，或 --knowledge-install 自动安装）"
-        fi
+        return 0
     fi
-else
-    warn "knowledge_root.py 不可用（skills 仓未就绪），跳过知识配置"
-fi
+    if [ -n "$KNOWLEDGE_ROOT_ARG" ] && [ "$KNOWLEDGE_INSTALL" != "1" ]; then
+        err "指定的 --knowledge-root 无效：$KNOWLEDGE_ROOT_ARG"
+        return 2
+    fi
+    if [ "$KNOWLEDGE_INSTALL" = "1" ]; then
+        local target="${KNOWLEDGE_ROOT_ARG:-${HOME:?}/.cannbot/cannbot-knowledge}"
+        step "[0/4] Fetching/installing cannbot-knowledge -> $target ..."
+        if install_knowledge "$KNOWLEDGE_INSTALLER" "$target"; then
+            KNOWLEDGE_ROOT_ARG="$target"
+            if bind_knowledge; then
+                ok "knowledge root -> $PROJECT_ROOT_ARG/.cannbot/knowledge.env（新安装）"
+                return 0
+            fi
+            warn "知识仓安装完成但绑定失败，请检查 $target 布局"
+            return 0
+        fi
+        warn "官方知识安装脚本失败，尝试直接 git clone 知识仓 ..."
+        if fetch_knowledge_repo "$target"; then
+            KNOWLEDGE_ROOT_ARG="$target"
+            if bind_knowledge; then
+                build_knowledge_index "$target"
+                ok "knowledge root -> $PROJECT_ROOT_ARG/.cannbot/knowledge.env（直接克隆）"
+                return 0
+            fi
+            warn "知识仓克隆完成但绑定失败，请检查 $target 布局"
+            return 0
+        fi
+        warn "知识仓自动安装失败（installer=$KNOWLEDGE_INSTALLER 或 git clone）；可手动安装后重跑 init.sh"
+    else
+        warn "未找到 cannbot-knowledge，跳过知识配置（可用 --knowledge-root 或 --knowledge-install）"
+    fi
+    return 0
+}
+
+ensure_knowledge
+kr_rc=$?
+[ "$kr_rc" -eq 0 ] || exit "$kr_rc"
 
 # --- Step 0: Confirmation before installation ---
 step "[0/4] Checking items to be installed..."

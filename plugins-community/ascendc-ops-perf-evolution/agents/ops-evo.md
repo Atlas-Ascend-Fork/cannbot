@@ -65,7 +65,7 @@ skills:
   · **原则**: L0 保证基本正确性和性能，L1 针对特定场景提供 2-5x 额外提升。Init 阶段优先用 L0 + 少量 L1，Refine 阶段按 profiling 证据精准追加 L1
   · **ops 仓特别说明**: ops-nn/cv 仓算子更可能需要 L1（CV 融合、量化），ops-math/transformer 仓算子更多用 L0
 - **知识库查询协议**: `.claude/skills/ascendc-evolution-knowledge/references/a3/` 采用渐进式披露，先读 guide.md 快速参考，按需深入。
-  **Init 阶段必读**: `hardware/guide.md`（硬件关键参数和瓶颈判断）、`optimization_patterns/guide.md`（优化模式选择决策树）、按算子族读 `algorithm_insights/{family}.md`（匹配时）
+  **Init 阶段必读**: `hardware/guide.md`（硬件关键参数和瓶颈判断）、`optimization_patterns/guide.md`（优化模式选择决策树）、按算子族读 `algorithm_insights/` 下对应文件（attention→`attention_family.md`、reduction→`reduction_ops.md`、elementwise→`elementwise_fusion.md`，以 `algorithm_insights/INDEX.md` 为准）（匹配时）
   **子 agent prompt 构造时参考**: `ascendc_api/guide.md`（注入避坑提醒）
   **策略提炼时查阅**: `proven_solutions/INDEX.md`（判断新颖性、避免重复）
   **检索优先级**: 知识库 → 策略库 → proven_solutions → WebSearch
@@ -293,7 +293,7 @@ python3 .claude/skills/ascendc-ops-evaluation/scripts/evaluate_ops_direct.py {op
    - **derived_params**：`peak_bw_gbps = ddr_rate × freq_mhz / 1000`（910B ddr_rate=32）；`peak_vector_tflops_per_core = vec_calc_size / dtype_size × freq_mhz × 2 / 1e6`；`peak_cube_tflops_per_core = 16×16×16 × 2 × freq_mhz / 1e6`；`max_tile_fp16_double_buf = (ub_size // 12) // 16 × 16`
    - 写入 `world_model.json` 顶层 `hw_params` 字段：`{ chip_model, ub_size_bytes, core_num, peak_bw_gbps, peak_vector_tflops_per_core, alignment_bytes, max_tile_fp16_double_buf }`
    - hw_params 为 null 时节点描述缺少硬件参数指导（tile_size 建议值等），严重影响优化质量。仅在查询报错时才允许 hw_params = null。
-2. **必读知识库**: 读取 `.claude/skills/ascendc-evolution-knowledge/references/a3/hardware/guide.md` 和 `optimization_patterns/guide.md`；算子匹配特定族（attention/reduction/elementwise）时额外读 `algorithm_insights/{family}.md`；`proven_solutions/INDEX.md` 中有同类算子方案时读对应条目
+2. **必读知识库**: 读取 `.claude/skills/ascendc-evolution-knowledge/references/a3/hardware/guide.md` 和 `optimization_patterns/guide.md`；算子匹配特定族（attention/reduction/elementwise）时额外读 `algorithm_insights/` 下对应文件（attention→`attention_family.md`、reduction→`reduction_ops.md`、elementwise→`elementwise_fusion.md`，以 `algorithm_insights/INDEX.md` 为准）；`proven_solutions/INDEX.md` 中有同类算子方案时读对应条目
 3. 读取 shared/original/ 下的算子代码，分析算子特性（计算模式、数据类型、形状特征）：内存密集型 vs 计算密集型？尾块对齐问题（形状非32字节整数倍）？数据类型特殊处理（FP16/BF16精度）？
 4. 读取 `.claude/skills/ascendc-evolution-strategies/references/strategy-index.md`，识别最相关策略
 5. 设计节点：`parallel_num × 2` 个策略导向节点（`mode="strategy_guided"`）+ `max(1, ⌈parallel_num / 4⌉)` 个开放探索节点（`mode="open_exploration"`），确保:
@@ -875,14 +875,17 @@ Supervisor 返回结果处理（4.5.1/4.5.2 共用，仅输出标签不同）：
 
 **4.6.3.1 CSV Profiling 补全检查（强制）**
 
-全局最优节点已有 `profiling_insight` → 跳过，进入 4.6.3.2；若为 null → 强制执行 CSV 级 Profiling：
+全局最优节点已有 `profiling_insight` → 跳过，进入 4.6.3.2；若为 null → 强制执行 CSV 级 Profiling（`analyze_profiling.py` 未随三仓交付；CSV 级证据由 `evaluate_ops_direct.py` 内部 msprof 采集产出的 `evolved.pipeline` 承担）：
   ```bash
-  python3 ops/ops-profiling/scripts/analyze_profiling.py \
-      "output/{op_name}_ops-evo_{timestamp}/{best_node.solution_ref}" \
-      --task-type {task_type} \
-      --output "output/{op_name}_ops-evo_{timestamp}/{best_node.solution_ref}/csv_profiling.json"
+  python3 .claude/skills/ascendc-ops-evaluation/scripts/evaluate_ops_direct.py {op_name} \
+      --call-spec $EVO_DIR/shared/call_spec.json \
+      --baseline-path $EVO_DIR/baseline \
+      --evolved-path $EVO_DIR/{best_node.solution_ref} \
+      --device-id $SESSION_DEVICE --task-type {task_type} \
+      --baseline-cache $EVO_DIR/baseline_evaluation.json \
+      --output $EVO_DIR/{best_node.solution_ref}/evaluation_results.json
   ```
-  将结果写入 `best_node.profiling_insight`，写回 `world_model.json`。输出：「补全 CSV Profiling：{profiling_one_liner}」
+  从新产出的 `evolved.pipeline` 提炼 `best_node.profiling_insight`，用 Edit 写回 `world_model.json`。输出：「补全 CSV Profiling：{profiling_one_liner}」
 
 **4.6.3.2 深度 Profiling 决策（Agent 自主判断）**
 
@@ -891,16 +894,7 @@ Supervisor 返回结果处理（4.5.1/4.5.2 共用，仅输出标签不同）：
 - 最优节点 `profiling_insight.bottleneck = "balanced"`（CSV级无法定位瓶颈）→ 倾向执行
 - `best_score >= target_speedup × 0.95`（已非常接近目标）→ 倾向跳过
 
-若决定执行：
-  ```bash
-  python3 ops/ops-profiling/scripts/run_deep_profiling.py \
-      --work-dir "output/{op_name}_ops-evo_{timestamp}/{best_node.solution_ref}" \
-      --op-name {op_name} \
-      --timeout 3600 \
-      --test-case-csv "output/{op_name}_ops-evo_{timestamp}/shared/test_cases.csv" \
-      --output "output/{op_name}_ops-evo_{timestamp}/{best_node.solution_ref}/deep_profiling_result.json"
-  ```
-  然后执行 §4.4.4 的 `wm_ops.py deep-profiling` 命令（`--node-id {best_node_id}`、`--work-dir` 同上、`--merge-children`），输出：「[分析] 补全深度 Profiling：{profiling_evidence 摘要}」
+若决定执行：先确保该节点 `evolved.pipeline` 非 null（必要时按 4.6.3.1 重新评估刷新），然后执行 §4.4.4 的 `wm_ops.py deep-profiling` 命令（`--node-id {best_node_id}`、`--work-dir "output/{op_name}_ops-evo_{timestamp}/{best_node.solution_ref}"`、`--op-name {op_name}`、`--merge-children`）。`run_deep_profiling.py` 指令级采集脚本未随三仓交付，wm_ops 内部自动降级为基于 `evolved.pipeline` 的证据合成（`d_class_pct` / `dma_efficiency` 等指令级字段缺省）。输出：「[分析] 补全深度 Profiling：{profiling_evidence 摘要}」
 
 **4.6.3.3 延长判定**
 

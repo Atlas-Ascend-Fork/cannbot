@@ -44,7 +44,7 @@ skills: []
 
 按优化模式补充阅读：
 - **strategy_guided**: 策略引用了特定优化模式时，读取对应的 `optimization_patterns/*.md`
-- **open_exploration**: 读取匹配算子族的 `algorithm_insights/{family}.md` 寻找灵感
+- **open_exploration**: 读取匹配算子族的 `algorithm_insights/` 下对应文件（attention→`attention_family.md`、reduction→`reduction_ops.md`、elementwise→`elementwise_fusion.md`，以 `algorithm_insights/INDEX.md` 为准） 寻找灵感
 - **profiling_driven**: 根据瓶颈类型读取对应的 `optimization_patterns/*.md`（如 memory_bound → `double_buffering.md`）
 
 ### L2（官方文档 — 按需查阅）
