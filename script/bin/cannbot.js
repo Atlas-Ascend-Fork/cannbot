@@ -566,7 +566,8 @@ function exposeDependency(source, destination) {
       return false;
     }
   }
-  symlinkSync(relative(dirname(destination), source) || ".", destination, "dir");
+  const linkTarget = process.platform === "win32" ? resolve(source) : relative(dirname(destination), source) || ".";
+  symlinkSync(linkTarget, destination, process.platform === "win32" ? "junction" : "dir");
   return true;
 }
 
