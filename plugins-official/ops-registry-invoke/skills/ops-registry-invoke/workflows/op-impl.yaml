@@ -229,26 +229,18 @@ nodes:
     for TestSpec conventions, plus $WORK_DIR/ops-test-kit/ttk/test_spec/examples/.
   - 'Write $WORK_DIR/golden.py in TestSpec format: __spec__ registration + class with golden and tolerance; implement the
     reference math from spec.yaml only — never import or reuse anything from $WORK_DIR/op/ (kernel artifacts).'
-  - 'Pick the golden body''s implementation backend by this fixed priority ladder, stopping at the first tier that holds (equivalent
-    = same semantics as the spec''s math_semantics.formula, including optional-input pairing and attr behavior): tier 1 single
-    PyTorch API — one equivalent torch API exists, build the golden body on it. tier 2 single TensorFlow API — one equivalent
-    TF API exists, build the golden body on it. tier 3 PyTorch API composition — no single equivalent API in either framework,
-    but a composition of torch APIs implements the full formula, build the golden body from it. tier 4 TensorFlow API composition
-    — same via a composition of TF APIs. tier 5 NumPy — hand-implement the formula with numpy primitives. When a torch or TF
-    tier is taken, the golden must CALL the chosen API(s) for every part they cover, casting inputs to float64 around each
-    call; re-implementing an API''s internals with elementary tensor ops is a tier-5 hand implementation, not a composition
-    — the API''s own numerics (including boundary-value behaviour) are the expected values. Record in golden.py''s module
-    docstring the tier taken, the exact API(s) chosen, and what each skipped tier lacked.'
-  - 'Float64 accumulation rule (workflow-mandated, overrides any lower accumulator dtype declared in the spec): wherever the
-    golden performs floating-point accumulation, lift the values to float64 first, accumulate in float64, and cast the final
-    result back to the target output dtype — torch: x.to(torch.float64) -> sum -> .to(out_dtype); tensorflow: tf.cast(x, tf.float64)
-    -> reduce_sum -> tf.cast(out_dtype); numpy: x.astype(np.float64) -> sum -> .astype(out_dtype). Never accumulate in float16/float32.'
+  - 'Implementation path for golden.py — priority order (select the first option that is semantically equivalent to spec''s
+    math_semantics.formula, including optional input pairing and attr behavior): T1: a single equivalent PyTorch API
+    exists — call that API directly to cover the corresponding part, casting inputs to float64 before the call and casting
+    back afterward; do not reimplement its internal logic using basic operators. T2: no single equivalent PyTorch API
+    exists — implement the complete formula by composing PyTorch basic tensor operators. T3: neither of the above applies
+    — use NumPy for the reference computation. Record the chosen path (T1/T2/T3) and the exact API(s) or operators used in
+    golden.py''s module docstring.'
+  - 'Float64 accumulation rule: for any floating-point accumulation, first promote values to float64, accumulate in
+    float64, and finally cast back to the target output dtype; accumulation in float16/float32 is prohibited.'
   - 'Memory-safe golden: the float64 lift must never fail on large inputs — accumulate/chunk element-by-element or block-wise
     when a whole-tensor float64 materialization would exceed host memory; the numerical result must equal the unchunked
     float64 computation within the output dtype''s rounding.'
-  - 'When any torch or TF tier (1–4) supplies the golden body — single API or composition — compose it with the float64 rule:
-    cast every input to float64, call the torch or TF API(s), cast the outputs back once to the target dtypes — the framework''s
-    internal accumulation then runs in float64.'
   - 'Derive tolerance.standard from $WORK_DIR/spec.yaml, never from the operator name. Default classification by op.paradigms
     (compute paradigms with float output -> mix_tolerance; pure data-reorganization -> binary_equal; int output -> binary_equal;
     quantization -> quant — the enum set defined by the ttk test_spec validator is authoritative), overridable by the spec''s
@@ -265,12 +257,11 @@ nodes:
     0; it contains __spec__ registration and a class definition (TestSpec format).'
   - 'Oracle independence: ! grep -qE ''from op|import op/'' $WORK_DIR/golden.py (no kernel artifact reuse); golden math matches
     spec.yaml reference_oracle semantics.'
-  - 'Backend priority traceable: golden.py''s module docstring names the priority tier taken (torch single API / tensorflow
-    single API / torch composition / tensorflow composition / numpy) and the exact API(s) used; for every skipped higher tier
-    it states what equivalent API the search lacked.'
-  - 'Float64 accumulation: the golden''s accumulation path casts to float64 before summing and casts back to the output dtype
-    after (torch: .to(torch.float64); tensorflow: tf.cast(x, tf.float64); numpy: astype(np.float64) -> np.sum -> astype(out_dtype));
-    no float16/float32 accumulation anywhere in the reduction.'
+  - 'Backend priority traceable: golden.py''s module docstring names the implementation path taken (T1 single PyTorch API /
+    T2 PyTorch basic-op composition / T3 NumPy) and the exact API(s) or operators used; for every skipped earlier path it
+    states why.'
+  - 'Float64 accumulation: the golden''s accumulation path promotes values to float64 before summing and casts back to the
+    output dtype after; no float16/float32 accumulation anywhere in the reduction.'
   - $WORK_DIR/golden_invariant_check.py exists and python3 $WORK_DIR/golden_invariant_check.py exits 0 with every invariant
     PASS — deleting or relaxing invariants to force green is forbidden.
   out_of_scope:
