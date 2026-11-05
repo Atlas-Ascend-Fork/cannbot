@@ -109,7 +109,9 @@ aclnn 函数 `aclnn{PascalCase}`。版本后缀（V2/V3）是算子名组成部�
 
 1. **`code_walkthrough.md`**：按调用链路走读（Python 接口 → 注册/dispatch → OP 定义 → Kernel 实现），
    贴关键代码 + 内联注释（规范同 `references/code_walkthrough_guide.md`）。
-2. **`code_design.md`**：算子基本信息（含**正反向身份**）/ 对外接口与 dtype / 声明 / 注册与 dispatch 与类型支持 /
+2. **`code_design.md`**：算子基本信息（含**正反向身份**）/ 对外接口（Python 接口签名 + **调用示例**）与 dtype /
+   **调用链路概述**（Python 接口 → 注册/dispatch → OP 定义 → Kernel 实现，浓缩自 walkthrough）/
+   声明 / 注册与 dispatch 与类型支持 /
    OP 定义与封装（Shape 推导 / dtype 转换 / 规格约束）/ Kernel 实现（空 Tensor / 确定性 / 边界值 / workspace /
    tiling / 计算步骤 / 分支）/ 实现评估（优化点 / NPU 可迁移性 / 不足）。
 3. **`formula.md`**：从竞品 **Kernel 实现**直接提取公式（规则同 `references/formula_template.md`），
@@ -160,7 +162,8 @@ aclnn 函数 `aclnn{PascalCase}`。版本后缀（V2/V3）是算子名组成部�
 
 1. **COPY 研究中间件**：模板中标 `COPY: <file>` 的章节，把对应 research 文件**逐字复制原文**（禁止摘要 / 改写 / 省略），
    遵守 `references/output_template.md` 的「COPY 规范」（丢一级标题、标题降档、开头追加源链接）。
-2. **自行生成章节**：需求背景（帮助读者从 0 理解算子功能，关注算子本身）、框架差异对比（据各 code_design.md 汇总对比表）、
+2. **自行生成章节**：需求背景（帮助读者从 0 理解算子功能，关注算子本身；并按输出模板 §1 明确写出
+   **支持的通路 / 既有算子支持度(A2) / 新旧兼容性(A5↔A2)**三项）、框架差异对比（据各 code_design.md 汇总对比表）、
    客户需求（网络信息 / 运行环境 / 调用方式 / 性能要求，用默认值时标「假设」）、需求分析总结（交付件清单 + ACLNN/GEIR 接口设计 + 框架兼容性）。
    其中**交付件清单按输出模板的「调用方式 → 交付件」映射推导取并集**（不写固定全"是"）；
    **接口设计遵守能力并集不可收窄原则**（代际补齐 / 新增 kernel 场景：不减 dtype、不移参数，新 kernel 声明子集 +

@@ -13,6 +13,7 @@
       "workflow-dispatch",
       "ops-incremental",
       "ops-requirement-analysis",
+      "req-content-acceptance",
       "design-template",
       "ascendc-build-system",
       "blackbox-tester",

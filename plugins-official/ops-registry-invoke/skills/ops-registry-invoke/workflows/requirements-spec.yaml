@@ -20,6 +20,7 @@ nodes:
       - "Consult the local built-in proto at $ASCEND_OPP_PATH/built-in/op_proto/inc/ as the highest-authority CANN fact source."
       - "Use the chip platform recorded in $WORK_DIR/npu-arch.json as the runtime-environment evidence."
       - "Fill any missing customer-requirement fields with the skill's defaults (Ascend 950PR/950DT, single-op + PyTorch) and mark them as assumptions; decide autonomously, never ask the user."
+      - "After the requirements document is produced, load the req-content-acceptance skill (mandatory) and execute its acceptance procedure end-to-end, including its FAIL-remediation loop (the skill defines the per-sub-item evidence rules, the RECORD path and the per-stage redo routing); do not fabricate content to pass the gate."
     acceptance:
       - "$WORK_DIR/requirements/REQUIREMENTS.md exists and is non-empty."
       - "The document has the fixed section structure (## 1 需求背景 through ## 8 需求分析总结) with all sections filled."
@@ -35,8 +36,9 @@ nodes:
       - "Variant full coverage: every tiling and kernel variant in the overview tables has its own detailed subsection (compute flow + buffer allocation + tiling strategy); no 'same as template 1' skips."
       - "Framework registration is enumerated per evidence: any found plugin (TF/ONNX/Caffe) is listed with its ParseParams attribute mapping and registration code, each marked ✅/❌; none found is recorded as ❌, never silently omitted."
       - "The verifier reviews the document item by item against the fixed section, COPY, numbering, TOC, research, performance, and API requirements; every check passes."
+      - "The content acceptance is recorded at $WORK_DIR/requirements/req-content-acceptance.RECORD.md: the file exists and is non-empty (test -s), contains all 33 sub-item verdict rows, and carries an overall PASS verdict (a FAILED overall verdict fails this task); the verifier independently re-checks the RECORD's cited evidence against REQUIREMENTS.md rather than trusting the executor-written RECORD alone."
     out_of_scope:
-      - "Do not write spec.yaml, DESIGN.md, or any implementation code; this task only produces the requirements document and its research intermediates."
+      - "Do not write spec.yaml, DESIGN.md, or any implementation code; this task produces the requirements document, its research intermediates, and the req-content-acceptance RECORD."
     depends_on: []
     max_retries: 1
     on_exhaust: exit
