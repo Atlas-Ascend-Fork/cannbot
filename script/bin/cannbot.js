@@ -337,7 +337,12 @@ function resolveSkills(plugin, pluginDir) {
     const name = readFileSync(skillPath, "utf8").match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim();
     if (!name) fail(`skill is missing a frontmatter name: ${skillPath}`);
     validateInstallName(name, "Skill name");
-    skills.set(name, source);
+    const key = process.platform === "win32" ? name.toLowerCase() : name;
+    const existing = skills.get(key);
+    if (existing && realpathSync(existing.source) !== realpathSync(source)) {
+      fail(`duplicate Skill name in ${pluginDir}: ${name} (${existing.source}, ${source})`);
+    }
+    skills.set(key, { name, source });
   };
 
   for (const relativeSkill of plugin.skills ?? []) {
@@ -357,7 +362,7 @@ function resolveSkills(plugin, pluginDir) {
     if (entry.isDirectory() && existsSync(join(source, "SKILL.md"))) addSkill(source);
   }
 
-  return [...skills.entries()].map(([name, source]) => ({ name, source }));
+  return [...skills.values()];
 }
 
 function resolveSourceSkills(repositoryRoot, sourceDefinition, sharedSkillsRoot = null) {
