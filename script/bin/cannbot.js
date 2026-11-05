@@ -829,6 +829,37 @@ function installCodexPlugin(plugin, skills, target, skillInstallMode) {
   return { pluginRoot, marketplacePath, marketplaceName: marketplace.name };
 }
 
+function assertCodexInputsOutsidePluginRoot(plugin, target, pluginDir, skills) {
+  const canonicalPath = (path) => {
+    let current = resolve(path);
+    const missing = [];
+    while (!pathExists(current)) {
+      const parent = dirname(current);
+      if (parent === current) fail(`cannot resolve path: ${path}`);
+      missing.unshift(basename(current));
+      current = parent;
+    }
+    if (!existsSync(current) && lstatSync(current).isSymbolicLink()) {
+      return resolve(canonicalPath(dirname(current)), basename(current), ...missing);
+    }
+    return resolve(realpathSync(current), ...missing);
+  };
+  const pluginRoot = canonicalPath(join(resolve(process.env.HOME || homedir()), "plugins", plugin.name));
+  const inputs = [
+    { input: target },
+    { input: pluginDir },
+    ...skills.map((skill) => ({ input: skill.source, recursive: true })),
+  ];
+  for (const { input, recursive } of inputs) {
+    const inputPath = canonicalPath(input);
+    const paths = [relative(pluginRoot, inputPath)];
+    if (recursive) paths.push(relative(inputPath, pluginRoot));
+    if (paths.some((path) => path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path)))) {
+      fail(`Codex plugin output overlaps an installation input: ${input}`);
+    }
+  }
+}
+
 function installOpenCodePlugin(target) {
   if (process.env.CANNBOT_SKIP_OPENCODE_PLUGIN_ADD !== "1") {
     run("opencode", ["plugin", "add", OPENCODE_PLUGIN_SPEC], target);
@@ -1151,6 +1182,9 @@ function install(options, initializing = []) {
       if (text.match(/^name:\s*([^\r\n]+)$/m)?.[1]?.trim() !== entry.name) fail(`override name mismatch: ${entry.name}`);
       skill.source = source;
     }
+  }
+  if (options.tool === "codex") {
+    assertCodexInputsOutsidePluginRoot(plugin, options.target, pluginDir, resolvedSkills);
   }
   const installDefinition = join(pluginDir, "plugin-install.json");
   const initializeBefore = existsSync(installDefinition)
