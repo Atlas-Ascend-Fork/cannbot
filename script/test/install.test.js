@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { assemblePlugins, pluginSourceDefinition } from "../lib/plugin-bundle.js";
 
 const packageRoot = resolve(import.meta.dirname, "..");
@@ -1587,4 +1588,210 @@ test("dependency expose keeps an existing real destination directory", () => {
   assert.equal(lstatSync(destination).isDirectory(), true);
   assert.equal(lstatSync(destination).isSymbolicLink(), false);
   assert.equal(readFileSync(join(destination, "sentinel.txt"), "utf8"), "local directory bytes\n");
+});
+
+// Real version changes in plugin-install.json must also affect repeated installs.
+function dependencyRefGit(repository, ...args) {
+  const result = spawnSync("git", ["-C", repository, ...args], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  return result.stdout.trim();
+}
+
+function dependencyRefFixture(initialRef) {
+  const sandbox = createSandbox("cannbot-dependency-ref-");
+  const remote = createDependencyRepository(sandbox, "dependency-remote", { "value.txt": "one\n" });
+  const one = dependencyRefGit(remote, "rev-parse", "HEAD");
+  dependencyRefGit(remote, "branch", "release-one");
+  dependencyRefGit(remote, "tag", "version-one");
+  writeFileSync(join(remote, "value.txt"), "two\n");
+  writeFileSync(join(remote, "only-two.txt"), "version two file\n");
+  dependencyRefGit(remote, "add", "value.txt", "only-two.txt");
+  dependencyRefGit(remote, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "two");
+  const two = dependencyRefGit(remote, "rev-parse", "HEAD");
+  dependencyRefGit(remote, "branch", "release-two");
+  dependencyRefGit(remote, "tag", "version-two");
+  const dependency = { name: "fixture-dependency", repository: pathToFileURL(remote).href, expose: "dependency", required: true };
+  if (initialRef !== undefined) dependency.ref = initialRef;
+  const bundle = createAssetsPluginBundle(sandbox, [dependency]);
+  const plugin = join(bundle, "plugins-official", "asset-fixture");
+  mkdirSync(join(plugin, "skills"));
+  const target = join(sandbox, "project");
+  mkdirSync(target);
+  const checkout = join(target, ".cannbot", "dependencies", "asset-fixture", "fixture-dependency");
+  return { sandbox, remote, one, two, dependency, bundle, plugin, target, checkout };
+}
+
+function installDependencyRef(fixture) {
+  writeFileSync(join(fixture.plugin, "plugin-install.json"), JSON.stringify({ dependencies: [fixture.dependency] }));
+  return spawnSync(process.execPath, [
+    cli, "install", "asset-fixture", "--tool", "dsh", "--target", fixture.target, "--source", fixture.bundle,
+  ], {
+    cwd: fixture.sandbox,
+    encoding: "utf8",
+    env: { ...process.env, GIT_ALLOW_PROTOCOL: "file", CANNBOT_SKIP_DEPENDENCY_REPOS: "0" },
+  });
+}
+
+for (const [first, next, expected] of [
+  ["release-one", "release-two", "two"],
+  ["release-two", "release-one", "one"],
+  ["version-one", "version-two", "two"],
+  ["release-one", "version-two", "two"],
+  ["version-one", "release-two", "two"],
+]) {
+  test(`dependency ref reinstall selects the changed declaration: ${first} to ${next}`, () => {
+    const f = dependencyRefFixture(first);
+    let result = installDependencyRef(f);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), first.endsWith("one") ? f.one : f.two);
+    f.dependency.ref = next;
+    result = installDependencyRef(f);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), f[expected]);
+    assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), `${expected}\n`);
+  });
+}
+
+test("dependency ref reinstall follows the branch when a same-named tag exists", () => {
+  const f = dependencyRefFixture("release-one");
+  dependencyRefGit(f.remote, "tag", "release-two", f.one);
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  f.dependency.ref = "release-two";
+  result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), f.two);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "two\n");
+});
+
+test("dependency ref reinstall updates the same explicit branch", () => {
+  const f = dependencyRefFixture("release-one");
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  dependencyRefGit(f.remote, "checkout", "--quiet", "release-one");
+  writeFileSync(join(f.remote, "value.txt"), "advanced\n");
+  dependencyRefGit(f.remote, "add", "value.txt");
+  dependencyRefGit(f.remote, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "advance");
+  const expected = dependencyRefGit(f.remote, "rev-parse", "HEAD");
+  result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), expected);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "advanced\n");
+});
+
+test("dependency ref reinstall retains tracking-branch updates when ref is omitted", () => {
+  const f = dependencyRefFixture(undefined);
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const branch = dependencyRefGit(f.checkout, "symbolic-ref", "--short", "HEAD");
+  writeFileSync(join(f.remote, "value.txt"), "default advanced\n");
+  dependencyRefGit(f.remote, "add", "value.txt");
+  dependencyRefGit(f.remote, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "default advance");
+  const expected = dependencyRefGit(f.remote, "rev-parse", "HEAD");
+  result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "symbolic-ref", "--short", "HEAD"), branch);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), expected);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "default advanced\n");
+});
+
+test("dependency ref reinstall keeps the existing checkout when fetching a missing ref fails", () => {
+  const f = dependencyRefFixture("release-one");
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  f.dependency.ref = "missing-ref";
+  result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), f.one);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "one\n");
+});
+
+test("dependency ref reinstall preserves dirty files when changing refs would overwrite them", () => {
+  const f = dependencyRefFixture("release-one");
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  writeFileSync(join(f.checkout, "value.txt"), "local uncommitted bytes\n");
+  f.dependency.ref = "release-two";
+  result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), f.one);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "local uncommitted bytes\n");
+});
+
+test("dependency ref reinstall rejects an unexpected origin without changing checkout bytes", () => {
+  const f = dependencyRefFixture("release-one");
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const other = createDependencyRepository(f.sandbox, "other-remote", { "value.txt": "other\n" });
+  dependencyRefGit(f.checkout, "remote", "set-url", "origin", pathToFileURL(other).href);
+  f.dependency.ref = "release-two";
+  result = installDependencyRef(f);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), f.one);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "one\n");
+});
+
+test("dependency ref reinstall can remove an explicit branch and retain its upstream", () => {
+  const f = dependencyRefFixture("release-one");
+  for (let count = 0; count < 2; count += 1) {
+    const result = installDependencyRef(f);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  }
+  dependencyRefGit(f.remote, "checkout", "--quiet", "release-one");
+  writeFileSync(join(f.remote, "value.txt"), "after removing ref\n");
+  dependencyRefGit(f.remote, "add", "value.txt");
+  dependencyRefGit(f.remote, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "advance after ref removal");
+  const expected = dependencyRefGit(f.remote, "rev-parse", "HEAD");
+  delete f.dependency.ref;
+  const result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "symbolic-ref", "--short", "HEAD"), "release-one");
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), expected);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "after removing ref\n");
+});
+
+test("dependency ref reinstall preserves untracked bytes that a ref switch would overwrite", () => {
+  const f = dependencyRefFixture("release-one");
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  writeFileSync(join(f.checkout, "only-two.txt"), "local untracked bytes\n");
+  f.dependency.ref = "release-two";
+  result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), f.one);
+  assert.equal(readFileSync(join(f.target, "dependency", "only-two.txt"), "utf8"), "local untracked bytes\n");
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "one\n");
+});
+
+for (const reference of ["-c", "release-two:refs/heads/unrequested"]) {
+  test(`dependency ref reinstall treats an invalid ref as data: ${reference}`, () => {
+    const f = dependencyRefFixture("release-one");
+    let result = installDependencyRef(f);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    f.dependency.ref = reference;
+    result = installDependencyRef(f);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), f.one);
+    assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "one\n");
+    const unwanted = spawnSync("git", ["-C", f.checkout, "show-ref", "--verify", "--quiet", "refs/heads/unrequested"]);
+    assert.notEqual(unwanted.status, 0);
+  });
+}
+
+test("dependency ref reinstall preserves local commits when the branch has diverged", () => {
+  const f = dependencyRefFixture("release-one");
+  let result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  writeFileSync(join(f.checkout, "value.txt"), "local committed bytes\n");
+  dependencyRefGit(f.checkout, "add", "value.txt");
+  dependencyRefGit(f.checkout, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "local commit");
+  const local = dependencyRefGit(f.checkout, "rev-parse", "HEAD");
+  dependencyRefGit(f.remote, "checkout", "--quiet", "release-one");
+  writeFileSync(join(f.remote, "value.txt"), "different remote bytes\n");
+  dependencyRefGit(f.remote, "add", "value.txt");
+  dependencyRefGit(f.remote, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "remote divergence");
+  result = installDependencyRef(f);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), local);
+  assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "local committed bytes\n");
 });

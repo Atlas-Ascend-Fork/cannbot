@@ -571,6 +571,36 @@ function exposeDependency(source, destination) {
   return true;
 }
 
+function updateDependencyRef(destination, reference, target) {
+  if (typeof reference !== "string" || reference.startsWith("-")) return false;
+  const branch = `refs/heads/${reference}`;
+  const valid = spawnSync("git", ["check-ref-format", branch], { stdio: "ignore" });
+  if (valid.status !== 0) return false;
+  // Match clone --branch: prefer a branch over a same-named tag, and keep
+  // its upstream so a later install without ref can still pull normally.
+  const remote = spawnSync("git", ["-C", destination, "ls-remote", "--exit-code", "--heads", "origin", branch],
+    { encoding: "utf8" });
+  if (remote.status === 0) {
+    const tracking = `refs/remotes/origin/${reference}`;
+    const mapping = `${branch}:${tracking}`;
+    if (!tryRun("git", ["-C", destination, "fetch", "origin", mapping], target)) return false;
+    const config = spawnSync("git", ["-C", destination, "config", "--get-all", "remote.origin.fetch"],
+      { encoding: "utf8" });
+    const mappings = (config.stdout ?? "").trim().split(/\r?\n/).map((value) => value.replace(/^\+/, ""));
+    if (!mappings.includes(mapping) && !mappings.includes("refs/heads/*:refs/remotes/origin/*")
+      && !tryRun("git", ["-C", destination, "remote", "set-branches", "--add", "origin", reference], target)) return false;
+    const local = spawnSync("git", ["-C", destination, "show-ref", "--verify", "--quiet", branch]);
+    const checkout = local.status === 0
+      ? ["-C", destination, "checkout", reference]
+      : ["-C", destination, "checkout", "--track", "-b", reference, tracking];
+    return tryRun("git", checkout, target)
+      && tryRun("git", ["-C", destination, "merge", "--ff-only", tracking], target);
+  }
+  if (remote.status !== 2) return false;
+  return tryRun("git", ["-C", destination, "fetch", "origin", `refs/tags/${reference}`], target)
+    && tryRun("git", ["-C", destination, "checkout", "--detach", "FETCH_HEAD"], target);
+}
+
 function provisionDependencies(pluginDir, plugin, target, skills) {
   const definitionPath = join(pluginDir, "plugin-install.json");
   if (!existsSync(definitionPath)) return [];
@@ -605,8 +635,10 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
         console.warn(`cannbot: ${dependency.name} has an unexpected origin; update skipped`);
         available = false;
       } else {
-        const pulled = tryRun("git", ["-C", destination, "pull", "--ff-only"], target);
-        if (!pulled) console.warn(`cannbot: failed to update ${dependency.name}; using the existing checkout`);
+        const updated = dependency.ref
+          ? updateDependencyRef(destination, dependency.ref, target)
+          : tryRun("git", ["-C", destination, "pull", "--ff-only"], target);
+        if (!updated) console.warn(`cannbot: failed to update ${dependency.name}; using the existing checkout`);
       }
     } else if (pathExists(destination)) {
       console.warn(`cannbot: ${dependency.name} exists but is not a Git checkout; clone skipped`);
