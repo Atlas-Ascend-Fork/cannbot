@@ -113,24 +113,55 @@ function installPlugin(plugin, tool, source = "repository", env = {}) {
 }
 
 for (const source of sources) {
-  test(`${source} registers the OpenCode package with plugin add`, () => {
-    const sandbox = createSandbox("cannbot-opencode-registration-");
-    const argsFile = join(sandbox, "args.txt");
-    writeFileSync(join(sandbox, "opencode"), `#!/bin/sh
-if [ "$1" != "plugin" ] || [ "$2" != "add" ]; then
+  for (const version of ["1.18.18", "2.1.3", "opencode v2.2.5"]) {
+    test(`${source} registers the OpenCode package for ${version}`, () => {
+      const sandbox = createSandbox("cannbot-opencode-registration-");
+      const argsFile = join(sandbox, "args.txt");
+      writeFileSync(join(sandbox, "opencode"), `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo '${version}'
+  exit 0
+fi
+if [ "$1" != "plugin" ]; then
   echo 'Unknown opencode plugin subcommand' >&2
   exit 1
 fi
 printf '%s\\n' "$@" > "$CANNBOT_OPENCODE_ARGS"
 `, { mode: 0o755 });
-    installPlugin("model-infer-optimize", "opencode", source, {
+      installPlugin("model-infer-optimize", "opencode", source, {
+        PATH: `${sandbox}${delimiter}${process.env.PATH}`,
+        CANNBOT_SKIP_OPENCODE_PLUGIN_ADD: "0",
+        CANNBOT_OPENCODE_ARGS: argsFile,
+      });
+      assert.deepEqual(readFileSync(argsFile, "utf8").trim().split("\n"), [
+        "plugin", ...(version.startsWith("1.") ? [] : ["add"]), sourcePackage,
+      ]);
+    });
+  }
+}
+
+for (const scenario of [
+  { name: "unrecognized version", version: "unknown", versionStatus: 0, registerStatus: 0, error: /cannot determine OpenCode version/, calls: ["--version"] },
+  { name: "failed version probe", version: "2.2.5", versionStatus: 7, registerStatus: 0, error: /opencode --version exited with status 7/, calls: ["--version"] },
+  { name: "failed registration", version: "2.2.5", versionStatus: 0, registerStatus: 9, error: /opencode exited with status 9/, calls: ["--version", `plugin add ${sourcePackage}`] },
+]) {
+  test(`OpenCode ${scenario.name} fails without a registration retry`, () => {
+    const sandbox = createSandbox("cannbot-opencode-failure-");
+    const argsFile = join(sandbox, "args.txt");
+    writeFileSync(join(sandbox, "opencode"), `#!/bin/sh
+printf '%s\\n' "$*" >> "$CANNBOT_OPENCODE_ARGS"
+if [ "$1" = "--version" ]; then
+  echo '${scenario.version}'
+  exit ${scenario.versionStatus}
+fi
+exit ${scenario.registerStatus}
+`, { mode: 0o755 });
+    assert.throws(() => installPlugin("model-infer-optimize", "opencode", "repository", {
       PATH: `${sandbox}${delimiter}${process.env.PATH}`,
       CANNBOT_SKIP_OPENCODE_PLUGIN_ADD: "0",
       CANNBOT_OPENCODE_ARGS: argsFile,
-    });
-    assert.deepEqual(readFileSync(argsFile, "utf8").trim().split("\n"), [
-      "plugin", "add", sourcePackage,
-    ]);
+    }), scenario.error);
+    assert.deepEqual(readFileSync(argsFile, "utf8").trim().split("\n"), scenario.calls);
   });
 }
 

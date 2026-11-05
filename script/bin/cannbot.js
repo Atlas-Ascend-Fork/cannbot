@@ -868,7 +868,13 @@ function assertCodexInputsOutsidePluginRoot(plugin, target, pluginDir, skills) {
 
 function installOpenCodePlugin(target) {
   if (process.env.CANNBOT_SKIP_OPENCODE_PLUGIN_ADD !== "1") {
-    run("opencode", ["plugin", "add", OPENCODE_PLUGIN_SPEC], target);
+    const result = spawnSync("opencode", ["--version"], { cwd: target, encoding: "utf8" });
+    if (result.error) fail(`opencode failed: ${result.error.message}`);
+    if (result.status !== 0) fail(`opencode --version exited with status ${result.status}`);
+    const version = result.stdout.trim().match(/^(?:opencode\s+)?v?([1-9]\d*)\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/i);
+    if (!version) fail("cannot determine OpenCode version; check opencode --version");
+    const args = version[1] === "1" ? ["plugin"] : ["plugin", "add"];
+    run("opencode", [...args, OPENCODE_PLUGIN_SPEC], target);
   }
   return { package: OPENCODE_PLUGIN_SPEC };
 }

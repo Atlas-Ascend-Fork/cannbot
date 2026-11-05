@@ -7,3 +7,9 @@
  * effects of its own.
  */
 export const CANNBotPlugin = async () => ({});
+
+export default {
+  id: "cannbot",
+  server: CANNBotPlugin,
+  setup: async () => {},
+};

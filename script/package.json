@@ -1,6 +1,6 @@
 {
   "name": "@cannbot-plugin/cannbot",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "CANNBot workflow installer for OpenCode, Codex, Claude Code, TRAE, DSH, and CodeArts",
   "repository": {
     "type": "git",
