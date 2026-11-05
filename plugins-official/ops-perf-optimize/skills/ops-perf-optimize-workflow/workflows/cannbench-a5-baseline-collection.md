@@ -31,7 +31,7 @@ PerfEvaluator + msprof             ← 复用评测框架采 kernel 耗时
 tasks/metadata/Ascend950DT_9582.json
 ```
 
-**核心脚本**：`cann-bench_A5/scripts/collect_baseline.py`
+**核心脚本**：`cann-bench_A5/scripts/collect_baseline.py`（位于 [CANN-Bench 仓](https://gitcode.com/cann/cann-bench)，本仓不包含该脚本）
 
 **设计原则**：
 - 复用评测体系的 `PerfEvaluator` + `KernelDetailsStrategy`（与正式跑分同一套计时逻辑）
@@ -42,6 +42,8 @@ tasks/metadata/Ascend950DT_9582.json
 ---
 
 ## 3. 环境准备
+
+> 本仓不包含 `collect_baseline.py`：采集脚本位于 [CANN-Bench 仓](https://gitcode.com/cann/cann-bench)，下文命令需先在该仓根目录执行。
 
 ```bash
 source /path/to/cann-9.0.0/bin/setenv.bash
