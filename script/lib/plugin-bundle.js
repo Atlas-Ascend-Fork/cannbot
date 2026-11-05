@@ -8,10 +8,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 // A community plugin ships its own licence, so the repository licence is not stamped
 // onto it. Its parent directory is what marks it as community-owned.
@@ -74,7 +76,38 @@ export function pluginSourceDefinition(repositoryRoot, pluginId, pluginDirectory
   return { pluginRoot, definitionPath, ...definition };
 }
 
+function physicalPath(path) {
+  const absolute = resolve(path);
+  let existing = absolute;
+  while (!existsSync(existing)) existing = dirname(existing);
+  return resolve(realpathSync(existing), relative(existing, absolute));
+}
+
+function containsPath(root, candidate) {
+  const pathFromRoot = relative(root, candidate);
+  return pathFromRoot === "" || (!isAbsolute(pathFromRoot)
+    && pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${sep}`));
+}
+
+export function assertSafeAssemblyOutput(repositoryRoot, outputRoot) {
+  const repository = physicalPath(repositoryRoot);
+  const output = physicalPath(outputRoot);
+  const reject = () => { throw new Error(`unsafe assembly output directory: ${outputRoot}`); };
+  if (existsSync(output) && !statSync(output).isDirectory()) reject();
+  const inputs = [".git", "plugins-official", "plugins-community", "vendor",
+    "script/bin", "script/lib", "script/scripts", "script/test", "script/docs"]
+    .map((path) => physicalPath(join(repository, path)));
+  // The library can reuse an existing output tree whose plugins/ is a symlink.
+  for (const destination of [output, physicalPath(join(output, "plugins"))]) {
+    if (containsPath(destination, repository)) reject();
+    for (const input of inputs) {
+      if (containsPath(input, destination) || containsPath(destination, input)) reject();
+    }
+  }
+}
+
 export function assemblePlugins(repositoryRoot, outputRoot, selectedPluginIds) {
+  assertSafeAssemblyOutput(repositoryRoot, outputRoot);
   const sourcePluginRoot = join(repositoryRoot, "plugins-official");
   const pluginIds = selectedPluginIds ?? ["plugins-official", "plugins-community"].flatMap((parent) => {
     const root = join(repositoryRoot, parent);
