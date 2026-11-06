@@ -19,8 +19,9 @@ Integer types get a minimal comparison (ae, mismatch_rate only).
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
+import numpy as np
 import torch
 
 from constants import DEFAULT_TOLERANCES
@@ -60,7 +61,7 @@ class ComparisonGroup:
     Integer types set re_max, re_mean, rmse, svec, ulp_* to None.
     """
 
-    ae_max: float
+    ae_max: Union[float, int]
     ae_mean: float
     re_max: Optional[float]
     re_mean: Optional[float]
@@ -293,13 +294,30 @@ def _compute_comparison_int(
     Only computes ae_max, ae_mean, mismatch_rate.
     re/rmse/svec/ulp fields are set to None (not applicable).
     """
-    # Use int64 to avoid overflow on subtraction
-    diff = a.long() - b.long()
-    ae = torch.abs(diff)
-    ae_max = torch.max(ae).item() if ae.numel() > 0 else 0
-    ae_mean = torch.mean(ae.float()).item() if ae.numel() > 0 else 0.0
-    mean_val = torch.mean(diff.float()).item() if diff.numel() > 0 else 0.0
-    std_val = torch.std(diff.float()).item() if diff.numel() > 1 else 0.0
+    a, b = torch.broadcast_tensors(a, b)
+    if a.dtype == b.dtype and not a.is_floating_point() and not a.is_complex():
+        # Same-dtype integer differences fit uint64. Unsigned subtraction keeps
+        # their magnitude exact, including the signed and unsigned endpoints.
+        a_np = a.detach().cpu().flatten().numpy()
+        b_np = b.detach().cpu().flatten().numpy()
+        a_ge_b = a_np >= b_np
+        hi = np.where(a_ge_b, a_np, b_np).astype(np.uint64)
+        lo = np.where(a_ge_b, b_np, a_np).astype(np.uint64)
+        ae = hi - lo
+        ae_max = int(ae.max()) if ae.size else 0
+        ae64 = ae.astype(np.float64)
+        diff = np.where(a_ge_b, ae64, -ae64)
+    else:
+        # Preserve the existing conversion semantics for mixed-dtype callers.
+        a_values = a.detach().cpu().flatten().tolist()
+        b_values = b.detach().cpu().flatten().tolist()
+        exact = [int(x) - int(y) for x, y in zip(a_values, b_values)]
+        ae_max = max((abs(value) for value in exact), default=0)
+        diff = np.asarray(exact, dtype=np.float64)
+        ae64 = np.abs(diff)
+    ae_mean = float(np.mean(ae64)) if ae64.size else 0.0
+    mean_val = float(np.mean(diff)) if diff.size else 0.0
+    std_val = float(np.std(diff, ddof=1)) if diff.size > 1 else 0.0
 
     # Mismatch rate: exact equality for zero tolerance, double-cast otherwise
     # (float32 loses precision for int32 > 2^24 / int64 > 2^53)
@@ -310,7 +328,7 @@ def _compute_comparison_int(
     mismatch_rate = 1.0 - close.sum().item() / max(close.numel(), 1)
 
     return ComparisonGroup(
-        ae_max=float(ae_max),
+        ae_max=ae_max,
         ae_mean=ae_mean,
         re_max=None,
         re_mean=None,
