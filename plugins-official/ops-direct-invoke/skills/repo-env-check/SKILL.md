@@ -35,6 +35,7 @@ description: 为需求对齐提供 conda/Python 与 CANN 候选，检查用户�
 | 构建工具 | CMake、build/setuptools/wheel；直调示例要求 CMake ≥ 3.16，保留其新 CMake 链接兼容设置 |
 | 评测组件 | 检查 kernel_eval CLI 的 help/任务发现、`cann_bench_utils` 是否可导入及其来源；缺失时报告准备项，不在检查中静默触发安装 |
 | 仓库资产 | 记录候选源码目录、任务目录、已有 pytest/评测入口与算子文档线索；不把一次快照当作以后永久现状 |
+| Blaze 源码依赖 | Blaze 路线能力调查依赖 ops-tensor 源码；检查依赖目录或缓存中是否可用，缺失时报告准备项，不在检查中静默拉取 |
 
 核对版本的官方快速入门要求 Python 3.10+、CANN 9.1.0+，实际依赖以当前 checkout 为准；torch/torch_npu 组合须按该版本的依赖和平台匹配。上述最低版本不等于任意版本组合都兼容，不宣称本次检查已完成 kernel 编译或设备精度验收。
 

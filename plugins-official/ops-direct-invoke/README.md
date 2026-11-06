@@ -43,6 +43,8 @@
 
 `ops-direct-invoke` 提供直调算子的需求对齐、方案设计、实现、功能验收、代码检视和交付文档流程。插件名称、安装 ID 与入口 Skill 名称统一为 `ops-direct-invoke`。
 
+Ascend C 直调支持独立 Tensor API 路线：用户明确要求 Tensor API 时，需求清单记录该路线约束，后续节点加载 ascendc-tensor-api-best-practice；若该路线无法闭合关键约束，输出 unsupported 和证据，交用户决定是否调整路线。用户未指定路线且无其他支持的合适路线时，以 Tensor API 为兜底开发路线。
+
 **调度交给 harness，知识交给 Skill，Workflow 专注于流程。** 主会话通过 `ops-direct-invoke` Skill 承担 PM 职责，对齐需求并规划子 Agent 合作，通过 harness 执行 workflow YAML。每个 task 同时声明执行与验收；运行期派发、并行及同节点重试使用框架原生机制。
 
 安装与首次使用见 [QUICKSTART.md](QUICKSTART.md)。

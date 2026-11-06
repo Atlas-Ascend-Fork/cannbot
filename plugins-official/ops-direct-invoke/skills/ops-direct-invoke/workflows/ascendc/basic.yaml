@@ -28,6 +28,8 @@ nodes:
   max_retries: 3
   variables:
     executor_skills: |
+      候选 Skill（当实现采用 Tensor API 路线时为必需）：
+      - 必须加载 ascendc-tensor-api-best-practice Skill，按其中的要求执行。
       候选 Skill（仅在实际证据命中时加载）：
       - 自测或复现出现输出错误、精度不达标时，必须加载 `ascendc-precision-debug` Skill，按其中的要求执行。
       - 自测或复现出现卡死、超时、崩溃或内存访问异常时，必须加载 `ascendc-crash-debug` Skill，按其中的要求执行。
@@ -45,6 +47,8 @@ nodes:
   max_retries: 3
   variables:
     executor_skills: |
+      候选 Skill（当实现采用 Tensor API 路线时为必需）：
+      - 必须加载 ascendc-tensor-api-best-practice Skill，按其中的要求执行。
       候选 Skill（仅在实际证据命中时加载）：
       - 自测或复现出现输出错误、精度不达标时，必须加载 `ascendc-precision-debug` Skill，按其中的要求执行。
       - 自测或复现出现卡死、超时、崩溃或内存访问异常时，必须加载 `ascendc-crash-debug` Skill，按其中的要求执行。

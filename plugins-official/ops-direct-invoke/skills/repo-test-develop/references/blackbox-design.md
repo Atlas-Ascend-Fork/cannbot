@@ -1,5 +1,18 @@
 # 黑盒用例设计
 
+## Tensor API 路线附加覆盖
+
+采用 Tensor API 路线时，用例矩阵在常规 shape、dtype、边界和异常输入之上补充:
+
+1. Layout / 物理布局变体。
+2. transA / transB 组合(如接口涉及矩阵乘)。
+3. M/N/K 尾块与非对齐。
+4. group 为 0、随机 group list 和 M/K 分组(如接口涉及分组)。
+5. 连续重复 launch 与资源释放。
+6. 空 tensor 与 0 维 tensor。
+
+Golden 必须独立于被测 kernel，并使用最终实际 H2D 物理 bytes;量化输入先按 ABI 合同解码,padding、tail 与对齐填充不参与结果。
+
 以确认规格及任务 `proto.yaml`、`desc.md`、`golden.py`、`cases.yaml` 为输入。核对已有用例与需求范围，补充真正的覆盖缺口；不把已有用例反向当作全部需求，也不盲目展开参数笛卡尔积。
 
 ## 覆盖与规模

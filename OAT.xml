@@ -116,6 +116,8 @@
             <filefilter name="readmeFileNamePolicyFilter" desc="Filters for README file policies">
             </filefilter>
             <filefilter name="binaryFileTypePolicyFilter" desc="Filters for binary file policies">
+                <filteritem type="filename" name="*.yaml" desc="YAML configuration files are UTF-8 text; the Apache Rat high-byte heuristic misdetects CJK content as binary"/>
+                <filteritem type="filename" name="*.yml" desc="YAML configuration files are UTF-8 text; the Apache Rat high-byte heuristic misdetects CJK content as binary"/>
             </filefilter>
         </filefilterlist>
         <licensematcherlist>

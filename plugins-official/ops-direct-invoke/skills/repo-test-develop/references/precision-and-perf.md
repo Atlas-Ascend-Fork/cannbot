@@ -1,5 +1,15 @@
 # 精度与评分口径
 
+## Tensor API 路线附加要求
+
+采用 Tensor API 路线时:
+
+1. 冻结输入 dtype、累加 dtype、转换顺序、公式顺序、舍入、clamp/saturation 和非有限值处理。
+2. 明确 mismatch_count 是 bitwise 差异数还是超过误差门的元素数,不得混用。
+3. 设备侧与 Golden 累加 dtype 不一致时,必须提供支持域内的等价性证据。
+4. 任何 device error、越界或 crash 均为阻断项。
+5. 性能报告记录 shape、命令、有效字节数、目标、基线、瓶颈维度分解、多轮采样中位数与离散度;改变数值路径的优化必须附精度回归结论。
+
 ## 精度执行
 
 本仓用 CANN 后端注册的 `relative_error` checker。标准来源是所用版本的 `src/kernel_eval/utils/thresholds.py`、`compare.py`、`checkers/relative_error_checker.py` 及算子 proto 中的 `precision_thresholds` 配置；在测试方案中记录实际生效配置，不另写近似判定器。

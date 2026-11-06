@@ -1,5 +1,7 @@
 # 新增直调算子
 
+采用 Tensor API 路线时，仍保留 direct launch 工程结构和 op_kernel/op_plugin 分层；API 分工、Layout、内存预算、构建和排障以 ascendc-tensor-api-best-practice 为权威源。
+
 以当前 checkout 中 `examples/direct_launch_example/csrc/ops/add/` 或 `sqrt/` 的真实文件为结构参考，复制到 `source_dir/csrc/ops/<op>/` 后调整名称与实现，保留许可头。
 
 | 文件 | 必须完成的内容 |

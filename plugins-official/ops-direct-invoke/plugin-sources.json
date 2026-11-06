@@ -17,6 +17,7 @@
     "vendor/cannbot-skills/ops/ascendc-simt-best-practices",
     "vendor/cannbot-skills/ops/ascendc-simt-tiling-design",
     "vendor/cannbot-skills/ops/ascendc-st-design",
+    "vendor/cannbot-skills/ops/ascendc-tensor-api-best-practice",
     "vendor/cannbot-skills/ops/ascendc-tiling-design",
     "vendor/cannbot-skills/ops/ascendc-ut-develop",
     "vendor/cannbot-skills/ops/ascendc-whitebox-design",

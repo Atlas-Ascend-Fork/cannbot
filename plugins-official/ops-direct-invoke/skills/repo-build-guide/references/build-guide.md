@@ -1,5 +1,15 @@
 # 构建与版本核对
 
+## Tensor API 路线附加契约
+
+采用 Tensor API 路线时:
+
+1. 适用前提：目标芯片须在 Ascend 950PR / 950DT（dav-3510）支持范围内；芯片不在该范围时不应选择该路线，此判定在路线选择阶段完成。
+2. bisheng 参数包含 --npu-arch=dav-3510 和 -xasc;direct launch kernel 使用 .cpp。
+3. CMake >=3.31 设置 CMAKE_LINK_DEPENDS_USE_LINKER=FALSE。
+4. 本地无 NPU / torch_npu 时使用 sim 全量编译与 DEMO_ONLY npu 编译。
+5. 详细事实源和排障方法见 ascendc-tensor-api-best-practice Skill。
+
 ## 构建输入
 
 记录 `source_dir`、cann-bench commit、Python 环境、CANN 路径和目标 SoC。环境信息来自本轮记录，不重复全面探测。构建在 `$WORK_DIR/<节点ID>-构建工程/` 的源码快照中执行，包含本次未提交代码，排除 `.cannbot/`、本轮工作目录、旧构建目录和二进制；记录与交付源码的对应哈希。算子计算、注册、打包代码、编译配置或工具链变化后更新快照并重建；仅测试用例变化不强制重建候选 wheel，但须记录与当前源码的对应关系。纯许可注释变更须核对完整差异、保留旧构建输入哈希及与当前源码的映射，不将旧 wheel 声称为新源码重新构建。
