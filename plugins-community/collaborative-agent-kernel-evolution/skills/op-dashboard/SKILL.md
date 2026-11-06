@@ -104,6 +104,10 @@ python3 ${CLAUDE_SKILL_DIR}/scripts/check_dashboard.py output/<op_name>/dashboar
 | **可视化片段** | `panels/algo/flow.html`, `panels/algo/steps.html`, `panels/memory/ub_viz.html` |
 | **文字分析** | `panels/*/analysis.md`（md→HTML 自动转换） |
 
+`op_summary*.csv` 的总 Duration 按 CSV 引号规则读取，字段中的逗号、
+转义双引号和加引号的数值不会改变列位置。空行、注释、缺少 Duration
+的行和无法转为数值的 Duration 保持忽略。
+
 ---
 
 ## 四个面板说明
