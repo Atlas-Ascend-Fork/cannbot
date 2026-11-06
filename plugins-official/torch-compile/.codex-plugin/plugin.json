@@ -1,0 +1,33 @@
+{
+  "name": "torch-compile",
+  "description": "PyTorch torch.compile 图模式编排入口。通过 Subagent 组织不同图模式，当前提供 npugraph_ex 图模式助手。",
+  "version": "1.0.4",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "keywords": [
+    "torch",
+    "torchair",
+    "npugraph_ex",
+    "npu",
+    "graph-mode"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "CANNBot torch.compile 图模式",
+    "shortDescription": "昇腾 NPU torch.compile 图模式配置、迁移与诊断",
+    "longDescription": "PyTorch torch.compile 图模式编排入口。通过 Subagent 组织不同图模式，当前提供 npugraph_ex 图模式助手。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": [
+      "Skills",
+      "Agents"
+    ],
+    "defaultPrompt": [
+      "使用 torch-compile 接入或诊断当前模型的 npugraph_ex 图模式。"
+    ]
+  }
+}

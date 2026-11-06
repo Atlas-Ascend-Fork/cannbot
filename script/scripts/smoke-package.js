@@ -72,6 +72,20 @@ try {
   ]) {
     if (!existsSync(path)) throw new Error(`CodeArts packaged install is missing: ${path}`);
   }
+  run(executable, ["install", "torch-compile", "--tool", "dsh", "--target", target], consumer, {
+    ...process.env,
+    HOME: join(sandbox, "home"),
+    XDG_CACHE_HOME: join(sandbox, "cache"),
+    CANNBOT_SKIP_DEPENDENCY_REPOS: "1",
+  });
+  const torchRegistry = JSON.parse(readFileSync(join(target, ".dsh", "cannbot-plugin.json"), "utf8"));
+  const torchRecord = torchRegistry.plugins.find((plugin) => plugin.plugin === "torch-compile");
+  if (torchRecord?.skills.length !== 7 || torchRecord.agents.length !== 1) {
+    throw new Error("packaged torch-compile must install seven Skills and one Agent");
+  }
+  for (const path of [...torchRecord.skills, ...torchRecord.agents]) {
+    if (!existsSync(join(target, path))) throw new Error(`packaged torch-compile is missing: ${path}`);
+  }
   run(executable, ["install", "ops-direct-invoke", "--tool", "claude", "--target", target], consumer, {
     ...process.env,
     HOME: join(sandbox, "home"),

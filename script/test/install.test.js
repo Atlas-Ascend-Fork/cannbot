@@ -236,7 +236,7 @@ function assertUnifiedInstall(target, tool, plugin) {
 }
 
 test("repository maps every official plugin to the Skill submodule", () => {
-  for (const plugin of ["ops-direct-invoke", "model-infer-optimize"]) {
+  for (const plugin of ["ops-direct-invoke", "model-infer-optimize", "torch-compile"]) {
     const root = join(repositoryRoot, "plugins-official", plugin);
     assert.equal(existsSync(join(root, ".claude-plugin", "plugin.json")), true);
     assert.equal(existsSync(join(root, ".codex-plugin", "plugin.json")), true);
@@ -251,7 +251,7 @@ test("repository maps every official plugin to the Skill submodule", () => {
       const quickstart = readFileSync(quickstartPath, "utf8");
       assert.doesNotMatch(quickstart, /cann\.cannbot\.cn/);
       assert.doesNotMatch(quickstart, /默认安装到当前目录并使用 OpenCode/);
-      assert.match(quickstart, /git clone --recurse-submodules/);
+      assert.match(quickstart, /git clone (?:--recurse-submodules(?: --shallow-submodules)? )?https:\/\/gitcode\.com\/cann\/cannbot\.git/);
     }
     const codexManifest = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
     assert.equal(codexManifest.homepage, "https://gitcode.com/cann/cannbot");
@@ -264,7 +264,7 @@ test("repository maps every official plugin to the Skill submodule", () => {
     assert.equal(trackedFiles.stdout.split("\n").some((line) => line.startsWith("120000 ")), false);
   }
   // ops-direct-invoke ships self-contained workflow skills in plugins-official/<id>/skills/;
-  // the other two plugins resolve all skills from the submodule only.
+  // the other plugins above resolve all skills from the submodule only.
   assert.equal(existsSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "skills")), true);
   assert.equal(existsSync(join(repositoryRoot, "plugins-official", "model-infer-optimize", "skills")), false);
   assert.equal(existsSync(join(repositoryRoot, "vendor", "cannbot-skills", ".git")), true);
@@ -288,7 +288,7 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
   const skillCommit = revision.stdout.match(/commit ([0-9a-f]+)\t/)?.[1];
   assert.ok(skillSourceUrl, "missing Skill submodule URL");
   assert.match(skillCommit, /^[0-9a-f]{40}$/);
-  const expectedPlugins = ["catlass-op-generator", "hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "ops-direct-invoke-flash", "ops-perf-optimize", "tilelang-op-orchestrator", "triton-op-generator"];
+  const expectedPlugins = ["catlass-op-generator", "hccl-op-generator", "model-infer-optimize", "ops-direct-invoke", "ops-direct-invoke-flash", "ops-perf-optimize", "tilelang-op-orchestrator", "torch-compile", "triton-op-generator"];
   // Only bundled plugins have manifests; source-only workflow entries are not packaged.
   // A community plugin is bundled under its directory name, which need not match its
   // manifest name, so only official-directory entries belong to this official list;

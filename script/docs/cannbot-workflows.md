@@ -70,6 +70,20 @@ Skills、Markdown Agent 和安装记录分别位于 `.codeartsdoer/skills/`、`.
 `.codeartsdoer/cannbot-plugin.json`；插件提供的项目指令写入根目录 `AGENTS.md`。随后通过 CodeArts CLI / IDE 打开该项目。
 使用通用入口的源码插件也支持 `bash init.sh project codearts /absolute/project`。当前不安装 CodeArts 权限 Hook。
 
+## torch.compile 图模式
+
+`torch-compile` 负责图模式识别与专业 Agent 调度，当前提供 npugraph_ex / aclgraph 的配置、Eager 脚本迁移、自定义算子入图和故障诊断。编排、Agent、Hook 与安装入口由本仓维护，7 个基础 Skills 继续在 cannbot-skills 的 `graph/` 维护。
+
+```bash
+# 源码联调：直接引用本地基础技能仓
+bash plugins-official/torch-compile/init.sh project codex /absolute/project --skills /absolute/cannbot-skills
+
+# 包含该插件的 npm 版本发布后，在目标项目中安装
+npx @cannbot-plugin/cannbot@latest install torch-compile --tool opencode
+```
+
+统一安装器支持 OpenCode、Codex、Claude Code、TRAE、DSH、CodeArts 的项目级安装；不支持全局安装及旧版 Cursor、Copilot 入口。历史 `torch`、`compile`、`graph` 别名由 install-helper 保留并转交本仓。源码安装在新 npm 版本发布前即可使用，详见 [快速入门](../../plugins-official/torch-compile/quickstart.md)。
+
 ## 算子领域
 
 ### 算子生成

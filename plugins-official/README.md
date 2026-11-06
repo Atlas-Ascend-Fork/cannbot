@@ -6,6 +6,7 @@ This directory contains the official CANNBot plugin definitions and non-Skill fi
 - `ops-direct-invoke-flash`
 - `catlass-op-generator`
 - `model-infer-optimize`
+- `torch-compile`
 - `hccl-op-generator`
 - `triton-op-generator`
 - `ops-perf-optimize`

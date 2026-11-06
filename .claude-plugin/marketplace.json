@@ -572,6 +572,60 @@
       "dependencies": [
         "shmem-ops-skills"
       ]
+    },
+    {
+      "name": "torch-npugraph-ex-skills",
+      "description": "PyTorch 昇腾 NPU npugraph_ex Skills（7 个）。覆盖图模式知识、代码模板、问题分诊、编译错误、运行时错误、性能诊断和自定义算子入图。",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://gitcode.com/cann/cannbot-skills.git",
+        "path": "graph",
+        "sha": "fa084f2c583cc4155babbc20b51667a2e8bf0d73"
+      },
+      "strict": false,
+      "version": "1.0.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "torch",
+        "torchair",
+        "npugraph_ex",
+        "npu",
+        "skills"
+      ],
+      "category": "skills",
+      "skills": [
+        "./torch-custom-ops-guide",
+        "./torch-npugraph-ex-compile-error-diagnosis",
+        "./torch-npugraph-ex-dfx-triage",
+        "./torch-npugraph-ex-knowledge",
+        "./torch-npugraph-ex-performance-diagnosis",
+        "./torch-npugraph-ex-runtime-error-diagnosis",
+        "./torch-npugraph-ex-template"
+      ]
+    },
+    {
+      "name": "torch-compile",
+      "source": "./plugins-official/torch-compile",
+      "description": "PyTorch torch.compile 图模式编排入口。通过 Subagent 组织不同图模式，当前提供 npugraph_ex 图模式助手。",
+      "version": "1.0.4",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "torch",
+        "torch.compile",
+        "torchair",
+        "npugraph_ex",
+        "npu",
+        "graph-mode",
+        "subagent"
+      ],
+      "category": "development",
+      "dependencies": [
+        "torch-npugraph-ex-skills"
+      ]
     }
   ]
 }

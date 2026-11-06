@@ -1,0 +1,13 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "skills": [
+    "graph/torch-npugraph-ex-knowledge",
+    "graph/torch-npugraph-ex-template",
+    "graph/torch-npugraph-ex-dfx-triage",
+    "graph/torch-npugraph-ex-compile-error-diagnosis",
+    "graph/torch-npugraph-ex-runtime-error-diagnosis",
+    "graph/torch-npugraph-ex-performance-diagnosis",
+    "graph/torch-custom-ops-guide"
+  ]
+}

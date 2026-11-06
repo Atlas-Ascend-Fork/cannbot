@@ -12,6 +12,8 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 
 ### Added
 
+- Migrated `torch-compile` orchestration, its npugraph_ex Agent, SessionStart Hook and evaluations from cannbot-skills. The unified installer links seven shared `graph/` Skills through `plugin-sources.json`; npm builds bundle them, and the Claude marketplace resolves the Skill pack from cannbot-skills. Shared Skill source remains in cannbot-skills.
+
 - `model-recommend-infer-optimize` now declares `dependencies: ["model-recommend-skills"]`, and the marketplace registers that
   Skills pack as a `git-subdir` source (`cannbot-skills` `community/model`) pinned to the same commit as the
   `vendor/cannbot-skills` submodule (`b4baf2a`). Claude Code marketplace installs therefore ship the 18 Skills

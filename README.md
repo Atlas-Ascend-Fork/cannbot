@@ -37,6 +37,7 @@ bash init.sh
 | [`ops-direct-invoke`](plugins-official/ops-direct-invoke/) | Ascend C 直调算子开发：以 `<<<>>>` 直接调用核函数的方式接入 |
 | [`ops-direct-invoke-flash`](plugins-official/ops-direct-invoke-flash/) | Ascend C 核函数从零构建：从 CPU 函数、公式、代码片段或文本描述出发，端到端构建并验证核函数；Ascend950 / `dav-3510` 走原生 `AscendC::Reg` 路径 |
 | [`ops-registry-invoke`](plugins-official/ops-registry-invoke/) | Ascend C 注册算子开发：经 ACLNN / GEIR 接入框架，以标准算子形式调用 |
+| [`torch-compile`](plugins-official/torch-compile/) | PyTorch torch.compile 图模式编排：npugraph_ex 配置、脚本迁移、故障诊断、性能优化与自定义算子入图 |
 | [`model-infer-optimize`](plugins-official/model-infer-optimize/) | NPU 模型迁移、精度对齐与推理性能优化 |
 | [`hccl-op-generator`](plugins-official/hccl-op-generator/) | HCCL AICPU 标准通信算子开发，四 Agent 状态机工作流 |
 | [`triton-op-generator`](plugins-official/triton-op-generator/) | Triton-Ascend 算子代码生成与优化（Phase 0-7 直接执行模式），知识卡片由 cannbot-knowledge 知识库供给 |
