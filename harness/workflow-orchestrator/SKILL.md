@@ -9,6 +9,18 @@ disable-model-invocation: true
 `$SKILL_ROOT` = the absolute path of the directory containing this SKILL.md.
 `$START_DIR` = the absolute startup directory of the current Agent session, recorded when this skill begins. It is the plugin project directory containing the model-adapter files.
 
+## Running in the DSH plugin
+
+When running inside DSH with `cannbot_workflow_run` available, follow this branch and its linked approval instructions; the CLI inputs and steps below apply only to other hosts.
+
+1. Resolve the owning CANNBot workflow ID, YAML path, task prompt and working directory from the selected workflow and user request. Reuse values already supplied; ask only for required information that is missing. For a new run, omit `workDir` to use the tool’s default session workspace unless the user supplies a directory within that workspace. For a resumed run, reuse its original YAML and working directory.
+2. Start or resume with `cannbot_workflow_run`, following its tool definition for parameters. No provider selection is required.
+3. Keep the returned `runId` and poll `cannbot_workflow_status` with `waitMs: 10000`.
+4. If any task in the returned `state.tasks` has `status: "awaiting_approval"`, follow [Human approval](#human-approval) using the returned `workDir`, then continue status polling. On a stop request call `cannbot_workflow_cancel`.
+5. Report completion only after the workflow exits successfully. Include failed/skipped tasks and log diagnostics on failure. After a DSH restart, resume with the same YAML and directory and use the newly returned `runId`.
+
+If this is a DSH session but these tools are unavailable, report that the CANNBot plugin must be enabled or updated. Do not substitute a CLI provider.
+
 ## Inputs
 
 Four required inputs:
@@ -67,17 +79,24 @@ For questions, use the environment's question tool when available; otherwise ask
    Then enter the wait loop. Each round (~10s apart) does the following two things until `tmux has-session -t <session>` fails (session ended):
 
    1. Poll `tmux has-session -t <session>` (as above).
-   2. Poll and approve: run `python3 "$SKILL_ROOT/scripts/poll_workflow.py" --work-dir "<work_dir>"`; its stdout is this round's ready-to-display text.
-      - Relay the output **verbatim** into the session as plain text: no status headers (e.g. `SESSION:RUNNING`), no code fences, no rewording, no JSON conversion. The progress block appears every round; relay it even when identical to the previous round.
-      - Each `◉ 待审批 <task_id>「<title>」` entry in the output is a task awaiting approval: ask the user with the question tool, offering: approve / redo (comment required) / fail (reason optional). Include the entry's task id, title, acceptance list, and review hints (if any) in the question. Do not re-ask an entry that was already asked and is still unanswered. After the user answers, run:
-
-        ```bash
-        python3 "$SKILL_ROOT/scripts/approve_task.py" --work-dir "<work_dir>" --task-id "<task_id>" \
-          --decision <approve|redo|fail> [--comment "<user comment>"] >> "<work_dir>/orchestrator.log" 2>&1
-        ```
-
-        On failure, forward stderr to the user verbatim and continue the loop; when several tasks await approval, ask one by one; when the question tool is unavailable, ask in chat and wait for the reply.
+   2. Follow [Human approval](#human-approval) with `<work_dir>` to display progress and handle pending approvals.
    Done when: the session has ended, and the log (output + exit status) has been relayed to the user verbatim.
+
+## Human approval
+
+Use the running workflow’s working directory as `<work_dir>` throughout these steps.
+
+1. Run `python3 "$SKILL_ROOT/scripts/poll_workflow.py" --work-dir "<work_dir>"`.
+   Relay stdout **verbatim** as plain text, without added headers, code fences, rewording or JSON conversion. Relay the progress block even when unchanged.
+2. For each `◉ 待审批 <task_id>「<title>」` entry, ask the user to choose **approve / redo / fail**, including the task ID, title, acceptance list and review hints. Use the environment’s question tool when available; otherwise ask in chat. Require a comment for redo; a reason for fail is optional. Handle multiple tasks one by one and wait for the user’s actual decision; keep unanswered questions pending without asking them again.
+3. After the user answers, submit that decision:
+
+   ```bash
+   python3 "$SKILL_ROOT/scripts/approve_task.py" --work-dir "<work_dir>" --task-id "<task_id>" \
+     --decision <approve|redo|fail> [--comment "<user comment>"] >> "<work_dir>/orchestrator.log" 2>&1
+   ```
+
+   If the command fails, relay its error output verbatim and return to the calling branch’s polling loop. A decision is submitted only when the command exits successfully; task completion is determined by subsequent workflow status. If no entries need a new decision, return to polling.
 
 ## Blackbox rule
 

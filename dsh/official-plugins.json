@@ -1,0 +1,50 @@
+{
+  "repository": "https://gitcode.com/cann/cannbot.git",
+  "plugins": [
+    {
+      "id": "ops-direct-invoke-flash",
+      "label": "flash",
+      "title": "Ascend C Flash 核函数开发"
+    },
+    {
+      "id": "ops-direct-invoke",
+      "label": "operator",
+      "title": "算子开发工作流"
+    },
+    {
+      "id": "ops-registry-invoke",
+      "label": "registry",
+      "title": "ACLNN / GEIR 注册算子开发"
+    },
+    {
+      "id": "model-infer-optimize",
+      "label": "model",
+      "title": "NPU 模型推理优化"
+    },
+    {
+      "id": "hccl-op-generator",
+      "label": "hccl",
+      "title": "HCCL 通信算子开发"
+    },
+    {
+      "id": "triton-op-generator",
+      "label": "triton",
+      "title": "Triton 算子开发"
+    },
+    {
+      "id": "catlass-op-generator",
+      "label": "catlass",
+      "title": "CATLASS 算子开发"
+    },
+    {
+      "id": "ops-perf-optimize",
+      "label": "performance",
+      "title": "Ascend C 性能调优"
+    },
+    {
+      "id": "pypto-op-orchestrator",
+      "label": "pypto",
+      "title": "PyPTO 算子开发"
+    }
+  ]
+}

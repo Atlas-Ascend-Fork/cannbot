@@ -28,6 +28,7 @@
             <filefilter name="defaultPolicyFilter" desc="Filters for compatibility and license header policies">
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="script/.*" desc="The npm installer is distributed under the MIT License in script/LICENSE"/>
+                <filteritem type="filepath" name="dsh/packages/install/.*" desc="The standalone DSH one-click installer package is distributed under the MIT License in dsh/packages/install/LICENSE, matching the script/ npm installer."/>
                 <filteritem type="filename" name="*.golden" desc="Test oracle fixtures, headers would break comparisons"/>
                 <filteritem type="filename" name="*.jsonl" desc="JSON Lines data files, cannot carry license header"/>
                 <filteritem type="filename" name="*.yaml" desc="YAML configuration files, no license header required"/>
@@ -58,6 +59,7 @@
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/workflows/Ascend950/LICENSE" desc="The original MIT license text is checked by the explicit TileLang MIT policy, rather than the default CANN-2.0 header policy."/>
                 <filteritem type="filepath" name="script/.*" desc="The npm installer is distributed under the MIT License in script/LICENSE."/>
+                <filteritem type="filepath" name="dsh/packages/install/.*" desc="The standalone DSH one-click installer package is distributed under the MIT License in dsh/packages/install/LICENSE, matching the script/ npm installer."/>
                 <filteritem type="filepath" name="vendor/cannbot-skills/.*" desc="Git submodule distributed under its own repository license."/>
                 <filteritem type="filepath" name="plugins-community/model-recommend-infer-optimize/framework/.*" desc="Bundled GE_SESSION_DEMO inference sample retains upstream Apache-2.0 licensing (LICENSE/NOTICE shipped under framework/); exempt from repository CANN-2.0 header policy."/>
                 <filteritem type="filename" name="*.yaml" desc="YAML configuration files, no license header required"/>

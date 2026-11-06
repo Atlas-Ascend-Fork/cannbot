@@ -1,0 +1,20 @@
+node_modules/
+/lib/
+/dist/
+.acceptance*/
+.acceptance*
+**/.acceptance*/
+**/.acceptance*
+*.log
+*.tgz
+.dsh-source.json
+.npmrc
+.env
+.env.*
+.credentials*
+test-results/
+.DS_Store
+Thumbs.db
+
+# Workflow copies are generated outside this source tree.
+/assets/

@@ -1,0 +1,95 @@
+{
+  "name": "@cannbot-plugin/cannbot-dsh",
+  "version": "1.0.0-alpha.1",
+  "description": "CANNBot DSH: Ascend development workbench with independently versioned workflow packages",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "workflow-defaults.json",
+    "locale",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "WORKFLOW_PUBLISHING.md",
+    "THIRD_PARTY_NOTICES.md",
+    "LICENSE",
+    "official-plugins.json"
+  ],
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": ">=0.1.1-rc.1 <0.3.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "dsh",
+    "cannbot",
+    "workbench",
+    "ascend"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-skill-filesystem": ">=0.1.1-0 <0.3.0",
+    "@deepseek-ai/schemastery": ">=3.18.0 <4",
+    "@deepseek-ai/dsh-llm": ">=0.1.1-0 <0.3.0",
+    "@deepseek-ai/dsh-skill": ">=0.1.1-0 <0.3.0",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-0 <0.3.0"
+  },
+  "dependencies": {
+    "pacote": "^21.0.3",
+    "@cannbot-plugin/workflow-catalog": "^1.0.4"
+  },
+  "devDependencies": {
+    "yaml": "^2.4.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-skill-filesystem": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-skill": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "pack:plugin": "node scripts/package.mjs",
+    "install:source": "node scripts/install-source.mjs"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "workflows": [
+    {
+      "id": "ops-direct-invoke-flash",
+      "title": "Ascend C Flash 核函数开发",
+      "package": "@cannbot-plugin/workflow-ops-direct-invoke-flash",
+      "default": true
+    },
+    {
+      "id": "ops-direct-invoke",
+      "title": "算子开发工作流",
+      "package": "@cannbot-plugin/workflow-ops-direct-invoke",
+      "default": true
+    },
+    {
+      "id": "ops-registry-invoke",
+      "title": "ACLNN / GEIR 注册算子开发",
+      "package": "@cannbot-plugin/workflow-ops-registry-invoke",
+      "default": true
+    }
+  ]
+}

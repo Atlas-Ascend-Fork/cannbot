@@ -1,0 +1,14 @@
+{
+  "name": "@cannbot-plugin/cannbot-dsh-install",
+  "version": "1.0.0",
+  "description": "Install official DSH Web and the latest CANNBot DSH workflows with one command on Linux and WSL",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "cannbot-dsh-install": "bin/install.mjs" },
+  "files": ["bin", "lib", "README.md", "LICENSE"],
+  "engines": { "node": ">=24.9.0" },
+  "dependencies": { "semver": "^7.7.2", "yaml": "^2.8.1" },
+  "scripts": { "test": "node --test" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "keywords": ["cannbot", "dsh", "installer", "workbench"]
+}

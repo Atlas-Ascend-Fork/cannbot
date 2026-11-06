@@ -1,0 +1,55 @@
+.cannbot-dsh-workflow { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; position: relative; min-width: 120px; max-width: 280px; }
+.cannbot-dsh-workflow-anchor { flex: none; min-width: 120px; max-width: 100%; }
+.cannbot-dsh-workflow-trigger { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; min-height: 28px; padding: 0 8px; border: 0; border-radius: var(--dsw-radius-sm); background: transparent; color: var(--dsw-alias-label-primary); font-family: inherit; font-size: 13px; line-height: 20px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.cannbot-dsh-workflow-trigger svg { flex: none; }
+.cannbot-dsh-workflow-trigger svg:last-child { color: var(--dsw-alias-label-caption); }
+.cannbot-dsh-workflow-trigger[aria-expanded='true'] { background: var(--dsw-alias-interactive-bg-hover); }
+.cannbot-dsh-workflow-trigger:disabled { cursor: default; color: var(--dsw-alias-label-quaternary); }
+.cannbot-dsh-workflow-trigger:focus-visible { outline: 2px solid var(--dsw-focus-ring-color); outline-offset: 2px; }
+.cannbot-dsh-workflow-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .cannbot-dsh-workflow-trigger:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover); } }
+.cannbot-dsh-workflow-option { display: flex; flex-direction: column; gap: 4px; padding: 5px 0; max-width: 320px; white-space: normal; }
+.cannbot-dsh-workflow-option small { font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+.cannbot-dsh-error { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); max-width: 100%; }
+.cannbot-dsh-error button { border: 0; padding: 0 8px; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.cannbot-dsh-toggle { display: flex; width: 100%; box-sizing: border-box; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; }
+.cannbot-dsh-toggle-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 20px; }
+.cannbot-dsh-toggle-name svg { flex-shrink: 0; }
+.cannbot-dsh-toggle-compact { flex-direction: column; gap: 6px; }
+.cannbot-dsh-switch { width: 36px; height: 20px; padding: 2px; border: 0; border-radius: 99px; background: var(--dsw-alias-interactive-bg-hover, #d7dadd); cursor: pointer; flex-shrink: 0; }
+.cannbot-dsh-switch[aria-checked='true'] { background: #cf1740; }
+.cannbot-dsh-switch > span { display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; transform: translateX(0); }
+.cannbot-dsh-switch[aria-checked='true'] > span { transform: translateX(16px); }
+.cannbot-dsh-switch:focus-visible { outline: 2px solid var(--dsw-focus-ring-color, #cf1740); outline-offset: 2px; }
+.cannbot-dsh-update { padding: 16px; border: 1px solid var(--dsw-alias-border-l2, #e5e7eb); border-radius: var(--dsw-radius-md, 12px); color: var(--dsw-alias-label-primary); }
+.cannbot-dsh-update-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.cannbot-dsh-update h4 { margin: 0; font-size: 14px; font-weight: 600; }
+.cannbot-dsh-update-heading > span, .cannbot-dsh-update p { font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.cannbot-dsh-update-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.cannbot-dsh-update-button { display: inline-flex; align-items: center; box-sizing: border-box; text-decoration: none; min-height: 32px; padding: 5px 14px; background: var(--dsw-alias-brand-primary, #cf1740); color: white; border: 0; border-radius: 8px; font: inherit; font-size: 13px; cursor: pointer; }
+.cannbot-dsh-update-button:disabled { opacity: .6; cursor: default; }
+.cannbot-dsh-update-button:focus-visible, .cannbot-dsh-update-recheck:focus-visible { outline: 2px solid var(--dsw-focus-ring-color, #cf1740); outline-offset: 3px; }
+.cannbot-dsh-update-recheck { border: 0; background: transparent; padding: 4px; font: inherit; font-size: 12px; color: var(--dsw-alias-brand-primary, #cf1740); cursor: pointer; }
+.cannbot-dsh-update p { margin: 10px 0 0; }
+.cannbot-dsh-content { margin-top: 16px; }
+.cannbot-dsh-content details { margin-top: 12px; font-size: 12px; }
+.cannbot-dsh-content summary { cursor: pointer; }
+.cannbot-dsh-content pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; }
+.cannbot-dsh-workflow-package { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--dsw-alias-border-l2, #eee); }
+.cannbot-dsh-workflow-package > div:first-child { min-width: 0; }
+.cannbot-dsh-workflow-package strong { font-size: 13px; font-weight: 500; }
+.cannbot-dsh-workflow-package small { display: block; font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
+.cannbot-dsh-workflow-package-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
+@media (max-width: 480px) { .cannbot-dsh-workflow-package { align-items: flex-start; flex-direction: column; } }
+.cannbot-dsh-session-workflow { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: min(320px, 40vw); padding: 3px 8px; border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 20px; }
+.cannbot-dsh-session-workflow > span { flex-shrink: 0; }
+.cannbot-dsh-session-workflow code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: inherit; color: var(--dsw-alias-label-primary); }
+.cannbot-task-list { margin: 0 auto; width: calc(100% - 48px); max-width: var(--dsh-composer-card-max-width, 760px); padding: 8px 12px; box-sizing: border-box; border-radius: var(--dsw-radius-lg, 12px); background: var(--dsw-specific-menu); color: var(--dsw-alias-label-primary); font-size: 13px; }
+.cannbot-task-list .cannbot-task-list-toggle { display: flex; width: 100%; align-items: center; flex-wrap: wrap; gap: 12px; padding: 0; text-align: left; }
+.cannbot-task-list-toggle span { color: var(--dsw-alias-label-secondary); }
+.cannbot-task-list-chevron { margin-left: auto; }
+.cannbot-task-list button { margin-left: auto; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.cannbot-task-list ul { list-style: none; padding: 0; margin: 8px 0 0; max-height: 220px; overflow-y: auto; }
+.cannbot-task-list li { display: flex; gap: 8px; padding: 3px 0; overflow-wrap: anywhere; }
+.cannbot-task-list li[data-status='completed'] { color: var(--dsw-alias-label-secondary); }
+.cannbot-task-list-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 14px; }

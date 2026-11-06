@@ -1,0 +1,6 @@
+/* Anchor the headline adjustment to this plugin's own public-slot occupant, without private DSH class names. */
+span:has(> [data-slot="conversation.hero.brand.mark"] > [data-cannbot-dsh-hero]) { width: auto; height: auto; min-width: 0; }
+span:has(> [data-slot="conversation.hero.brand.mark"] > [data-cannbot-dsh-hero]) + span { display: none; }
+[data-cannbot-dsh-hero] { display: inline-flex; align-items: center; justify-content: center; gap: 12px; font-size: 26px; line-height: 1.3; font-weight: 650; letter-spacing: -.6px; color: var(--dsw-alias-label-primary); }
+[data-cannbot-dsh-hero] svg { flex-shrink: 0; }
+.cannbot-dsh-name { font-weight: 650; letter-spacing: -.3px; }

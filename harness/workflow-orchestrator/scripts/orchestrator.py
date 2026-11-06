@@ -296,7 +296,7 @@ def report(work_dir):
         print("[orchestrator]   %s: %s (retries=%d)" % (tid, t["status"], t.get("retries", 0)))
 
 
-def run_agent(entry, provider, work_dir, dry_map):
+def run_agent(entry, provider, work_dir, dry_map, task_executor=None):
     """worker 线程体：返回 (内部阶段令牌, crashed)，stdout 仅存档；不碰 status.json。"""
     if dry_map is not None:
         reply = dry_reply(dry_map, entry["task_id"], entry["_phase"])
@@ -317,6 +317,8 @@ def run_agent(entry, provider, work_dir, dry_map):
             reply = text or ("通过" if verdict.strip() == "pass" else "失败")
         return reply, reply == CRASH
     path = session_path(work_dir, entry["task_id"], entry["_phase"])
+    if task_executor is not None:
+        return task_executor(entry, work_dir, path)
     with (
         open(path, "wb") as f,
         subprocess.Popen(
@@ -481,9 +483,10 @@ def terminal_exit(work_dir, verdict):
 class LoopContext:
     """主循环运行上下文与轮间状态；仅主线程读写（worker 只跑 run_agent）。"""
 
-    def __init__(self, work_dir, provider, dry_map, executor):
+    def __init__(self, work_dir, provider, dry_map, executor, task_executor=None):
         self.work_dir = work_dir
         self.provider = provider
+        self.task_executor = task_executor
         self.dry_map = dry_map
         self.executor = executor  # 常驻共享线程池
         self.inflight = {}  # future → 派发条目
@@ -543,7 +546,7 @@ def dispatch_batch(ctx, batch):
             return err("任务状态预占失败: %s" % entry["task_id"])
     for entry in batch:
         ctx.inflight[
-            ctx.executor.submit(run_agent, entry, ctx.provider, ctx.work_dir, ctx.dry_map)
+            ctx.executor.submit(run_agent, entry, ctx.provider, ctx.work_dir, ctx.dry_map, ctx.task_executor)
         ] = entry
     return None
 
@@ -599,13 +602,13 @@ def loop_step(ctx):
     return None
 
 
-def loop(work_dir, provider, dry_map):
+def loop(work_dir, provider, dry_map, task_executor=None):
     max_parallel = read_max_parallel(work_dir)
     if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
         return err("无法从 workflow yaml 读取合法的 max_parallel")
 
     # 常驻共享池 + 全部轮间状态聚合进 ctx（仅主线程读写）
-    ctx = LoopContext(work_dir, provider, dry_map, ThreadPoolExecutor(max_workers=max_parallel))
+    ctx = LoopContext(work_dir, provider, dry_map, ThreadPoolExecutor(max_workers=max_parallel), task_executor)
     try:
         while True:
             exit_code = loop_step(ctx)
@@ -701,9 +704,9 @@ def prepare_workflow(args):
     return _init_workflow(args, status_path)
 
 
-def main():
-    args = parse_args()
-    if not args.dry_run and not args.provider:
+def main(task_executor=None, args=None):
+    args = args if args is not None else parse_args()
+    if task_executor is None and not args.dry_run and not args.provider:
         return err("必须提供 --provider（或用 --dry-run 模拟）")
     if acquire_lock(args.work_dir) is None:
         return err("另一个 orchestrator 实例正在运行（.workflow/orchestrator.lock），拒绝双跑")
@@ -720,7 +723,7 @@ def main():
         except (OSError, json.JSONDecodeError):
             dry_map = {}
     try:
-        return loop(args.work_dir, PROVIDERS.get(args.provider), dry_map)
+        return loop(args.work_dir, PROVIDERS.get(getattr(args, "provider", None)), dry_map, task_executor)
     except (OSError, KeyError, ValueError, subprocess.CalledProcessError) as e:
         # JSONDecodeError ⊂ ValueError，不重复捕获；CalledProcessError = copy_tree 的 cp 失败
         return err("主循环异常: %s" % e)

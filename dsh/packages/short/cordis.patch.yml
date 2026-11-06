@@ -1,0 +1,3 @@
+- insert:
+    - id: cannbot-dsh
+      name: '@cannbot-plugin/cannbot-dsh'
