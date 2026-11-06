@@ -1,0 +1,10 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "preserveSkillInvocationPolicy": true,
+  "skills": [
+    "ops/cann-error-code-standard",
+    "ops/ops-error-code-remediation",
+    "infra/gitcode-toolkit"
+  ]
+}

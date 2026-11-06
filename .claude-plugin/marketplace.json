@@ -626,6 +626,23 @@
       "dependencies": [
         "torch-npugraph-ex-skills"
       ]
+    },
+    {
+      "name": "ops-qa-suite",
+      "source": "./plugins-community/ops-qa-suite",
+      "description": "Ascend C 算子仓库 QA 检测套装：文档质量、UT 缺失与执行、CMake 配置、列表一致性、Examples、断链修复、Issue 管理与错误码开发/审计/整改。",
+      "version": "0.1.0",
+      "author": {
+        "name": "CANNBot Community"
+      },
+      "keywords": [
+        "qa",
+        "ascendc",
+        "ops",
+        "scan",
+        "error-code"
+      ],
+      "category": "development"
     }
   ]
 }

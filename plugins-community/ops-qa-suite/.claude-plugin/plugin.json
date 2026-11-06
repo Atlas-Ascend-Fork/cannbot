@@ -1,0 +1,14 @@
+{
+  "name": "ops-qa-suite",
+  "description": "Ascend C 算子仓库（ops-math/ops-nn/ops-transformer/ops-cv）QA 检测套装：文档质量、UT 缺失与执行、CMake 配置、列表一致性、Examples、断链修复、Issue 管理与错误码开发/审计/整改。11 个内置 Skill 随 .opencode 覆盖层安装，3 个共享 Skill（cann-error-code-standard、ops-error-code-remediation、gitcode-toolkit）由 cannbot-skills 仓维护。",
+  "version": "0.1.0",
+  "author": {
+    "name": "CANNBot Community"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot/tree/master/plugins-community/ops-qa-suite",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "agents": [
+    "./AGENTS.md"
+  ]
+}

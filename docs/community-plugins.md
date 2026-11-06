@@ -13,6 +13,7 @@
 | [`triton-auto-evolve`](../plugins-community/triton-auto-evolve/) | Triton-Ascend 算子多轮自动优化 |
 | [`triton-optimizer`](../plugins-community/triton-optimizer/) | Triton Ascend NPU 算子优化与 PyTorch 算子转换 |
 | [`shmem-ops-generator`](../plugins-community/shmem-ops-generator/) | Ascend SHMEM 通信与通算融合算子开发、正确性验证、性能评测与优化 |
+| [`ops-qa-suite`](../plugins-community/ops-qa-suite/) | Ascend C 算子仓库 QA 检测（文档质量、UT、CMake、列表一致性、断链、Issue、错误码治理） |
 
 ## ascendc-port-orchestrator
 
@@ -108,3 +109,16 @@ cd plugins-community/model-recommend-infer-optimize && bash init.sh project open
 ```
 
 各客户端安装参数、框架落位与常见问题见 [quickstart.md](../plugins-community/model-recommend-infer-optimize/quickstart.md)。
+
+## ops-qa-suite
+
+Ascend C 算子仓库（ops-math / ops-nn / ops-transformer / ops-cv）QA 检测套装：文档质量（31 项）、UT 缺失分析与全量执行、CMake 配置（9 种）、op_list / op_api_list 一致性、Examples 缺失与测试、Markdown 断链检查与修复、GitCode Issue 自动生成，以及错误码开发 / 只读审计 / 授权整改（基于 `cann-error-code-standard` 基准）。11 个内置 Skill 随 `.opencode` 覆盖层（commands / scripts / templates / config）整体安装，`gitcode-toolkit` 等 3 个共享 Skill 由 cannbot-skills 仓维护并经 `plugin-sources.json` 引用。
+
+本插件以**目标项目为运行单元**（覆盖层与 reports 输出均在项目内），仅支持 project 级安装：
+
+```bash
+git submodule update --init vendor/cannbot-skills
+cd plugins-community/ops-qa-suite && bash init.sh project opencode /absolute/path/to/target-project
+```
+
+扫描命令、报告口径与能力矩阵见[插件 README](../plugins-community/ops-qa-suite/README.md)。
