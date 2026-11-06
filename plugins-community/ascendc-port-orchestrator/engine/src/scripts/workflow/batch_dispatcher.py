@@ -284,11 +284,12 @@ def compute_next_actions(ws_root: Path = WORKSPACE_ROOT) -> list[NextAction]:
     returned with skip=True.
     """
     actions: list[NextAction] = []
+    ws_root = ws_root.resolve()
     workspaces = _list_op_workspaces(ws_root)
 
     for ws in workspaces:
         op = ws.name
-        ws_rel = str(ws.relative_to(PROJECT_ROOT))
+        ws_rel = str(ws.resolve().relative_to(PROJECT_ROOT.resolve()))
         current_state, last_handoff = _detect_current_state(ws)
 
         # Skip terminal
