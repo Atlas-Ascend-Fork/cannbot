@@ -63,9 +63,9 @@
 ```cpp
 template <typename T, bool isSetMask = true>
 __aicore__ inline void Adds(
-    const LocalTensor<T>& dst, 
-    const LocalTensor<T>& src, 
-    const T& scalarValue, 
+    const LocalTensor<T>& dst,
+    const LocalTensor<T>& src,
+    const T& scalarValue,
     const int32_t& count);
 
 // 功能: dst[i] = src[i] + scalarValue
@@ -76,9 +76,9 @@ __aicore__ inline void Adds(
 ```cpp
 template <typename T, bool isSetMask = true>
 __aicore__ inline void Muls(
-    const LocalTensor<T>& dst, 
-    const LocalTensor<T>& src, 
-    const T& scalarValue, 
+    const LocalTensor<T>& dst,
+    const LocalTensor<T>& src,
+    const T& scalarValue,
     const int32_t& count);
 
 // 功能: dst[i] = src[i] * scalarValue
@@ -100,21 +100,21 @@ LocalTensor<T> broadcastLocal = broadcastBuf.Get<T>();
 
 for (uint32_t row = 0; row < rowsThisLoop; row++) {
     uint32_t rowOffset = row * rLengthAlign;
-    
+
     // Step 1: ReduceMax
     ReduceMax<T>(broadcastLocal, xLocal[rowOffset], reduceTmpLocal, rLength, false);
-    
+
     // Step 2: Duplicate + Sub（需要广播 buffer）
     T maxVal = broadcastLocal.GetValue(0);
     Duplicate<T>(broadcastLocal, maxVal, rLength);  // 指令 1
     Sub<T>(yLocal[rowOffset], xLocal[rowOffset], broadcastLocal, rLength);  // 指令 2
-    
+
     // Step 3: Exp
     Exp<T>(yLocal[rowOffset], yLocal[rowOffset], rLength);
-    
+
     // Step 4: ReduceSum
     ReduceSum<T, true>(broadcastLocal, yLocal[rowOffset], reduceTmpLocal, rLength);
-    
+
     // Step 5: Duplicate + Div（需要广播 buffer）
     T sumVal = broadcastLocal.GetValue(0);
     Duplicate<T>(broadcastLocal, sumVal, rLength);  // 指令 3
@@ -137,20 +137,20 @@ LocalTensor<T> scalarLocal = scalarBuf.Get<T>();
 
 for (uint32_t row = 0; row < rowsThisLoop; row++) {
     uint32_t rowOffset = row * rLengthAlign;
-    
+
     // Step 1: ReduceMax
     ReduceMax<T>(scalarLocal, xLocal[rowOffset], reduceTmpLocal, rLength, false);
-    
+
     // Step 2: Adds（直接标量操作，无需广播）
     T maxVal = scalarLocal.GetValue(0);
     Adds<T>(yLocal[rowOffset], xLocal[rowOffset], -maxVal, rLength);  // 指令 1
-    
+
     // Step 3: Exp
     Exp<T>(yLocal[rowOffset], yLocal[rowOffset], rLength);
-    
+
     // Step 4: ReduceSum
     ReduceSum<T, true>(scalarLocal, yLocal[rowOffset], reduceTmpLocal, rLength);
-    
+
     // Step 5: Muls（除法转乘法，直接标量操作）
     T sumVal = scalarLocal.GetValue(0);
     T invSumVal = (T)1.0 / sumVal;  // CPU 端计算 1/sum
@@ -220,7 +220,7 @@ for (uint32_t r = 0; r < R; r++) {
 uint64_t mask = alignedCols;
 uint8_t repeatTime = R;
 
-Sub(dstLocal, srcLocal, scalarLocal, mask, repeatTime, 
+Sub(dstLocal, srcLocal, scalarLocal, mask, repeatTime,
     {1, 1, 1, alignedCols/8, alignedCols/8, 0});
 // API 调用：1 次
 // 性能提升：R 倍
@@ -236,8 +236,8 @@ for (uint32_t batch = 0; batch < totalBatches; batch++) {
     uint32_t startRow = batch * BATCH_SIZE;
     uint8_t repeatTime = (startRow + BATCH_SIZE <= R) ? BATCH_SIZE : (R - startRow);
     uint32_t offset = startRow * alignedCols;
-    
-    Sub(dstLocal[offset], srcLocal[offset], scalarLocal, 
+
+    Sub(dstLocal[offset], srcLocal[offset], scalarLocal,
         mask, repeatTime, {1, 1, 1, alignedCols/8, alignedCols/8, 0});
 }
 // API 调用：ceil(R/64) 次
@@ -325,8 +325,8 @@ for (uint32_t batch = 0; batch < totalBatches; batch++) {
 
 ## 参考资料
 
-- [BinaryRepeatParams 结构体](../../../asc-devkit/docs/zh/api/SIMD-API/basic_api/aux_data_structures/BinaryRepeatParams.md)
-- [Adds API](../../../asc-devkit/docs/zh/api/SIMD-API/basic_api/reg_vector_compute/basic_arithmetic/Adds.md)
-- [Muls API](../../../asc-devkit/docs/zh/api/SIMD-API/basic_api/reg_vector_compute/basic_arithmetic/Muls.md)
-- [Sub API](../../../asc-devkit/docs/zh/api/SIMD-API/basic_api/memory_vector_compute/basic_arithmetic/Sub.md)
-- [Div API](../../../asc-devkit/docs/zh/api/SIMD-API/basic_api/memory_vector_compute/basic_arithmetic/Div.md)
+- [BinaryRepeatParams 结构体](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/api/SIMD-API/basic_api/aux_data_structures/BinaryRepeatParams.md)
+- [Adds API](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/api/SIMD-API/basic_api/reg_vector_compute/basic_arithmetic/Adds.md)
+- [Muls API](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/api/SIMD-API/basic_api/reg_vector_compute/basic_arithmetic/Muls.md)
+- [Sub API](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/api/SIMD-API/basic_api/memory_vector_compute/basic_arithmetic/Sub.md)
+- [Div API](https://gitcode.com/cann/asc-devkit/blob/master/docs/zh/api/SIMD-API/basic_api/memory_vector_compute/basic_arithmetic/Div.md)
