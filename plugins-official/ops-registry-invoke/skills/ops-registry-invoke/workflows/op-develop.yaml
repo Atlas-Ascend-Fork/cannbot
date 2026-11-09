@@ -123,6 +123,7 @@ nodes:
     approach:
       - "Change into the cloned repo: `cd $WORK_DIR/ops-test-kit` (TTK commands must run from the ops-test-kit directory)."
       - "Create the output directory: `mkdir -p $WORK_DIR/ops-test-kit/ttk-verify`."
+      - "Record each environment-check or sample command and its exit code in `$WORK_DIR/ops-test-kit/ttk-verify/exit-codes.txt` immediately after execution. Preserve each command's original output in its log."
       - "Run the environment check and save its output: `python3 -m ttk info > $WORK_DIR/ops-test-kit/ttk-verify/env-info.txt 2>&1`."
       - "Pick the input files at runtime instead of hardcoding them: for kernel and geir pick any one file from `$WORK_DIR/ops-test-kit/examples/case_store/kernel/*.csv`, for aclnn pick any one from `$WORK_DIR/ops-test-kit/examples/case_store/aclnn/*.csv` (e.g. the first match of listing that directory and taking its first CSV). Record which file each command used."
       - "Run the three runnable sample test paths in order with the picked files, each saving its full output to a log file under `$WORK_DIR/ops-test-kit/ttk-verify/` (skip the e2e path entirely — it is out of scope for this verification). For each path, append `--ti=0` to run only the first case in the picked CSV; do not run the full CSV:"
@@ -130,8 +131,9 @@ nodes:
       - "`python3 -m ttk geir -i <picked-kernel.csv> --ti=0 > $WORK_DIR/ops-test-kit/ttk-verify/geir.log 2>&1`"
       - "`python3 -m ttk aclnn -i <picked-aclnn.csv> --ti=0 > $WORK_DIR/ops-test-kit/ttk-verify/aclnn.log 2>&1`"
     acceptance:
-      - "Every command was actually executed and its output saved: $WORK_DIR/ops-test-kit/ttk-verify/ contains env-info.txt (non-empty, with a `Found N device(s)` block) and the three logs kernel.log, geir.log, aclnn.log (each non-empty, containing a `TTK Test Summary` block). e2e.log is not required."
-      - "The environment is verified OK: each of the three logs' `TTK Test Summary` block shows `FAIL     : 0` and `PassRate : 100.00%`. Any FAIL means the environment is not usable, so the task fails and the workflow exits."
+      - "Every command was actually executed and its output saved: $WORK_DIR/ops-test-kit/ttk-verify/ contains env-info.txt (non-empty, with a `Found N device(s)` block), the three non-empty logs kernel.log, geir.log, aclnn.log (each containing a final testcase summary), and exit-codes.txt covering all four commands. e2e.log is not required."
+      - "The environment check and all three sample commands exited with code 0. Each sample's final summary reports Total > 0, PASS = Total, FAIL = 0, SKIP/NA = 0, and PassRate = 100%. Read these values from either the current table or a legacy key-value summary; accept formatting differences such as `100.00% (1/1)` and ignore decorative titles and spacing."
+      - "A nonzero exit code, failed or skipped case, missing command result or summary, or inconsistent counters makes verification fail. Keep the original logs and report the observed result; subsequent workflow handling follows this node's on_exhaust setting."
     out_of_scope:
       - "Do not fix or work around any failure: do not edit example CSVs, docs, or source, do not modify or reinstall anything, and do not retry or patch commands to force a pass; report results exactly as produced."
       - "Write outputs only under $WORK_DIR/ops-test-kit/ttk-verify/ (build and cache artifacts the repo generates under itself are expected)."
