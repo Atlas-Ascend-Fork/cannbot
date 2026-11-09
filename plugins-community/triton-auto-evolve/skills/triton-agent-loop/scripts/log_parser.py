@@ -16,7 +16,6 @@ be observed in real time without blocking on the sub-process.
 
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TextIO
@@ -237,7 +236,7 @@ def parse_stream_json_log(raw_path: str, readable_path: str) -> None:
         return
     if not Path(raw_path).exists():
         return
-    os.makedirs(os.path.dirname(readable_path), exist_ok=True)
+    Path(readable_path).parent.mkdir(parents=True, exist_ok=True)
     with (
         open(raw_path, "r", encoding="utf-8") as f_in,
         open(readable_path, "w", encoding="utf-8") as f_out,
