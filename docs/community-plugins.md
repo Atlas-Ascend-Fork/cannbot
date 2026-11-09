@@ -4,6 +4,7 @@
 
 | 插件 | 场景 |
 |------|------|
+| [`autoresearch`](../plugins-community/autoresearch/) | Triton Ascend / AscendC / AscendC CATLASS 算子自动优化工作区，保留 baseline、plan、edit、eval 与 keep/discard 状态机 |
 | [`ascendc-port-orchestrator`](../plugins-community/ascendc-port-orchestrator/) | AscendC 算子跨代际移植与反向算子生成 |
 | [`collaborative-agent-kernel-evolution` (CAKE2)](../plugins-community/collaborative-agent-kernel-evolution/) | AscendC 算子生成、评估与进化式性能优化 |
 | [`model-train-precision-diagnose`](../plugins-community/model-train-precision-diagnose/) | PyTorch on Ascend NPU 训练精度异常诊断 |
@@ -122,3 +123,15 @@ cd plugins-community/ops-qa-suite && bash init.sh project opencode /absolute/pat
 ```
 
 扫描命令、报告口径与能力矩阵见[插件 README](../plugins-community/ops-qa-suite/README.md)。
+
+## autoresearch
+
+自包含的算子内核迭代优化工作区，提供 Claude Code / OpenCode 的 `/autoresearch` 入口、hooks、诊断 Agent、KernelVerifier、批处理及本地/远端 worker。运行时按原有项目根目录布局安装，状态机与评测流程保持不变。
+
+```bash
+bash plugins-community/autoresearch/init.sh project claude /path/to/project
+cd /path/to/project
+python -m pip install -e .
+```
+
+使用 OpenCode 时将 `claude` 改为 `opencode`；仅启动 HTTP worker 才需 `.[worker]`。源码安装不需要初始化 Skills 子模块。该工作流依赖两个客户端专属适配器，不提供其他客户端或全局安装。安装与复用现有工作区的细节见 [quickstart.md](../plugins-community/autoresearch/quickstart.md)。

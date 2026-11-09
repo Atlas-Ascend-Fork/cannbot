@@ -142,3 +142,17 @@ npm --prefix script run pack:smoke
 - submodule 内容遵循 `cannbot-skills` 仓库许可证。
 
 CANNBot 生成或修改的代码需由开发者完成编译、测试、精度验证、性能验证和安全审查后再投入使用。
+
+## 自包含工作区安装
+
+以项目根为运行单元的社区插件可以在 `plugin-install.json` 中声明 `workspace`，由统一安装器交付，避免每个插件维护一套复制脚本：
+
+- `tools`：实际支持的客户端；不在清单中的客户端在写入前拒绝。
+- `files`：保持相对路径复制的运行时文件/目录；条目也可用 `{ "source": "模板路径", "target": "目标路径" }` 指定映射。同名文件变化时逐文件备份为 `.cannbot-backup[.N]`，不替换整个目录。
+- `preserve`：只在目标不存在时复制的项目配置和说明。
+- `directories`：只创建、不清理的运行态目录。
+- `claudeSettings`：合并该文件中的 hooks 并去重，保留用户原设置；不复制插件的权限放行清单。
+
+全部路径与设置先校验再复制；拒绝源/目标重叠和符号链接。工作区插件的 `plugin-sources.json` 可声明空 Skills 清单，源码安装无需拉取共享 Skills；完整 npm 构建仍按仓库通用流程初始化子模块。示例见 `plugins-community/autoresearch/plugin-install.json`。
+
+AutoResearch 用 `gitignore.template` 映射到目标 `.gitignore`，因为 npm tarball 会排除名为 `.gitignore` 的文件；模板内容应与源码 `.gitignore` 同步。

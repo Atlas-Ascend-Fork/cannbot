@@ -643,6 +643,22 @@
         "error-code"
       ],
       "category": "development"
+    },
+    {
+      "name": "autoresearch",
+      "source": "./plugins-community/autoresearch",
+      "description": "AutoResearch 算子内核自动优化工作区，支持 Triton Ascend、AscendC、AscendC CATLASS 和 Claude Code/OpenCode。安装请使用源码或 npm 工作区安装入口。",
+      "version": "1.0.1",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "autoresearch",
+        "ascend",
+        "kernel",
+        "optimization"
+      ],
+      "category": "development"
     }
   ]
 }

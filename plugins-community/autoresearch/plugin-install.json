@@ -1,0 +1,45 @@
+{
+  "workspace": {
+    "tools": [
+      "claude",
+      "opencode"
+    ],
+    "files": [
+      "scripts",
+      "src",
+      "tests",
+      "ar_examples",
+      ".claude/agents",
+      ".claude/commands",
+      ".claude/hooks",
+      ".opencode",
+      "AUTORESEARCH.md",
+      "quickstart.md",
+      "LICENSE",
+      "LICENSE-APACHE",
+      "NOTICE",
+      "README.OpenSource",
+      "SOURCE_REVISION",
+      "pyproject.toml",
+      "requirements-worker.txt"
+    ],
+    "preserve": [
+      "config.yaml",
+      "package.json",
+      {
+        "source": "gitignore.template",
+        "target": ".gitignore"
+      },
+      "README.md"
+    ],
+    "directories": [
+      "workspace",
+      "ar_tasks",
+      ".session_tasks",
+      ".task_dir_pointers",
+      ".claude/skills",
+      ".opencode/skills"
+    ],
+    "claudeSettings": ".claude/settings.json"
+  }
+}

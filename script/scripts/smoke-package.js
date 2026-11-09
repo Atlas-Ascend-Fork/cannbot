@@ -23,7 +23,7 @@ const archiveName = `${packageJson.name.replace(/^@/, "").replace("/", "-")}-${p
 const sandbox = mkdtempSync(join(tmpdir(), "cannbot-package-smoke-"));
 
 function run(command, args, cwd, env = process.env) {
-  const result = spawnSync(command, args, { cwd, env, encoding: "utf8" });
+  const result = spawnSync(command, args, { cwd, env, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
   if (result.error || result.status !== 0) {
     const detail = result.error?.message || result.stderr || result.stdout;
     throw new Error(`${command} ${args.join(" ")} failed: ${detail}`);
@@ -119,6 +119,22 @@ try {
     run("python3", [join(entryRoot, "scripts", "run_workflow.py"),
       "--template", `ascendc/${template}.yaml`, "--work-dir", join(workflowRun, template), "--provider", "claude",
       "--prompt", "package workflow smoke test", "--foreground", "--dry-run"], consumer);
+  }
+  for (const tool of ["claude", "opencode"]) {
+    const workspace = join(sandbox, `autoresearch-${tool}`);
+    run(executable, ["install", "autoresearch", "--tool", tool, "--target", workspace], consumer);
+    for (const path of [".gitignore", "pyproject.toml", "config.yaml", "quickstart.md", "AGENTS.md",
+      "scripts/engine/parse_args.py", "src/op_autoresearch/__init__.py", ".claude/settings.json",
+      ".opencode/plugin/autoresearch.js"]) {
+      if (!existsSync(join(workspace, path))) throw new Error(`packaged autoresearch is missing: ${path}`);
+    }
+    const ignore = readFileSync(join(workspace, ".gitignore"), "utf8");
+    if (!ignore.includes("ar_tasks/") || !ignore.includes("workspace/")) {
+      throw new Error("packaged autoresearch must preserve its runtime Git exclusions");
+    }
+    run("python3", ["scripts/engine/parse_args.py", "--resume"], workspace, {
+      ...process.env, PYTHONPATH: join(workspace, "src"),
+    });
   }
   console.log(`Verified ${archiveName} through the installed cannbot npm bin.`);
 } finally {

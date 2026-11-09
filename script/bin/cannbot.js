@@ -23,6 +23,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { findPluginDirectory, pluginSourceDefinition } from "../lib/plugin-bundle.js";
 import { isInside, prepareSharedSkills, resolveSkillSource, sourceRevisions } from "../lib/skills-source.js";
+import { installWorkspace, hasWorkspace, preflightWorkspaceFiles } from "../lib/workspace-install.js";
 
 const installerPackage = readJson(new URL("../package.json", import.meta.url));
 const OPENCODE_PLUGIN_SPEC = `${installerPackage.name}@${installerPackage.version}`;
@@ -160,7 +161,8 @@ function resolvePluginDir(repoPath, pluginId) {
     const candidate = findPluginDirectory(repoPath, parent, pluginId);
     if (candidate
         && existsSync(join(candidate, ".claude-plugin", "plugin.json"))
-        && (existsSync(join(candidate, "skills")) || declaresDependencyAssets(candidate))) return candidate;
+        && (existsSync(join(candidate, "skills")) || declaresDependencyAssets(candidate)
+          || hasWorkspace(candidate))) return candidate;
   }
   return null;
 }
@@ -1205,6 +1207,33 @@ function install(options, initializing = []) {
   validateInstallName(plugin.name, "plugin manifest name");
   if (plugin.name !== options.pluginId) {
     fail(`plugin name mismatch: requested ${options.pluginId}, manifest declares ${plugin.name}`);
+  }
+  if (hasWorkspace(pluginDir)) {
+    const configDir = toolConfigDir(options.target, options.tool);
+    const registryPath = join(configDir, "cannbot-plugin.json");
+    preflightWorkspaceFiles(options.target, [
+      "AGENTS.md",
+      ...(options.tool === "claude" ? ["CLAUDE.md"] : []),
+      relative(options.target, registryPath),
+    ]);
+    if (existsSync(registryPath)) readJson(registryPath);
+    const workspace = installWorkspace(pluginDir, options.target, options.tool);
+    if (options.tool === "claude") installInstructions(pluginDir, plugin, options.target, "opencode", null);
+    const instructions = installInstructions(pluginDir, plugin, options.target, options.tool, null);
+    updateInstallRegistry(registryPath, {
+      plugin: plugin.name,
+      pluginVersion: plugin.version,
+      sourcePackage: OPENCODE_PLUGIN_SPEC,
+      tool: options.tool,
+      skills: [],
+      workspace,
+      instructions: instructions ? relative(options.target, instructions) : null,
+    });
+    console.log(`Installed ${plugin.name}@${plugin.version} for ${options.tool}`);
+    console.log(`  target: ${options.target}`);
+    console.log('Next: enter the target directory and run python -m pip install -e .');
+    console.log('HTTP worker only: python -m pip install -e ".[worker]"');
+    return;
   }
   // TileLang retains its original agent files and workflow-relative paths.
   // Its installer resolves shared Skills without rewriting the workflow tree.

@@ -1,0 +1,62 @@
+{#
+Copyright 2026 Huawei Technologies Co., Ltd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-#}
+def gen_binary_data(inputs, outputs, data_dir):
+    """Store input and golden-output tensors as binary files."""
+    import os
+
+    input_dir = os.path.join(data_dir, {{ op_name | tojson }}, "input")
+    output_dir = os.path.join(data_dir, {{ op_name | tojson }}, "output")
+    os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    for index, input_tensor in enumerate(inputs):
+        if isinstance(input_tensor, TensorType):
+            save_tensor(input_tensor, os.path.join(input_dir, f"input{index}.bin"))
+
+    output_tensors = outputs if isinstance(outputs, (list, tuple)) else [outputs]
+    for index, output_tensor in enumerate(output_tensors):
+        if isinstance(output_tensor, TensorType):
+            golden_path = os.path.join(output_dir, f"output{index}_golden.bin")
+            save_tensor(output_tensor, golden_path)
+
+
+def load_binary_data(data_dir, reference_outputs):
+    """Load actual output files using reference tensors for shape and dtype."""
+    import os
+
+    references = (
+        reference_outputs
+        if isinstance(reference_outputs, (list, tuple))
+        else [reference_outputs]
+    )
+    output_dir = os.path.join(data_dir, {{ op_name | tojson }}, "output")
+    loaded_outputs = []
+    index = 0
+    while True:
+        output_path = os.path.join(output_dir, f"output{index}_actual.bin")
+        if not os.path.exists(output_path):
+            break
+        if index >= len(references):
+            raise RuntimeError(
+                f"output file count ({index + 1}) exceeds reference count "
+                f"({len(references)})"
+            )
+        loaded_outputs.append(load_tensor(output_path, references[index]))
+        index += 1
+
+    if not loaded_outputs:
+        raise RuntimeError("no output binary files were generated")
+    return loaded_outputs

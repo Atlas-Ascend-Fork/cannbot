@@ -26,6 +26,10 @@
                 <filteritem type="filepath" name="vendor/cannbot-skills/.*" desc="Git submodule with its own license and OAT configuration."/>
             </filefilter>
             <filefilter name="defaultPolicyFilter" desc="Filters for compatibility and license header policies">
+                <filteritem type="filepath" name="plugins-community/autoresearch/LICENSE" desc="Original CANN license text; a legal document, not source requiring an additional header."/>
+                <filteritem type="filepath" name="plugins-community/autoresearch/LICENSE-APACHE" desc="Original Apache license text; a legal document, not source requiring an additional header."/>
+                <filteritem type="filepath" name="plugins-community/autoresearch/NOTICE" desc="Original upstream attribution notice; preserve its legal content without an additional source header."/>
+                <filteritem type="filepath" name="plugins-community/autoresearch/README[.]OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="script/.*" desc="The npm installer is distributed under the MIT License in script/LICENSE"/>
                 <filteritem type="filepath" name="dsh/packages/install/.*" desc="The standalone DSH one-click installer package is distributed under the MIT License in dsh/packages/install/LICENSE, matching the script/ npm installer."/>
@@ -56,6 +60,10 @@
                 <filteritem type="filepath" name="plugins-community/model-recommend-infer-optimize/framework/.*" desc="Bundled GE_SESSION_DEMO inference sample retains upstream Apache-2.0 licensing (LICENSE/NOTICE shipped under framework/); exempt from repository CANN-2.0 header policy."/>
 </filefilter>
             <filefilter name="licenseFileNamePolicyFilter" desc="Explicitly licensed components excluded from the repository default license policy">
+                <filteritem type="filepath" name="plugins-community/autoresearch/LICENSE" desc="Original CANN license text; a legal document, not source requiring an additional header."/>
+                <filteritem type="filepath" name="plugins-community/autoresearch/LICENSE-APACHE" desc="Original Apache license text; a legal document, not source requiring an additional header."/>
+                <filteritem type="filepath" name="plugins-community/autoresearch/NOTICE" desc="Original upstream attribution notice; preserve its legal content without an additional source header."/>
+                <filteritem type="filepath" name="plugins-community/autoresearch/README[.]OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/README.OpenSource" desc="Third-party component register in JSON; a comment header would invalidate the format."/>
                 <filteritem type="filepath" name="plugins-official/tilelang-op-orchestrator/workflows/Ascend950/LICENSE" desc="The original MIT license text is checked by the explicit TileLang MIT policy, rather than the default CANN-2.0 header policy."/>
                 <filteritem type="filepath" name="script/.*" desc="The npm installer is distributed under the MIT License in script/LICENSE."/>
