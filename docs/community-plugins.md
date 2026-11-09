@@ -6,6 +6,7 @@
 |------|------|
 | [`autoresearch`](../plugins-community/autoresearch/) | Triton Ascend / AscendC / AscendC CATLASS 算子自动优化工作区，保留 baseline、plan、edit、eval 与 keep/discard 状态机 |
 | [`ascendc-port-orchestrator`](../plugins-community/ascendc-port-orchestrator/) | AscendC 算子跨代际移植与反向算子生成 |
+| [`ascendc-ops-perf-evolution`](../plugins-community/ascendc-ops-perf-evolution/) | 已有 Ascend C 内核与 ops 仓库算子的多轮性能进化优化 |
 | [`collaborative-agent-kernel-evolution` (CAKE2)](../plugins-community/collaborative-agent-kernel-evolution/) | AscendC 算子生成、评估与进化式性能优化 |
 | [`model-train-precision-diagnose`](../plugins-community/model-train-precision-diagnose/) | PyTorch on Ascend NPU 训练精度异常诊断 |
 | [`pypto-pro-op-orchestrator`](../plugins-community/pypto-pro-op-orchestrator/) | PyPTO-Pro 算子开发、验证与性能优化（主 agent 按需调度 6 个专职 subagent） |
@@ -25,6 +26,10 @@
 - **正向→反向生成**（`ascendc-backward-gen`）：由可微 PyTorch 正向规格生成并验证 AscendC 反向（梯度）算子。
 
 安装见 [quickstart.md](../plugins-community/ascendc-port-orchestrator/quickstart.md)。
+
+## ascendc-ops-perf-evolution
+
+面向已有 Ascend C 内核或 ops 仓库算子的性能优化，支持基线评估、多轮变体生成与评测、最佳方案验证及进化优化报告输出。安装与使用见 [quickstart.md](../plugins-community/ascendc-ops-perf-evolution/quickstart.md)。
 
 ## collaborative-agent-kernel-evolution (CAKE2)
 
