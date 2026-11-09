@@ -4,6 +4,7 @@ dist/
 __pycache__
 docs/superpowers/
 codespell_reports/
+vendor/cannbot-knowledge/
 
 # OAT 远程 hook 报告目录
 oat_reports/

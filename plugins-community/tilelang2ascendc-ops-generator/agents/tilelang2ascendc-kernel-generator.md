@@ -20,8 +20,7 @@ skills:
   - tilelang2ascend-tilelang-designer
   - tilelang2ascend-trace-recorder
   - npu-arch
-  - knowledge-query
-  - ops-knowledge-ingest
+  - tilelang2ascendc-knowledge
 permission:
   edit: allow
   bash: allow
@@ -60,8 +59,9 @@ Phase 4: AscendC 生成与验证    (分支)
 Phase 5: 性能分析              (ops-profiling --quick 模式)
 Phase 6: 全量用例验证
 Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md →
-                                从 trace.md 提取走偏点与成功模式 → 经 ops-knowledge-ingest
-                                路由按 OKF 格式写入共享知识库 runbooks/)
+                                从 trace.md 提取走偏点与成功模式 → 经
+                                tilelang2ascendc-knowledge 的 record 写入项目暂存库
+                                .tilelang2ascendc/knowledge/learned/)
 ```
 
 ## Hook 机制说明
@@ -148,24 +148,108 @@ Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md 
 
 > asc-devkit 的代码生成时查阅职责已下沉到 `tilelang2ascend-translator` skill 内部。agent 无需在调用 skill 前自行查阅。
 
-### 演进知识检索（生成前必读）
+### 知识检索（按阶段按需检索）
 
-共享演进知识库（`$CANNBOT_KNOWLEDGE_ROOT` 的 `runbooks/` 树，当前
-`/home/asc-gen-knowledge`，由 `~/.config/cannbot/knowledge.env` 配置）沉淀了历史任务的
-走偏点与成功模式。**检索一律经 cannbot-knowledge 插件的 knowledge-query skill**
-（`knowledge_query.py`），禁止直接读文件索引。**Phase 0 判定算子类别后、Phase 4 生成
-kernel 前**：
+知识分两层，**分开检索、分开写入**：
 
-1. `python3 knowledge_query.py preflight --task "<算子类型 + 结构特征>" --brief`（必读），
-   读取 `read_first` 命中的卡片全文（`local_path` 可直接 Read）
-2. 按本算子命中的维度（sync/api/tiling/precision/process，对应卡片 tags）与"触发条件"
-   命中情况，用 `search --query "<短语>" --scope runbooks/` 补检并 `get` 整卡
-3. 在思考中确认：命中了哪些已知坑，对应规避策略是什么
-4. 若命中 sync/tiling 类卡片且本算子可能触发（MIX_AIC/TQue/多核/缓冲），
-   在调用 translator skill 的 prompt 中显式提示规避策略
+| 层级 | 根 | 权限 | 检索入口 |
+|---|---|---|---|
+| 固定知识 | `cannbot-knowledge` 仓（安装时默认 clone 到 `<cannbot>/vendor/cannbot-knowledge`，根路径写入项目 `.cannbot/knowledge.env`） | 只读 | `<config>/scripts/knowledge_search.sh`（封装 `knowledge-query`） |
+| 暂存知识 | 插件内置 `knowledge/` + 项目副本 `.tilelang2ascendc/knowledge/` | 内置只读、项目副本只写 `learned/` | `tilelang2ascendc-knowledge` skill |
 
-> 知识库卡片来自历史 trace，若与本轮实际行为矛盾（如平台升级后 API 恢复），
-> 以 asc-devkit 官方文档为准，并在 trace.md 走偏点中记录，供演进循环更新卡片。
+固定知识统一经 `<config>/scripts/knowledge_search.sh` 检索：脚本自动从 cwd 向上定位
+`.cannbot/knowledge.env`、校验平台、执行 `discover`、按 `path` 去重，并把结果限制在
+5 条内。**无命中或知识不可用时只打印状态、退出码 0，不阻断主流程。**
+若安装未链接该脚本，可直接调用 `knowledge-query` 的 `search`，参数同名。
+
+**Phase 0：解析平台 + 确认索引**
+
+1. 解析目标平台，优先级：任务显式给出的 SoC > `CANNBOT_KNOWLEDGE_PLATFORM`
+   （由 `.cannbot/knowledge.env` 提供）> `npu-smi info -t board -i <npu>` > 询问用户；
+   不得猜测平台。解析出的 SoC / `SOC_VERSION` 必须映射为知识仓注册 ID：
+
+   | SoC / 产品 | 平台 ID |
+   |---|---|
+   | Ascend910B / 910B1 / 910B2C / 910B4（Atlas A2） | `a2` |
+   | Ascend910C / 910_93（Atlas A3） | `a3` |
+   | Ascend950（旧称 Atlas A5） | `950` |
+   | Ascend310P | `310p` |
+   | Atlas 200I/500 A2（310B） | `310b` |
+   | 早期 Ascend910 | `910` |
+
+   无法映射时记录 `knowledge: unavailable` 并继续，不阻断主流程。
+2. 确认知识根和索引：
+
+   ```bash
+   source .cannbot/knowledge.env   # 项目级；全局安装为 $HOME/.cannbot/knowledge.env
+   export CANNBOT_KNOWLEDGE_PLATFORM="<第 1 步解析出的平台 ID>"
+   python3 "$CANNBOT_KNOWLEDGE_ROOT/.agents/skills/knowledge-query/scripts/knowledge_query.py" \
+     --knowledge-root "$CANNBOT_KNOWLEDGE_ROOT" discover
+   ```
+
+**Phase 3 Step 1：设计检索**
+
+查设计类知识，命中后读卡全文，把任务切分、流水排布、内存层级约束作为设计输入：
+
+```bash
+KS="<config>/scripts/knowledge_search.sh"
+"$KS" --query "<算子类型 + 结构特征>" --profile guides --technology tilelang \
+     --match text -k 5
+"$KS" --query "<tiling / pipeline / memory 关键词>" --profile guides --technology ascendc \
+     --match text -k 5
+"$KS" --query "<算子类型 + 优化目标>" --profile optimizations --technology ascendc \
+     --match text -k 5 --include-shared
+```
+
+TileLang guides 按平台收录（如 FlashAttention 仅 `a3`），在当前平台无命中属正常；
+需要补查缺少 `platforms` 的卡时可加 `--allow-unlocated`，结果会标注
+`platform-unverified`，采用前须自行核对适用平台。
+
+**Phase 3 Step 4：性能检索**
+
+用当前瓶颈（msprof 指标或反模式名）查优化卡，作为性能迭代候选：
+
+```bash
+"$KS" --query "<scalar bound / MTE2 bound / tiling 反模式>" --profile optimizations \
+     --technology ascendc --match text -k 5
+```
+
+**Phase 4：每次修复前按报错检索**
+
+报错原文、API 名用 `literal`；自然语言症状用 `text`。不要只在生成前查一次：
+
+```bash
+"$KS" --query "<编译/运行报错原文或 API 名>" --profile runbooks --technology ascendc \
+     --match literal -k 5
+"$KS" --query "<精度/同步/性能现象>" --profile runbooks --technology ascendc \
+     --match text -k 5
+```
+
+API 契约不确定时调用 `ascendc-api-knowledge-query` skill（复用同一索引），不要凭记忆写签名。
+
+**Phase 5：性能分析后**
+
+用实测瓶颈查 `optimizations` 与 `runbooks/performance`，作为优化建议输入。
+
+**暂存知识检索（Phase 3/4 各一次）**
+
+```bash
+python3 "<config>/skills/tilelang2ascendc-knowledge/scripts/knowledge_store.py" query \
+  --project-root "<project>" --builtin-root "<config>/knowledge" \
+  --category learned --text "<sync/tiling/precision 等关键词>" --limit 5
+```
+
+**使用规则**
+
+- 读命中卡全文，核对 `platforms`、`status`、适用条件和失效边界；命中 sync/tiling 类
+  且本算子可能触发（MIX_AIC/TQue/多核/缓冲）时，在 translator prompt 中显式提示规避策略。
+- 每个检索点最多 3 次固定知识查询，注入正文不超过 5 张卡。
+- 无命中记录 `knowledge: no-hit`，不得编造知识卡，也不得用旧 `search/okf.index.json`
+  或 `/home/asc-gen-knowledge` 替代。
+
+> 固定知识是权威来源；若与本轮实际行为矛盾（如平台升级后 API 恢复），以 asc-devkit
+> 官方文档为准，并在 trace.md 走偏点中记录。知识不可用（`discover` 失败、索引缺失、
+> 技能缺失）时记录 `knowledge: unavailable` 并继续主流程，不阻断算子生成。
 
 ## 关键限制
 
@@ -511,7 +595,8 @@ max_p_retries = 3      # 性能迭代预算上限
 首轮（tl_iteration == 0）执行一次性设计步骤，后续迭代不再重复：
 
 1. **Block 层级设计**：调用 `tilelang2ascend-tilelang-designer` skill，生成 `{output_dir}/design/block_level/`
-   - Step 1a-1d: 技术约束检测 + 编程模式决策 + 信息收集 + 生成 block_level/ 骨架
+   - Step 1a-1d: 技术约束检测 + 编程模式决策 + 信息收集 + 生成 block_level/ 骨架；
+     设计前先执行「知识检索」Phase 3 Step 1 的 guides/optimizations 查询
    - Step 1e: 设计期性能初检（反模式扫描 + 算子类型对应的优化范围确认）
    - Skill 依赖: `tilelang-op-design`（约束/决策/信息收集）、`tilelang-perf-optimization`（性能反模式）
 2. **Tile 层级设计**：调用 `tilelang2ascend-tilelang-designer` skill，生成 `{output_dir}/design/tile_level/`
@@ -603,6 +688,7 @@ while tl_iteration < max_tl_iterations:
   4b 基线采集: msprof 分别测 TileLang / reference kernel 时间
      → perf_tuning/baseline.json；geomean ≥ 0.6 → 达标
   4c 迭代优化: while p_retry < max_p_retries:
+     每轮先用当前瓶颈执行「知识检索」Phase 3 Step 4 的 optimizations 查询
      以 PERF_DESIGN.md「性能迭代待验证清单」为强制种子
      识别优化点（ORDER-PLAN）→ 逐项实施（每次 Edit 只改
      一个点，精度复验不过禁止计入收益）→ msprof 复测
@@ -800,6 +886,7 @@ D 类 → 进入 4.5D (D 类精度修复清单, 最多 12 次)
 
 ```
 [A1] 🛑 查阅 asc-devkit 对应 API 文档，确定错误根因。此步骤不可跳过。
+     先用「知识检索」Phase 4 查询 runbooks：编译/运行报错原文用 literal，症状描述用 text。
      如果是编译错误：查阅 asc-devkit/docs/zh/api/ 中对应 API 的精确文档路径，确认签名、参数、dtype 支持矩阵。
      如果是运行时崩溃/segfault：查阅 asc-devkit/examples/ 中对应模式的官方示例，确认正确的 API 使用模式。
      必须有明确的文档/示例查阅记录，记录查阅了哪个文件、确认了什么信息。
@@ -866,6 +953,7 @@ D 类 → 进入 4.5D (D 类精度修复清单, 最多 12 次)
 
   [D1-1] 🛑 调用 Skill "ascendc-precision-debug"，传入 output_dir + evaluate_ascendc.sh 错误输出
          等待 Skill 返回诊断结论和修复建议。此步骤不可跳过。
+         调用前先用「知识检索」Phase 4 以精度现象查询 runbooks（无命中则继续）。
   [D1-2] 🛑 仅在 [D1-1] 返回修复建议后，才允许 Edit/Write 修改 kernel/ 代码
   [D1-3] 运行 evaluate_ascendc.sh
   [D1-4] 如果 PASS → Phase 4 成功，进入 Phase 5
@@ -1034,7 +1122,7 @@ Phase 5 完成后，必须验证 `{output_dir}/performance.json`：
 
 **传入**：`output_dir` 目录路径、各阶段执行结果信息
 
-**产出**：`{output_dir}/trace.md` + 共享知识库更新（runbooks/ 新卡或更新 + 逐层 index.md + 检索索引重建 + log + 演进报告）
+**产出**：`{output_dir}/trace.md` + 项目暂存知识更新（`.tilelang2ascendc/knowledge/learned/` 新卡或更新 + `learned/index.md` 重建 + 演进报告）；固定知识库只读，不写入
 
 trace.md 包含内容：
 - 设计路径（ops-direct-invoke / TileLang）
@@ -1047,11 +1135,15 @@ trace.md 包含内容：
 - TileLang 路径必须包含 3.5 性能迭代摘要：基线 geomean、最终 geomean、p_retry 轮数、已实施优化点列表；合法跳过时记录 SKIPPED.md 中的原因与对照实验证据
 
 知识演进要点：
-- 阅读原文 → 检索去重（knowledge-query preflight/search，禁自维护索引）→
-  按 ops-knowledge-ingest 规则撰写/更新 OKF 卡（runbooks/field_notes|optimization/）→
-  三件套（逐层 index.md + knowledge_query build / 图谱增量 + log）→ 演进报告
+- 阅读 trace.md → 先查项目暂存库 `learned/`，再查固定知识库（`knowledge-query`）去重 →
+  用 `tilelang2ascendc-knowledge` 的 `record` 写入项目副本
+  `.tilelang2ascendc/knowledge/learned/<slug>.md`（`status: draft`）→
+  自动重建 `learned/index.md` → 输出演进报告
 - 只沉淀**通用**知识：算子特异细节并入同根因通用条目，不单独成卡
-- 演进失败不阻塞主流程：记录失败原因，与最终结果一并汇报
+- 不自动写入插件源码仓库，更不写入 `cannbot-knowledge`；稳定后由人工执行 `promote`
+  并走插件仓库 / 知识仓评审
+- 演进失败或知识不可用不阻塞主流程：在 trace.md 记录 `knowledge_writeback: skipped`
+  及原因，与最终结果一并汇报
 - 若 trace.md 无新增教训（如一次通过且无走偏点），演进报告如实记录"无新增"即可
 
 ---

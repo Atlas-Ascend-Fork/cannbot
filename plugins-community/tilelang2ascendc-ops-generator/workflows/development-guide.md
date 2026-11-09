@@ -27,7 +27,7 @@ tilelang2ascendc-kernel-generator Subagent
     ├── Phase 5: 性能分析 (ops-profiling --compare 模式)
     ├── Phase 6: 全量验证
     └── Phase 7: Trace 记录 + 知识演进 (tilelang2ascend-trace-recorder:
-                trace.md → 经 ops-knowledge-ingest 路由写入共享知识库 runbooks/)
+                trace.md → 经 tilelang2ascendc-knowledge 写入项目暂存库 learned/)
 ```
 
 ## Phase 3-4 迭代机制
@@ -91,16 +91,28 @@ generation → AST退化检测 → [通过] → 功能验证 → [通过] → �
 
 ## 知识演进闭环
 
+知识分两层，写入边界不同：
+
+| 层级 | 根 | 权限 | 使用方式 |
+|---|---|---|---|
+| 固定知识 | `cannbot-knowledge`（默认 `<cannbot>/vendor/cannbot-knowledge`） | 只读 | `<config>/scripts/knowledge_search.sh`（封装 `knowledge-query`） |
+| 暂存知识 | 插件 `knowledge/` + 项目 `.tilelang2ascendc/knowledge/` | 项目副本只写 `learned/` | 经 `tilelang2ascendc-knowledge` 的 `query` / `record` |
+
+- 固定知识按阶段检索，不再在生成前一次性批量加载：
+  - Phase 3 Step 1：`guides`（tilelang + ascendc）与 `optimizations`，作为设计输入；
+  - Phase 3 Step 4 / Phase 5：按实测瓶颈查 `optimizations`；
+  - Phase 4：每次修复前按报错原文（`literal`）或症状（`text`）查 `runbooks`，
+    API 契约不确定时调用 `ascendc-api-knowledge-query`。
+  - 每个检索点最多 3 次查询、注入不超过 5 张卡；无命中记录 `knowledge: no-hit`。
+
 - 每个任务完成后，`tilelang2ascend-trace-recorder` 在 Phase 7 从 trace.md 的走偏点/
-  行为轮次/关键错误中提取可复用经验，经 `ops-knowledge-ingest` 标准路由按
-  OKF (okf.v1) 格式写入共享知识库（`$CANNBOT_KNOWLEDGE_ROOT`，当前
-  `/home/asc-gen-knowledge`）的 `runbooks/` 树（field_notes/optimization 子树；
-  维度分类 sync/api/tiling/precision/process 走 tags，不建目录），
-  并同步三件套（逐层 index.md + 检索索引/图谱重建 + log）。
-- 后续任务的 Phase 0 与 Phase 4 转译前经 `knowledge-query` skill 检索知识库
-  （preflight/search，禁自维护索引），命中"触发条件"即规避已知坑，
-  从而降低迭代轮数、提升生成质量。
-- 知识库卡片可随平台升级失效；失效时以官方文档为准并标记 superseded。
+  行为轮次/关键错误中提取可复用经验，先查项目 `learned/` 与固定知识去重，再用
+  `tilelang2ascendc-knowledge` 的 `record` 写入
+  `.tilelang2ascendc/knowledge/learned/<slug>.md`，自动重建 `learned/index.md`。
+- 自动写回只发生在项目暂存副本；不自动写插件源码仓，更不自动写 `cannbot-knowledge`。
+  稳定后由人工执行 `promote` 生成评审清单，再提 PR。
+- 知识不可用时记录 `knowledge: unavailable` / `knowledge_writeback: skipped` 并继续
+  主流程；卡片可随平台升级失效，失效时以官方文档为准。
 
 ## 关键约束
 

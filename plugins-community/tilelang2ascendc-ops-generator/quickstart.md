@@ -19,8 +19,9 @@ Phase 4: AscendC 生成与验证   (分支)
 Phase 5: 性能分析            (ops-profiling --compare 模式)
 Phase 6: 全量验证
 Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md →
-                                经 ops-knowledge-ingest 路由按 OKF 格式写入共享知识库
-                                runbooks/，供后续任务经 knowledge-query 检索复用)
+                                经 tilelang2ascendc-knowledge 的 record 写入项目暂存库
+                                .tilelang2ascendc/knowledge/learned/，供后续任务与
+                                固定知识 cannbot-knowledge 一起检索)
 ```
 
 ### 算子分类路由
@@ -91,7 +92,7 @@ python -c 'import tilelang, torch, torch_npu; print(tilelang.__file__)'
 | CodeArts | `codearts` | ✅ | ✅ | `.codeartsdoer/{skills,agents,hooks}/` |
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git ~/cannbot
+git clone https://gitcode.com/cann/cannbot.git ~/cannbot
 
 # 缺省：装到当前目录（在算子工程根执行）
 cd /path/to/your/operator-project
@@ -102,8 +103,14 @@ bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh project 
 bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh project codex --target /path/to/your/operator-project
 ```
 
-> 本插件的 19 个 Skill 全部来自子模块 `vendor/cannbot-skills`，因此克隆必须带 `--recurse-submodules`；
-> 若已经克隆过仓库，先执行 `git submodule update --init --recursive`。
+> 本插件共 18 个 Skill：17 个来自子模块 `vendor/cannbot-skills`，1 个
+> （`tilelang2ascendc-knowledge`）为插件本地。普通 `git clone` 即可，`init.sh` 会自动执行
+> `git submodule update --init --recursive vendor/cannbot-skills`；离线或 CI 场景仍可使用
+> `git clone --recurse-submodules ...` 获得完全可复现的 checkout。
+>
+> 安装时会默认把 `cannbot-knowledge` clone 到 `<cannbot>/vendor/cannbot-knowledge`，
+> 并调用知识仓安装器构建索引、写入项目 `.cannbot/knowledge.env`。知识不可用时安装继续，
+> 只标记为 degraded；需要严格失败时加 `--strict-knowledge`。
 >
 > 项目级安装把 skill / agent / 配置写入目标目录；全局级写入各工具的用户配置根（见下表），此时目标目录参数会被忽略。
 > 安装结束会逐个校验依赖 Skill 是否可达（缺失或断链会报错并以非零码退出），全部通过才返回 0。
@@ -122,6 +129,31 @@ bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh project 
 | Copilot | `~/.copilot` |
 | CodeArts | `~/.codeartsdoer` |
 
+### 知识库（固定 + 暂存）
+
+安装器区分两套知识，读取和写入边界不同：
+
+| 知识 | 默认位置 | 权限 | 写入方式 |
+|---|---|---|---|
+| 固定知识 | `<cannbot>/vendor/cannbot-knowledge` | 只读 | 只通过人工 PR 更新，安装器不写 |
+| 插件暂存知识 | `<plugin>/knowledge` → `<config>/knowledge` | 内置只读 | 随插件版本发布 |
+| 项目暂存副本 | `<project>/.tilelang2ascendc/knowledge/` | 只写 `learned/` | Phase 7 经 `tilelang2ascendc-knowledge` 记录 |
+
+安装选项：
+
+| 选项 | 作用 |
+|---|---|
+| `--knowledge-root <path>` | 使用已有知识仓，或在该路径 clone 新 checkout |
+| `--no-knowledge` | 跳过固定知识安装，仅保留插件暂存知识 |
+| `--knowledge-update` | 显式 `git pull --ff-only` 更新已存在的知识仓（默认不更新） |
+| `--knowledge-platform <id>` | 写入 `.cannbot/knowledge.env` 的默认平台；必须是知识仓注册值（如 `a2`、`a3`、`950`），Ascend 910B 对应 `a2` |
+| `--strict-knowledge` | 固定/暂存知识不可用时以退出码 2 失败 |
+
+固定知识的检索 Skill 由知识仓安装器以 **consumer** 模式安装
+（`knowledge-query` + `ascendc-api-knowledge-query`）。需要向知识仓贡献时，在
+`vendor/cannbot-knowledge` 中单独执行 `bash install.sh <tool> <project> contributor`。
+插件安装器不会自动写入 `cannbot-knowledge`。
+
 #### Claude Code（推荐）
 
 **首选：Plugin Marketplace（一键安装）**
@@ -137,7 +169,7 @@ bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh project 
 **备选：init.sh 脚本**
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git
+git clone https://gitcode.com/cann/cannbot.git
 cd cannbot/plugins-community/tilelang2ascendc-ops-generator
 bash init.sh project claude     # 项目级（当前目录）
 bash init.sh global claude      # 全局级
@@ -149,7 +181,7 @@ bash init.sh global claude      # 全局级
 <summary>OpenCode</summary>
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git
+git clone https://gitcode.com/cann/cannbot.git
 cd cannbot/plugins-community/tilelang2ascendc-ops-generator
 bash init.sh project opencode                  # 项目级（默认，当前目录）
 bash init.sh project opencode /path/to/proj    # 项目级，指定目录
@@ -162,7 +194,7 @@ bash init.sh global opencode                   # 全局级
 <summary>Codex</summary>
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git ~/cannbot
+git clone https://gitcode.com/cann/cannbot.git ~/cannbot
 cd /path/to/your/operator-project
 bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh project codex
 bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh global codex    # 全局级
@@ -178,7 +210,7 @@ bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh global c
 <summary>DeepSeek Harness（DSH）</summary>
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git ~/cannbot
+git clone https://gitcode.com/cann/cannbot.git ~/cannbot
 cd /path/to/your/operator-project
 bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh project dsh
 bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh global dsh     # 全局级
@@ -198,7 +230,7 @@ bash ~/cannbot/plugins-community/tilelang2ascendc-ops-generator/init.sh global d
 仅支持项目级安装。
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git
+git clone https://gitcode.com/cann/cannbot.git
 cd cannbot/plugins-community/tilelang2ascendc-ops-generator
 bash init.sh project trae
 ```
@@ -211,7 +243,7 @@ bash init.sh project trae
 <summary>Cursor</summary>
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git
+git clone https://gitcode.com/cann/cannbot.git
 cd cannbot/plugins-community/tilelang2ascendc-ops-generator
 bash init.sh project cursor                    # 项目级
 bash init.sh project cursor /path/to/proj      # 项目级，指定目录
@@ -226,7 +258,7 @@ bash init.sh global cursor                     # 全局级
 <summary>Copilot</summary>
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git
+git clone https://gitcode.com/cann/cannbot.git
 cd cannbot/plugins-community/tilelang2ascendc-ops-generator
 bash init.sh project copilot                   # 项目级
 bash init.sh project copilot /path/to/proj     # 项目级，指定目录
@@ -241,7 +273,7 @@ bash init.sh global copilot                    # 全局级
 <summary>CodeArts</summary>
 
 ```bash
-git clone --recurse-submodules https://gitcode.com/cann/cannbot.git
+git clone https://gitcode.com/cann/cannbot.git
 cd cannbot/plugins-community/tilelang2ascendc-ops-generator
 bash init.sh project codearts                  # 项目级
 bash init.sh project codearts /path/to/proj    # 项目级，指定目录
@@ -302,7 +334,7 @@ CANNBot 会自动调度 tilelang2ascendc-kernel-generator 按 7 Phase 流程执�
 4. 设计表达（简单算子走 ops-direct-invoke 架构设计 + 设计串讲，复杂算子做 TileLang 设计）
 5. AscendC 生成与验证（简单算子走开发实现 + 代码审查 + 修复循环，复杂算子走转译 + 迭代验证）
 6. 性能分析（对比 reference 和 ascendc）
-7. 全量用例验证 + 生成 trace.md 并完成知识演进（共享知识库 runbooks/ 更新）
+7. 全量用例验证 + 生成 trace.md 并完成知识演进（项目暂存库 learned/ 更新，固定知识库只读）
 
 #### 场景二：批量性能测试
 

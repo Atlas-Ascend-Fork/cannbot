@@ -6,6 +6,11 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 
 ### Fixed
 
+- `tilelang2ascendc-ops-generator` now maps the resolved SoC to a registered `cannbot-knowledge`
+  platform ID before querying (for example Ascend910B → `a2`), and validates `--knowledge-platform`
+  during installation instead of writing an unknown value into `knowledge.env` and failing later at
+  retrieval time.
+
 - Restored the original TileLang AGENTS.md, role adapters and workflows directory verbatim. Migration now adapts only Skill source resolution and installation; no extra orchestration Skill or workflow rewrite is introduced.
 
 - TileLang source installation now defaults to the plugin directory instead of the CANNBot repository root, preserving its AGENTS.md on repeated installs. Explicit project paths remain supported.
@@ -13,6 +18,18 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 ### Added
 
 - Migrated `torch-compile` orchestration, its npugraph_ex Agent, SessionStart Hook and evaluations from cannbot-skills. The unified installer links seven shared `graph/` Skills through `plugin-sources.json`; npm builds bundle them, and the Claude marketplace resolves the Skill pack from cannbot-skills. Shared Skill source remains in cannbot-skills.
+
+- `tilelang2ascendc-ops-generator` now retrieves `cannbot-knowledge` by phase instead of a single
+  pre-generation pass: design guides and optimizations in Phase 3, bottleneck-driven optimizations
+  in the performance loops, and runbooks/API cards at each Phase 4 failure. A linked
+  `knowledge_search.sh` wrapper resolves the project knowledge env and platform, deduplicates hits,
+  and degrades to `no-hit` without blocking the workflow.
+
+- `tilelang2ascendc-ops-generator` now installs a fixed, read-only `cannbot-knowledge` checkout by
+  default under `vendor/cannbot-knowledge` (override with `--knowledge-root`), auto-initializes the
+  `vendor/cannbot-skills` submodule, and mounts a separate plugin-local OKF v0.2 staging bundle.
+  Phase 7 records drafts only in the project copy's `learned/` directory; promotion and writes to
+  `cannbot-knowledge` remain manual.
 
 - `model-recommend-infer-optimize` now declares `dependencies: ["model-recommend-skills"]`, and the marketplace registers that
   Skills pack as a `git-subdir` source (`cannbot-skills` `community/model`) pinned to the same commit as the

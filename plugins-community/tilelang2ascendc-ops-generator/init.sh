@@ -69,7 +69,14 @@ Arguments:
                Can also be passed as --target <dir>. Ignored for global level.
 
 Options:
-  --help     - Show this help message
+  --help                       - Show this help message
+  --knowledge-root <path>      - Use an existing (or clone a new) cannbot-knowledge
+                                 checkout at <path>; default: <repo>/vendor/cannbot-knowledge
+  --no-knowledge               - Skip fixed-knowledge installation entirely
+  --knowledge-update           - Explicitly fast-forward an existing knowledge checkout
+  --knowledge-platform <id>    - Default platform written to .cannbot/knowledge.env
+                                 (default: $CANNBOT_KNOWLEDGE_PLATFORM)
+  --strict-knowledge           - Exit 2 when fixed or staging knowledge is unavailable
 
 Examples:
   init.sh                              # Project-level, OpenCode, 当前目录
@@ -107,6 +114,14 @@ Global installation roots:
 Project root for Codex/DSH: --target / $CANNBOT_PROJECT_ROOT if set, otherwise the
 nearest .git ancestor of the current directory, otherwise the current directory.
 
+Knowledge (two independent stores):
+  Fixed    - cannbot-knowledge, cloned by default to vendor/cannbot-knowledge
+             (read-only; override with --knowledge-root)
+  Staging  - plugin knowledge/ bundle, mounted to <config>/knowledge; per-project
+             drafts go to <project>/.tilelang2ascendc/knowledge/learned/
+  If the fixed knowledge repo is unavailable the installer warns and continues;
+  use --strict-knowledge to fail instead.
+
 After installation, launch directly:
   OpenCode: opencode
   Claude:   claude
@@ -124,6 +139,24 @@ TOOL="opencode"
 TARGET_DIR=""
 TARGET_GIVEN=0
 
+# --- Knowledge configuration (fixed read-only knowledge + plugin staging bundle) ---
+KNOWLEDGE_ROOT_ARG=""
+KNOWLEDGE_ROOT_EXPLICIT=0
+KNOWLEDGE_DISABLED=0
+KNOWLEDGE_UPDATE=0
+KNOWLEDGE_PLATFORM="${CANNBOT_KNOWLEDGE_PLATFORM:-}"
+STRICT_KNOWLEDGE=0
+
+KNOWLEDGE_DIR=""
+KNOWLEDGE_STATUS="absent"
+KNOWLEDGE_INDEX=""
+KNOWLEDGE_INDEX_STATE="absent"
+KNOWLEDGE_COMMIT=""
+KNOWLEDGE_SKILLS_STATUS="absent"
+STAGING_STATUS="absent"
+STAGING_PROJECT_DIR=""
+STAGING_BUILTIN_DIR=""
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$SCRIPT_DIR"
 # 调用时的原始工作目录：project 级 CLAUDE.md/AGENTS.md 安装在此处；
@@ -131,13 +164,15 @@ PLUGIN_ROOT="$SCRIPT_DIR"
 INVOCATION_DIR="$PWD"
 # Agents: use local agents/ directory (migrated with plugin)
 LOCAL_AGENT_ROOT="$PLUGIN_ROOT/agents"
-# Skills: 统一由子模块 vendor/cannbot-skills 提供。三个来源根：
+# Skills: 统一由子模块 vendor/cannbot-skills 提供。四个来源根：
 #   ops/                                     — 上游官方 Skill
 #   community/ops/                           — 社区 Skill
 #   plugins-community/cannbot-knowledge/skills/ — knowledge 类 Skill（独立插件内）
+#   <plugin>/skills/                         — 插件本地 Skill（暂存知识管理等）
 # 兼容旧布局：子模块不存在时回退到仓库根的对应目录。
 REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd)"
 SKILLS_VENDOR="$REPO_ROOT/vendor/cannbot-skills"
+SKILL_ROOT_LOCAL="$PLUGIN_ROOT/skills"
 if [ -d "$SKILLS_VENDOR/ops" ]; then
     SKILL_ROOT_OPS="$SKILLS_VENDOR/ops"
     SKILL_ROOT_COMMUNITY="$SKILLS_VENDOR/community/ops"
@@ -178,7 +213,7 @@ print(' '.join(filtered))
 " 2>/dev/null)
   if [ -z "$INCLUDED_SKILLS" ]; then
     warn "Failed to parse skill dependencies from AGENTS.md, using fallback"
-    INCLUDED_SKILLS="npu-arch ascendc-api-best-practices ascendc-docs-search ascendc-tiling-design ascendc-crash-debug tilelang2ascend-case-simplifier tilelang2ascend-operator-project-init ops-profiling ascendc-precision-debug tilelang2ascend-precision-tuning tilelang2ascend-tilelang-designer tilelang2ascend-translator tilelang2ascend-trace-recorder tilelang-op-design tilelang-op-develop tilelang-perf-optimization ascendc-perf-optimize knowledge-query ops-knowledge-ingest"
+    INCLUDED_SKILLS="npu-arch ascendc-api-best-practices ascendc-docs-search ascendc-tiling-design ascendc-crash-debug tilelang2ascend-case-simplifier tilelang2ascend-operator-project-init ops-profiling ascendc-precision-debug tilelang2ascend-precision-tuning tilelang2ascend-tilelang-designer tilelang2ascend-translator tilelang2ascend-trace-recorder tilelang-op-design tilelang-op-develop tilelang-perf-optimization ascendc-perf-optimize tilelang2ascendc-knowledge"
   fi
 else
   err "AGENTS.md not found at $PLUGIN_ROOT/AGENTS.md"
@@ -206,7 +241,7 @@ provision_skills_from_repo() {
         for name in $INCLUDED_SKILLS; do
             [ -n "$EXCLUDED_SKILL" ] && [ "$name" = "$EXCLUDED_SKILL" ] && continue
             echo "$name" | grep -qi "triton" && continue
-            [ -d "$SKILL_ROOT_OPS/$name" ] || [ -d "$SKILL_ROOT_COMMUNITY/$name" ] || [ -d "$SKILL_ROOT_KNOWLEDGE/$name" ] || vendor_missing="$vendor_missing $name"
+            [ -d "$SKILL_ROOT_OPS/$name" ] || [ -d "$SKILL_ROOT_COMMUNITY/$name" ] || [ -d "$SKILL_ROOT_KNOWLEDGE/$name" ] || [ -d "$SKILL_ROOT_LOCAL/$name" ] || vendor_missing="$vendor_missing $name"
         done
         [ -z "$vendor_missing" ] && return 0
         warn "skills missing in vendor/cannbot-skills:$vendor_missing (skip network provisioning)"
@@ -217,6 +252,8 @@ provision_skills_from_repo() {
         echo "$name" | grep -qi "triton" && continue
         [ -d "$SKILL_ROOT_OPS/$name" ] && continue
         [ -d "$SKILL_ROOT_COMMUNITY/$name" ] && continue
+        [ -d "$SKILL_ROOT_KNOWLEDGE/$name" ] && continue
+        [ -d "$SKILL_ROOT_LOCAL/$name" ] && continue
         need_fetch="$need_fetch $name"
     done
     [ -z "$need_fetch" ] && return 0
@@ -299,12 +336,33 @@ while [ $# -gt 0 ]; do
             TARGET_DIR="$2"; TARGET_GIVEN=1; shift 2; continue ;;
         global|project)     LEVEL="$1" ;;
         opencode|claude|codex|dsh|trae|cursor|copilot|codearts)   TOOL="$1" ;;
-        -*)  echo "Error: Unknown option '$1'. Valid options: --help, --target <dir>."; exit 1 ;;
+        --knowledge-root)
+            [ $# -ge 2 ] && [ -n "$2" ] || { echo "Error: --knowledge-root requires a directory"; exit 1; }
+            KNOWLEDGE_ROOT_ARG="$2"; KNOWLEDGE_ROOT_EXPLICIT=1; shift 2; continue ;;
+        --knowledge-root=*)
+            KNOWLEDGE_ROOT_ARG="${1#--knowledge-root=}"
+            [ -n "$KNOWLEDGE_ROOT_ARG" ] || { echo "Error: --knowledge-root requires a directory"; exit 1; }
+            KNOWLEDGE_ROOT_EXPLICIT=1 ;;
+        --no-knowledge)     KNOWLEDGE_DISABLED=1 ;;
+        --knowledge-update) KNOWLEDGE_UPDATE=1 ;;
+        --knowledge-platform)
+            [ $# -ge 2 ] && [ -n "$2" ] || { echo "Error: --knowledge-platform requires a value"; exit 1; }
+            KNOWLEDGE_PLATFORM="$2"; shift 2; continue ;;
+        --knowledge-platform=*)
+            KNOWLEDGE_PLATFORM="${1#--knowledge-platform=}"
+            [ -n "$KNOWLEDGE_PLATFORM" ] || { echo "Error: --knowledge-platform requires a value"; exit 1; } ;;
+        --strict-knowledge) STRICT_KNOWLEDGE=1 ;;
+        -*)  echo "Error: Unknown option '$1'. Valid options: --help, --target <dir>, --knowledge-root <dir>, --no-knowledge, --knowledge-update, --knowledge-platform <id>, --strict-knowledge."; exit 1 ;;
         *)   [ "$TARGET_GIVEN" -eq 0 ] || { echo "Error: unexpected extra argument '$1'"; exit 1; }
              TARGET_DIR="$1"; TARGET_GIVEN=1 ;;
     esac
     shift
 done
+
+if [ "$KNOWLEDGE_DISABLED" -eq 1 ] && [ "$KNOWLEDGE_ROOT_EXPLICIT" -eq 1 ]; then
+    echo "Error: --no-knowledge cannot be combined with --knowledge-root"
+    exit 1
+fi
 
 if [ "$LEVEL" = "global" ] && [ "$TARGET_GIVEN" -eq 1 ]; then
     warn "global level ignores the target directory; installing into the user config root"
@@ -333,6 +391,15 @@ if { [ "$TOOL" = "codex" ] || [ "$TOOL" = "dsh" ]; } && [ "$TARGET_GIVEN" -eq 0 
     else
         PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
     fi
+fi
+
+# 子模块自动初始化：用户按文档执行普通 git clone 即可，不需要感知 submodule。
+# 失败时保留 provision_skills_from_repo() 的原有仓库兜底逻辑。
+if [ ! -d "$SKILLS_VENDOR/ops" ] \
+   && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    info "Initializing vendor/cannbot-skills submodule..."
+    git -C "$REPO_ROOT" submodule update --init --recursive vendor/cannbot-skills \
+        || warn "submodule init failed, falling back to skills repo provisioning"
 fi
 
 provision_skills_from_repo
@@ -431,6 +498,270 @@ is_installer_generated_file() {
     [ -f "$1" ] && grep -q "This is the Codex custom-agent adapter" "$1" 2>/dev/null
 }
 
+# --- Knowledge helpers -------------------------------------------------------
+# 固定知识（cannbot-knowledge，只读）与插件暂存知识（plugin/knowledge，项目内可写）
+# 是两套独立的知识来源，安装期分别处理，运行期分别检索。
+
+KNOWLEDGE_REPO_URL="${CANNBOT_KNOWLEDGE_REPO_URL:-https://gitcode.com/cann/cannbot-knowledge.git}"
+
+if [ "$KNOWLEDGE_ROOT_EXPLICIT" -eq 1 ]; then
+    case "$KNOWLEDGE_ROOT_ARG" in
+        "~"/*) KNOWLEDGE_DIR="$HOME/${KNOWLEDGE_ROOT_ARG#\~/}" ;;
+        /*)    KNOWLEDGE_DIR="$KNOWLEDGE_ROOT_ARG" ;;
+        *)     KNOWLEDGE_DIR="$PWD/$KNOWLEDGE_ROOT_ARG" ;;
+    esac
+else
+    KNOWLEDGE_DIR="$REPO_ROOT/vendor/cannbot-knowledge"
+fi
+
+knowledge_repo_ready() {
+    [ -d "$1/knowledge" ] && [ -f "$1/governance/schemas/registries.yaml" ]
+}
+
+# 读取 registries.yaml 的 platforms 顶层键；不依赖 PyYAML，安装前即可使用。
+knowledge_platform_registered() {
+    local registry="$1" platform="$2"
+    [ -f "$registry" ] || return 1
+    awk '
+        /^platforms:[[:space:]]*$/ { in_platforms = 1; next }
+        in_platforms && /^[^[:space:]]/ { in_platforms = 0 }
+        in_platforms && /^  [^[:space:]].*:/ {
+            line = $0
+            sub(/^  /, "", line)
+            sub(/:.*/, "", line)
+            gsub(/"/, "", line)
+            print line
+        }
+    ' "$registry" | grep -Fxq -- "$platform"
+}
+
+# 只补自己的软链：目标已存在且指向别处时保留用户内容。
+link_knowledge_skill() {
+    local src="$1" dst="$2" current
+    if [ -L "$dst" ]; then
+        if [ ! -e "$dst" ]; then
+            # 断链（常见于知识仓被移动或重装），可以安全重建。
+            ln -sfn "$src" "$dst"
+            return 0
+        fi
+        current="$(readlink -f "$dst" 2>/dev/null || true)"
+        [ "$current" = "$(readlink -f "$src" 2>/dev/null || echo "$src")" ] && return 0
+        warn "保留已存在条目（非本安装器创建）: $dst"
+        return 0
+    fi
+    [ ! -e "$dst" ] || { warn "保留已存在条目（非本安装器创建）: $dst"; return 0; }
+    mkdir -p "$(dirname "$dst")"
+    ln -s "$src" "$dst"
+}
+
+write_knowledge_env() {
+    local target="$1" root="$2" platform="$3" existing current_platform
+    mkdir -p "$(dirname "$target")"
+    if [ -f "$target" ]; then
+        existing="$(sed -n 's/^[[:space:]]*\(export[[:space:]]*\)\{0,1\}CANNBOT_KNOWLEDGE_ROOT=//p' "$target" | tail -n 1 | tr -d "'\"")"
+        current_platform="$(sed -n 's/^[[:space:]]*\(export[[:space:]]*\)\{0,1\}CANNBOT_KNOWLEDGE_PLATFORM=//p' "$target" | tail -n 1 | tr -d "'\"")"
+        if [ -n "$existing" ] && [ "$existing" != "$root" ] && [ "$KNOWLEDGE_ROOT_EXPLICIT" -eq 0 ]; then
+            warn "保留已有知识库绑定（根路径不同）: $target"
+            return 0
+        fi
+        # 默认重复安装不重写；显式 --knowledge-root / --knowledge-platform 才更新绑定。
+        if [ "$existing" = "$root" ] \
+           && { [ "$KNOWLEDGE_ROOT_EXPLICIT" -eq 0 ] \
+                || [ -z "$platform" ] \
+                || [ "$current_platform" = "$platform" ]; }; then
+            info "knowledge env already bound: $target"
+            return 0
+        fi
+    fi
+    {
+        printf 'export CANNBOT_KNOWLEDGE_ROOT=%q\n' "$root"
+        printf 'export CANNBOT_KNOWLEDGE_PROFILE=%q\n' "consumer"
+        [ -n "$platform" ] && printf 'export CANNBOT_KNOWLEDGE_PLATFORM=%q\n' "$platform"
+    } > "$target"
+    ok "knowledge env → $target"
+}
+
+setup_fixed_knowledge() {
+    if [ "$KNOWLEDGE_DISABLED" -eq 1 ]; then
+        KNOWLEDGE_STATUS="disabled"
+        KNOWLEDGE_SKILLS_STATUS="disabled"
+        KNOWLEDGE_INDEX_STATE="disabled"
+        info "Fixed knowledge disabled (--no-knowledge)"
+        return 0
+    fi
+
+    local clone_ok=false install_ok=false stage log skill src canonical
+    if knowledge_repo_ready "$KNOWLEDGE_DIR"; then
+        info "Using fixed knowledge: $KNOWLEDGE_DIR"
+    elif [ -e "$KNOWLEDGE_DIR" ]; then
+        if [ "$KNOWLEDGE_ROOT_EXPLICIT" -eq 1 ]; then
+            err "Not a cannbot-knowledge checkout: $KNOWLEDGE_DIR"
+            exit 2
+        fi
+        warn "Existing path is not a cannbot-knowledge checkout: $KNOWLEDGE_DIR"
+        KNOWLEDGE_STATUS="invalid"
+        [ "$STRICT_KNOWLEDGE" -eq 1 ] && exit 2
+        return 0
+    else
+        command -v git >/dev/null 2>&1 || {
+            warn "git not available; fixed knowledge unavailable"
+            KNOWLEDGE_STATUS="degraded"
+            [ "$STRICT_KNOWLEDGE" -eq 1 ] && exit 2
+            return 0
+        }
+        mkdir -p "$(dirname "$KNOWLEDGE_DIR")"
+        info "Cloning cannbot-knowledge → $KNOWLEDGE_DIR"
+        if git clone --depth 1 "$KNOWLEDGE_REPO_URL" "$KNOWLEDGE_DIR" >/dev/null 2>&1; then
+            clone_ok=true
+        else
+            rm -rf "$KNOWLEDGE_DIR"
+            warn "cannbot-knowledge clone failed; knowledge features will be degraded"
+            KNOWLEDGE_STATUS="degraded"
+            [ "$STRICT_KNOWLEDGE" -eq 1 ] && exit 2
+            return 0
+        fi
+    fi
+
+    knowledge_repo_ready "$KNOWLEDGE_DIR" || {
+        warn "Invalid cannbot-knowledge checkout: $KNOWLEDGE_DIR"
+        KNOWLEDGE_STATUS="invalid"
+        [ "$STRICT_KNOWLEDGE" -eq 1 ] && exit 2
+        return 0
+    }
+
+    if [ "$KNOWLEDGE_UPDATE" -eq 1 ] && [ "$clone_ok" != true ]; then
+        if git -C "$KNOWLEDGE_DIR" pull --ff-only >/dev/null 2>&1; then
+            ok "Fixed knowledge fast-forwarded"
+        else
+            warn "cannbot-knowledge update failed; using current checkout"
+        fi
+    fi
+
+    KNOWLEDGE_COMMIT="$(git -C "$KNOWLEDGE_DIR" rev-parse HEAD 2>/dev/null || true)"
+    KNOWLEDGE_INDEX="$KNOWLEDGE_DIR/artifacts/indexes/knowledge.sqlite3"
+
+    # 显式指定平台时按知识仓注册值校验，避免把非法值写进 knowledge.env 后才在检索期失败。
+    # 不依赖 PyYAML：首次安装时依赖由知识仓安装器稍后补齐。
+    if [ -n "$KNOWLEDGE_PLATFORM" ] \
+       && ! knowledge_platform_registered "$KNOWLEDGE_DIR/governance/schemas/registries.yaml" "$KNOWLEDGE_PLATFORM"; then
+        err "Unknown knowledge platform: $KNOWLEDGE_PLATFORM"
+        exit 2
+    fi
+
+    # 知识仓安装器在临时项目目录执行：只借用它安装依赖、建索引、校验知识根，
+    # 不向真实工程注入 prompt 块（插件自己的 AGENTS.md 负责编排与检索路由）。
+    stage="$(mktemp -d "${TMPDIR:-/tmp}/cannbot-knowledge.XXXXXX")"
+    log="$(mktemp "${TMPDIR:-/tmp}/cannbot-knowledge-install.XXXXXX.log")"
+    case "$TOOL" in
+        dsh|codearts) set -- claude ;;
+        *)            set -- "$TOOL" ;;
+    esac
+    if bash "$KNOWLEDGE_DIR/install.sh" "$1" "$stage" consumer \
+        --knowledge-root "$KNOWLEDGE_DIR" \
+        --skip-repository-update \
+        ${KNOWLEDGE_PLATFORM:+--platform "$KNOWLEDGE_PLATFORM"} >"$log" 2>&1; then
+        install_ok=true
+    else
+        warn "cannbot-knowledge installer failed; knowledge features may be degraded"
+        tail -n 3 "$log" 2>/dev/null | sed 's/^/    /' || true
+    fi
+    rm -rf "$stage" "$log"
+
+    if [ -f "$KNOWLEDGE_INDEX" ]; then
+        KNOWLEDGE_INDEX_STATE="ready"
+    else
+        KNOWLEDGE_INDEX_STATE="missing"
+        warn "Knowledge search index missing: $KNOWLEDGE_INDEX"
+    fi
+    if [ "$install_ok" = true ] && [ "$KNOWLEDGE_INDEX_STATE" = "ready" ]; then
+        KNOWLEDGE_STATUS="ready"
+    else
+        KNOWLEDGE_STATUS="degraded"
+    fi
+
+    # 固定知识 Skill 由知识仓提供，插件不复制其实现。
+    for skill in knowledge-query ascendc-api-knowledge-query; do
+        src="$KNOWLEDGE_DIR/.agents/skills/$skill"
+        [ -d "$src" ] || { warn "knowledge skill missing in checkout: $skill"; continue; }
+        if [ "$LEVEL" = "global" ]; then
+            link_knowledge_skill "$src" "$SKILL_DISCOVERY_ROOT/$skill"
+        else
+            canonical="$TARGET_DIR/.agents/skills/$skill"
+            link_knowledge_skill "$src" "$canonical"
+            if [ "$SKILL_DISCOVERY_ROOT" != "$TARGET_DIR/.agents/skills" ]; then
+                link_knowledge_skill "$canonical" "$SKILL_DISCOVERY_ROOT/$skill"
+            fi
+        fi
+    done
+
+    KNOWLEDGE_SKILLS_STATUS="ready"
+    for skill in knowledge-query ascendc-api-knowledge-query; do
+        [ -e "$SKILL_DISCOVERY_ROOT/$skill" ] || KNOWLEDGE_SKILLS_STATUS="degraded"
+    done
+
+    # 固定知识检索封装：链接到配置根，供各 Phase 统一调用。
+    if [ -f "$PLUGIN_ROOT/scripts/knowledge_search.sh" ]; then
+        link_knowledge_skill "$PLUGIN_ROOT/scripts/knowledge_search.sh" \
+            "$CONFIG_ROOT/scripts/knowledge_search.sh"
+    fi
+
+    if [ "$LEVEL" = "global" ]; then
+        write_knowledge_env "$HOME/.cannbot/knowledge.env" "$KNOWLEDGE_DIR" "$KNOWLEDGE_PLATFORM"
+    else
+        write_knowledge_env "$TARGET_DIR/.cannbot/knowledge.env" "$KNOWLEDGE_DIR" "$KNOWLEDGE_PLATFORM"
+    fi
+
+    if [ "$KNOWLEDGE_STATUS" != "ready" ]; then
+        warn "Fixed knowledge status: $KNOWLEDGE_STATUS"
+        [ "$STRICT_KNOWLEDGE" -eq 1 ] && exit 2
+    fi
+    return 0
+}
+
+setup_staging_knowledge() {
+    STAGING_BUILTIN_DIR="$PLUGIN_ROOT/knowledge"
+    if [ ! -f "$STAGING_BUILTIN_DIR/index.md" ]; then
+        warn "Plugin staging knowledge bundle missing: $STAGING_BUILTIN_DIR"
+        STAGING_STATUS="degraded"
+        [ "$STRICT_KNOWLEDGE" -eq 1 ] && exit 2
+        return 0
+    fi
+
+    # 只读挂载：<config>/knowledge → 插件内置 bundle
+    if [ -L "$CONFIG_ROOT/knowledge" ]; then
+        if [ "$(readlink -f "$CONFIG_ROOT/knowledge" 2>/dev/null || true)" != \
+             "$(realpath "$STAGING_BUILTIN_DIR")" ]; then
+            warn "保留已存在条目（非本安装器创建）: $CONFIG_ROOT/knowledge"
+        fi
+    elif [ -e "$CONFIG_ROOT/knowledge" ]; then
+        warn "保留已存在目录（非本安装器创建）: $CONFIG_ROOT/knowledge"
+    else
+        mkdir -p "$CONFIG_ROOT"
+        ln -sfn "$(realpath "$STAGING_BUILTIN_DIR")" "$CONFIG_ROOT/knowledge"
+        ok "staging knowledge → $CONFIG_ROOT/knowledge"
+    fi
+
+    if [ "$LEVEL" = "project" ]; then
+        if python3 "$PLUGIN_ROOT/skills/tilelang2ascendc-knowledge/scripts/knowledge_store.py" \
+            initialize --project-root "$TARGET_DIR" --builtin-root "$STAGING_BUILTIN_DIR" >/dev/null 2>&1; then
+            STAGING_PROJECT_DIR="$TARGET_DIR/.tilelang2ascendc/knowledge"
+            STAGING_STATUS="ready"
+            ok "project staging knowledge → $STAGING_PROJECT_DIR"
+        else
+            warn "Project staging knowledge initialization failed"
+            STAGING_STATUS="degraded"
+        fi
+    else
+        # 全局安装不写当前目录；首次运行时由 Skill 按项目惰性初始化。
+        STAGING_STATUS="ready"
+    fi
+
+    if [ "$STAGING_STATUS" != "ready" ]; then
+        [ "$STRICT_KNOWLEDGE" -eq 1 ] && exit 2
+    fi
+    return 0
+}
+
 # Clean up legacy cannbot subdirectory from previous installations.
 # 只清理安装器自己创建的目录（软链或含 cannbot-manifest.json），不删用户目录。
 if [ -L "$CONFIG_ROOT/$BRAND" ]; then
@@ -460,13 +791,18 @@ fi
 echo "  Path:      $CONFIG_ROOT"
 echo ""
 
+# --- Knowledge setup (fixed read-only + plugin staging) ---
+setup_fixed_knowledge
+setup_staging_knowledge
+echo ""
+
 # --- Step 0: Confirmation before installation ---
 step "[0/5] Checking items to be installed..."
 
 # Collect skills to install (from shared ops)
 SKILLS_TO_INSTALL=""
 SKILL_COUNT=0
-for skill_dir in "$SKILL_ROOT_COMMUNITY"/*/ "$SKILL_ROOT_OPS"/*/ "$SKILL_ROOT_KNOWLEDGE"/*/; do
+for skill_dir in "$SKILL_ROOT_COMMUNITY"/*/ "$SKILL_ROOT_OPS"/*/ "$SKILL_ROOT_KNOWLEDGE"/*/ "$SKILL_ROOT_LOCAL"/*/; do
     [ -d "$skill_dir" ] || continue
     name=$(basename "$skill_dir")
     echo "$INCLUDED_SKILLS" | tr ' ' '\n' | grep -qxF "$name" || continue
@@ -575,7 +911,7 @@ if [ "$TOOL" = "opencode" ]; then
     mkdir -p "$CANNBOT_DIR/skills"
     skill_count=0
     skill_skipped=0
-    for skill_dir in "$SKILL_ROOT_COMMUNITY"/*/ "$SKILL_ROOT_OPS"/*/ "$SKILL_ROOT_KNOWLEDGE"/*/; do
+    for skill_dir in "$SKILL_ROOT_COMMUNITY"/*/ "$SKILL_ROOT_OPS"/*/ "$SKILL_ROOT_KNOWLEDGE"/*/ "$SKILL_ROOT_LOCAL"/*/; do
         [ -d "$skill_dir" ] || continue
         name=$(basename "$skill_dir")
         echo "$INCLUDED_SKILLS" | tr ' ' '\n' | grep -qxF "$name" || continue
@@ -815,7 +1151,7 @@ else
 
     link_count=0
     link_skipped=0
-    for skill_dir in "$SKILL_ROOT_COMMUNITY"/*/ "$SKILL_ROOT_OPS"/*/ "$SKILL_ROOT_KNOWLEDGE"/*/; do
+    for skill_dir in "$SKILL_ROOT_COMMUNITY"/*/ "$SKILL_ROOT_OPS"/*/ "$SKILL_ROOT_KNOWLEDGE"/*/ "$SKILL_ROOT_LOCAL"/*/; do
         [ -d "$skill_dir" ] || continue
         name=$(basename "$skill_dir")
         echo "$INCLUDED_SKILLS" | tr ' ' '\n' | grep -qxF "$name" || continue
@@ -1030,6 +1366,14 @@ if [ "$LEVEL" = "global" ] && [ ! -d "$CONFIG_ROOT/asc-devkit" ]; then
   health_errors="${health_errors}\n  ${YELLOW}⚠${NC} asc-devkit symlink missing in $CONFIG_ROOT"
 fi
 
+# 知识不可用只降级，不改变安装退出码（--strict-knowledge 已在 setup 阶段 exit 2）。
+if [ "$KNOWLEDGE_DISABLED" -eq 0 ]; then
+  [ "$KNOWLEDGE_STATUS" = "ready" ] || health_errors="${health_errors}\n  ${YELLOW}⚠${NC} fixed knowledge: $KNOWLEDGE_STATUS"
+  [ "$KNOWLEDGE_INDEX_STATE" = "ready" ] || health_errors="${health_errors}\n  ${YELLOW}⚠${NC} knowledge index: $KNOWLEDGE_INDEX_STATE"
+  [ "$KNOWLEDGE_SKILLS_STATUS" = "ready" ] || health_errors="${health_errors}\n  ${YELLOW}⚠${NC} knowledge skills: $KNOWLEDGE_SKILLS_STATUS"
+fi
+[ "$STAGING_STATUS" = "ready" ] || health_errors="${health_errors}\n  ${YELLOW}⚠${NC} staging knowledge: $STAGING_STATUS"
+
 if [ "$LEVEL" = "project" ]; then
     if [ "$AGENTS_MD_TOOL" = true ]; then
         if [ "$TOOL" = "codex" ] || [ "$TOOL" = "dsh" ]; then
@@ -1076,6 +1420,36 @@ if [ -d "$CANNBOT_DIR/hooks" ]; then
   done | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))" 2>/dev/null || echo "[]")
 fi
 
+KNOWLEDGE_JSON=$(python3 - \
+  "$KNOWLEDGE_STATUS" "$KNOWLEDGE_DIR" "$KNOWLEDGE_COMMIT" "$KNOWLEDGE_INDEX" \
+  "$KNOWLEDGE_INDEX_STATE" "$STAGING_BUILTIN_DIR" "$STAGING_PROJECT_DIR" \
+  "$STAGING_STATUS" "$KNOWLEDGE_PLATFORM" "$KNOWLEDGE_SKILLS_STATUS" <<'PY'
+import datetime
+import json
+import sys
+
+(status, root, commit, index, index_state, builtin, project,
+ staging_status, platform, skills_status) = sys.argv[1:]
+print(json.dumps({
+    "fixed": {
+        "root": root or None,
+        "commit": commit or None,
+        "index": index or None,
+        "indexState": index_state,
+        "status": status,
+    },
+    "staging": {
+        "builtin": builtin or None,
+        "project": project or None,
+        "status": staging_status,
+    },
+    "skills": skills_status,
+    "platform": platform or None,
+    "checkedAt": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+}, ensure_ascii=False))
+PY
+) || KNOWLEDGE_JSON='{"status":"unknown"}'
+
 cat > "$MANIFEST" << MANIFEST_EOF
 {
   "brand": "CANNBot",
@@ -1086,6 +1460,7 @@ cat > "$MANIFEST" << MANIFEST_EOF
   "installed_skills": $SKILLS_JSON,
   "installed_agents": $AGENTS_JSON,
   "installed_hooks": $HOOKS_JSON,
+  "knowledge": $KNOWLEDGE_JSON,
   "brand_dir": "$CONFIG_ROOT",
   "install_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }

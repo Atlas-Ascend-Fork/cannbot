@@ -1,7 +1,7 @@
 {
   "name": "tilelang2ascendc-ops-generator",
-  "description": "Ascend C 算子自动生成 Team。通过双路径（design.md / TileLang）设计表达和 AscendC 转译优化，端到端完成算子开发（7 Phase 工作流，含 Phase 7 知识演进闭环），含 1 个专业 Agent 和 19 个配套 Skill。",
-  "version": "1.4.1",
+  "description": "Ascend C 算子自动生成 Team。通过双路径（design.md / TileLang）设计表达和 AscendC 转译优化，端到端完成算子开发（7 Phase 工作流，含固定知识与暂存知识分层的 Phase 7 知识演进闭环），含 1 个专业 Agent 和 18 个配套 Skill。",
+  "version": "1.5.0",
   "author": {
     "name": "CANNBot"
   },

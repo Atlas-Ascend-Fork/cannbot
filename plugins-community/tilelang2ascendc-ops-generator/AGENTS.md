@@ -19,8 +19,7 @@ skills:
   - tilelang-op-develop
   - tilelang-perf-optimization
   - ascendc-perf-optimize
-  - knowledge-query
-  - ops-knowledge-ingest
+  - tilelang2ascendc-knowledge
 permission:
   external_directory: allow
 ---
@@ -123,19 +122,19 @@ Phase 4: AscendC 生成与验证   (分支)
 Phase 5: 性能分析            (ops-profiling --quick 模式; 只做测量归档, TileLang 调优已在 Phase 3 Step 4 完成)
 Phase 6: 全量验证            (恢复全量用例、验证、修复)
 Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md →
-                              从 trace.md 提取走偏点与成功模式 → 经 ops-knowledge-ingest
-                              标准路由按 OKF 格式写入共享知识库 runbooks/
-                              （$CANNBOT_KNOWLEDGE_ROOT），供后续任务经
-                              knowledge-query 检索，形成生成效率闭环)
+                              从 trace.md 提取走偏点与成功模式 → 经
+                              tilelang2ascendc-knowledge 的 record 写入项目暂存库
+                              .tilelang2ascendc/knowledge/learned/，供后续任务
+                              与固定知识（cannbot-knowledge）一起检索)
 ```
 
 ### Phase 执行规则
 
 1. **调用 Subagent**：调用 `tilelang2ascendc-kernel-generator` Subagent，传入用户需求参数
 2. **进度监控**：定期检查 `{output_dir}/` 下的产出文件，判断当前 Phase
-3. **完成判定**：Phase 7 产出 `trace.md` 并完成知识演进（runbooks/ 新卡或
-   更新 + 逐层 index.md 同步 + 检索索引重建 + log 记录），流程方为完成
-   （演进失败不阻塞汇报，但需如实说明）
+3. **完成判定**：Phase 7 产出 `trace.md` 并完成知识演进（项目暂存库
+   `learned/` 新卡或更新 + `learned/index.md` 重建），流程方为完成
+   （演进失败不阻塞汇报，但需如实说明；固定知识库不自动写入）
 4. **中断恢复**：如果流程中断，检查已有文件判断当前进度，从断点继续
 
 
@@ -262,7 +261,8 @@ Subagent 返回
 | 精度调试 Skill | `/tilelang2ascend-precision-tuning` | 仲裁精度争议时参考 |
 | 性能采集 Skill | `/ops-profiling` | 仲裁性能争议时参考 |
 | 历史成功任务 | `workflows/templates/archive_tasks/` | 仲裁开发模式争议时参考 |
-| 演进知识库 | 共享 OKF 知识库 `$CANNBOT_KNOWLEDGE_ROOT`（当前 `/home/asc-gen-knowledge`，配置于 `~/.config/cannbot/knowledge.env`）的 `runbooks/` 树；**检索一律经 `knowledge-query` skill**（preflight/search，禁自维护索引），**沉淀一律经 `ops-knowledge-ingest` skill 路由** | 历史走偏点与成功模式（OKF kind：implementation_trap/operator_optimization，维度走 tags），生成前 preflight 检索可规避已知坑 |
+| 固定知识库 | `cannbot-knowledge` 仓（安装时默认 clone 到 `<cannbot>/vendor/cannbot-knowledge`，根路径写入项目 `.cannbot/knowledge.env`）；**检索经知识仓提供的 `knowledge-query` skill**，**只读，禁止自动写入** | 权威、跨项目复用的 API 契约、算子示例、runbook 与优化方法 |
+| 暂存知识库 | 插件内置 `knowledge/` Bundle（只读）与项目副本 `<project>/.tilelang2ascendc/knowledge/`（只写 `learned/`）；**检索与沉淀经 `tilelang2ascendc-knowledge` skill** | 尚未固化的走偏点、修复配方与成功模式；稳定后人工 promote，不自动提升 |
 
 ### TileLang 设计阶段 Skill 依赖（复杂算子路径）
 
