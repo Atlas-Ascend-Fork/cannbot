@@ -121,6 +121,7 @@ opencode
 
 ### 开发算子示例
 
+详细下发示例：
 本地已有hccl代码：/xxx/hccl,请按 HCCLBot 多 Agent 工作流处理以下 AICPU 开发需求：完成aicpu引擎的allgather ring算法,完成后给我呈现报告
 
 allgather-ring算法详细描述
@@ -164,6 +165,8 @@ allgather-ring算法详细描述
 - k = 1, 获得out[3]
 - k = 2, 获得out[2]
 
+当然也可以用很简单的示例，不需要描述ring算法的详细步骤：
+本地已有hccl代码：/xxx/hccl,请按 HCCLBot 多 Agent 工作流处理以下 AICPU 开发需求：完成aicpu引擎的allgather ring算法
 HCCLBot 会先判定引擎，AICPU 任务按工作流分派给四个 Agent。把**算子类型**（AllReduce/ReduceScatter 等）、**算法名称**、**引擎**、**拓扑场景**、**数据类型**写清楚即可。
 
 ### 核心工作流
