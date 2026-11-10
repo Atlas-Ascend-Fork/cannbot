@@ -12,7 +12,7 @@
 """AscendC operator build bridge: compile, install .run, and rebuild pybind.
 
 This script bridges the gap between code-performance-advisor (which modifies
-AscendC .cpp source) and ascendc_evaluation (which needs compiled .run +
+AscendC .cpp source) and ascendc-evaluation (which needs compiled .run +
 pybind to run tests).
 
 Pipeline:
@@ -42,12 +42,10 @@ logger = logging.getLogger(__name__)
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CAKE_ROOT = ROOT.parents[2]  # skills/code-performance-advisor -> CAKE2
+CAKE_ROOT = ROOT.parents[1]  # skills/code-performance-advisor -> plugin root
 OUTPUT_DIR = CAKE_ROOT / "output"
 
-EVALUATION_SCRIPTS = (
-    CAKE_ROOT / ".claude" / "skills" / "ascendc_evaluation" / "scripts"
-)
+EVALUATION_SCRIPTS = ROOT.parent / "ascendc-evaluation" / "scripts"
 GENERATE_PYBIND = EVALUATION_SCRIPTS / "generate_pybind.py"
 
 WORKSPACE = ROOT / "workspace"
@@ -208,7 +206,7 @@ def _rebuild_pybind(op: str) -> tuple[bool, str]:
 
     try:
         result = subprocess.run(
-            [sys.executable, str(GENERATE_PYBIND), "--op", op],
+            [sys.executable, str(GENERATE_PYBIND), op],
             cwd=str(CAKE_ROOT),
             capture_output=True,
             text=True,
@@ -255,7 +253,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         if count == 0:
             logger.info(f"[WARN] No source files found in {source_dir}/op_host/ or op_kernel/")
     else:
-        logger.info(f"\n[STEP 1] No source-dir specified, building with existing files")
+        logger.info("\n[STEP 1] No source-dir specified, building with existing files")
 
     # Step 2: Build
     logger.info(f"\n[STEP 2] Running build.sh (timeout={timeout}s)")
@@ -272,18 +270,18 @@ def cmd_build(args: argparse.Namespace) -> int:
         if not install_ok:
             logger.info(f"[FAIL] {install_msg}")
             return 3
-        logger.info(f"  Install successful")
+        logger.info("  Install successful")
     else:
-        logger.info(f"\n[STEP 3] No .run package found, skipping install")
+        logger.info("\n[STEP 3] No .run package found, skipping install")
 
     # Step 4: Rebuild pybind
-    logger.info(f"\n[STEP 4] Rebuilding pybind")
+    logger.info("\n[STEP 4] Rebuilding pybind")
     pybind_ok, pybind_msg = _rebuild_pybind(op)
     if not pybind_ok:
         logger.info(f"[WARN] {pybind_msg}")
-        logger.info(f"  Pybind rebuild is not critical; evaluation may still work.")
+        logger.info("  Pybind rebuild is not critical; evaluation may still work.")
     else:
-        logger.info(f"  Pybind rebuild successful")
+        logger.info("  Pybind rebuild successful")
 
     logger.info(f"\n[DONE] Build pipeline completed for '{op}'")
     return 0
@@ -307,7 +305,7 @@ def cmd_rollback(args: argparse.Namespace) -> int:
     count = _copy_source(baseline_code, build_dir)
     logger.info(f"  Restored {count} files")
 
-    logger.info(f"\n[ROLLBACK] Rebuilding with baseline code")
+    logger.info("\n[ROLLBACK] Rebuilding with baseline code")
     build_ok, build_msg = _run_build(build_dir, timeout=args.timeout)
     if not build_ok:
         logger.info(f"[FAIL] Rollback build failed: {build_msg}")
@@ -330,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="AscendC operator build bridge: compile + install + pybind"
     )
-    sub = parser.add_subparsers(dest="command")
+    parser.add_subparsers(dest="command")
 
     # The following arguments apply to the default (build) command.
     parser.add_argument("--op", required=True, help="Operator name (e.g., fastgelu)")

@@ -42,9 +42,9 @@ import argparse
 
 def _extract_wheel_so(wheel_file: Path, pybind_lib_dir: Path) -> None:
     """Extract .so from wheel (it's a zip) into pybind_lib/, flattened to its root."""
-    with zipfile.ZipFile(str(wheel_file), 'r') as whl:
+    with zipfile.ZipFile(str(wheel_file), "r") as whl:
         for name in whl.namelist():
-            if not (name.endswith('.so') or name.endswith('.pyd')):
+            if not (name.endswith(".so") or name.endswith(".pyd")):
                 continue
             whl.extract(name, str(pybind_lib_dir))
             # Move from nested dir to pybind_lib root
@@ -74,11 +74,11 @@ def _isolate_built_wheels(extension_dir: Path, work_dir: Path) -> None:
 def _run_pybind_build(extension_dir: Path) -> None:
     """运行 setup.py build bdist_wheel，非零退出码时抛 CalledProcessError。"""
     result = subprocess.run(
-        [sys.executable, 'setup.py', 'build', 'bdist_wheel'],
+        [sys.executable, "setup.py", "build", "bdist_wheel"],
         cwd=str(extension_dir),
         capture_output=True,
         text=True,
-        timeout=300
+        timeout=300,
     )
     if result.returncode != 0:
         error_msg = (
@@ -88,7 +88,9 @@ def _run_pybind_build(extension_dir: Path) -> None:
             f"Stderr:\n{result.stderr}"
         )
         logging.error(error_msg)
-        raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, result.stdout, result.stderr
+        )
     logging.info("编译 wheel 包成功")
 
 
@@ -160,11 +162,17 @@ def generate_pybind_bindings(work_dir: Path, op_cpp: Path) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
-    parser = argparse.ArgumentParser(description="Generate PyBind bindings for AscendC operators")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+    parser = argparse.ArgumentParser(
+        description="Generate PyBind bindings for AscendC operators"
+    )
     parser.add_argument("op_name", type=str, help="Operator name")
-    parser.add_argument("--work-dir", type=str, default=None,
-                        help="Work directory containing op_name.cpp (default: output/<op_name>)")
+    parser.add_argument(
+        "--work-dir",
+        type=str,
+        default=None,
+        help="Work directory containing op_name.cpp (default: output/<op_name>)",
+    )
 
     args = parser.parse_args()
 
@@ -178,3 +186,4 @@ if __name__ == "__main__":
         logging.info("PyBind bindings generated successfully")
     except Exception as e:
         logging.error(e)
+        sys.exit(1)
