@@ -13,6 +13,7 @@ import ast
 import csv
 import logging
 import sys
+from collections import Counter
 from pathlib import Path
 
 LOG = logging.getLogger(__name__)
@@ -87,10 +88,21 @@ def _append_rows(path, headers, rows, names):
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
             raise ValueError(f"{path}: missing CSV header")
+        duplicates = [
+            name for name, count in Counter(reader.fieldnames).items() if count > 1
+        ]
+        if duplicates:
+            raise ValueError(
+                f"{path}:{reader.line_num}: duplicate CSV header columns: {', '.join(duplicates)}"
+            )
         for field in reader.fieldnames:
             if field not in headers:
                 headers.append(field)
         for row in reader:
+            if None in row:
+                raise ValueError(
+                    f"{path}:{reader.line_num}: extra CSV values without a column name"
+                )
             name = row.get("testcase_name") or row.get("case_name")
             if not name:
                 raise ValueError(f"{path}: testcase_name is empty")
