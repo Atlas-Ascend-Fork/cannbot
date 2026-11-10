@@ -1,6 +1,6 @@
 # DSL 实施验证
 
-先读本轮 analysis（含 `ascendc-performance-review` 的方案净收益评估 `references/dsl-benefit-assessment.md`）、exact/forbidden 契约、冻结 scope、原/当前基线与映射；共享验证与领域边界见 [cannbot-dsl.md](../../ops-perf-acceptance-criteria/references/cannbot-dsl.md)。核对 scheme_id 与评估条目、冻结 case/SoC、计时范围一致且为 ready_for_implementation；缺少评估或安全/同步关键未知未完成诊断时返回 analysis，不自行把 probe/deferred 方向作为正式候选实施。每方案独立物理副本与证据，不修改原工程、测试真源或 SDK。
+先读本轮 analysis（含 [方案净收益评估](../../ops-perf-analysis/references/dsl-analysis.md)）、exact/forbidden 契约、冻结 scope、原/当前基线与映射；共享验证与领域边界见 [cannbot-dsl.md](../../ops-perf-acceptance-criteria/references/cannbot-dsl.md)。核对 scheme_id 与评估条目、冻结 case/SoC、计时范围一致且为 ready_for_implementation；缺少评估或安全/同步关键未知未完成诊断时返回 analysis，不自行把 probe/deferred 方向作为正式候选实施。每方案独立物理副本与证据，不修改原工程、测试真源或 SDK。
 
 ## 候选门禁
 
@@ -11,7 +11,7 @@
 5. 用原 pytest/checker/golden 运行冻结 functional_acceptance，记录逐例 strict/conditional。执行变更相关序列压测：重复/交替 shape、槽位 wraparound、不同进程与缓存命中、metadata 更新/复用。新增失败先用可信原基线对照，再修复或淘汰候选。调度改变时按冻结支持范围补满/单 tile、短长 query 交替、空 query、尾块、sink/LSE、两个 AIV 不均衡和槽位回绕；不支持的路径须有真实接口依据，不能以未测代替不适用。
 6. 调度报告分别记录 model/lowering/runtime 证据；源码、参数、SDK/编译配置或输入分支变化使相关证据失效，重新绑定 SHA。只有符合性、资源/编译/加载、精度与序列门禁通过才 eligible。正式采集按 shared protocol 排他运行，编译/调试 launch 不计入样本且不得未声明。本轮构建使用隔离目录，同设备验证串行。
 
-生成代码核对还须区分地址、所有权和真实搬运：RingBuffer 捕获句柄不证明跨控制流区间持有 lease；逻辑等价 guard 也可能被 lowering 拆成多个事务，须核对实际同代 slot、guard 与发布/消费绑定。whole-view 模型的保守包络不证明 DMA 布局正确；分片或 reinterpret 后核对源/目标 stride、偏移、搬运长度及写集合，精度结果由原 checker/golden 独立验收。取证方法见 `ascendc-performance-review` 的后端层模板 `references/async-schedule-templates.md`（后端层当前 DSL 的真实表达与核对）。
+生成代码核对还须区分地址、所有权和真实搬运：RingBuffer 捕获句柄不证明跨控制流区间持有 lease；逻辑等价 guard 也可能被 lowering 拆成多个事务，须核对实际同代 slot、guard 与发布/消费绑定。whole-view 模型的保守包络不证明 DMA 布局正确；分片或 reinterpret 后核对源/目标 stride、偏移、搬运长度及写集合，精度结果由原 checker/golden 独立验收。取证方法见 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md#模型边界与验收)。
 
 ## 选择与最终验收
 

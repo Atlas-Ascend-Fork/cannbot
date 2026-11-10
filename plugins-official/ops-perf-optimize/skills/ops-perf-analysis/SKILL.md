@@ -27,7 +27,7 @@ description: 用于冻结性能任务的基线 profiling、逐 case 瓶颈诊断
 - **知识库（`knowledge-query`）**：代表性关键词为 API 约束、存储层级、SIMD/SIMT、同步、Roofline、优化反模式、编译/精度/性能排障。用于解释 profiling 现象、核对约束和借鉴失败经验：围绕当前瓶颈检索，读相关卡片正文，将机制和约束用于提出或排除候选方向。输入含 Query/CLI 入口、`KB_ROOT`、已有覆盖信息或卡片索引及目标适用范围。
 - **最佳实践（`ascendc-performance-best-practices`）**：代表性关键词为 MatMul、FlashAttention、MC²、Reduction/Softmax、Scan、Gather/Scatter、Transpose、数据搬运、UB 复用、Reg/VF。用于寻找可复用的成熟实现：按目标代际与算子族找参考代码，对照当前实现的布局、Tiling 和流水，提取可迁移的做法并核对集成条件。输入含 Skill 入口、族级与公共能力索引及平台/语言适用范围。
 - **优化方法（`ascendc-perf-optimize`）**：用于定位瓶颈、估算优化空间和推导策略。按当前问题选用 Tiling 建模或卡间/核间/单核流水分析，将模型与 profiling 对照，形成有预期收益依据的修改方向。输入含 Skill 入口、方法索引和适用条件。
-- **理论建模（`ops-theoretical-performance-estimation` / `ops-opmodel-toolkit`）**：粗粒度 roofline 不足以解释实测差距，或需要在设计期定量比较融合、驻留、tiling、分核等候选收益时使用。按计算结构选择入口：纯 Vector/RegBase 计算流使用 `ops-theoretical-performance-estimation` 的标定引擎；MM/Cube、融合算子、多阶段 DAG、流水空泡和映射/参数寻优优先使用 `ops-opmodel-toolkit`。混合算子由 OpModel 建立整体融合图，内部纯 Vector 子图可在需要时再用标定模型细化，不能把含 MM 或跨阶段数据流的融合算子当成单一纯 Vector 算子。输入含 Skill 入口、适用平台与工作流索引；实际版本、硬件绑定和模型范围以运行时核验结果为准。
+- **理论建模（`ops-theoretical-performance-estimation` / `ops-opmodel-toolkit`）**：在搜索、比较方案时评估适用性和决策价值；粗粒度 roofline 不足以解释实测差距，或需要比较融合、驻留、tiling、分核等候选收益时，优先尝试或复用能回答当前问题的模型。按整体计算结构选择入口：MM/Cube、融合算子、多阶段 DAG、流水空泡和映射/参数寻优优先使用 `ops-opmodel-toolkit`；单一纯 Vector/RegBase 计算链使用 `ops-theoretical-performance-estimation` 的标定引擎。跨阶段数据流即使全由 Vector 组成，也按整体 DAG 评估建模路线，内部 Vector 子图可按需细化。输入含 Skill 入口、适用平台与工作流索引；实际版本、硬件绑定、成本可信度和模型范围以核验结果为准。模型是搜索辅助证据，运行模型或达到某个预测精度不是方案进入实施的必要条件。
 
 **以下三项仅适用于 AscendC 路径，不作为 CANNBot-DSL 的参考输入：**
 
@@ -37,7 +37,7 @@ description: 用于冻结性能任务的基线 profiling、逐 case 瓶颈诊断
 
 分析 Agent 先浏览各项概览，了解可用知识和候选方法，再结合源码、冻结用例、性能目标、profiling 和历史尝试择优形成方案。详细资料按问题与适用范围深读，可组合使用或复用已有证据；不规定深读顺序，也不要求每轮完整读取所有资料。来源缺失时保留该项概览并说明不可用原因，不把未检索误写成无覆盖。
 
-各项资料得出的方向合并比较，按目标适配、预期收益、实施成本和证据可信度选择本轮方案；在同一分析报告中说明采用了什么、如何支撑决策，以及未采用相关候选的原因。例如搬运等待占主导时，可用知识库核对搬运/同步约束，从最佳实践寻找流水骨架，再用优化方法评估重叠能节省的时间与新增成本；按现有证据选择需要深读的部分。
+各项资料得出的方向合并比较，按目标适配、预期收益、实施成本和证据可信度选择本轮方案；在同一分析报告中说明采用了什么、如何支撑决策，以及未采用相关候选的原因。理论建模的执行与产物要求见[分析执行参考](references/analysis-execution.md)。例如搬运等待占主导时，可用知识库核对搬运/同步约束，从最佳实践寻找流水骨架，再用优化方法评估重叠能节省的时间与新增成本；按现有证据选择需要深读的部分。
 
 概览和索引用于发现候选，不能代替正文、代码或实测证据。选用 `knowledge-query` 时，先读其 SKILL 与 `references/cli.md`，确认任务目标平台后检索并阅读全文；只引用实际读过的卡片及 doc-id，复杂任务按其证据工作流记录审计。未采用知识卡时 `kb_cards` 留空；知识库缺失或查询失败时停止该次知识检索，记录 `kb_unavailable` 及原因，使用其他有效输入继续分析；不自动重建索引。
 

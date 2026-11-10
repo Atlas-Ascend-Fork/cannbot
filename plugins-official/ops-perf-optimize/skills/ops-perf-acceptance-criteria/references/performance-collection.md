@@ -14,6 +14,4 @@ MC²/多 rank 必须加载 `ascendc-mc2-best-practice`，完全遵循其 `msprof
 
 超过单命令可靠时长的采集（多 case 全集、20 slot 确认、A/B 配对轮）由驱动脚本以 `setsid`/`nohup` 脱离会话进程组后台执行，逐 case/slot 写进度日志与独立证据目录；脚本必须跳过已存在的 case/slot 证据目录，中断恢复只补缺失部分，不重采已完成样本、不替换成功样本；外部终止产生的失败 attempt 记录后保留其目录，重采走新编号。禁止把整段采集放在代理前台单命令内执行。
 
-## 事前配对确认与证据复用
-
-效果判定版本、计划和proof见 [performance-jitter-policy.md](performance-jitter-policy.md)。新请求默认confidence；单次canonical10是初筛，强变化case可按已注册方法由两侧各一次原canonical10样本进行独立median-bootstrap确认，无需重复轮；小变化待确认case可在结果前登记固定轮数、统计方法、seed/draws、AB/BA顺序后采一次完整对照。每版每轮仍10样本，warmup/preparation/prime只计完整launch拓扑而不计target median；不得合并成任意100样本协议。该计划是一次新证据采集，不是对已有同身份收据重采择优。不得看到结果后补轮、删样本或选择会话；原始精度/10%spread/频率/身份/expected=parsed=mapped全部保留。证据不足时待确认，不宣称无收益或终验无回退。
+效果规则按冻结策略读取：AscendC 默认 → [legacy](performance-jitter-policy.md)；DSL 默认 → [confidence](performance-confidence-policy.md)，显式指定优先。

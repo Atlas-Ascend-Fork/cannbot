@@ -13,7 +13,7 @@
 | `SEARCH_POLICY` | 新请求默认 `{"id":"architecture_search_v1","version":1}`；每轮一个方案，测量驱动参考晋升与架构重规划，见 [搜索决策](../../ops-perf-acceptance-criteria/references/architecture-search.md)。搜索不改变用户目标或轮数 |
 | `PERFORMANCE_CASES` | standard 必选；generalization 可提供性能/功能合一用例，或留空后生成 |
 | `FUNCTIONAL_MODE` | standard：`reuse_performance|existing|generate`；generalization：固定 `reuse_performance`，不作为待确认选项 |
-| `PERFORMANCE_REFERENCE` | 每 case 对标来源与目标比例，见 [基线评估](../ops-perf-baseline-evaluate/references/baseline-evaluation.md)；通过 `--performance-reference <json>` 固化，旧任务保留原始实现对比 |
+| `PERFORMANCE_REFERENCE` | 每 case 对标来源与目标比例，见 [基线评估](../../ops-perf-baseline-evaluate/references/baseline-evaluation.md)；通过 `--performance-reference <json>` 固化，旧任务保留原始实现对比 |
 | `OPTIMIZATION_OBJECTIVE` | `fixed_rounds` 或 `target`；前者默认 5 轮，后者需指标、比较方向、数值、单位和可选最大轮次 |
 | `PYTHON_ENVIRONMENT` | Python 可执行文件及可选激活命令；创建 request 时记录实际版本 |
 | `CANN_ENVIRONMENT` | 环境加载命令；用户明确选择当前环境时写 `inherit` |
@@ -28,7 +28,7 @@ generalization 还必须在启动时确认竞品性能来源：
 
 精度诊断不是用户输入项，固定持续执行，没有工作流级总时长、轮次、Agent turn 或 token 上限。命令级防挂死 watchdog 可以识别单次编译/执行的 Hang，但不得被解释成精度诊断总预算。
 
-用户确认后调用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py create-request` 写 `optimization-request.json`。该文件只保存请求意图和环境，不保存输出目录、冻结 artifact 或阶段状态，因此可以跨 run 复用。核心结构为：
+用户确认后调用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py create-request` 写 `optimization-request.json`。该文件只保存请求意图和环境，不保存输出目录、冻结 artifact 或阶段状态，因此可以跨 run 复用。
 
 DSL 创建时追加 `--backend cannbot_dsl --dsl-repo-root <领域仓库> --dsl-entrypoint <原module:callable> --dsl-execution-mode jit|aot`。默认 standard + 用户网络 case；原 pytest 库存按 existing 接入，库存目录提供 cases.csv、测试 nodeid 映射及测试/golden 资产。只有原测试缺口才补必要边界，不默认生成泛化全集。身份切换需更新请求并失效旧证据。
 
@@ -36,6 +36,7 @@ DSL 创建时追加 `--backend cannbot_dsl --dsl-repo-root <领域仓库> --dsl-
 {
   "schema_version": 2,
   "operator": "maximum",
+  "backend": "ascendc",
   "tuning_mode": "standard",
   "target_socs": ["Ascend950"],
   "code_dir": "/abs/path/to/operator",
@@ -43,6 +44,7 @@ DSL 创建时追加 `--backend cannbot_dsl --dsl-repo-root <领域仓库> --dsl-
   "functional": {"mode": "existing", "cases": "/abs/path/to/functional.csv"},
   "optimization_objective": {"mode": "fixed_rounds", "rounds": 5},
   "performance_reference": {"kind": "baseline", "target_ratio": 1.0},
+  "performance_effect_policy": {"id": "legacy_jitter_v1", "version": 1},
   "generalization": null,
   "schedule_policy": {"id": "schedule_contract_v1", "version": 1},
   "search_policy": {"id": "architecture_search_v1", "version": 1},

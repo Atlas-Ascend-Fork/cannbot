@@ -1111,7 +1111,8 @@ def _build_create_request(
         "reference_perf": str(reference_perf) if reference_perf else None,
         "performance_reference": reference,
         "performance_effect_policy": {
-            "id": getattr(args, "performance_effect_policy", "confidence_effect_v1"),
+            "id": getattr(args, "performance_effect_policy", None)
+            or ("legacy_jitter_v1" if args.backend == "ascendc" else "confidence_effect_v1"),
             "version": 1,
         },
         "schedule_policy": {"id": "schedule_contract_v1", "version": 1},
@@ -1672,7 +1673,8 @@ def _add_create_parser(subparsers: Any) -> None:
     create.add_argument(
         "--performance-effect-policy",
         choices=("legacy_jitter_v1", "confidence_effect_v1"),
-        default="confidence_effect_v1",
+        default=None,
+        help="default: ascendc uses legacy_jitter_v1; cannbot_dsl uses confidence_effect_v1",
     )
     create.add_argument(
         "--performance-reference",

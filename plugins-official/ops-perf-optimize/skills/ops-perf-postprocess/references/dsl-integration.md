@@ -16,10 +16,12 @@
 
 ## 效果确认与耗时控制（DSL）
 
+本节仅适用于 `confidence_effect_v1`。
+
 回集成阶段最容易超时的是证据组装与重复统计确认；按以下口径执行（来自实板 run 复盘）。本节只规定集成层的复用与执行方式，不放宽 `performance-jitter-policy`、`msprof-op-effect-evidence` 与调度契约的任何 proof 门槛：
 
-1. **两全集 before/after 用 canonical10_independent proof，集成层禁止默认重跑 20-slot 全量确认**：baseline 侧绑定既有冻结收据（plan 显式声明其 manifest 路径与 SHA，不重采），candidate 侧只做一次集成后采集。demo 侧已完成的最终 20-slot 确认（`msprof_op10_independent_v1`）不重做、不改名降级为集成层证据。逐 case 分类仍按冻结 `performance_effect_policy` 执行，小变化不因集成层复用而豁免配对确认。
-2. **字节等价回写绑定 demo 确认结论**：回写字节一致性证明（writeback byte-equality）成立且源/编译/加载身份链闭合时，集成层效果结论 = demo 侧正式确认结论 + 集成层 canonical10 proof，不重复采样；绑定关系（两侧 proof 的路径/SHA）写入 effect summary 的 evidence_paths。
+1. **强变化 case 的 before/after 可用 canonical10_independent proof，集成层禁止默认重跑 20-slot 全量确认**：baseline 侧绑定既有冻结收据（plan 显式声明其 manifest 路径与 SHA，不重采），candidate 侧只做一次集成后采集。demo 侧已完成的最终 20-slot 确认（`msprof_op10_independent_v1`）不重做、不改名降级为集成层证据。逐 case 分类仍按冻结 `performance_effect_policy` 执行，小变化不因集成层复用而豁免配对确认。
+2. **字节等价回写绑定 demo 确认结论**：回写字节一致性证明（writeback byte-equality）成立且源/编译/加载身份链闭合时，集成层绑定 demo 侧正式确认结论和当前比较的合法 proof，不重复采样；绑定关系（两侧 proof 的路径/SHA）写入 effect summary 的 evidence_paths。
 3. **先登记后采集**：`performance_effect_evidence.py --register` 必须早于全部 candidate 采集（registration 时间由 proof builder 机械核验，事后登记不可证明）。
 4. **字节等价的边界**：仅当集成后源码与 demo 验收实现逐字节一致（writeback byte-equality + built 与 loaded 同 SHA）时适用第 2 条复用规则；回路由、编译分支或输入分布变化即新身份，必须重新确认。
 5. **长采集脱离会话执行**：多 case 全集 before/after 由驱动脚本 `setsid`/`nohup` 后台执行，逐 case/slot 进度日志、独立证据目录、跳过已完成部分断点续跑；禁止放在代理前台单命令内（纪律详见 `ops-perf-acceptance-criteria` 的长采集执行纪律与 msprof op 确认适配器文档）。

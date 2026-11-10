@@ -588,19 +588,23 @@ def test_new_effect_policy_default_override_and_legacy_missing_field(
     request = tmp_path / "request.json"
     create_request(request, code, cases)
     assert load(request)["performance_effect_policy"] == {
-        "id": "confidence_effect_v1",
+        "id": "legacy_jitter_v1",
         "version": 1,
     }
     run("freeze", "--request", request, "--output-dir", tmp_path / "new")
     frozen_manifest = load(tmp_path / "new/run-manifest.json")
     assert (
         frozen_manifest["configuration"]["performance_effect_policy"]["id"]
-        == "confidence_effect_v1"
+        == "legacy_jitter_v1"
     )
     create_request(
-        request, code, cases, extra=("--performance-effect-policy", "legacy_jitter_v1")
+        request, code, cases, extra=("--performance-effect-policy", "confidence_effect_v1")
     )
-    assert load(request)["performance_effect_policy"]["id"] == "legacy_jitter_v1"
+    assert load(request)["performance_effect_policy"]["id"] == "confidence_effect_v1"
+    run("freeze", "--request", request, "--output-dir", tmp_path / "strict")
+    assert load(tmp_path / "strict/run-manifest.json")["configuration"][
+        "performance_effect_policy"
+    ]["id"] == "confidence_effect_v1"
     legacy = load(request)
     legacy.pop("performance_effect_policy")
     request.write_text(json.dumps(legacy))

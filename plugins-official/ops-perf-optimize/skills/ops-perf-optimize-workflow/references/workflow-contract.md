@@ -44,9 +44,9 @@ DSL 默认 standard，围绕指定网络 case 优化，不自动生成 1000 条�
 
 五个角色和阶段键保持不变，Agent 的原有技能依赖全部保留。先加载本阶段 Skill 和共享验证，再按 backend 选择执行步骤：AscendC 使用原阶段步骤；DSL 执行本阶段 Skill 的 references/dsl-<stage>.md（共享验证与领域边界见 ops-perf-acceptance-criteria 的 references/cannbot-dsl.md），使用原测试入口，并交付编译及实际加载证据。原测试使用 TTK 时保留 TTK；原工程包含 Native/AOT、C++ 扩展或注册入口时保留对应构建与集成检查。纯 Python/JIT 输入不要求改造成 C++ 注册工程。阶段依赖、exact/forbidden、身份、全集、抖动和恢复门禁均须满足；语言选择不允许跳过门禁。其他声明技能按本阶段实际任务使用，客户端自动预加载不改变其适用范围。
 
-主 Agent 将 DSL 仓库与领域原文件路径、原测试、dsl-environment.json、编译依据按职责放入 INPUT_ARTIFACTS；analysis 接收知识库、最佳实践和优化方法三项通用参考的概览、索引与适用范围，浏览后结合当前证据自主选择方案并按需深读；MC²、AscendC 静态性能检视和 AscendC API 文档检索不作为 DSL 参考输入。implementation 消费已冻结方案及其采用的证据。前处理、最终实施、后处理交接增加 dsl-compile-evidence.json，workflow_state.py 在 complete 时机械验证并登记编译/加载依赖。仅有源码与二进制 SHA、同名 kernel 或进程 exit 0 不能代替血缘证明。
+主 Agent 将 DSL 仓库与领域原文件路径、原测试、dsl-environment.json、编译依据按职责放入 INPUT_ARTIFACTS；analysis 接收知识库、最佳实践、优化方法和理论建模四项通用参考的概览、索引与适用范围，浏览后结合当前证据自主搜索、比较方案并按需深读；MC²、AscendC 静态性能检视和 AscendC API 文档检索不作为 DSL 参考输入。implementation 消费已冻结方案及其采用的证据。前处理、最终实施、后处理交接增加 dsl-compile-evidence.json，workflow_state.py 在 complete 时机械验证并登记编译/加载依赖。仅有源码与二进制 SHA、同名 kernel 或进程 exit 0 不能代替血缘证明。
 
-DSL 分析生成实施契约前必须执行本阶段 [方案净收益评估](../../ops-perf-analysis/references/dsl-benefit-assessment.md)。在同一 analysis.md 逐方向/方案、逐 case × SoC 记录关键路径、新增成本、完整调用收益区间或 unknown、目标贡献、证据可信度和处置；主 Agent 审阅后再冻结 scope。ready_for_implementation 才派发实施，needs_probe 按分析阶段采集路由补齐已登记诊断，deferred 保留证据和下一动作。字段完整不证明估计正确；理论空间、单核仿真跨度或局部加速不能直接作为完整调用收益。关键未知不允许作为不可行或收敛结论，正式终选仍按实测。
+DSL 分析生成实施契约前必须执行本阶段 [方案净收益评估](../../ops-perf-analysis/references/dsl-analysis.md)。在同一 analysis.md 逐方向/方案、逐 case × SoC 记录关键路径、新增成本、完整调用收益区间或 unknown、目标贡献、证据可信度和处置；主 Agent 审阅后再冻结 scope。ready_for_implementation 才派发实施，needs_probe 按分析阶段采集路由补齐已登记诊断，deferred 保留证据和下一动作。字段完整不证明估计正确；理论空间、单核仿真跨度或局部加速不能直接作为完整调用收益。关键未知不允许作为不可行或收敛结论，正式终选仍按实测。
 
 原短程序可整体重排合法计算流，scope 按真实依赖和公开接口确定；不要求虚构 C++ 模板。性能收益以上板完整调用及同协议证据判定，编译/初始化成本单列。修改同文件 Python wrapper 时逐项审阅其公开契约。
 `TARGET_SOCS` 记录实际验证的 SoC。A2/A3 共用同一套 arch22（DAV_2201）实现，验证结果可互换；同时作为目标时，在冻结请求前选一个代表 SoC，兼容矩阵为另一型号引用同一份证据并保留实际测试型号。不同代际仍分别验证。
@@ -70,6 +70,8 @@ baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_S
 | integration | 最终 demo 与验收证据、原快照/映射、两个全集 | 集成计划/scope、安全与加载证据、两个全集精度/性能、每 SoC `postprocess-performance-<soc>.json`、回路由复验、`VERIFY_REPORT.md`；原入口保持、非目标族不变、无有效性能退化 |
 
 各阶段产物一律写入该阶段对应的文件夹（布局见「运行目录布局与阶段总结」），交付时同步更新该文件夹的 `阶段总结.md`。
+
+理论建模在 analysis 搜索、比较方案时按分析 Skill 的[分析标准](../../ops-perf-analysis/references/analysis-execution.md#分析标准)评估并按需使用。交接复核其使用依据与证据可信度，不以性能预测模型的运行成功或预测精度作为实施放行条件；精度、安全及实测终选规则不变。
 
 启用 `manifest.configuration.schedule_policy={"id":"schedule_contract_v1","version":1}` 时，analysis/implementation 按 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md) 交接候选模型与检查报告。analysis 在原阶段内完成 A1 独立程序/微任务恢复、A2 数据/资源/复用与事件约束检查、A3 本轮候选模型；主 Agent 核验适用性、未知项与身份后冻结。implementation 先消费契约，再核对实际生成代码和运行/序列证据。模型可行不等于 eligible，更不等于更快。同步/所有权关键未知先 probe；纯性能收益 unknown 不阻止合法候选实测。integration 的路由、编译选路或输入分支改变时，对新身份重新核验，不能把满 tile 的证据外推到未覆盖路径。旧 request/manifest 缺字段保持原门禁；新策略不重写历史状态。
 
@@ -128,7 +130,7 @@ generalization 保留既有规则：
 
 ## 6. 派发、状态与报告
 
-主 Agent 将知识库、最佳实践和优化方法的概览、真实索引入口与目标适用范围作为两条 backend 的分析输入；仅在 AscendC 路径追加 MC²、静态性能检视与 API 文档检索三项，DSL 不接收这三项。缺失来源注明原因。分析 Agent 浏览适用概览后根据当前任务择优选择方案、按需深读资料，平台/API/同步及特殊路线检查独立于资料选择；实施验证消费所选方案及其实际采用的证据。选用知识库时，使用知识仓自身 `install.sh <tool> <project> consumer` 安装的 `knowledge-query`，不使用 cannbot-skills 中的旧版副本。主 Agent 在首次派发需要它的阶段前读取该 Skill 与 `references/cli.md`，解析一次 `KB_ROOT` 并全程复用：优先按 Query 自身规则使用环境变量 `CANNBOT_KNOWLEDGE_ROOT`、当前目录及祖先中的 `.cannbot/knowledge.env`、真实 Skill 所在知识仓；未配置且尚未定位时，可检查项目下 `.cannbot/dependencies/*/cannbot-knowledge`，或同级检出的 cannbot-knowledge，并显式交给 Query。`KB_ROOT` 必须是包含 `governance/` 与 `knowledge/` 的仓根绝对路径，不是 `knowledge/` Bundle 根；显式配置无效时报告配置错误，不静默改用别的仓。
+主 Agent 将知识库、最佳实践、优化方法和理论建模的概览、真实索引入口与目标适用范围作为两条 backend 的分析输入；理论建模概览包含 `ops-theoretical-performance-estimation` 与 `ops-opmodel-toolkit` 的实际 Skill 入口和适用范围。仅在 AscendC 路径追加 MC²、静态性能检视与 API 文档检索三项，DSL 不接收这三项。缺失来源注明原因。分析 Agent 浏览适用概览后根据当前任务搜索、比较方案、按需深读资料，平台/API/同步及特殊路线检查独立于资料选择；实施验证消费所选方案及其实际采用的证据。选用知识库时，使用知识仓自身 `install.sh <tool> <project> consumer` 安装的 `knowledge-query`，不使用 cannbot-skills 中的旧版副本。主 Agent 在首次派发需要它的阶段前读取该 Skill 与 `references/cli.md`，解析一次 `KB_ROOT` 并全程复用：优先按 Query 自身规则使用环境变量 `CANNBOT_KNOWLEDGE_ROOT`、当前目录及祖先中的 `.cannbot/knowledge.env`、真实 Skill 所在知识仓；未配置且尚未定位时，可检查项目下 `.cannbot/dependencies/*/cannbot-knowledge`，或同级检出的 cannbot-knowledge，并显式交给 Query。`KB_ROOT` 必须是包含 `governance/` 与 `knowledge/` 的仓根绝对路径，不是 `knowledge/` Bundle 根；显式配置无效时报告配置错误，不静默改用别的仓。
 
 首次进入该知识仓运行 `discover --json`，使用其返回的 `root` 与真实覆盖信息；同一任务、同一知识根且索引指纹未变时复用。Query 只读已准备的索引；索引缺失、损坏或 stale 时记录具体错误，由知识仓安装器或维护者准备，不在调优阶段自动重建或扫描全库兜底。知识库不可用（Skill 未安装、依赖仓克隆被跳过、离线、配置或索引错误）不是阻塞项：信封省略 `KB_ROOT`，阶段标注 `kb_unavailable`，按无知识增强继续，不降低精度与性能验收要求；主 Agent 在报告中登记原因与恢复方式。有效零命中保留为当前决策的知识缺口，不等同于知识库不可用，更不能作为技术不可行的证据。
 
@@ -159,6 +161,6 @@ generalization 保留既有规则：
 
 ## 冻结效果策略与确认门禁
 
-新请求默认 `performance_effect_policy={"id":"confidence_effect_v1","version":1}`，用户指定优先；旧request/manifest缺字段保持 `legacy_jitter_v1`。真源为 `ops-perf-acceptance-criteria/references/performance-jitter-policy.md`，不从固定3%阈值否决已证实小收益，不引入1us下限。schema2旧summary与schema1旧全集gate原算法复核；schema3新summary与schema2新gate记录版本、统计依据和完整proof依赖SHA。CLI提供manifest或显式policy，未知版本拒绝。
+新请求默认策略按 backend 选择，用户指定优先；旧 request/manifest 缺字段保持 `legacy_jitter_v1`。公共规则见 [效果判定](../../ops-perf-acceptance-criteria/references/performance-jitter-policy.md)，仅 confidence 策略读取 [确认细则](../../ops-perf-acceptance-criteria/references/performance-confidence-policy.md)，不从固定3%阈值否决已证实小收益，不引入1us下限。schema2旧summary与schema1旧全集gate原算法复核；schema3新summary与schema2新gate记录版本、统计依据和完整proof依赖SHA。CLI提供manifest或显式policy，未知版本拒绝。
 
-主Agent复核当前comparison独立proof，A/base不能替代A/B或不同累计基线。confidence最终/原工程全集有待确认case时不是PASS：合法确认或同source/build/loaded no-op依据后才结束；稳定小回退回原代码并复验。采集完整性、原精度、身份、频率、spread与泛化ratio不放宽。配对原始证据变更时对应summary/report/gate失效，不重写旧历史。
+confidence 下主Agent复核当前comparison独立proof，A/base不能替代A/B或不同累计基线。confidence最终/原工程全集有待确认case时不是PASS：合法确认或同source/build/loaded no-op依据后才结束；稳定小回退回原代码并复验。采集完整性、原精度、身份、频率、spread与泛化ratio不放宽。配对原始证据变更时对应summary/report/gate失效，不重写旧历史。

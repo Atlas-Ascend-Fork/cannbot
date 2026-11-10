@@ -121,10 +121,19 @@ def test_create_and_freeze_dsl_request_preserve_original_inventory(tmp_path):
     run("freeze", "--request", request, "--output-dir", tmp_path / "run")
     manifest = load(tmp_path / "run/run-manifest.json")
     assert manifest["configuration"]["backend"] == "cannbot_dsl"
+    assert manifest["configuration"]["performance_effect_policy"] == {
+        "id": "confidence_effect_v1", "version": 1,
+    }
     assert manifest["configuration"]["dsl"]["entrypoint"] == "op:run"
     assert manifest["configuration"]["tuning_mode"] == "standard"
     assert manifest["collections"]["performance_full"]["count"] == 3
     assert manifest["inputs"]["dsl_environment"] == file_identity(tmp_path / "run/dsl-environment.json")
+    create_request(request, code, cases, extra=(
+        "--backend", "cannbot_dsl", "--dsl-repo-root", str(tmp_path),
+        "--dsl-entrypoint", "op:run", "--dsl-execution-mode", "jit",
+        "--performance-effect-policy", "legacy_jitter_v1",
+    ))
+    assert load(request)["performance_effect_policy"]["id"] == "legacy_jitter_v1"
 
 
 def test_evidence_validates_and_tracks_all_dependencies(tmp_path):

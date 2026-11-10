@@ -64,6 +64,6 @@ generalization 保留涉及/不涉及用例的映射与抽检扩样（5% → 20%
 
 ## confidence全集门禁
 
-`validate_postprocess_performance.py` 自动读取manifest策略。schema2 gate接收可重复的 `--functional-effect-evidence/--performance-effect-evidence`（每case一个proof）；同源码、同构建、同加载的真实no-op使用 `--functional-same-implementation/--performance-same-implementation`。规格与proof schema见 `ops-perf-acceptance-criteria/references/performance-jitter-policy.md`。两类全集分别按相同版本重算，proof必须绑定此次原工程before/after收据及当前SoC，demo或候选间proof不能直接挪用。header-only非计时行仍按原语义门禁检查。
+`validate_postprocess_performance.py` 自动读取manifest策略。schema2 gate接收可重复的 `--functional-effect-evidence/--performance-effect-evidence`（每case一个proof）；同源码、同构建、同加载的真实no-op使用 `--functional-same-implementation/--performance-same-implementation`。confidence 规格与 proof schema 见 [确认细则](../../ops-perf-acceptance-criteria/references/performance-confidence-policy.md)。两类全集分别按相同版本重算，proof必须绑定此次原工程before/after收据及当前SoC，demo或候选间proof不能直接挪用。header-only非计时行仍按原语义门禁检查。
 
 稳定小回退为 `route_required`，需要真实谓词回原代码并完整复验；无有效回退但有 `inconclusive` 为 `confirmation_required`，不能写PASS。最终两个全集全部已确认或有同身份byte-identical依据才为 `pass`。旧gate schema1按legacy原算法重放；新gate、报告与state登记proof全部依赖SHA，任一改变失效。原精度、泛化ratio、非目标芯片族保护和路由审阅不变。

@@ -1,6 +1,6 @@
 # msprof op 独立十样本确认
 
-仅在最终候选稳定后使用。本适配器不占设备、不调用 profiler；探索阶段的合法单次 `Task Duration` 可继续作诊断，但不能冒充统计终选。冻结的 `confidence_effect_v1`、原 baseline 和旧 application collector 均保持不变。
+仅用于 `confidence_effect_v1` 任务的稳定最终候选。本适配器不占设备、不调用 profiler；探索阶段的合法单次 `Task Duration` 可继续作诊断，但不能冒充统计终选。冻结的 `confidence_effect_v1`、原 baseline 和旧 application collector 均保持不变。
 
 完整确认是 **baseline 十次 + candidate 十次独立 msprof op 采集**，每次 `PipeTimeline`、`launch-count=1`、工具实际 warmup5、原两次 target call 和两次同步。数据来自 `OpBasicInfo.csv` 的唯一完整 mix 目标行；不伪造 application warmup 行，不相加 AIC/AIV pipe 时间。
 
@@ -45,9 +45,9 @@ timeout 120s python3 "$SCRIPTS/summarize_performance_effects.py" \
 
 ## 集成层复用规则
 
-本适配器服务 demo 侧最终确认；回集成（integration）层默认不重跑 20-slot 全量确认，两全集 before/after 的效果证据由 `canonical10_independent` proof 承担（口径见 performance-jitter-policy 与 DSL 集成阶段文档）。
+本节仅适用于 `confidence_effect_v1`：回集成默认不重跑 20-slot 全量确认；强变化 case 可用 `canonical10_independent` proof，小变化仍需配对确认，见 [confidence 确认细则](performance-confidence-policy.md)。
 
-1. **复用条件**：回写字节一致性证明成立（集成后源码与 demo 验收实现逐字节一致，built 与 loaded 同 SHA）且源/编译/加载身份链闭合时，集成层效果结论 = demo 侧本适配器正式确认结论 + 集成层 canonical10 proof，不重复采样；绑定关系写入 effect summary 的 evidence_paths。
+1. **复用条件**：回写字节一致性证明成立（集成后源码与 demo 验收实现逐字节一致，built 与 loaded 同 SHA）且源/编译/加载身份链闭合时，集成层绑定 demo 侧正式确认结论和当前比较的合法 proof，不重复采样；绑定关系写入 effect summary 的 evidence_paths。
 2. **边界**：回路由、编译分支或输入分布变化即新身份，字节等价不再成立，集成层必须重新确认；不得把 `msprof_op10_independent_v1` 改名或降级口径冒充集成层证据，也不得为凑集成层证据改写已登记 plan。
 3. **登记时序不变**：集成层 canonical10 proof 仍走 `performance_effect_evidence.py` 事前 registration（早于全部 candidate 采集）；baseline 绑定既有冻结收据时在 plan 中显式声明其 manifest 路径与 SHA，不重采。
 4. 逐 case 分类仍按冻结 `performance_effect_policy` 执行：小变化不因集成层复用而豁免配对确认，`inconclusive` 照常阻断最终 PASS。

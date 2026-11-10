@@ -8,6 +8,8 @@
 
 契约是决策真源，`selection.json` 是评估真源；搜索事件写入现有 `workflow-state.json.events`。状态脚本持锁、原子提交并重绘报告，搜索模块不另写状态文件。`inspect.search` 从事件推导当前参考、连续无新最优次数、机制结论和重新尝试条件。重复提交同一保存点不重复计数，改变已登记内容须使用新身份，不能覆盖证据。
 
+方案搜索、比较与架构重规划时，按分析 Skill 的[分析标准](../../ops-perf-analysis/references/analysis-execution.md#分析标准)评估并按需使用理论建模；模型仅作辅助证据，不以预测收益作为实施门槛，候选实测、参考晋升和停止规则不变。
+
 ## 实施契约的 search 字段
 
 在现有 schema 3 `implementation-contract-<scheme_id>.json` 中添加 `search` 字段。以下示例为字段模板，机制、证据路径、验证结论和重试条件均须根据当前算子与本轮证据填写：

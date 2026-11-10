@@ -147,5 +147,3 @@ python "$WORKFLOW_SCRIPTS/validate_schedule_contract.py" \
 lowering 核对必须引用当前生成代码中的 task/edge/buffer/event 映射；runtime 依据冻结支持范围覆盖满/单 tile、短长 query 交替、空 query、尾块、sink/LSE、两个 AIV 不均衡、槽位回绕和最终输出等待。不存在的路径记录真实接口依据；未运行不能写成已覆盖。通过调度检查也不能跳过原功能全集、精度、运行身份和性能协议。
 
 冻结范围外的辅助边界诊断不得冒充主用例：`scope` 和 `branches.case_ids` 仍只引用冻结集合及其输入实际可达场景，`runtime.coverage` 也只登记这些真实运行。辅助报告使用独立 diagnostic ID，记录准确输入、实际分支、源码/编译/加载/进程及输出身份，可由 `coverage_review.evidence`、安全 unknown 的 evidence 和 runtime 的 precision/sequence_stress 引用绑定。`model.boundaries` 须说明这些辅助路径不在主图的机械覆盖声明内；`coverage_review.complete=true` 只表示声明的有限模型完成审阅，不能隐藏尚未解释的公共合同安全问题。辅助报告的 SHA 校验不等于机械证明其输入或分支覆盖。本版本没有独立辅助 case 注册与覆盖矩阵，若需要机械验证这些额外路径，必须显式扩展 schema/检查器，不能改写冻结 case 或填写虚假覆盖。
-
-实例化工作表见 `ascendc-performance-review` 的算法/调度/后端三层模板 `references/async-schedule-templates.md`。模板只固定依赖与所有权原则，不固定历史 lag、depth、tiling 或性能数字；DSL 表达由本机真实源码、sample 与生成代码核验。

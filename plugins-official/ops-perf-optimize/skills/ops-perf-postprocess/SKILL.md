@@ -32,9 +32,9 @@ description: 用于将验收后的性能优化 demo 回集成原工程，保护�
 ## DSL 执行与交付
 
 1. 回写前核对与回写：核对最终 demo 全集证据、逐文件回写映射与原源码快照；回写映射按文件名逐字节核对，无关同名文件不入候选 diff；发现原工程并发改动先返回冲突证据。计划提交主 Agent 冻结后实施，保持原 Python 入口与公开契约。
-2. 回到原 Python 调用链一次验收：功能用例就是性能用例，同一冻结集合先按原 pytest/checker/golden 判精度，再按统一采集协议做 before/after 性能对比，不另造额外验证集，整体越快越好。before/after 用 canonical10_independent proof（先 `--register` 后采集，baseline 绑定既有冻结收据）；回写字节等价且源/编译/加载身份链闭合时，集成层效果结论绑定 demo 正式确认，不重复 20-slot 全量确认。长采集按上方双后端纪律脱离会话执行。
+2. 回到原 Python 调用链一次验收：功能用例就是性能用例，同一冻结集合先按原 pytest/checker/golden 判精度，再按统一采集协议做 before/after 性能对比，不另造额外验证集，整体越快越好。效果判定按冻结策略执行；仅 confidence 任务加载 [集成确认细则](references/dsl-integration.md#效果确认与耗时控制dsl)。长采集按上方双后端纪律脱离会话执行。
 3. 交付每 SoC `postprocess-performance-<soc>.json`、回路由证据、stage=integration 的 `dsl-compile-evidence.json` 与 `VERIFY_REPORT.md`；冻结集合的功能与性能检查无有效回退方可完成，最终报告引用集成后的真实身份。启用 schedule_policy 时按调度契约提交带 integration 链的 runtime conformance gate。细则见 [DSL 回集成](references/dsl-integration.md)。阶段产物写入 `$OUTPUT_DIR/integration/`，交付时更新该文件夹的 `阶段总结.md`（做了什么、成果、关键产物清单、未决项）。
 
-两个后端的长采集（多 case 全集、20 slot 确认、A/B 配对轮）一律按 `ops-perf-acceptance-criteria` 的长采集执行纪律（`performance-collection.md` 与 `msprof-op-effect-evidence.md`）：驱动脚本 `setsid`/`nohup` 脱离会话、逐 case/slot 进度日志与独立证据目录、跳过已完成部分断点续跑、失败 attempt 合规记录；禁止把整段采集放在代理前台单命令内执行。
+两条后端的长采集均按 [长采集执行纪律](../ops-perf-acceptance-criteria/references/performance-collection.md#长采集执行纪律) 执行。
 
 需要调用工具时使用 `$WORKFLOW_SCRIPTS/`；写进度或提交保存点时按需读取 `$WORKFLOW_ROOT/workflows/references/state-reporting.md`。保持现有 phase/round/gen 键，代码与证据身份不变时复用已有结果。阶段内不加载主编排 Skill `ops-perf-optimize-workflow` 或其他阶段 Skill；工程机械能力与共享验证能力按上述路由调用。

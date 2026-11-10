@@ -13,8 +13,8 @@ description: 性能优化阶段共用的验收判据：性能采集协议、精�
 |---|---|
 | 采集/复用基线、小算子、候选或原工程性能 | [performance-collection.md](references/performance-collection.md)，实际采集加载 `ops-profiling`；MC² 加载 `ascendc-mc2-best-practice` |
 | 基线/候选/原工程功能判定、定位新增失败 | [precision-policy.md](references/precision-policy.md)，TTK 操作加载 TTK 标准 skill（`ttk-how-run-test`/`ttk-how-diagnose`） |
-| 比较性能、生成 effect 摘要、防止退化 | [performance-jitter-policy.md](references/performance-jitter-policy.md) |
-| 用户指定 msprof op 单 launch 协议，稳定最终候选后做独立十样本确认 | [msprof-op-effect-evidence.md](references/msprof-op-effect-evidence.md) |
+| 比较性能、生成 effect 摘要、防止退化 | 按冻结策略读取：AscendC 默认 → [legacy](references/performance-jitter-policy.md)；DSL 默认 → [confidence](references/performance-confidence-policy.md)，显式指定优先 |
+| confidence 策略且用户指定 msprof op 单 launch 协议，稳定最终候选后做独立十样本确认 | [msprof-op-effect-evidence.md](references/msprof-op-effect-evidence.md) |
 | schedule_policy 下的调度模型交接、生成代码与运行证据核验 | [async-schedule-contract.md](references/async-schedule-contract.md) |
 | search_policy 下的单方案决策、评估与架构重规划证据交接 | [architecture-search.md](references/architecture-search.md) |
 | 泛化 ratio 计算与覆盖核验 | [ratio.md](references/ratio.md) |
