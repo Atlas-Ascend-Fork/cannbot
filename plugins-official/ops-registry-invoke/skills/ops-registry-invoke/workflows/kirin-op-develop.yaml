@@ -1,0 +1,1146 @@
+# kirin-op-develop：op-develop.yaml 的 kirin 平台变体（工作流定义文件）。以 op-develop.yaml 为唯一参考基线，
+# 针对麒麟端侧平台（Kirin NPU）的执行/验证载体为：麒麟设备验证（ops-kirin-device-verify）为主，
+# camodel simulator（sim 直调）为辅（麒麟设备异常时降级处理的选项），删除昇腾特有链路、补充 kirin 收口节点，
+# 并保留手写 l0op op_api 交付、check_runtime_result.py determinism 门禁、sim 确定性指示性声明、
+# ASSUMPTIONS.md 汇总 TODO/假设等严谨点。全部改动点均带 # kirin-adapt 注释，说明原因与目的。
+#
+# 目标平台：麒麟端侧（Kirin NPU，KirinX90/Kirin9030 等端侧型号；arch 与 UB 规格按 kirin 型号经工具链确定，
+# 不在此写死，见 kirin-env-check）。算子的开发与验证以「麒麟设备验证（ops-kirin-device-verify）为主，
+# CANN Simulator（camodel 仿真，sim 直调）为辅（麒麟设备异常时降级处理的选项）」。
+# 工具链要求 mobile-station 完整形态 CANN 包（opp/built-in 下 op_graph/op_proto、op_impl、framework 齐备）。
+# 麒麟设备验证为默认执行载体；sim 直调仅作为辅助载体，用于 kernel 开发白盒快迭代与下述降级场景：
+#   情形 A｜麒麟设备离线：验证整体降级为仿真，仿真作为替代载体。
+#   情形 B｜单用例在麒麟设备上执行过程异常：仅该用例降级为仿真，仿真作为替代载体。
+#   情形 C｜单用例在麒麟设备上验证结果失败：仅该用例先用仿真复现/定位，修复后重新进行麒麟设备验证，
+#     最终判定以麒麟设备验证结果为准；其余用例不受影响。
+# 降级按用例进行，不允许因个别用例异常而把整轮验证切到仿真。两种载体皆不可达时显式 N/A。
+# 仿真 tick 上限（统一定义）：camodel 单用例 tick 硬上限，当前值 100M（暂定值，获取方式待确认——CANN 包
+# 未暴露该参数：config.json 的 max_sim_time、digitalNpu.json 等修改实测不生效；该值来自实测观察
+# 「total tick: 100000001 / stopped by exceed max sim time」）。其余位置一律引用本定义，不再重复写死数值。
+# 约束范围：该上限仅作用**仿真载体执行**的用例，麒麟设备验证的用例不受此约束。仅当用例已降级到仿真
+# （情形 A/B/C）且超过此上限（预估超限或运行中触顶识别均可）时暂时跳过该用例，不判定通过或失败，
+# 并显式记录「用例名 + 跳过原因（降级到仿真 + 超过仿真 tick 上限）」。
+#
+# 统一约定（其余位置一律引用本约定，不重复写死具体值）：
+#   - sim 直调运行约定：ASCEND_RUN_MODE=sim；LD_LIBRARY_PATH 顺序 simulator 目录在包 lib64 前（否则 100039）；
+#     需要时 GLIBCXX_3.4.32 经 LD_PRELOAD 就绪。事实源：ascendc-kirin-env-check（仿真线）。
+#   - 构建命令约定：cd $WORK_DIR/op && bash build.sh --soc=<SOC_VERSION 小写（来自 kirin-env.json）>，
+#     在所 source 的 mobile-station CANN 下执行；示例 soc 为 kirinx90，实际以 kirin-env.json 的 soc_version 为准。
+#   - sim 上 aclnn 两段式受限错误码 361001（事实源：ascendc-kirin-env-check 仿真线）。
+#   - SIM_MAX_ELEMS：sim 载体元素数上限，3_000_000（保守下取，由 camodel 100M tick 上限 ≈4.67M 元素（fp32）
+#     推得，见上方仿真 tick 上限统一定义）；元素数超过该值的用例 sim 不可行（仅设备运行），正文一律引用本定义。
+#
+# 与 op-develop.yaml 相比的节点/子图改动总览：
+#   [修改节点]（适配 kirin 执行载体、工程树与验证证据源）
+#     detect-npu-arch -> kirin-env-check：asys info -r hardware 为昇腾 NPU 查询命令，本地开发机（宿主机）上
+#       不可用（无昇腾驱动）；改用 ascendc-kirin-env-check + check_kirin_env.sh 输出 kirin-env.json
+#       （SoC/架构/双能力线/设备链路）。
+#     blackbox-gen：用例生成保留 ascendc-st-design，去向改为麒麟设备验证为主、sim 辅助；并按「覆盖全面 +
+#       集合最小化」构造（合并等价形状/参数组合，压缩数量不牺牲覆盖面）；生成后经 merge_cases.py 离线切分为
+#       可执行套件 cases/blackbox_l0.csv / blackbox_l1.csv / blackbox_l2_neg.csv（*_oversized.csv 侧表不进入），
+#       记录各套件数据行数（供下游核对与回归基线使用）。
+#     blackbox-determinism：麒麟设备载体每用例重复 10 次 bit 比对；降级到仿真载体时每用例只执行 1 次
+#       （仿真耗时较长）；check_runtime_result.py determinism 门禁 + 「sim 上确定性为指示性证据」显式声明。
+#     analyze-requirements / generate-spec：运行时证据换 kirin-env.json；spec 芯片换 kirin SoC。
+#     setup-op-package：--soc 构建 + atc->OMC 转换证明替代 NPU eager 示例（模板 build.sh 只认昇腾代际）。
+#     write-design-validation：numpy golden；性能目标换 camodel tick 基线。
+#     write-design-devview-*/write-design-kernel：工程树 arch 按 kirin 型号确定（不在此写死）。
+#     update-opdef / write-tiling-ut / implement-tiling：arch 按 kirin 型号确定 + --soc 构建。
+#     gen-golden：numpy golden + gen_cases.py，供麒麟设备验证比对为主、sim 辅助比对。
+#     generate-kernel-subgraph / kernel-impl：子图验证以麒麟设备验证为主、sim harness 为辅（开发辅助白盒快迭代），
+#       每分支 kernel 的正式验证证据以麒麟设备验证收口（设备离线时 sim 结果作降级证据）；共享框架分支合并 bringup。
+#     doc-gen / fix-findings / docs-consistency-check：验证证据源以麒麟设备验证为主、sim 辅助（降级）。
+#     aclnn-impl-smoke：回归载体修正——**host 契约验证为收口层（closing layer）**（构建 + 符号 + 头文件字节级
+#       校验，默认可落地）；camodel sim 直调为尽力而为层（可选增强，aclnn 两段式在 sim 上受限，错误码见统一约定）；
+#       设备侧以 atc->OMC 单算子路线为操作等价承接（每覆盖格用例的 atc 转换由 blackbox-device-verify 证明）；
+#       **设备无 host aclnn API 执行路线**（ops-kirin-device-verify 8 步为 atc->OMC->HAP->推理）。
+#     prepare-performance-optimization / performance-optimization：camodel tick 基线 + kirin 子图。
+#   [删除节点]（kirin 无等价链路，逐条原因见对应 # kirin-adapt 注释；删除均为显式记录，不静默跳过）
+#     setup-ops-test-kit / verify-ops-test-kit / setup-xpu-server：TTK kernel/aclnn 跑昇腾 NPU。
+#     geir-testcase-gen / geir-impl-smoke / geir-run-100pct：GEIR 图模式为昇腾 A5 路由，kirin 用 atc->OMC。
+#     torch-impl-smoke：端侧无 PyTorch NPU 支持；tensorflow-impl-smoke：无 TF 路线。
+#     blackbox-smoke / blackbox-run-l0/l1/l2-100pct（kirin 变体名 st-sim-smoke / st-sim-l0/l1/l2-100pct）：
+#       仿真全量套件节点删除——套件切分职责并入 blackbox-gen；情形 A/B/C 降级执行并入 blackbox-device-verify
+#       （以覆盖格最小集跑 sim，不再单独跑 sim 全量套件）；仿真 tick 上限跳过规则保留（用例名 + 跳过原因，
+#       不判定通过或失败）。
+#   [新增节点]
+#     setup-sim-harness：构建 camodel sim 直调 harness（run_sim.sh + <op>_sim.cpp + --perf 模式），作为降级
+#       底座与开发辅助——供 kernel bringup 子图、blackbox-device-verify（情形 A/B/C 降级执行）与性能 tick 基线
+#       消费，消除 harness 构建时序断链。
+#     blackbox-device-verify：麒麟设备验证**主验证节点**。用**覆盖全面 + 集合最小化**的用例集合：对 spec dtype
+#       矩阵 × tilingKey × shape 形态类（大/小尾/rank-0/非连续/广播）做等价类覆盖，从 blackbox-gen 产出的最小化
+#       套件中经集合覆盖算法选最小子集，证明每格至少 1 条而总量最小；每项经 ops-kirin-device-verify 8 步麒麟
+#       设备验证比对，承接 setup-op-package 的模板示例（atc->OMC 单算子推理）与 aclnn-impl-smoke 的 host 契约
+#       延后项（每覆盖格用例的 atc 转换），并产出 ASSUMPTIONS.md 汇总全流程 TODO/假设；集成三种降级路径并承接
+#       仿真全量套件（基线 blackbox-smoke / blackbox-run-l0/l1/l2-100pct）的降级执行职责：情形 A（设备离线，
+#       整体降级 sim，以覆盖格最小集经 sim harness 执行，不再单独跑 sim 全量套件）/ 情形 B（单用例执行异常，
+#       逐用例降级 sim）/ 情形 C（单用例失败，先 sim 复现定位、修复后重新设备验证，最终以设备结果为准）。
+#   [子图] design-sub-graph.yaml（不变，运行时生成）、kernel-sub-graph.yaml（运行时生成，验证以麒麟设备验证
+#     为主、sim 辅助，供开发辅助与降级场景使用）、kirin-perf-optimize.yaml（sim 性能决策，运行时生成）。
+#   [性能] 走 camodel tick 基线摸底（total tick / cycles-per-element），非麒麟设备延迟/吞吐；cannsim 不支持
+#     Kirin。仿真载体受单用例仿真 tick 上限约束（见上方统一定义），超限用例跳过并显式记录。
+#   [验证载体优先级]（五条）：
+#     1) 载体优先级为麒麟设备验证为主、camodel 仿真为辅（麒麟设备异常时降级处理的选项）；验证链为
+#       blackbox-gen -> kernel-impl -> aclnn-impl-smoke -> blackbox-device-verify（主）-> blackbox-determinism -> doc-gen；
+#       blackbox-smoke / blackbox-run-l0/l1/l2-100pct（st-sim-*）节点删除（套件切分并入 blackbox-gen、
+#       降级执行并入 blackbox-device-verify）。
+#     2) 仿真 tick 上限（见上方统一定义）：仅降级到仿真（情形 A/B/C）且超限的用例暂时跳过并显式记录，
+#       不判定通过或失败；该上限仅作用仿真载体执行的用例，麒麟设备验证用例不受影响。
+#     3) ST 用例集按「覆盖全面 + 集合最小化」构造（合并等价形状/参数组合，压缩数量不牺牲覆盖面），
+#       写入 blackbox-gen 与 blackbox-device-verify 的用例选择逻辑。
+#     4) blackbox-determinism：麒麟设备载体每用例重复 10 次；降级到仿真载体时每用例只执行 1 次（仿真耗时较长）。
+#     5) 载体强制顺序（kernel 子图 bringup/batch/instantiate 与 blackbox 批次通用）：device_online 时以麒麟设备
+#       验证为主载体，精度 PASS 必须出自设备 8 步验证，sim 不作为在线时的验收证据；sim 仅限编译/接线级 sanity
+#       （run_sim.sh --check）与情形 A/B/C 降级（须记录降级原因）；sim 调试有终止条件——命中 sim 固有局限
+#       （int8 B 通路 L0B/MMAD 限制、tick 上限、dav-l300 Fixpipe NZ->ND 断言）立即停止并切设备；
+#       验收门禁只认设备 8 步结果，sim bitwise-PASS 仅作接线 sanity。
+#
+# 依赖 skill（均真实存在于 cannbot 仓或 cannbot-skills 仓）：
+#   native（cannbot 仓）：ops-requirement-analysis、design-template、ascendc-build-system、st-verifier、
+#     tiling-ut-harness、tiling-exception-coverage、workflow-orchestrator（blackbox-tester 的用例切分脚本
+#     merge_cases.py 被 blackbox-gen 复用为离线 CSV 切分工具，不作为本工作流声明的依赖 skill 加载）。
+#   external（cannbot-skills/；tool-atc / tool-hdc 位于 cannbot-skills/tools/）：ascendc-kirin-env-check、
+#     ops-kirin-device-verify、tool-atc、tool-hdc、npu-arch、ops-spec-gen、
+#     ops-design-paradigms、ascendc-st-design、ascendc-code-review、ascendc-docs-gen、
+#     ascendc-registry-invoke-template、ascendc-whitebox-design、ascendc-runtime-debug、ascendc-precision-debug。
+#   perf：cannbot 仓 plugins-official/ops-perf-optimize（技能 ops-perf-optimize-workflow，kirin 适配见
+#     prepare-performance-optimization 的 TODO）。
+#   ops-impl-review：与 op-develop.yaml 引用一致（四脚本门禁；脚本路径以安装后实际为准）。
+#   skill/agent 引用兜底说明：develop-hand-written-aclnn、ops-impl-review 技能，以及 designer / whitebox-designer /
+#     st-verifier 等角色 agent 可能未在磁盘落地——此类引用按「执行其文档化步骤，由执行器按文档 fallback 执行」
+#     处理（不臆造脚本存在）；实际脚本路径在安装后 / 运行时核对。
+workflow: kirin-op-develop
+max_parallel: 10
+system_prompt: "If needed, dispatch multi subagents to explore code under $WORK_DIR/requirements/references(if exists) relevant to this task, as development reference. Target platform is kirin end-side (Kirin NPU); the primary verification carrier is the kirin-device verification (ops-kirin-device-verify), and the camodel simulator (sim-direct) is the auxiliary/degradation carrier only (cases A: device offline whole-round, B: per-case execution anomaly, C: per-case failure reproduce/localize — never a whole-round sim switch for isolated anomalies); the ttk aclnn/kernel, torch_npu, TF, GEIR and other Ascend-NPU-dependent paths are forbidden."
+nodes:
+  - id: knowledge-preflight
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Set up and query the cannbot-knowledge knowledge base
+    goal:
+      - "Set up the cannbot-knowledge knowledge base at $WORK_DIR/cannbot-knowledge and query it for knowledge relevant to the operator in the task prompt; write the distilled findings to $WORK_DIR/cannbot-knowledge/artifacts/preflight.md."
+    approach:
+      - "The knowledge root is $WORK_DIR/cannbot-knowledge. If it has no .git subdirectory, run `git clone --depth 1 https://gitcode.com/cann/cannbot-knowledge.git $WORK_DIR/cannbot-knowledge`; otherwise skip the clone."
+      - "If $WORK_DIR/cannbot-knowledge/artifacts/indexes/knowledge.sqlite3 is missing, run `python3 -m pip install -r $WORK_DIR/cannbot-knowledge/requirements.txt`, `bash $WORK_DIR/cannbot-knowledge/get_resources.sh`, and `python3 $WORK_DIR/cannbot-knowledge/.agents/skills/knowledge-query/scripts/knowledge_index.py --knowledge-root $WORK_DIR/cannbot-knowledge build`; if the index already exists, skip all three."
+      - "Run `python3 $WORK_DIR/cannbot-knowledge/.agents/skills/knowledge-query/scripts/knowledge_query.py --knowledge-root $WORK_DIR/cannbot-knowledge discover` once, then query for the operator name, its math semantics, and the key CANN/Ascend C APIs mentioned in the task prompt."
+      - "For each promising hit, read the full card at the returned path; follow card resource/sources links only when the card is insufficient."
+      - "Write $WORK_DIR/cannbot-knowledge/artifacts/preflight.md: per topic, the distilled facts (API contracts, platform limits, tiling/UB constraints, known pitfalls), each citing its source card path. Record zero-hit queries explicitly as 'no coverage' — do not treat them as errors."
+    acceptance:
+      - "$WORK_DIR/cannbot-knowledge/artifacts/preflight.md exists and is non-empty."
+      - "Every fact in it cites a card path under $WORK_DIR/cannbot-knowledge; queries with no hits are listed explicitly."
+    out_of_scope:
+      - "The knowledge repository is read-only except for its own setup artifacts (indexes, downloaded resources); do not modify any knowledge card."
+      - "Do not create or modify any file outside $WORK_DIR/cannbot-knowledge/."
+    depends_on: []
+    max_retries: 1
+    on_exhaust: continue
+# kirin-adapt: kirin-env-check：相对 op-develop：detect-npu-arch 依赖 `asys info -r hardware`（昇腾 NPU
+#   查询命令，本地开发机（宿主机）上不可用（无昇腾驱动；实测报错以实际执行为准）→ 改用 ascendc-kirin-env-check，
+#   输出 kirin-env.json（记录 SoC/架构/双能力线/设备链路）；下游消费方 analyze-requirements 与
+#   prepare-performance-optimization 同步改为读 kirin-env.json。
+  - id: kirin-env-check
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Detect the kirin target platform, toolchain and device link via ascendc-kirin-env-check
+    goal:
+      - "Run the ascendc-kirin-env-check skill to establish the three capability lines and record them in $WORK_DIR/kirin-env.json: (1) development prerequisites, (2) CANN package dual capability — atc->omc conversion line and camodel simulator sim-direct line (independently assessed), (3) hdc device connection and chip model. Also record the target SoC version (e.g. KirinX90/Kirin9030), device serial, ASCEND_HOME_PATH, and GLIBCXX readiness. device_online determines the primary/degradation carrier for the later verification stages: device online -> kirin-device verification is the primary carrier; device offline -> whole-round degradation to the simulator (case A)."
+    approach:
+      - "Load the ascendc-kirin-env-check skill first (mandatory); its scripts/check_kirin_env.sh is the execution authority: run `bash <skill>/scripts/check_kirin_env.sh` (full, including the device segment). If the device segment fails (offline), rerun with `--skip-device` and record the offline state — do not treat device offline as a blocker at this stage; the kirin-device stage will re-check or degrade."
+      - "Load the tool-hdc skill for hdc connection details (hdc list targets; chip model via `hdc shell hidumper -c base`), and the npu-arch skill for the SoC->arch mapping (the mapping is per kirin model and is captured from the toolchain check as arch_code into $WORK_DIR/kirin-env.json — arch/UB specs are not fixed here)."
+      - "Confirm the CANN package is the mobile-station full package (opp/built-in has op_graph/op_proto, op_impl and framework) — a trimmed devkit makes atc FE fail with E20002; record the conclusion and the ASCEND_HOME_PATH of the sourced set_env.sh."
+      - "Confirm the simulator line: x86_64-linux/simulator/{SoC}/lib/libruntime_camodel.so present, plus the camodel libascendcl shell (~16KB) and GLIBCXX_3.4.32 readiness; record whether sim-direct is usable and the required LD_LIBRARY_PATH ordering (simulator dir before package lib64, else 100039)."
+      - "Write $WORK_DIR/kirin-env.json as JSON: {platform: kirin, soc_version, arch_code (the kirin model's chip/arch code captured from the toolchain check, not fixed), device_sn (or null), ascend_home_path, atc_capable, sim_capable, glibcxx_ready, device_online}. Decide autonomously from the check outputs; never guess the SoC — if the device/chip model is unavailable, ask the user for the SoC version before proceeding."
+    acceptance:
+      - "$WORK_DIR/kirin-env.json exists and parses as JSON with platform: kirin and concrete soc_version; the value matches the toolchain check, not a guess."
+      - "The check script(s) actually ran and their outputs are preserved under $WORK_DIR/kirin-env-check/ (full log per capability line, PASS/FAIL each)."
+      - "atc_capable and sim_capable are each decided independently with evidence; if sim_capable is false or GLIBCXX_3.4.32 is missing, the record states the exact blocker and the prescribed fix (from ascendc-kirin-env-check), and the workflow must not start the sim-dependent stages until resolved or explicitly accepted by the user."
+      - "The SoC version used across all later tasks equals kirin-env.json's soc_version."
+    out_of_scope:
+      - "Do not install, upgrade, or reconfigure anything; only check and record. Do not run npu-smi (the Ascend NPU status query command) on kirin — the end-side device status is queried via hdc (hdc list targets) instead."
+      - "Do not create or modify any file outside $WORK_DIR/kirin-env.json and $WORK_DIR/kirin-env-check/."
+    depends_on: []
+    max_retries: 2
+    on_exhaust: exit
+  - id: create-requirements-dir
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Create the requirements analysis directory
+    goal:
+      - Create the requirements analysis directory at $WORK_DIR/requirements/.
+    approach:
+      - Create $WORK_DIR/ if it does not already exist.
+      - Create $WORK_DIR/requirements/ under it.
+    acceptance:
+      - $WORK_DIR/requirements/ exists and is a directory.
+    out_of_scope:
+      - Do not create or modify any file other than the $WORK_DIR/requirements/ directory.
+    depends_on: []
+    max_retries: 2
+    on_exhaust: exit
+  - id: setup-reference-repos
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Shallow-clone the reference source repos
+    goal:
+      - "Create $WORK_DIR/requirements/references/ and shallow-clone (--depth 1) the reference source repos required by the requirement analysis into cann/, ascend/, competitor/ subdirectories."
+    approach:
+      - "Create $WORK_DIR/requirements/references/ if it does not already exist, then create cann/, ascend/, competitor/ subdirectories under it."
+      - "For each clone command below, skip it if the target directory already contains a .git subdirectory; otherwise run it as-is."
+      - "git clone --depth 1 https://gitcode.com/cann/ops-nn.git $WORK_DIR/requirements/references/cann/ops-nn"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-math.git $WORK_DIR/requirements/references/cann/ops-math"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-transformer.git $WORK_DIR/requirements/references/cann/ops-transformer"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-cv.git $WORK_DIR/requirements/references/cann/ops-cv"
+      - "git clone --depth 1 https://gitcode.com/cann/ops-rand.git $WORK_DIR/requirements/references/cann/ops-rand"
+      - "git clone --depth 1 https://gitcode.com/ascend-archive/canndev.git $WORK_DIR/requirements/references/cann/canndev"
+      - "git clone --depth 1 https://gitcode.com/Ascend/op-plugin.git $WORK_DIR/requirements/references/ascend/op-plugin"
+      - "git clone --depth 1 https://gitcode.com/Ascend/torchair.git $WORK_DIR/requirements/references/ascend/torchair"
+      - "git clone --depth 1 https://github.com/pytorch/pytorch.git $WORK_DIR/requirements/references/competitor/pytorch"
+      - "git clone --depth 1 https://github.com/tensorflow/tensorflow.git $WORK_DIR/requirements/references/competitor/tensorflow"
+      - "Report which repos were cloned, skipped (already present), or failed to clone."
+    acceptance:
+      - "$WORK_DIR/requirements/references/ exists and contains cann/, ascend/, competitor/ subdirectories."
+      - "Each of these ten target directories contains a .git subdirectory: cann/ops-nn, cann/ops-math, cann/ops-transformer, cann/ops-cv, cann/ops-rand, cann/canndev, ascend/op-plugin, ascend/torchair, competitor/pytorch, competitor/tensorflow."
+    out_of_scope:
+      - "Do not modify any repo's contents, checkout a different branch, or run any build inside the repos."
+      - "Do not create or modify any file outside $WORK_DIR/requirements/references/."
+    depends_on:
+      - create-requirements-dir
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: setup-ops-test-kit / verify-ops-test-kit / setup-xpu-server：相对 op-develop：克隆 ops-test-kit
+#   + TTK 环境验证 + xpu-server -> 删除。原因：TTK（ops-test-kit）的 kernel/aclnn/geir 黑盒链路依赖昇腾 NPU
+#   执行，本地开发机（宿主机）上无该链路（无昇腾驱动，asys info -r hardware 即见无可用昇腾设备）；
+#   verify-ops-test-kit 要求 `Found N device(s)` 并跑样例测试（NPU 运行）；setup-xpu-server 服务 TTK 的
+#   cross_check（third_party torch）链路。kirin 的执行/比对载体为麒麟设备验证为主、camodel sim 直调为辅
+#   （降级处理时选项），numpy golden 比对，三者均无消费方。环境由 kirin-env-check 能力线 2 承接，golden
+#   比对见 gen-golden / blackbox-device-verify。
+#
+# kirin-adapt: analyze-requirements：相对 op-develop：由依赖 $WORK_DIR/npu-arch.json 作运行时证据、昇腾
+#   950PR/950DT 默认改为 $WORK_DIR/kirin-env.json（soc_version + 麒麟设备验证为主、sim 辅助执行载体），
+#   默认 KirinX90/单算子/无 PyTorch NPU 依赖。
+  - id: analyze-requirements
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the requirements analysis document REQUIREMENTS.md
+    goal:
+      - "Produce $WORK_DIR/requirements/REQUIREMENTS.md for the operator described in $USER_PROMPT, covering its functional scope, inputs/outputs, and constraints, along with the research intermediates under $WORK_DIR/requirements/research/."
+      - "The CANN-side research anchors on the existing implementation and produces three artifacts under $WORK_DIR/requirements/research/cann/: code_walkthrough.md (call-chain walkthrough), code_design.md (deliverable coverage + analysis), and formula.md (formula extracted from the existing kernel's Compute method — the semantic anchor of the operator's math, reference evidence for downstream design/golden tasks)."
+      - "The runtime environment section (## 7 运行环境) targets the kirin end-side platform recorded in $WORK_DIR/kirin-env.json (soc_version), single-op invocation via atc->OMC kirin-device inference primarily and simulator sim-direct execution as the auxiliary/degradation carrier — not an Ascend server NPU."
+    approach:
+      - "First read the customer requirement from the file named by $USER_PROMPT (the user prompt); extract the operator name and any specified runtime environment, invocation, network, dtype, or shape requirements."
+      - "Load the ops-requirement-analysis skill first (mandatory) and follow its pipeline: stage 1 name resolution, stage 2 three-way research (model / competitor / CANN) with decision priority — math semantics and formula follow the competitor implementation (the primary semantic baseline and reference-oracle source); signatures, dtypes and deliverable facts follow the official IR when it hits; stage 3 requirement summary per its references/output_template.md."
+      - "Load the cannbot-knowledge knowledge base at $WORK_DIR/cannbot-knowledge and query it for this operator and its key CANN/Ascend C APIs; reuse $WORK_DIR/cannbot-knowledge/artifacts/preflight.md when present, cite source card paths in the requirement research, and record no-hit topics explicitly."
+      - "Treat $WORK_DIR/requirements/references/ (cann/, ascend/, competitor/ subdirectories) as the skill's reference/ tree for empirical source search."
+      - "Consult the local built-in proto at $ASCEND_OPP_PATH/built-in/op_proto/inc/ as the highest-authority CANN fact source."
+      - "Use the target platform recorded in $WORK_DIR/kirin-env.json as the runtime-environment evidence (SoC version, sim vs kirin-device execution carrier)."
+      - "Fill any missing customer-requirement fields with the skill's defaults (KirinX90 / the SoC in kirin-env.json, single-op, no PyTorch NPU dependency) and mark them as assumptions; decide autonomously, never ask the user."
+    acceptance:
+      - "$WORK_DIR/requirements/REQUIREMENTS.md exists and is non-empty."
+      - "The document has the fixed section structure (## 1 需求背景 through ## 8 需求分析总结) with all sections filled."
+      - "Supported data types, chip platform / runtime environment, and the operator formula are all traceable in the document; the runtime environment names the kirin SoC and states that execution is via kirin-device inference primarily with simulator sim-direct as the auxiliary/degradation carrier."
+      - "No bare COPY: directives remain; table of contents entries match the body headings."
+      - "The §7.4 performance requirement section lists at least 4 concrete key shapes, states the source route, and fills in no target values (kirin performance baseline is camodel tick, per REQUIREMENTS the target metric may be tick-based)."
+      - "$WORK_DIR/requirements/research/cann/ contains code_walkthrough.md, code_design.md and formula.md; when no kernel source was found, formula.md carries an explicit 'Kernel code missing' note instead of invented line-level evidence."
+      - "The verifier reviews the document item by item against the fixed section, COPY, numbering, TOC, research, performance, and API requirements; every check passes."
+    out_of_scope:
+      - "Do not write spec.yaml, DESIGN.md, or any implementation code; this task only produces the requirements document and its research intermediates."
+    depends_on:
+      - setup-reference-repos
+      - kirin-env-check
+    max_retries: 1
+    on_exhaust: exit
+# kirin-adapt: generate-spec：相对 op-develop：由按昇腾目标芯片（默认 950PR/950DT，stage 9 torch）走 11
+#   阶段校验，改为将 op.platform_constraints.supported_chips 设为 kirin SoC（KirinX90；ops-spec-gen 的
+#   chip_registry 加入 KirinX90 为本地补丁，上游未合入，见方法中的校验步骤），不含昇腾服务器芯片；
+#   kirin 上 torch 阶段 SKIP 计 pass。
+  - id: generate-spec
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the operator spec file spec.yaml (kirin chip)
+    goal:
+      - "Produce $WORK_DIR/spec/spec.yaml for the operator described in $WORK_DIR/requirements/REQUIREMENTS.md: a machine-checkable structured operator spec translated from and consistent with it, with no omission and no invented addition (every field traceable to REQUIREMENTS.md)."
+      - "Use $WORK_DIR/spec/ as this task's working directory; the spec artifact is written there."
+    approach:
+      - "Load the ops-spec-gen skill first (mandatory); decide category and paradigms from its registries (category_enum.yaml, paradigm_enum.yaml, category_paradigm_map.yaml), never by intuition."
+      - "Confirm $WORK_DIR/requirements/REQUIREMENTS.md exists; extract operator category/paradigms, input tensors + dtypes, output dtype/shape rules, math formula, reference oracle, numerical tolerance, boundary cases, target chips (runtime environment section — the kirin SoC from $WORK_DIR/kirin-env.json), and non-tensor attributes."
+      - "Generate the skeleton with the generator (never hand-write spec.yaml): python3 the ops-spec-gen skill's scripts/generate_spec.py --op-name <op-from-REQUIREMENTS> --category <Category> --paradigms <P1,P2> --inputs \"n1:dt1,dt2;n2:...\" --outputs <out> --description \"...\" --output-dir $WORK_DIR/spec"
+      - "Select the conditional generator options per the skill's rule table (axis-source / paradigm-groups / format-variants as the operator's interface requires)."
+      - "Hand-fill the required TODO fields per the skill: math_semantics.formula, reference_oracle.api, dtype_policy.supported_combinations, numerical_tolerance.per_dtype, op.platform_constraints.supported_chips (the kirin SoC, e.g. KirinX90; verify the ops-spec-gen chip_registry has the chip, else report and stop), outputs[].shape_rule/dtype_rule, and determinism. The formula form must match the 'core formula' row in REQUIREMENTS section 6 step by step."
+      - "Pin the io table to the official truth (dtype-and-naming fence) as the ops-spec-gen skill prescribes; never invent dtypes beyond the IR/competitor source the REQUIREMENTS names."
+      - "Run python3 the ops-spec-gen skill's scripts/validate_spec.py $WORK_DIR/spec/spec.yaml; fix and rerun on any FAIL until overall: PASS (exit 0); a stage SKIP (e.g. stage 9 without torch) counts as pass."
+      - "Self-verify: stop and report if any spec-owned field conflicts with REQUIREMENTS rather than choosing silently."
+    acceptance:
+      - "$WORK_DIR/spec/spec.yaml exists, is non-empty, and parses as YAML: python3 -c \"import yaml; yaml.safe_load(open('$WORK_DIR/spec/spec.yaml'))\" exits 0."
+      - "11-stage validation passes: python3 the ops-spec-gen skill's scripts/validate_spec.py $WORK_DIR/spec/spec.yaml ends with overall: PASS (exit 0)."
+      - "No TODO or placeholder residue: ! grep -qiE 'TODO|<[A-Z_]+>' $WORK_DIR/spec/spec.yaml."
+      - "op.platform_constraints.supported_chips names the kirin SoC from $WORK_DIR/kirin-env.json; no Ascend server chip is declared as the target."
+      - "spec-verifier cross-checks every spec-owned field against $WORK_DIR/requirements/REQUIREMENTS.md item by item: no omission, no invented addition; all clauses must be ✓ or ⚠ (no ❌)."
+    out_of_scope:
+      - "Produce only $WORK_DIR/spec/spec.yaml: do not create or modify any other file — including $WORK_DIR/requirements/REQUIREMENTS.md or any implementation code."
+    depends_on:
+      - analyze-requirements
+      - kirin-env-check
+    max_retries: 1
+    on_exhaust: exit
+# kirin-adapt: setup-op-package：相对 op-develop：由用模板 build.sh 按昇腾 lab 代际构建并跑 aclnn eager
+#   示例（NPU 运行时，两段式链路；模板 build.sh 的 --soc 只认 ascend910b/910_93/950）改为按 kirin SoC
+#   构建（经 ascendc-build-system 按 kirin 型号设置 soc/arch；构建命令约定见头部统一约定），把 vendor 包
+#   装入所 source 的 mobile-station opp，并以「atc 把模板算子转出 .omc」作为工具链等价验收（替代 NPU eager
+#   示例）。
+  - id: setup-op-package
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Initialize and verify the operator package from the registry-invoke template (kirin soc build)
+    goal:
+      - "Initialize the complete operator package from the ascendc-registry-invoke-template skill into $WORK_DIR/op/, rename it to the target operator, and verify the kirin toolchain path: build with the kirin SoC under the mobile-station CANN, install the vendor package into the sourced opp, and prove atc can convert the template operator to an OMC (the toolchain-equivalent of op-develop's eager example verification, which is NPU-bound and not applicable on kirin)."
+    approach:
+      - "Derive the operator's three name forms from spec.yaml: OP_SNAKE = op.name, OP_PASCAL = PascalCase, OP_UPPER = UPPER_SNAKE; read SOC_VERSION from $WORK_DIR/kirin-env.json."
+      - "Resolve the template through the ascendc-registry-invoke-template skill: TEMPLATE_DIR is the loaded skill's own directory; test -f $TEMPLATE_DIR/SKILL.md && test -d $TEMPLATE_DIR/references/add_example."
+      - "Create a fresh package from the template: rm -rf $WORK_DIR/op && mkdir -p $WORK_DIR/op && cp -a $TEMPLATE_DIR/references/add_example/. $WORK_DIR/op/ && rm -rf $WORK_DIR/op/tests. Keep the template's ACLNN example as the baseline."
+      - "Rename every file under $WORK_DIR/op/ whose name contains add_example to OP_SNAKE, then replace all sample name forms in file contents: add_example->OP_SNAKE, AddExample->OP_PASCAL, ADD_EXAMPLE->OP_UPPER; set the root CMake package_name to OP_PASCAL and update any ACLNN symbol references to aclnn<OP_PASCAL>."
+      - "Build for the kirin SoC: source the mobile-station toolkit's set_env.sh (the one recorded in $WORK_DIR/kirin-env.json), then cd $WORK_DIR/op && bash build.sh --soc=<SOC_VERSION lowercase> (build command per the unified conventions in the workflow header). The template build.sh only accepts ascend910b/ascend910_93/ascend950 — if it rejects the kirin SoC, load the ascendc-build-system skill and set the soc/arch via its documented mechanism (arch and the project layout op_host/<arch>/ + op_kernel/<arch>/ are determined per kirin model from the toolchain mapping — the arch_code recorded in $WORK_DIR/kirin-env.json / npu-arch mapping; e.g. ASC_VALID_SOC_LIST mapping 'kirinx90'->'KirinX90'; do not hardcode an arch name not in the toolchain)."
+      - "Install the vendor run package into the sourced opp: run the produced custom_opp_<host-arch>.run --install (append --force when the installer mis-reports 'undefined symbol: mmDladdr'; the package name carries the host arch, e.g. custom_opp_ubuntu_x86_64.run). After any re-install, the fresh op_proto/tiling/kernel files must appear under $ASCEND_OPP_PATH/vendors/<OP_PASCAL>/ (check timestamps)."
+      - "Prove the atc route: load the tool-atc skill; use the ops-kirin-device-verify skill's assets (create_onnx.py / singleop_json example) to build a minimal add_example-derived ONNX or singleop description for the template's own add_example operator, then `atc --model=... --framework=5 --soc_version=${SOC_VERSION} --output=...` (or --singleop) and require an .omc output with no EZ3003/E90003/E10032 — this proves the vendor proto loads and the kirin toolchain is operational for this package."
+    acceptance:
+      - "$WORK_DIR/op/ contains the package skeleton: test -d $WORK_DIR/op/op_host && test -d $WORK_DIR/op/op_kernel && test -d $WORK_DIR/op/op_graph && test -f $WORK_DIR/op/build.sh && test -f $WORK_DIR/op/CMakeLists.txt && test -f $WORK_DIR/op/README.md."
+      - "No sample-name residue: ! grep -RniE 'add_example|AddExample|ADD_EXAMPLE|addExample' $WORK_DIR/op/ (except under the tests/ directory the task removed)."
+      - "Kirin build succeeds: cd $WORK_DIR/op && bash build.sh --soc=<soc> exits 0 and the vendor run package exists under $WORK_DIR/op/build/."
+      - "Vendor installed: test -d $ASCEND_OPP_PATH/vendors/$OP_PASCAL and the op_proto/tiling/kernel dirs carry fresh files (timestamp no older than the build)."
+      - "atc route proven: an OMC file was produced for the template operator under $WORK_DIR/op/verify-atc/ and the atc log contains none of EZ3003/E90003/E10032."
+    out_of_scope:
+      - "Only create or modify files under $WORK_DIR/op/ and the toolchain-installed vendor under the sourced opp."
+      - "Do not run any NPU device test; the kirin execution carriers are simulator and kirin-device, both exercised in later stages."
+      - "Keep the template's operator semantics unchanged (input count and kernel math change in later tasks)."
+    depends_on:
+      - generate-spec
+      - kirin-env-check
+    max_retries: 2
+    on_exhaust: exit
+  - id: init-design-dir
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Initialize the design document directory structure
+    goal:
+      - "Create $WORK_DIR/design/branches/ as a directory and $WORK_DIR/design/INDEX.md whose content equals the design-template skill's templates/design/INDEX.md.templ with every {OP} replaced by the operator name from spec.yaml."
+    approach:
+      - "OP_NAME=$(python3 -c \"import yaml; print(yaml.safe_load(open('$WORK_DIR/spec/spec.yaml'))['op']['name'])\")"
+      - "mkdir -p $WORK_DIR/design/branches"
+      - "Render the design-template skill's templates/design/INDEX.md.templ to $WORK_DIR/design/INDEX.md with every {OP} replaced (sed \"s/{OP}/${OP_NAME}/g\")"
+    acceptance:
+      - "$WORK_DIR/design/ and $WORK_DIR/design/branches/ exist and are directories."
+      - "$WORK_DIR/design/INDEX.md exists and is non-empty."
+      - "No placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/INDEX.md."
+    out_of_scope:
+      - "Do not create any design document other than INDEX.md; the remaining design files are produced by later tasks."
+      - "Do not create or modify any file outside $WORK_DIR/design/."
+    depends_on:
+      - generate-spec
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-overview
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Overview.md
+    goal:
+      - "Produce $WORK_DIR/design/Overview.md for the operator in $WORK_DIR/spec/spec.yaml: operator function, natural-language definition, LaTeX math formula, and special-value / numerical-stability semantics, all traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Render the design-template skill's templates/design/Overview.md.templ to $WORK_DIR/design/Overview.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the four sections from them: ## 算子功能 (one sentence), ## 算子定义(自然语言) (exact computation semantics: input relationships and attr effect), ## 数学公式(LaTeX) (a strict LaTeX formula — the single semantic source for every branch kernel and golden), ## 特殊值与数值稳定性 (NaN/+Inf/-Inf/0/negative behaviour aligned with golden; overflow/underflow/divide-by-zero and saturation/clamp; the precision-sensitive step and whether high-precision accumulation is required)."
+      - "Replace every `>` lead-in line with actual design content; keep the four section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Overview.md exists and is non-empty: test -s $WORK_DIR/design/Overview.md."
+      - "No placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Overview.md."
+      - "All four section headings remain: grep -qF '## 算子功能' $WORK_DIR/design/Overview.md && grep -qF '## 算子定义(自然语言)' $WORK_DIR/design/Overview.md && grep -qF '## 数学公式(LaTeX)' $WORK_DIR/design/Overview.md && grep -qF '## 特殊值与数值稳定性' $WORK_DIR/design/Overview.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/Overview.md; the ## 数学公式(LaTeX) section contains a LaTeX formula, and the content is traceable to $WORK_DIR/requirements/REQUIREMENTS.md / $WORK_DIR/spec/spec.yaml."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Overview.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-interface
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Interface.md
+    goal:
+      - "Produce $WORK_DIR/design/Interface.md for the operator in $WORK_DIR/spec/spec.yaml: the operator prototype (ATen IR + Inputs/Outputs/Attrs), the supported dtype combination table, data format support, and constraints/limitations, all traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Render the design-template skill's templates/design/Interface.md.templ to $WORK_DIR/design/Interface.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the sections from them: ## 算子原型 (ATen IR plus Inputs/Outputs/Attrs with name, semantics, shape contract, optionality and defaults), ## 算子规格(受支持 dtype 组合) (a table laid out by Inputs/Outputs, one row per supported combination), ## 数据 Format 支持, ## 约束与限制 (shape range / rank cap / per-axis length cap, dtype / format / attr-value constraints, alignment, broadcast rules, explicitly unsupported scenarios), and ## OpDef 代码片段 (a complete OpDef class body generated from the prototype + spec, DataType({...}) arrays expanded per combination, all Input/Output lists equal length)."
+      - "Fill the ## 算子规格(受支持 dtype 组合) table row by row from spec.yaml: its rows/content must match spec.yaml exactly (no placeholder rows, no `<...>` residue in that table)."
+      - "Replace every `>` lead-in line with actual design content; keep the section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Interface.md exists and is non-empty: test -s $WORK_DIR/design/Interface.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Interface.md."
+      - "No `<...>` placeholder residue in the OpDef / dtype table: ! grep -qE '<(Op|op|in[0-9]*|out[0-9]*|optional_in|attr|req_attr|bool_attr|default|soc)>' $WORK_DIR/design/Interface.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/Interface.md."
+      - "The ## 算子规格(受支持 dtype 组合) table has no placeholder rows and its rows/content match $WORK_DIR/spec/spec.yaml's supported combinations exactly."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Interface.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-infershape-dtype
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document InferShapeDtype.md
+    goal:
+      - "Produce $WORK_DIR/design/InferShapeDtype.md for the operator in $WORK_DIR/spec/spec.yaml: the InferShape and InferDataType derivation rules (how outputs are derived from inputs), traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Render the design-template skill's templates/design/InferShapeDtype.md.templ to $WORK_DIR/design/InferShapeDtype.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill the two sections: ## InferShape (per-output shape derivation; broadcast alignment rule and per-dim output size; DynamicShape value/attr-driven derivation logic when applicable; empty/scalar/rank-mismatch edge cases) and ## InferDataType (per-output dtype source and any dtype promotion; the consistency check point against Interface.md's 算子规格 table)."
+      - "Replace every `>` lead-in line with actual derivation rules consistent with $WORK_DIR/spec/spec.yaml's supported_combinations; keep the section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/InferShapeDtype.md exists and is non-empty: test -s $WORK_DIR/design/InferShapeDtype.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/InferShapeDtype.md."
+      - "Every `>` lead-in has been replaced with actual derivation rules: ! grep -qE '^>' $WORK_DIR/design/InferShapeDtype.md; the rules are consistent with $WORK_DIR/spec/spec.yaml's supported_combinations."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/InferShapeDtype.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: write-design-validation：golden 采用 numpy/CPU 引用（端侧无 PyTorch NPU 路线，精度验证以
+#   麒麟设备验证为主、降级 sim 为辅与 golden 比对），性能目标为 camodel tick 基线（total tick /
+#   cycles-per-element），执行载体为麒麟设备验证为主、sim 辅助。
+  - id: write-design-validation
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Validation.md
+    goal:
+      - "Produce $WORK_DIR/design/Validation.md: the operator-wide end-to-end verification criteria (Golden reference, test-case matrix, per-dtype precision tolerances, performance targets), traceable to $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, with the execution carriers being kirin-device inference primarily and simulator sim-direct as the auxiliary/degradation carrier (not an Ascend NPU)."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory)."
+      - "Render the design-template skill's templates/design/Validation.md.templ to $WORK_DIR/design/Validation.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md and $WORK_DIR/spec/spec.yaml, then fill: ## 参考实现 (Golden) (a numpy / CPU reference or formula anchored to Overview.md's math formula, independent of the kernel under test — no self-verification), ## 端到端测试用例矩阵 (shape × dtype × format matrix covering every supported dtype combination, every branch, special values, max shape, non-aligned, broadcast if supported), and ## 精度验收标准 (per-dtype rtol/atol plus pointwise special-value alignment)."
+      - "Fill ## 性能目标: carry over §7.4 of $WORK_DIR/requirements/REQUIREMENTS.md — the target metric for kirin is camodel tick baseline (total tick / cycles-per-element) unless the requirements state otherwise; leave the target-value column empty (later calibration)."
+      - "Replace every `>` lead-in line with actual content; keep the section headings; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Validation.md exists and is non-empty: test -s $WORK_DIR/design/Validation.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Validation.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/Validation.md; the 参考实现 (Golden) is explicitly independent of the kernel under test, and 精度验收标准 gives per-dtype rtol/atol."
+      - "grep -qF '性能目标' $WORK_DIR/design/Validation.md; its key-shape count is ≥ 4 and the metric definition (camodel tick baseline) matches REQUIREMENTS §7.4; the target-value column is empty or marked 待标定."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Validation.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: write-design-devview-…：描述按 kirin 型号确定的工程树（op_host/<arch> tiling 入口、
+#   op_kernel/<arch> kernel 模板 + tiling_data.h + struct.h + kernel 入口源；arch 由 kirin 型号经工具链
+#   确定，不在此写死）；TPL 宏参数须用字面数字（正式工具链对 tiling key 查重，符号常量内嵌数字会构建失败）。
+  - id: write-design-devview-tilingkey-tilingdata-branchroute
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design documents DevView.md / TilingKey.md / TilingData.md / BranchRoute.md (kirin arch per model)
+    goal:
+      - "Produce $WORK_DIR/design/DevView.md, $WORK_DIR/design/TilingKey.md, $WORK_DIR/design/TilingData.md, and $WORK_DIR/design/BranchRoute.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md. The target arch is the kirin tree (op_host/<arch>, op_kernel/<arch>) for the arch resolved per kirin model from the toolchain mapping, not the Ascend arch35 layout."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory), and load the paradigm patterns.md corresponding to $WORK_DIR/spec/spec.yaml's op.paradigms."
+      - "Before writing TilingKey.md / BranchRoute.md, load the ascendc-build-system skill and read references/tiling-key-encoding.md; encode every tilingKey with the paradigm's GET_TPL_TILING_KEY actual bit encoding — and use literal numeric TPL macro parameters (the formal toolchain de-duplicates TPL keys; symbol constants embedding numbers fail the build)."
+      - "Render the design-template skill's templates/design/{DevView,TilingKey,TilingData,BranchRoute}.md.templ to $WORK_DIR/design/, replacing every {OP} with the operator name (BranchRoute.md.templ carries no {OP} and is copied as-is)."
+      - "Write DevView.md describing the kirin project tree for the arch resolved per model (op_host/<arch> tiling entry, op_kernel/<arch> kernel templates + tiling_data.h + struct.h + the kernel-entry source), the OpDef registration, and InferShape/InferDataType registration."
+      - "Write TilingKey.md (TilingKey C++ struct as ASCENDC_TPL_* code + TPL_SEL combination table + template partition table; the tilingKey set here is the single source for BranchRoute.md and BranchCatalog.md); TilingData.md (complete struct + field table + paradigm constraints); BranchRoute.md (routing table + priority/mutual-exclusion + scenario coverage matrix; its tilingKey set must match TilingKey.md exactly)."
+      - "Keep each template's section headings; do not touch any other design file."
+    acceptance:
+      - "All four files exist and are non-empty: test -s $WORK_DIR/design/DevView.md && test -s $WORK_DIR/design/TilingKey.md && test -s $WORK_DIR/design/TilingData.md && test -s $WORK_DIR/design/BranchRoute.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/DevView.md $WORK_DIR/design/TilingKey.md $WORK_DIR/design/TilingData.md $WORK_DIR/design/BranchRoute.md."
+      - "Every `>` lead-in in each of the four files has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/DevView.md $WORK_DIR/design/TilingKey.md $WORK_DIR/design/TilingData.md $WORK_DIR/design/BranchRoute.md."
+      - "The DevView describes the kirin project tree with the arch resolved per model (grep -qE '<arch>' $WORK_DIR/design/DevView.md, where <arch> is the per-model arch from the kirin-env.json arch_code / npu-arch mapping); TilingKey.md and BranchRoute.md tilingKey sets match exactly."
+      - "No `<...>` placeholder residue in the TilingKey / BranchRoute tables: ! grep -qE '<(name|case|dtype|shape|值|条件)>' $WORK_DIR/design/TilingKey.md $WORK_DIR/design/BranchRoute.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/DevView.md, TilingKey.md, TilingData.md, BranchRoute.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - init-design-dir
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-host-tiling
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document HostTiling.md
+    goal:
+      - "Produce $WORK_DIR/design/HostTiling.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md Host-side Tiling chapter."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory); read the Host-side Tiling chapter of the paradigm patterns.md (or other tiling content if absent) to determine the subsection structure."
+      - "Read $WORK_DIR/spec/spec.yaml's determinism block (accumulation_order + bitwise_reproducible) and consult the ops-spec-gen skill's references/accumulation_order.md §0/§1/§3; make the split/tiling decisions consistent with it (stable_in_axis → partials merged in fixed order; bitwise_reproducible: true → document how the kernel path is fixed) and record this in the determinism guarantees subsection."
+      - "Render the design-template skill's templates/design/HostTiling.md.templ to $WORK_DIR/design/HostTiling.md, replacing every {OP} with the operator name (sed \"s/{OP}/${OP_NAME}/g\" with OP_NAME from spec.yaml)."
+      - "Fill each subsection per the template's 须包含 checklist (liveness-node analysis, framework prerequisites, input preprocessing/axis fusion, UB split, multi-core split, group/2D split, fill TilingData + set TilingKey, host registration, overall Tiling structure, determinism guarantees); replace every `>` lead-in line with actual content; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/HostTiling.md exists and is non-empty: test -s $WORK_DIR/design/HostTiling.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/HostTiling.md."
+      - "Every `>` lead-in has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/HostTiling.md."
+      - "Determinism is explicit and grounded: grep -qF 'accumulation_order' $WORK_DIR/design/HostTiling.md && grep -qF 'bitwise_reproducible' $WORK_DIR/design/HostTiling.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/HostTiling.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-devview-tilingkey-tilingdata-branchroute
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: write-design-kernel：描述按 kirin 型号确定的 arch kernel 模板（kernel 落在 op_kernel/<arch>/）。
+  - id: write-design-kernel
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document Kernel.md (kirin arch per model)
+    goal:
+      - "Produce $WORK_DIR/design/Kernel.md for the operator in $WORK_DIR/spec/spec.yaml, following the operator's paradigm patterns.md Kernel-side chapter, targeting the kirin kernel templates for the arch resolved per model (op_kernel/<arch>)."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory); read the Kernel-side chapter of the paradigm patterns.md and confirm the paradigm-specific requirements."
+      - "Render the design-template skill's templates/design/Kernel.md.templ to $WORK_DIR/design/Kernel.md, replacing every {OP} with the operator name."
+      - "Fill each item per the template's 须包含 checklist (Kernel entry, Kernel class declaration, scheduling framework, Init, Process per dtype, Sync, CopyIn/CopyInBrc, CopyOut, paradigm-specific Kernel subsections); the kernel lives under op_kernel/<arch>/ per the kirin toolchain (arch per model); replace every `>` lead-in line with actual content; do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/Kernel.md exists and is non-empty: test -s $WORK_DIR/design/Kernel.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/Kernel.md."
+      - "Every `>` lead-in has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/Kernel.md."
+      - "The kernel entry references the per-model arch tree (grep -qE '<arch>' $WORK_DIR/design/Kernel.md, where <arch> is the per-model arch from the kirin-env.json arch_code / npu-arch mapping)."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/Kernel.md; do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-host-tiling
+      - write-design-interface
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-api
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document API.md
+    goal:
+      - "Produce $WORK_DIR/design/API.md for the operator in $WORK_DIR/spec/spec.yaml: API mapping, API verification record, data-flow design, memory management, and UB capacity verification — the closing acceptance of the implementation-plan docs (DevView.md–API.md)."
+    approach:
+      - "Load the ops-design-paradigms skill first (mandatory); read the paradigm patterns.md sections on API mapping / API verification record / memory management / data-flow design / UB capacity verification to determine the subsection structure."
+      - "Render the design-template skill's templates/design/API.md.templ to $WORK_DIR/design/API.md (this template carries no {OP} placeholder; do not introduce one)."
+      - "Fill each item per the template's 须包含 checklist (VF function signatures, API mapping table, API verification record, data-flow design, memory management, UB capacity verification); replace every `>` lead-in line with actual content."
+      - "Per the template, if any API verification fails, roll back to $WORK_DIR/design/HostTiling.md to re-derive with a different API — this task may revise HostTiling.md / Kernel.md at the corresponding places until all API verifications pass."
+    acceptance:
+      - "$WORK_DIR/design/API.md exists and is non-empty: test -s $WORK_DIR/design/API.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/API.md."
+      - "Every `>` lead-in has been replaced with actual content: ! grep -qE '^>' $WORK_DIR/design/API.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/API.md (and, only if an API verification fails, revise HostTiling.md / Kernel.md at the corresponding places); do not create or modify any other file."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-kernel
+    max_retries: 2
+    on_exhaust: exit
+  - id: write-design-branch-catalog
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the design document BranchCatalog.md
+    goal:
+      - "Produce $WORK_DIR/design/BranchCatalog.md: the branch design catalog table registering, for every tilingKey, the branch name / entry condition / covered scenario / design file path, derived from $WORK_DIR/design/BranchRoute.md's branch determination."
+    approach:
+      - "Render the design-template skill's templates/design/BranchCatalog.md.templ to $WORK_DIR/design/BranchCatalog.md, replacing every {OP} with the operator name."
+      - "Based on $WORK_DIR/design/BranchRoute.md's branch determination, write the catalog table: one row per tilingKey, registering branch name / entry condition / covered scenario / design file path $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md."
+      - "The tilingKey set in BranchCatalog.md must match $WORK_DIR/design/BranchRoute.md exactly."
+      - "Only register the catalog here; do not write any branch's detailed design, and do not touch any other design file."
+    acceptance:
+      - "$WORK_DIR/design/BranchCatalog.md exists and is non-empty: test -s $WORK_DIR/design/BranchCatalog.md."
+      - "No operator-name placeholder residue: ! grep -qF '{OP}' $WORK_DIR/design/BranchCatalog.md."
+      - "Every `>` lead-in has been replaced with real content: ! grep -qE '^>' $WORK_DIR/design/BranchCatalog.md."
+      - "The catalog table has one row per tilingKey, matching $WORK_DIR/design/BranchRoute.md's key set exactly (no missing, no extra), and each row references $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md."
+      - "No `<...>` placeholder residue in the catalog table: ! grep -qE '<(name|条件|case)>' $WORK_DIR/design/BranchCatalog.md."
+      - "No unexpected file under $WORK_DIR/design/: ! find $WORK_DIR/design -maxdepth 1 -type f | grep -vE '/(INDEX|Overview|Interface|InferShapeDtype|Validation|DevView|TilingKey|TilingData|BranchRoute|HostTiling|Kernel|API|BranchCatalog|IterationPlan)[.]md$' | grep -q ."
+    out_of_scope:
+      - "Write only $WORK_DIR/design/BranchCatalog.md; do not create or modify any other file (including the branch design files, which are produced by a later task)."
+      - "Do not write kernel code, modify the engineering project, or run builds."
+    depends_on:
+      - write-design-devview-tilingkey-tilingdata-branchroute
+    max_retries: 2
+    on_exhaust: exit
+  - id: generate-design-subgraph
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the branch design subgraph design-sub-graph.yaml
+    goal:
+      - "Read $WORK_DIR/design/BranchCatalog.md and produce $WORK_DIR/.workflow/design-sub-graph.yaml: one designer task per tilingKey writing $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md, each node satisfying the subgraph contract and carrying depends_on: [] (branches are independent)."
+    approach:
+      - "Read the workflow-orchestrator skill's templates/basic_workflow.yaml first — the annotated schema template; the node keys and their list/str/int requirements are documented inline there, so take the node shape from it."
+      - "Write the subgraph form: a mapping whose sole top-level key is nodes holding normal nodes only. Enumerate every tilingKey in BranchCatalog.md in registration order, one node per key, executor=designer / verifier=design-verifier, each writing $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md."
+      - "Branch design nodes are independent — each writes its own file and shares no state — so every node's depends_on is []."
+    acceptance:
+      - 'Contract-valid: ORCH_SKILL=the workflow-orchestrator skill directory ; python3 -c "import sys; sys.path.insert(0,\"$ORCH_SKILL/scripts\"); import get_task; nodes,err=get_task.load_subgraph(\"$WORK_DIR/.workflow/design-sub-graph.yaml\"); assert not err, err" exits 0.'
+      - "Node count equals the tilingKey count in BranchCatalog.md (no missing, no extra); node ids/titles/acceptance are traceable to BranchCatalog.md / BranchRoute.md; every node has executor=designer and verifier=design-verifier."
+      - 'Dep-free: python3 -c "import yaml; nodes=yaml.safe_load(open(\"$WORK_DIR/.workflow/design-sub-graph.yaml\"))[\"nodes\"]; bad=[n[\"id\"] for n in nodes if n[\"depends_on\"]]; assert not bad, \"every node carries no dependency (depends_on: []); offenders: %s\" % bad" exits 0.'
+    out_of_scope:
+      - "Do not create or modify any file other than $WORK_DIR/.workflow/design-sub-graph.yaml."
+      - "Do not execute the branch design tasks; do not write any branch design file."
+    depends_on:
+      - write-design-branch-catalog
+      - write-design-api
+      - write-design-overview
+      - write-design-validation
+    max_retries: 2
+    on_exhaust: exit
+  - id: design-branches
+    task_type: subgraph
+    file: .workflow/design-sub-graph.yaml
+    depends_on:
+      - generate-design-subgraph
+# kirin-adapt: update-opdef：相对 op-develop：由构建命令 `cd $WORK_DIR/op && ./build.sh`（昇腾代际）、kernel
+#   入口源位于 op_kernel/ 昇腾布局，改为 `cd $WORK_DIR/op && bash build.sh --soc=<kirin soc>`（构建命令约定
+#   见头部统一约定；在所 source 的 mobile-station CANN 下），kernel 入口 stub 落在 op_kernel/<arch>/
+#   （arch 按 kirin 型号确定）。
+  - id: update-opdef
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Transcribe the OpDef from Interface.md; keep the kernel entry as a compiling no-op stub
+    goal:
+      - "Rewrite $WORK_DIR/op/op_host/*_def.cpp so its `class ... : public OpDef` body matches the `## OpDef 代码片段` fenced cpp block in $WORK_DIR/design/Interface.md exactly."
+      - "Align the kernel entry's param list — in the $WORK_DIR/op/op_kernel/ source declaring the `__global__ __aicore__` entry — to the `Kernel 入口` section of $WORK_DIR/design/Kernel.md as a no-op stub (no compute yet); it only needs to compile."
+    approach:
+      - "Read the `## OpDef 代码片段` fenced cpp block in $WORK_DIR/design/Interface.md — the authoritative, already-resolved OpDef; record its Input/Output names in declaration order."
+      - "Rewrite $WORK_DIR/op/op_host/*_def.cpp: keep the file header, `#include \"register/op_def_registry.h\"`, and the `namespace ops { ... }` wrapper; replace only the `class ... : public OpDef` body and the `OP_ADD(...)` macro with the snippet's."
+      - "Read the `Kernel 入口` section of $WORK_DIR/design/Kernel.md for the kernel entry signature (symbol name + param list); this is the authoritative source for the entry, not the OpDef names."
+      - "Rewrite the kernel-entry source under $WORK_DIR/op/op_kernel/<arch>/: take the entry symbol name and param list from Kernel.md's 入口 code, keeping the package's existing entry boilerplate and the tiling readout; drop the compute (no kernel class call), leaving a no-op stub (InitSocState + tiling readout + PipeBarrier). Silence an unused `tilingData` with `(void)tilingData;`."
+      - "cd $WORK_DIR/op && bash build.sh --soc=<SOC_VERSION from kirin-env.json, lowercase> — exit 0 under the sourced mobile-station CANN."
+    acceptance:
+      - "cd $WORK_DIR/op && bash build.sh --soc=<SOC_VERSION from kirin-env.json, lowercase> exits 0."
+      - "def.cpp transcribes the snippet: the `this->Input(...)` / `this->Output(...)` names in $WORK_DIR/op/op_host/*_def.cpp appear in the same order as in the `## OpDef 代码片段` fenced block of $WORK_DIR/design/Interface.md (same names, same order, no extras or missing)."
+      - "No placeholder residue: ! grep -qF '{OP}' $WORK_DIR/op/op_host/*_def.cpp && ! grep -qE '<(Op|op|in[0-9]*|out[0-9]*|optional_in|attr|req_attr|bool_attr|default|soc)>' $WORK_DIR/op/op_host/*_def.cpp."
+    out_of_scope:
+      - "Only $WORK_DIR/op/op_host/*_def.cpp and the $WORK_DIR/op/op_kernel/ kernel-entry source may change (plus build/ regenerated by build.sh)."
+      - "Do not implement the compute — the kernel body is written by the kernel task from design/Kernel.md."
+    depends_on:
+      - write-design-kernel
+      - setup-op-package
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: write-tiling-ut：为 host 侧 gtest + platform mock，本身不依赖昇腾 NPU；操作按 kirin 型号
+#   确定的 <arch> 文件（UT 运行于本地开发机，用 fe::PlatFormInfos mock 每例 core/UB——core 数与 UB 规格
+#   按 kirin 型号确定，不在此写死）。
+  - id: write-tiling-ut
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Write the Tiling gtest unit test (TDD red baseline, only the exempt tiling(nullptr) case passes)
+    goal:
+      - "Rewrite $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp as the complete Tiling UT for the operator in $WORK_DIR/spec/spec.yaml: one TEST_F per host-tiling feature and per validation/exception exit, expectations from an independent hand-written oracle, following the tiling-developer TDD discipline. The UT is host-side gtest with platform mock and needs no Ascend NPU — it runs identically on the local development host."
+      - "Exception coverage is checklist-driven: load the tiling-exception-coverage skill (mandatory) and work its full checklist per its procedure (the item set and its mandatory/conditional classification are the skill's own definition, not restated here), recording the coverage matrix as a comment block inside $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp (no separate matrix file); the skill's completion criterion defines done — every item covered or N/A with spec evidence, no third state."
+    approach:
+      - "Load the tiling-exception-coverage skill first (mandatory); its checklist procedure and assertion playbook are the authority for every exception case below."
+      - "Load the tiling-ut-harness skill first (mandatory); its platform-mock mapping table, compile-link recipe, and env_doctor verification are the authority for the mock harness below — do not reverse-engineer SDK binaries when env_doctor returns VERIFIED."
+      - "Derive the case set and the oracle from these sources: $WORK_DIR/design/HostTiling.md (shared tiling formulas as oracle rules, every 异常值校验 exit as one GRAPH_FAILED case), $WORK_DIR/design/TilingData.md (expected TilingData layout), $WORK_DIR/design/TilingKey.md + BranchCatalog.md (authoritative tilingKey set), $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md 「具体切分计算」 (per-branch constants), $WORK_DIR/design/Interface.md 算子规格 table, $WORK_DIR/design/Kernel.md, $WORK_DIR/spec/spec.yaml (error_codes / boundary_conditions / shape_constraints)."
+      - "the tiling-exception-coverage skill -> the exception-coverage floor: walk every checklist item per the skill's procedure against the Interface.md IO table / OpDef attrs / spec.yaml constraints; every hit item becomes one TEST_F using the skill's construction recipe and assertion playbook, and the disposition of every item lands as a coverage-matrix comment block inside test_tiling_gtest.cpp, in the skill's row format, as the task's checklist audit trail."
+      - "Establish the red-phase stub first: reduce TilingFunc in $WORK_DIR/op/op_host/<arch>/*_tiling_<arch>.cpp to the red-phase stub per the tiling-developer TDD discipline before running the UT; the tiling(nullptr) guard case already passes against the stub and is exempt."
+      - "Harness: keep the sample tests/tiling/ pattern B (registry dlopen of the installed op_host .so; fe::PlatFormInfos mock for per-case core count / UB size — both are set per the kirin model's specs from the kirin-env.json / npu-arch mapping, not hardcoded here)."
+      - "Isolation: point run.sh's --install-path and CMake's OPP_INSTALL_DIR at $WORK_DIR/op/tests/tiling/dev-package/; the shared toolchain-installed vendor stays untouched."
+      - "Run `cd $WORK_DIR/op/tests/tiling && ./run.sh` (non-zero exit expected) and save the full output to ut-baseline.log. Any case beyond the exemptions passing against the stub does not discriminate the unimplemented state: sharpen that expectation until the baseline shows only the exemption case(s) passed."
+    acceptance:
+      - "UT artifacts exist with a single source file: test -s $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp && test -f $WORK_DIR/op/tests/tiling/CMakeLists.txt && test -f $WORK_DIR/op/tests/tiling/run.sh."
+      - "Isolated install: test -d $WORK_DIR/op/tests/tiling/dev-package/vendors && find $WORK_DIR/op/tests/tiling/dev-package/vendors -name 'libcust_opmaster_rt2.0.so' | grep -q ."
+      - "Oracle independence: ! grep -qE '#include[[:space:]]+\"[^\"]*(tiling_struct|tiling_<arch>)[.]h\"' $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp."
+      - "Red baseline recorded: test -s $WORK_DIR/op/tests/tiling/ut-baseline.log && grep -qF '[  FAILED  ]' $WORK_DIR/op/tests/tiling/ut-baseline.log, and the passed set is exactly the exemption rows (the tiling(nullptr) guard)."
+      - "Loaded-library evidence: grep -qF 'loading op_host .so' $WORK_DIR/op/tests/tiling/ut-baseline.log && grep -qF $WORK_DIR/op/tests/tiling/dev-package $WORK_DIR/op/tests/tiling/ut-baseline.log."
+      - "Exception checklist audited in-file: every checklist item the tiling-exception-coverage skill defines appears exactly once in the coverage-matrix comment block of $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp (IDs are whatever the skill currently defines)."
+      - "Checklist row content: every TEST_F name cited in the in-file coverage matrix grep-matches a TEST_F in test_tiling_gtest.cpp; every covered row names its interception layer (infer / tiling / platform); every covered expect-failure row names its asserted log anchor; every N/A row cites Interface.md or spec.yaml as evidence."
+      - "Broadly-applicable items never N/A by default: for the checklist items the skill marks as applying to nearly every operator, N/A is legitimate only when the op spec provably lacks that degree of freedom (e.g. a single-input operator makes the cross-input-dtype item vacuous — the N/A row must say so by quoting the IO table)."
+      - "tiling-verifier reviews per agents/tiling-verifier.md in TilingUT/red-baseline mode, with UT artifacts rooted at $WORK_DIR/op/tests/tiling/; all clauses pass."
+      - "tiling-verifier additionally re-judges every N/A row of the in-file coverage matrix against the op spec: an N/A whose trigger actually fires (e.g. an operator with broadcast semantics marking the broadcast-rule item N/A) fails the review."
+    out_of_scope:
+      - "Only create or modify files under $WORK_DIR/op/tests/tiling/ (including the build/, dev-package/ and ut-baseline.log artifacts run.sh generates there); the one exception is $WORK_DIR/op/op_host/<arch>/*_tiling_<arch>.cpp, which may only be reduced to the red-phase stub."
+      - "Do not turn the red baseline green here: the TilingFunc stays stub-only; record design gaps as test comments only."
+    depends_on:
+      - design-branches
+      - update-opdef
+      - setup-op-package
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: implement-tiling：改按 kirin 型号确定的 <arch>（TilingData struct header 在
+#   op_kernel/<arch>/*_tiling_struct.h）。
+  - id: implement-tiling
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Implement the real host Tiling so the entire Tiling UT suite passes (TDD green)
+    goal:
+      - "Replace the stub TilingFunc currently in $WORK_DIR/op/op_host/<arch>/*_tiling_<arch>.cpp with the real TilingFunc for the operator in $WORK_DIR/spec/spec.yaml — TilingData struct, common split formulas, branch determination with tilingKey setting, validation/short-circuit exits, and the IMPL_OP_OPTILING registration — transcribed from the same $WORK_DIR/design/ docs the UT oracle was derived from."
+      - "Make the complete Tiling UT pass, with the UT itself as the pinned oracle: cd $WORK_DIR/op/tests/tiling && ./run.sh exits 0 with every TEST_F passed and 0 failed, recorded as $WORK_DIR/op/tests/tiling/ut-green.log."
+    approach:
+      - "The Tiling UT at $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp is the read-only pinned oracle; implement until it passes; the oracle itself is never edited. The completion gate is strict: run.sh exits 0 with every TEST_F passed and 0 failed."
+      - "Implement from the design docs: $WORK_DIR/design/TilingData.md -> $WORK_DIR/op/op_kernel/<arch>/*_tiling_struct.h rewritten field-for-field; $WORK_DIR/design/HostTiling.md -> the common TilingFunc (shared split formulas, 异常值校验 exits, short-circuit/early-return paths, TilingData fill + SetBlockDim + workspace sizes, determinism guarantees); $WORK_DIR/design/TilingKey.md + BranchRoute.md -> branch determination and SetTilingKey per entry conditions using the literal GET_TPL_TILING_KEY encoding fixed at design time; $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md 「具体切分计算」 -> per-branch constants transcribed verbatim into constexpr."
+      - "Iterate: implement the common formulas first, then branch by branch, rerunning the full suite after each increment — gtest's failed list is the worklist, and regression means the whole suite stays green, never a subset."
+      - "Conflict rule: when an oracle expectation and the implementation disagree, the design doc is the arbiter, and the implementation side is the only side this task may fix. If a case cannot pass without deviating from the design, leave it red and report the conflict as the task outcome."
+      - "Evidence: cd $WORK_DIR/op/tests/tiling && ./run.sh > ut-green.log 2>&1 (exit 0, all pass, loaded-.so print retained); ut-baseline.log stays untouched."
+    acceptance:
+      - "Green baseline fully green: cd $WORK_DIR/op/tests/tiling && ./run.sh > ut-green.log 2>&1 exits 0, and test -s $WORK_DIR/op/tests/tiling/ut-green.log && grep -qF '[  PASSED  ]' $WORK_DIR/op/tests/tiling/ut-green.log && ! grep -qF '[  FAILED  ]' $WORK_DIR/op/tests/tiling/ut-green.log."
+      - "Loaded-library evidence: grep -qF 'loading op_host .so' $WORK_DIR/op/tests/tiling/ut-green.log && grep -qF $WORK_DIR/op/tests/tiling/dev-package $WORK_DIR/op/tests/tiling/ut-green.log."
+      - "No hidden registration failure: ! grep -qi 'do not registe tiling struct' $WORK_DIR/op/tests/tiling/ut-green.log."
+      - "The oracle ran unchanged: the green run's total test count equals the total recorded in $WORK_DIR/op/tests/tiling/ut-baseline.log; every test name listed in ut-baseline.log appears as a TEST_F in test_tiling_gtest.cpp."
+      - "Oracle independence unchanged: ! grep -qE '#include[[:space:]]+\"[^\"]*(tiling_struct|tiling_<arch>)[.]h\"' $WORK_DIR/op/tests/tiling/test_tiling_gtest.cpp."
+      - "tiling-verifier reviews per agents/tiling-verifier.md in 「Tiling 实现」 mode: TilingData struct fields match TilingData.md (no missing, no extra), branch constants match the DESIGN-BRANCH-<key>.md sections, SetTilingKey routing matches BranchRoute.md, and the UT source and harness are untouched."
+    out_of_scope:
+      - "Modifiable scope (exhaustive): $WORK_DIR/op/op_kernel/<arch>/*_tiling_struct.h, $WORK_DIR/op/op_host/<arch>/*_tiling_<arch>.h and *_tiling_<arch>.cpp, and the artifacts run.sh regenerates under $WORK_DIR/op/tests/tiling/."
+      - "Do not touch $WORK_DIR/op/op_host/*_def.cpp or *_infershape.cpp, the op_kernel compute sources, op_graph/, package-root CMakeLists.txt / build.sh, or any file under $WORK_DIR/design/."
+    depends_on:
+      - write-tiling-ut
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: gen-golden：产出 numpy 参考实现 + 每 dtype rtol/atol 字典（消费方以 ops-kirin-device-verify
+#   compare_output.py 为主、camodel sim 直调 harness 为辅），并补 $WORK_DIR/op/tests/sim_verify/gen_cases.py
+#   （适配 ops-kirin-device-verify 的 scripts/gen_cases.py）。
+  - id: gen-golden
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the golden reference golden.py and its invariant self-check
+    goal:
+      - "Produce $WORK_DIR/golden.py as a numpy-based golden reference (independent of the kernel under test) for the operator in $WORK_DIR/spec/spec.yaml, plus $WORK_DIR/golden_invariant_check.py which proves the golden satisfies the spec's math_semantics invariants on random inputs. On the kirin platform the golden is consumed primarily by the kirin-device comparison (ops-kirin-device-verify compare) and secondarily by the simulator sim-direct harness (degradation/development), so it must expose a plain numpy function and the per-dtype rtol/atol."
+    approach:
+      - "Read $WORK_DIR/spec/spec.yaml's reference_oracle and math_semantics; implement the reference math in numpy (implement the formula with numpy primitives, or one equivalent torch/TF API if it runs on host CPU) — never import or reuse anything from $WORK_DIR/op/ (kernel artifacts)."
+      - "Float64 accumulation rule (workflow-mandated): wherever the golden performs floating-point accumulation, lift to float64 first, accumulate in float64, cast back to the target output dtype; never accumulate in float16/float32."
+      - "Derive tolerance per-dtype from $WORK_DIR/spec/spec.yaml's numerical_tolerance; expose them as a dict so the sim harness and compare_output.py consume them (rtol/atol)."
+      - "Write $WORK_DIR/golden_invariant_check.py: build 3+ random legal input sets, run every value-level invariant in spec math_semantics.invariants against the golden, print PASS per invariant, exit 0 only if all pass."
+      - "Also write $WORK_DIR/op/tests/sim_verify/gen_cases.py for the kirin sim harness by adapting the ops-kirin-device-verify skill's scripts/gen_cases.py: numpy golden function per spec + --special injection (nan/inf/equal/ulp/spread/zpair) + fixed seed, matching the spec dtype/shape rules."
+    acceptance:
+      - "$WORK_DIR/golden.py exists and parses: python3 -c \"import ast; ast.parse(open('$WORK_DIR/golden.py').read())\" exits 0; it exposes a numpy reference function and a per-dtype tolerance dict."
+      - "Oracle independence: ! grep -qE 'from op|import op/' $WORK_DIR/golden.py (no kernel artifact reuse); golden math matches spec.yaml reference_oracle semantics."
+      - "Float64 accumulation: the golden's accumulation path casts to float64 before summing and casts back to the output dtype after."
+      - "$WORK_DIR/golden_invariant_check.py exists and python3 $WORK_DIR/golden_invariant_check.py exits 0 with every invariant PASS."
+      - "$WORK_DIR/op/tests/sim_verify/gen_cases.py exists and python3 -c \"import ast; ast.parse(open('$WORK_DIR/op/tests/sim_verify/gen_cases.py').read())\" exits 0."
+    out_of_scope:
+      - "Create only $WORK_DIR/golden.py, $WORK_DIR/golden_invariant_check.py, and $WORK_DIR/op/tests/sim_verify/gen_cases.py; do not modify spec.yaml, design docs, or any existing files under $WORK_DIR/op/ (creating gen_cases.py under $WORK_DIR/op/tests/sim_verify/ is in scope)."
+    depends_on:
+      - generate-spec
+      - setup-op-package
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: setup-sim-harness：新增节点——相对 op-develop.yaml，其 blackbox 系列节点直接跑 TTK-on-NPU，
+#   无需自建 harness；本工作流改用 camodel sim 直调后，kernel 子图 branch-<m>-kernel-bringup 的验收依赖
+#   $WORK_DIR/op/tests/sim_verify/ 的 harness，故把 harness 构建抽成独立节点（run_sim.sh + <op>_sim.cpp +
+#   --perf 模式），kernel-impl 子图、blackbox-device-verify（情形 A/B/C 降级执行）与性能 tick 基线均依赖
+#   它，消除「未建先被消费」的时序断链。依赖 update-opdef（其重写 kernel 入口 stub）保证 harness 的
+#   <op>_sim.cpp 对 Kernel.md 入口签名编译，避免与模板原始入口并发冲突。
+#   载体定位：sim harness 为**辅助载体/降级底座**——kernel 开发白盒快迭代（bringup）与降级场景（情形 A/B/C）
+#   使用，不作为主验证证据源；主验证证据以麒麟设备验证为准。sim 固有局限（供执行体在起 sim 前预判，命中即
+#   停止 sim 调试并切麒麟设备主载体、记录局限，不以 sim bitwise-PASS 为验证门禁）：camodel 对 int8 B 通路
+#   （L0B/MMAD）仿真受限、sim tick 上限（见头部统一约定）、dav-l300 上 Fixpipe NZ->ND 转换断言崩溃等。
+  - id: setup-sim-harness
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Build the simulator sim-direct harness under $WORK_DIR/op/tests/sim_verify/
+    goal:
+      - "Create the operator's simulator sim-direct harness under $WORK_DIR/op/tests/sim_verify/ as the **auxiliary carrier** (kernel bringup development iteration and degradation scenarios A/B/C), consumable by the kernel bringup subgraph and the blackbox-device-verify degradation paths (cases A/B/C): a direct-invocation program (cmake -DASCEND_RUN_MODE=sim building a <op>_sim.cpp that instantiates the per-model-arch kernel templates, reads input bins, runs, writes output bin) plus a run_sim.sh wrapping cmake configure+build+run+compare against golden, and a --perf mode emitting total tick / cycles-per-element for the camodel baseline (subject to the sim-carrier tick cap defined in the workflow header)."
+    approach:
+      - "Load the ascendc-kirin-env-check skill's simulator line as the execution authority (sim-direct run convention — LD_LIBRARY_PATH ordering + GLIBCXX LD_PRELOAD — per the unified conventions in the workflow header); consult the tiling-ut-harness skill for the compile-link recipe if needed."
+      - "Derive the kernel entry signature from $WORK_DIR/design/Kernel.md 入口 (the authoritative symbol + param list) and write <op>_sim.cpp accordingly: instantiate the per-model-arch kernel templates (op_kernel/<arch>), read input bins from the case set, run, write output bin."
+      - "Write run_sim.sh wrapping cmake configure+build+run+compare against $WORK_DIR/golden.py (per-dtype rtol/atol); the compare step consumes $WORK_DIR/op/tests/sim_verify/gen_cases.py for bin generation when run case-by-case."
+      - "Add a --perf mode to run_sim.sh that runs the camodel simulation and emits the baseline (total tick / cycles-per-element), consumed by the performance decision task."
+      - "Build once to prove the harness compiles: cd $WORK_DIR/op/tests/sim_verify && bash run_sim.sh --check (exit 0)."
+    acceptance:
+      - "test -f $WORK_DIR/op/tests/sim_verify/run_sim.sh && find $WORK_DIR/op/tests/sim_verify -maxdepth 1 -name '*_sim.cpp' | grep -q ."
+      - "run_sim.sh supports --perf and prints a total tick / cycles-per-element line when invoked in perf mode."
+      - "The harness builds: cd $WORK_DIR/op/tests/sim_verify && bash run_sim.sh --check exits 0."
+    out_of_scope:
+      - "Write only under $WORK_DIR/op/tests/sim_verify/; do not modify kernel/host sources, case CSVs, $WORK_DIR/golden.py, tolerances, or design docs."
+      - "Do not execute any case or batch here; do not run the performance baseline."
+    depends_on:
+      - gen-golden
+      - setup-op-package
+      - update-opdef
+      - write-design-kernel
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: generate-kernel-subgraph：生成的节点验证载体为麒麟设备验证为主（ops-kirin-device-verify
+#   8 步）、camodel sim 直调 harness 为辅（ASCEND_RUN_MODE=sim；sim 直调运行约定见头部统一约定；
+#   开发辅助 + 情形 A/B/C 降级），精度与 numpy golden 比对。
+#   共享框架分支（同一 kernel 模板）合并 bringup：共享框架只在代表分支（branch-0）完整验证一次，其余分支
+#   仅实例化，子图节点标注「共享框架已由 branch-0 验证，其余分支仅实例化」。
+#   **载体定位**：bringup/批次以麒麟设备验证为主、sim 直调 harness 为辅/降级；其经 sim 的执行仅属**开发辅助**
+#   （kernel 开发期快迭代、快速定位），不构成正式验证证据；每分支 kernel 的正式验证证据以
+#   blackbox-device-verify（麒麟设备验证）收口，设备离线（情形 A）时 sim 结果作为降级证据。sim 载体受仿真
+#   tick 上限（见头部统一定义）约束，超限用例跳过并记录。
+  - id: generate-kernel-subgraph
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the kernel-implementation branch subgraph (kirin-device primary, simulator sim-direct auxiliary) kernel-sub-graph.yaml
+    goal:
+      - "Read $WORK_DIR/design/BranchCatalog.md and produce $WORK_DIR/.workflow/kernel-sub-graph.yaml: a dict with exactly one top-level key nodes holding the kernel-development nodes, where the tilingKey count is discovered at runtime and never assumed. Branches that share the same kernel template/framework form one framework group and **merge their bringup**: the shared framework is fully verified once on the group's representative branch, the remaining branches of the group are instance-only nodes. Execution of kernel bringup and batch runs uses **kirin-device verification as the primary carrier** (ops-kirin-device-verify 8-step) with the **simulator sim-direct harness as the auxiliary carrier** (camodel, development aid + case A/B/C degradation) — not TTK-on-NPU. Nothing in this task may hardcode an operator name, a tilingKey set, or a branch count."
+    approach:
+      - "Node schema = this workflow's normal task (id, task_type: normal, title, goal, approach, acceptance, out_of_scope, depends_on, executor, verifier, max_retries: 2, on_exhaust: exit). Write the file as a YAML mapping whose sole top-level key is nodes."
+      - "Enumerate the tilingKeys in BranchCatalog.md registration order, m = 1..M; group branches by shared kernel framework — branches whose DESIGN-BRANCH-<key>.md §3–§5 instantiate the same kernel template form one framework group, and the group's representative branch is its first registered one."
+      - "For the representative branch of each framework group: generate the full five-task chain (ids branch-<m>-whitebox-gen, branch-<m>-kernel-bringup, branch-<m>-run-20pct, branch-<m>-run-50pct, branch-<m>-run-100pct) — the shared kernel framework is verified in full exactly once on this branch."
+      - "For each remaining branch of the group: generate a single instance-only node branch-<m>-instantiate — it instantiates the group's already-verified shared framework per that branch's constants (no re-full-verification of the shared framework), and its title/goal/acceptance carry the marker「共享框架已由 branch-0 验证，其余分支仅实例化」(branch-0 is the group's representative branch, i.e. the first one registered in BranchCatalog.md; in the marker, branch-0 denotes the representative-branch concept, not a node id — the actual subgraph node ids are branch-1..branch-M in registration order); its acceptance is that the branch compiles and its representative case passes (device primary / sim auxiliary)."
+      - "Carrier (all bringup/batch/instantiate nodes): **kirin-device verification primary** — cases driven through ops-kirin-device-verify 8-step (vendor rebuilt + installed, per-case atc->OMC, device inference, compare with golden) — with the **simulator sim-direct harness as the auxiliary carrier** (development-aid fast iteration and case A/B/C degradation; $WORK_DIR/op/tests/sim_verify/ + sim-direct run convention per the unified conventions in the workflow header); whitebox cases generated by whitebox-gen feed both carriers; precision judged per Validation.md."
+      - "1. branch-<m>-whitebox-gen — executor whitebox-designer, verifier st-verifier: generate this branch's whitebox case set under $WORK_DIR/op/tests/whitebox/branch-<m>/ (design_doc_cases.json + a case CSV) from $WORK_DIR/design/branches/DESIGN-BRANCH-<key>.md §9 branch-verification points and $WORK_DIR/design/Validation.md's matrix rows for this branch; expected values computed by the independent golden $WORK_DIR/golden.py; coverage audit passes; no hardcoded case counts or hand-written CSV. Annotate every row with the §9 carrier column (device primary / sim auxiliary per the unified conventions in the workflow header) and a sim-feasibility flag: compute the element count from the case shape; rows with element count > SIM_MAX_ELEMS (defined in the unified conventions in the workflow header) are sim-infeasible (device-only) and are written to $WORK_DIR/op/tests/whitebox/branch-<m>/*_oversized.csv (excluded from the sim batch, still device-runnable)."
+      - "2. branch-<m>-kernel-bringup — executor kernel-developer, verifier kernel-verifier: implement this branch's kernel per $WORK_DIR/design/Kernel.md and DESIGN-BRANCH-<key>.md §3–§5 under op_kernel/<arch>/; the bring-up case is the first row of this branch's whitebox case CSV. Carry out the carrier protocol strictly in order: (i) build the package (cd $WORK_DIR/op && bash build.sh --soc=<soc> exits 0); (ii) bash $WORK_DIR/op/tests/sim_verify/run_sim.sh --check — compile/wiring-level sanity only, never precision evidence; (iii) read device_online from $WORK_DIR/kirin-env.json — refresh it first by re-running the kirin device-segment environment check (the snapshot written at kirin-env-check may be stale by kernel-impl time) — when online, run the bring-up case through the **kirin-device verification primary** (ops-kirin-device-verify 8-step) and require precision-PASS against golden (sim is not acceptance evidence while the device is online); (iv) degrade to the **simulator sim-direct harness** $WORK_DIR/op/tests/sim_verify/ (sim-direct run convention per the unified conventions in the workflow header) only for case A (device offline) / case B (per-case execution anomaly) / case C (per-case failure reproduce/localize), recording the degradation reason. Sim debugging is development aid with a stop condition: use sim solely for structural/wiring checks; on hitting an inherent sim limitation (e.g. camodel int8 B-path L0B/MMAD restriction, the sim tick cap, the dav-l300 Fixpipe NZ->ND assertion) stop sim debugging, switch to the device primary, and record the limitation — never chase a sim bitwise-PASS as the bring-up gate. Acceptance (non-disjunctive): package builds, the bring-up case precision-PASSes on the kirin-device carrier when device_online (sim-only evidence fails unless a case A/B/C degradation reason is recorded), and the four ops-impl-review scripts exit 0 against $WORK_DIR/op."
+      - "3. branch-<m>-run-20pct — executor kernel-developer, verifier st-verifier: batch-run the first ceil(20%) rows of this branch's case set through the step-2 carrier protocol (kirin-device verification primary when device_online, sim only on case A/B/C degradation with the reason recorded; one invocation per case, per-case timeout from Validation.md); fix kernel/tiling per DESIGN-BRANCH-<key>.md until every one precision-PASSes against golden; never edit cases, golden, or tolerances; log the exact row set used."
+      - "4. branch-<m>-run-50pct — executor kernel-developer, verifier st-verifier: same as step 3 but the batch is the first ceil(50%) rows (cumulative superset of step 3); all must precision-PASS, earlier rows must not regress."
+      - "5. branch-<m>-run-100pct — executor kernel-developer, verifier st-verifier: full-branch batch, every run case precision-PASS (hard gate), zero fail, earlier stages regress-checked; rows in *_oversized.csv (element count > SIM_MAX_ELEMS, device-only) are excluded from the sim batch — when the carrier has degraded to sim (case A/B/C) they are skipped and explicitly recorded (case + skip reason: sim tick budget infeasible, never counted as pass or fail), otherwise (device online) they still run through kirin-device verification; results recorded under $WORK_DIR/op/tests/whitebox/branch-<m>/ and $WORK_DIR/op/tests/sim_verify/logs/."
+      - "Positive/negative split: a row is negative iff the case set marks it expect_error; positive rows must precision-PASS and negative rows must be REJECTED by the operator; report both counts in the evidence. Precision is judged per the design authority — $WORK_DIR/design/Validation.md 精度验收标准 and DESIGN-BRANCH-<key>.md (per-dtype rtol/atol)."
+      - "Dependencies inside the subgraph: each framework group's full chain nodes chain linearly (gen -> bringup -> 20 -> 50 -> 100); every whitebox-gen node has no intra-subgraph dependency; instance-only nodes depend on their group's run-100pct; kernel-touching steps of different framework groups never run concurrently (shared op_kernel/ entry and build tree) — each group's branch-<m>-kernel-bringup depends on the previous group's branch-<m-1>-run-100pct (cross-group serialization edge, mirroring the op-develop baseline's branch-(m)-kernel-bringup -> branch-(m-1)-run-100pct)."
+    acceptance:
+      - 'Contract-valid: ORCH_SKILL=the workflow-orchestrator skill directory ; python3 -c "import sys; sys.path.insert(0,\"$ORCH_SKILL/scripts\"); import get_task; nodes,err=get_task.load_subgraph(\"$WORK_DIR/.workflow/kernel-sub-graph.yaml\"); assert not err, err" exits 0.'
+      - "$WORK_DIR/.workflow/kernel-sub-graph.yaml exists; the tilingKeys come from $WORK_DIR/design/BranchCatalog.md; python3 -c \"import yaml; d=yaml.safe_load(open('$WORK_DIR/.workflow/kernel-sub-graph.yaml')); assert isinstance(d,dict) and set(d)=={'nodes'}\" exits 0."
+      - "Framework-group merging applied: each framework group (branches sharing one kernel template) has exactly one full five-task chain (branch-<m>-whitebox-gen / -kernel-bringup / -run-20pct / -run-50pct / -run-100pct) on its representative branch, and every remaining branch of the group has exactly one instance-only node branch-<m>-instantiate whose title/goal carry「共享框架已由 branch-0 验证，其余分支仅实例化」."
+      - "Carrier: every bringup/batch/instance node's execution description names kirin-device verification as the primary carrier (ops-kirin-device-verify 8-step) and the simulator sim-direct harness as the auxiliary/degradation carrier ($WORK_DIR/op/tests/sim_verify/ + ASCEND_RUN_MODE=sim), the bringup node embeds the step-2 carrier protocol (run_sim.sh --check sanity -> device primary when device_online -> sim only on recorded case A/B/C degradation), and every bringup/batch acceptance is non-disjunctive (device_online => device evidence required; sim-only evidence fails unless a case A/B/C degradation reason is recorded) — no ttk kernel/aclnn commands appear."
+    out_of_scope:
+      - "Do not create or modify any file other than $WORK_DIR/.workflow/kernel-sub-graph.yaml; do not execute any branch task; do not write kernel code."
+    depends_on:
+      - gen-golden
+      - implement-tiling
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: kernel-impl：子图 depends_on [generate-kernel-subgraph, setup-sim-harness]（setup-xpu-server
+#   已删除，sim/麒麟设备验证不依赖 xpu-server；bringup/batch 节点要消费 sim 直调 harness，必须先由
+#   setup-sim-harness 建好，消除时序断链）。
+#   载体定位：kernel 子图的验证以麒麟设备验证为主、sim 白盒批次为辅（开发辅助）；每分支 kernel 的正式验证
+#   证据以 blackbox-device-verify 麒麟设备验证收口。
+  - id: kernel-impl
+    task_type: subgraph
+    file: .workflow/kernel-sub-graph.yaml
+    depends_on:
+      - generate-kernel-subgraph
+      - setup-sim-harness
+# kirin-adapt: blackbox-gen：用 ascendc-st-design 生成 ACLNN L0/L1/L2（+可选 kernel 套件）用例集，执行
+#   载体为麒麟设备验证为主、camodel sim 直调 harness 为辅（sim 仅作开发辅助与情形 A/B/C 降级），用例生成
+#   本身离线、平台无关；生成后经 merge_cases.py 离线切分为可执行套件 cases/blackbox_l0.csv / blackbox_l1.csv
+#   / blackbox_l2_neg.csv（*_oversized.csv 侧表不进入），并记录各套件数据行数（供下游核对与回归基线使用）。
+#   用例集构造约束：麒麟设备验证与仿真验证均耗时较长，ST 用例集在**覆盖全面**（覆盖 spec dtype 矩阵 ×
+#   tilingKey × shape 形态类 × 负例语义）的前提下**集合最小化**——合并等价形状/参数组合（如同一 shape 不同
+#   dtype 归并、等价边界条件合并、负例只保留能触发不同校验路径的代表），压缩数量但不牺牲覆盖面；该最小化
+#   约束落到本节点的用例构造与 blackbox-device-verify 的用例选择。sim 载体受仿真 tick 上限（见头部统一定义）
+#   约束，超限用例在降级时跳过并显式记录。
+  - id: blackbox-gen
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the ST case sets (ACLNN L0/L1/L2 plus oversized side tables) via ascendc-st-design and split them into executable suites
+    goal:
+      - "Produce the ST case set under $WORK_DIR/op/tests/blackbox/ (design/ intermediates + testcases/ standard *_l0_functional.csv, *_l1_functional.csv, *_l2_exception.csv) for the operator in $WORK_DIR/spec/spec.yaml, designed one-shot from facts independent of the design line: $WORK_DIR/requirements/REQUIREMENTS.md plus the actual interface facts — the proto sources under $WORK_DIR/op/op_graph/ and the actual OpDef in $WORK_DIR/op/op_host/*_def.cpp. The cases are executed primarily by the kirin-device verification (ops-kirin-device-verify) and secondarily by the simulator sim-direct harness (development aid + degradation A/B/C), not by TTK-on-NPU. **Case-set construction constraint**: ST case sets must be **coverage-complete yet minimal** — merge equivalent shape/parameter combinations (e.g. the same shape across dtypes, equivalent boundary conditions, negatives that only trigger distinct validation paths) to compress the count without shrinking coverage. After the standard CSVs pass QA, split them into the three executable suites under $WORK_DIR/op/tests/blackbox/cases/ (blackbox_l0.csv / blackbox_l1.csv / blackbox_l2_neg.csv; *_oversized.csv side tables excluded) and record each suite's data-row count for downstream traceability (suite scale)."
+    approach:
+      - "Load the ascendc-st-design skill first (mandatory — the single execution authority for blackbox modeling, generation, QA and standard artifacts); adapt its output layout to this workflow: design/ and testcases/ under $WORK_DIR/op/tests/blackbox/."
+      - "Fact mapping: $WORK_DIR/requirements/REQUIREMENTS.md -> supported scope, value domains, error semantics; $WORK_DIR/op/op_graph/ proto sources + the actual OpDef in $WORK_DIR/op/op_host/*_def.cpp -> parameter ABI and tensor-to-tensor shape bindings. An explicit conflict between the two fact inputs that would flip a positive/negative classification is reported as FAILED with both locations."
+      - "Run ascendc-st-design for the ACLNN suite under tests/blackbox/ (kernel/REG_OP suite only if the operator's REG_OP proto is a required deliverable for the kirin-device atc->OMC singleop/onnx route; generate it under tests/blackbox/kernel/ otherwise skip). Cover applicable rank-0 inputs; every tensor's support_non_contiguous is declared explicitly from the facts. **Apply the coverage-complete-minimal construction**: within the skill's generation rules, merge equivalent shape/parameter combinations so each coverage cell (dtype × tilingKey × shape class × negative semantics) holds the minimal number of rows while every cell stays non-empty; record the minimization decisions (merged equivalences, per-layer main counts) in WORKFLOW_PROVENANCE.json."
+      - "After the standard CSVs fully pass the skill's generation/QA/review, split oversized rows explicitly by threshold: compute each case's element count from its shape; rows with element count > SIM_MAX_ELEMS (defined in the unified conventions in the workflow header) are sim-infeasible (device-only) — move them to same-stem *_oversized.csv side tables that never enter the executable suites (they remain runnable on the kirin-device carrier; when the carrier is degraded to sim they are skipped and explicitly recorded). No dedicated isolation script exists under the ops-registry-invoke workflows/scripts/, so this split is done by the generator itself from the explicit threshold."
+      - "Split the standard layer CSVs into the executable suites consumed downstream: use the blackbox-tester skill's merge_cases.py as an offline CSV split tool (platform-independent; not a workflow-level skill dependency) to produce $WORK_DIR/op/tests/blackbox/cases/blackbox_l0.csv / blackbox_l1.csv / blackbox_l2_neg.csv from the standard *_l0_functional.csv / *_l1_functional.csv / *_l2_exception.csv (the *_oversized.csv side tables stay out), and record each suite's data-row count for downstream traceability."
+      - "Record $WORK_DIR/op/tests/blackbox/WORKFLOW_PROVENANCE.json: both fact inputs, the skill's real path and revision, conflict conclusions, standard artifacts, per-layer main/side-table counts and effective thresholds (SIM_MAX_ELEMS), each executable suite's data-row count, the public QA conclusions, and any requirement scenario that could not be landed."
+    acceptance:
+      - "Standard CSVs exist non-empty (each glob resolves at least one file): test -s $WORK_DIR/op/tests/blackbox/testcases/*_l0_functional.csv && test -s $WORK_DIR/op/tests/blackbox/testcases/*_l1_functional.csv && test -s $WORK_DIR/op/tests/blackbox/testcases/*_l2_exception.csv."
+      - "Design intermediates exist non-empty: $WORK_DIR/op/tests/blackbox/design/ contains the skill's standard artifacts, each non-empty."
+      - "Interface consistency with the actual OpDef: parameter names, order, optionality, defaults and output positions in the case set match $WORK_DIR/op/op_host/*_def.cpp (st-verifier cross-checks item by item)."
+      - "$WORK_DIR/op/tests/blackbox/WORKFLOW_PROVENANCE.json exists, parses as JSON, and records both fact inputs, skill path + revision, conflict conclusions, main/side-table counts with effective thresholds (SIM_MAX_ELEMS), and each executable suite's data-row count."
+      - "Executable suites exist non-empty and match their standard layers: test -s $WORK_DIR/op/tests/blackbox/cases/blackbox_l0.csv && test -s $WORK_DIR/op/tests/blackbox/cases/blackbox_l1.csv && test -s $WORK_DIR/op/tests/blackbox/cases/blackbox_l2_neg.csv; each suite's data-row count equals its standard layer CSV's data-row count (recorded in WORKFLOW_PROVENANCE.json)."
+      - "st-verifier reviews per its 用例生成 dimensions and passes."
+    out_of_scope:
+      - "Write only under $WORK_DIR/op/tests/blackbox/; do not modify kernel/host sources, $WORK_DIR/golden.py, or design docs."
+      - "Do not execute device tests or run any sim/NPU batch here; do not hand-write, sample, or post-edit CSV rows."
+    depends_on:
+      - update-opdef
+      - setup-op-package
+      - gen-golden
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: aclnn-impl-smoke：op-develop.yaml 中该节点以设备 aclnn harness 回归验收；麒麟端侧无 host
+#   aclnn API 调用路线（ops-kirin-device-verify 8 步为 atc->OMC->HAP->推理，见 SKILL.md 第 74 行），sim 上
+#   aclnn 两段式受限（错误码见头部统一约定）→ 五个 op_api 文件与 CMake 接线的开发不变（host 侧），交付手写
+#   l0op op_api——aclnn 公共头是 doc-gen/文档校验的实质输入，不能只靠模板/autogen 保留。回归闭环：**host
+#   契约验证为收口层（closing layer）**（构建 + 符号 + 头文件字节级校验，默认可落地）；camodel sim 直调为
+#   尽力而为层（可选增强，aclnn 两段式在 sim 上受限，错误码见统一约定）；设备侧以 atc->OMC 单算子路线为操作
+#   等价承接（每覆盖格用例的 atc 转换由 blackbox-device-verify 证明）——设备无 aclnn 执行路线，不造假 PASS。
+  - id: aclnn-impl-smoke
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Hand-written ACLNN smoke - replace the autogen stub with l0op-style op_api; host contract verification is the closing layer
+    goal:
+      - "Replace the op_build autogen ACLNN stub of the package at $WORK_DIR/op/ with a hand-written l0op-style op_api — the four files under $WORK_DIR/op/op_api/ (aclnn_<op_name>.h / aclnn_<op_name>.cpp for L2, <op_name>.h / <op_name>.cpp for L0) plus the CMake wiring — by executing the develop-hand-written-aclnn skill."
+      - "Completion gate (kirin): the skill's green-gate checks 1-3 pass (build exits 0, both aclnn<OpPascal> symbols exported from the dev-package library, the installed public header is byte-identical to the handwritten one), the autogen stub is no longer a compile source; **host contract verification is the closing layer** — the kirin device has no host aclnn API route (ops-kirin-device-verify is atc->OMC->HAP->inference only), so no harness regression is deferred to the device; camodel sim direct-call is a best-effort strengthening where available (TODO/假设: exact sim harness; aclnn two-stage on sim restricted, error code per the unified conventions in the workflow header), never a fabricated PASS."
+    approach:
+      - "Load the develop-hand-written-aclnn skill first (mandatory — it is the single execution authority for the handwritten ACLNN development; do not restate or bypass its step procedure); execute its steps 1-5 in order until its green gate passes. The package you operate on is $WORK_DIR/op/ (kernel and op_host are done; the ACLNN API is currently the op_build autogen stub compiled into libcust_opapi.so)."
+      - "Workflow overlays on the skill (where an overlay and the skill differ, the overlay wins): the operator identity comes from $WORK_DIR/spec/spec.yaml (op.name -> <op_name>, capitalized words -> <OpPascal>); the install root is $WORK_DIR/dev-package/vendors/<OpPascal>/ (build via cd $WORK_DIR/op && bash build.sh --soc=<SOC_VERSION lowercase> (build command per the unified conventions in the workflow header), which already installs there); the fact-sheet read of build/autogen/aclnn_*.h is the authoritative L2 signature contract — copy it verbatim, callers and test CSVs were built against it."
+      - "Modification whitelist for this task: $WORK_DIR/op/op_api/ (the four new files), $WORK_DIR/op/CMakeLists.txt (the skill's four wiring edits), and exactly one signature refresh of $WORK_DIR/op/tests/aclnn/test_aclnn.cpp to the autogen-signature contract in $WORK_DIR/op/build/autogen/aclnn_<op_name>.h (this test was rendered stale by the interface change; the refresh is limited to this one file). Nothing else — in particular op_host/ and op_kernel/ sources stay as-is (their behavior is already gated by the blackbox tasks), and tests/aclnn/run.sh and tests/aclnn/CMakeLists.txt stay byte-identical to their setup-op-package state."
+      - "Regression closing on kirin (kirin-adapt, replaces the device harness run; the kirin device has no host aclnn API route, so no harness regression is deferred to the device): the **host contract checks above are the closing layer** — record the green-gate evidence (build exit, nm symbol lines, header diff) under $WORK_DIR/op/tests/aclnn/, never fabricate a PASS. Optionally, where a camodel sim direct-call project exists, cd $WORK_DIR/op/tests/aclnn && ./run.sh executes the harness through the simulator (TODO/假设: exact sim harness; aclnn two-stage on sim is restricted, error code per the unified conventions in the workflow header) as best-effort strengthening; a red case is reproduced first, classified (build failure -> ascendc-compile-debug; simulator runtime failure -> ascendc-runtime-debug with the ascendc-kirin-env-check failure vocabulary; wrong precision -> ascendc-precision-debug), and fixed inside the whitelist until green. The device-side operational equivalent (each coverage cell's atc->OMC singleop conversion) is closed by blackbox-device-verify."
+      - "Evidence: record the four delivered file paths, the skill green-gate results (build exit, nm symbol lines, header diff), the CMake edits applied, and the regression case name + result in the task report."
+    acceptance:
+      - "Four files delivered: OP_SNAKE=$(python3 -c \"import yaml; print(yaml.safe_load(open('$WORK_DIR/spec/spec.yaml'))['op']['name'])\") ; test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/aclnn_${OP_SNAKE}.cpp && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.h && test -f $WORK_DIR/op/op_api/${OP_SNAKE}.cpp."
+      - "Build and symbols: cd $WORK_DIR/op && bash build.sh --soc=<SOC_VERSION lowercase> (build command per the unified conventions in the workflow header) exits 0, and nm -D $WORK_DIR/dev-package/vendors/<OpPascal>/op_api/lib/libcust_opapi.so | grep -cE ' T aclnn<OpPascal>(GetWorkspaceSize)?$' equals 2."
+      - "Handwritten sources actually compiled: the autogen stub is empty and unreferenced — test $(wc -c < $WORK_DIR/op/build/autogen/aclnn_<op_name>.cpp) -eq 0 and ! grep -n 'autogen/aclnn_<op_name>.cpp' $WORK_DIR/op/CMakeLists.txt shows it only as the COPYONLY destination."
+      - "Installed header is the handwritten one: diff $WORK_DIR/op/op_api/aclnn_<op_name>.h $WORK_DIR/dev-package/vendors/<OpPascal>/op_api/include/aclnn_<op_name>.h exits 0, and its two declarations match the pre-task autogen contract (verifier cross-checks against the blackbox CSVs' api_name)."
+      - "Regression closing (kirin): the host-contract green-gate evidence is recorded under $WORK_DIR/op/tests/aclnn/ (build exit, nm symbol lines, header diff — verified by the verifier); the atc->OMC singleop closure is named as blackbox-device-verify; where a sim direct-call run additionally happened, cd $WORK_DIR/op/tests/aclnn && ./run.sh exits 0 and its log holds no FAILED row, with the harness frame frozen (run.sh / CMakeLists.txt byte-identical to their setup-op-package end state)."
+    out_of_scope:
+      - "Write only under $WORK_DIR/op/op_api/ and edit only $WORK_DIR/op/CMakeLists.txt for the four wiring edits; additionally, $WORK_DIR/op/tests/aclnn/test_aclnn.cpp may be updated once, only to match the autogen-signature contract (the sole deferred refresh for this task) — tests/aclnn/run.sh and tests/aclnn/CMakeLists.txt stay frozen as setup-op-package wrote them; everything else under $WORK_DIR/op/ stays as-is."
+      - "Do not modify the blackbox suite CSVs, $WORK_DIR/golden.py, tolerances, design docs, the TTK framework, or any other task's frozen assets."
+      - "Do not change the L2 signature contract: the public API keeps the autogen header's parameter list verbatim."
+    depends_on:
+      - kernel-impl
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: blackbox-determinism：以**麒麟设备验证为主**——在麒麟设备上对每用例同输入重复 10 次并做输出
+#   逐位比对（确定性 = bit 一致）；**降级到仿真载体时每用例只执行 1 次**（仿真验证耗时较长，不再重复 10 次，
+#   差异显式记录）；用 check_runtime_result.py determinism 作门禁，在 RECORD.md 显式声明「sim 上确定性为
+#   指示性证据，不替代麒麟设备时序/调度证据」。
+  - id: blackbox-determinism
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Verify full L0 determinism after ST testing (kirin-device primary; degraded sim 1x per case)
+    goal:
+      - "After the kirin-device primary verification (blackbox-device-verify) completes the ST L0/L1/L2 coverage, check the frozen blackbox_l0.csv once in full for determinism. **Kirin-device carrier (primary)**: run each L0 case on the kirin device 10 times with the same initial inputs and compare outputs bitwise. **Degraded sim carrier (case A/B/C)**: run each case through the simulator **1 time only** (not 10 — simulation is time-consuming), no repeats. Deliver results under $WORK_DIR/op/tests/determinism/ and record the carrier (device vs degraded-sim) and repeat count explicitly."
+    approach:
+      - "Choose the carrier: kirin device online -> run determinism on-device (primary); device offline (case A) or per-case degradation (case B/C) -> run the affected cases on the simulator with **1 execution per case**."
+      - "Kirin-device carrier: run each L0 case on the device 10 times with identical input bins (per the ops-kirin-device-verify 8-step flow); every repeat must produce bit-identical output bins."
+      - "Degraded sim carrier: run each affected case through the sim harness 1 time only (fixed seed), per the sim-carrier tick cap defined in the workflow header — an over-cap case is skipped and recorded (case name + reason), not judged."
+      - "Check (kirin-device carrier only): resolve CHECKER to workflows/scripts/check_runtime_result.py under the installed ops-registry-invoke skill; run python3 \"$CHECKER\" determinism --cases <frozen L0 CSV> --attempt <result.csv> <run log>. The checker hard-codes a repeat count of 10 (int(count)==10) and therefore applies **only to the kirin-device 10x carrier**; for the degraded-sim 1x carrier the 1-execution-per-case evidence is verified manually against RECORD.md (checker is not run on 1x results). Record the checker output in RECORD.md; reconcile split/repaired attempts oldest to newest with repeated --attempt arguments, preserving originals."
+      - "Evidence: write RECORD.md with the L0 case inventory, the carrier used (device / degraded-sim), the repeat count per case (device 10 / sim 1), commands, exit status, original result/log paths. RECORD.md must explicitly record: determinism on the simulator is indicative evidence only (the simulator's execution path is fixed) and is not a substitute for kirin-device timing/scheduling evidence; the repeat-count difference (device 10x vs degraded-sim 1x, due to simulation being time-consuming) is documented as intended."
+    acceptance:
+      - "Gate: kirin-device carrier — resolve CHECKER to workflows/scripts/check_runtime_result.py under the installed ops-registry-invoke skill; independently run python3 \"$CHECKER\" determinism --cases <frozen L0 CSV> --attempt <result.csv> <run log> (oldest to newest for multiple attempts), exiting 0; every L0 case has deterministic_status PASS with native evidence of 10 repeated executions in the same attempt. Degraded-sim carrier — the checker (hard-coded to 10 repeats) does not apply; instead RECORD.md proves each affected case was executed exactly 1 time with bit-identical/expected output, verified manually. Missing/skip results, insufficient repeats and mismatch cannot pass."
+      - "Evidence: RECORD.md and the original results/logs exist under $WORK_DIR/op/tests/determinism/, including the explicit statement that simulator determinism is indicative evidence only and does not substitute for kirin-device timing/scheduling evidence, and the explicit device-10x-vs-sim-1x repeat-count rationale."
+    out_of_scope:
+      - "Operator sources, golden, case CSVs, tolerances stay unchanged."
+    depends_on:
+      - blackbox-device-verify
+    max_retries: 2
+    on_exhaust: continue
+# kirin-adapt: geir-testcase-gen / geir-impl-smoke / geir-run-100pct：相对 op-develop：GEIR 用例冻结 +
+#   graph-mode 开发 + ttk geir 4 组合全量 -> 删除。原因：GEIR 图模式为昇腾 A5 路由（ttk geir +
+#   InferShape/InferDataType 的 GE 注册）；kirin 用 atc->OMC 单算子转换路线，由 setup-op-package 的 atc
+#   证明与 blackbox-device-verify 的每覆盖格用例 atc 转换承接。
+#
+# kirin-adapt: torch-impl-smoke：相对 op-develop：节点删除。原因：端侧无 PyTorch NPU 支持，torch_npu 依赖
+#   昇腾 NPU；跳过原因即本条 kirin-adapt 注释，交付时在 CODE_REVIEW_FIX.md/交付总结中显式记录，不静默删除。
+#
+# kirin-adapt: tensorflow-impl-smoke：相对 op-develop：节点删除。原因：TF 路线依赖昇腾 NPU 运行时，kirin 无
+#   TF 路线。
+#
+# kirin-adapt: blackbox-device-verify：新增节点——相对 op-develop，基线无麒麟设备验证环节；kirin 必须提供
+#   麒麟设备精度证据，且验证策略以麒麟设备为主。用例选择为**覆盖全面 + 集合最小化**：对 spec dtype 矩阵 ×
+#   tilingKey × shape 形态类做等价类覆盖，从 blackbox-gen 产出的最小化套件经贪心集合覆盖选最小子集（测试
+#   全面但数量不多）；承接 setup-op-package 模板示例（atc->OMC 单算子推理）与 aclnn-impl-smoke 的 host
+#   契约延后项（每覆盖格用例的 atc 转换），并产出 ASSUMPTIONS.md 汇总全流程 TODO/假设。
+#   集成三种降级路径（承接仿真全量套件 blackbox-smoke / blackbox-run-l0/l1/l2-100pct 的降级执行职责）：
+#     情形 A（设备离线，整体降级 sim——以覆盖格最小集经 sim harness 执行作为替代载体，不再单独跑 sim 全量套件）
+#     / 情形 B（单用例在设备上执行过程异常，仅该用例降级 sim）/ 情形 C（单用例在设备上验证结果失败，仅该
+#     用例先用 sim 复现定位、修复后重新进行设备验证，最终以设备验证结果为准）；降级按用例进行，不允许因个别
+#     用例异常切整轮。
+#   仿真 tick 上限（见头部统一定义）仅作用 sim 载体：降级到 sim 的用例超限时跳过并显式记录（用例名 + 跳过
+#   原因），覆盖格以同格后备候选回填，无候选则记录 degrade_note，绝不静默丢弃。
+  - id: blackbox-device-verify
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Kirin-device verification of a coverage-complete minimal case set via ops-kirin-device-verify (primary verification)
+    goal:
+      - "Execute the **primary verification** of the operator on a kirin device via the ops-kirin-device-verify skill (8 steps: compile vendor -> install -> generate cases -> atc->OMC -> HAP prepare -> hdc push -> start inference -> recv + compare), covering a **coverage-complete minimal case set**: the selected cases fill every cell of the spec coverage matrix (dtype × tilingKey × shape class: large / small-tail / rank-0 / non-contiguous / broadcast when supported, plus representative negative semantics) with at least one case each, while keeping the total count minimal (greedy set-cover over the minimized suite produced by blackbox-gen). The kirin-device verdict (PASS/FAIL per case, bitwise/tolerance against golden) is the **primary verification evidence**; sim only acts as the degradation carrier (cases A/B/C)."
+      - "Integrate the three degradation paths: case A (device offline — whole-round degradation to sim as replacement carrier), case B (per-case execution anomaly on device — that case only degrades to sim), case C (per-case verification failure on device — reproduce/localize on sim first, fix, then re-verify on device; the device result is final for that case). No whole-round switch to sim due to isolated anomalies."
+      - "This node is the closing aggregator for deferred kirin-device items: the setup-op-package template example (atc->OMC singleop inference) and the aclnn-impl-smoke host-contract close (each coverage cell's atc conversion) land here, and it produces $WORK_DIR/ASSUMPTIONS.md aggregating every TODO/假设 item across the workflow."
+    approach:
+      - "Load the ops-kirin-device-verify skill first (mandatory — the single execution authority for the 8-step device flow); atc/hdc command details come from tool-atc / tool-hdc inside the skill; the skill itself degrades to direct-doc fallback when those skills are absent."
+      - "Re-check the device link: run the skill's check_onboard_env.sh (--skip-device first, then the full run). If the device segment fails (offline), **case A**: record the whole-round degradation, run the selected coverage-complete minimal set through the simulator sim-direct harness instead (the whole-round replacement; the former sim full-suite nodes are deleted, so the sim evidence under case A is the minimal set, not a separate full-suite run), and report to the user — do not fail the workflow. Under case A/B/C, a degraded-to-sim selected case that exceeds the sim-carrier tick cap defined in the workflow header is skipped (case name + reason) and its coverage cell is **back-filled** by another minimal-set candidate from the same cell (recorded as a backup selection) — if no candidate fits, the cell is recorded as a degraded coverage gap (degrade_note), never silently dropped."
+      - "Select the coverage-complete minimal set: build the coverage matrix from $WORK_DIR/spec/spec.yaml (dtype × tilingKey from $WORK_DIR/design/TilingKey.md / BranchCatalog.md × shape classes) and solve a greedy set-cover over the minimized L0/L1/L2 suites produced by blackbox-gen under $WORK_DIR/op/tests/blackbox/cases/ (adding l1/l2 representatives only where a cell needs a negative), so every cell has at least one covering case and the selected set is as small as possible. Record in the report the per-cell mapping (cell -> covering case_id) proving completeness, and the minimization (selected count vs suite row count). Do not default to 'one large + one small per dtype'."
+      - "For each selected case: rebuild and re-install the vendor if code changed since the last install (rm -rf build then full rebuild per the kirin discipline — the installer skips existing vendor dirs), generate input bins + numpy golden + an ONNX or singleop description strictly per the spec (opset=11 / ir_version=6; fp32/bf16 require --precision_mode=must_keep_origin_dtype), atc convert to OMC with soc_version from $WORK_DIR/kirin-env.json, HAP install (bundle name verified via hdc shell bm dump -a), hdc file send (case-prefixed names), aa force-stop + aa start with --ps path/omPath, recv output0.bin, compare with golden (bitwise for bool/int, rtol/atol for float via compare_output.py). Per-case degradation: **case B** — a case that anomalously fails to execute on device (runtime crash/hang) degrades to sim for that case only, with the degrade recorded; **case C** — a case that runs but FAILs verification first goes to sim to reproduce/localize, is fixed, then is re-verified on device, with the device result as final. Degraded-to-sim cases on the sim carrier are subject to the sim-carrier tick cap defined in the workflow header: an over-cap case is skipped (not pass/fail) and recorded with case name + reason. Run the deferred items (the setup-op-package template example and the aclnn-impl-smoke host-contract close — each coverage cell's atc->OMC singleop conversion) through the same 8-step flow and record them in the report."
+      - "Assumptions aggregation: scan every node of this workflow for TODO/假设 markers and write $WORK_DIR/ASSUMPTIONS.md with one row per item (node id, statement, current status, carrier to close it) — the closed-loop carrier for 'facts not yet verified are marked TODO/假设'."
+    acceptance:
+      - "The device-verification report exists: $WORK_DIR/op/tests/blackbox/device-verify/KIRIN_DEVICE_VERIFY_REPORT.md records per selected case: case_id, dtype, shape, the coverage cells it fills, route (st_real for on-device, st_cpp/sim for degraded; the route taxonomy follows the ascendc-st-design case route column), degradation reason (case B/C or offline A), status (PASS/FAIL/blocked_by_device_runtime/skipped-over-cap-tick), compare mode and tolerance used."
+      - "Coverage complete: the coverage matrix in the report shows every cell (dtype × tilingKey × shape class) filled by at least one selected case_id, with the selected count recorded and visibly smaller than the suite row count (minimal-set proof); this replaces the 'per-dtype representative' requirement."
+      - "Degradation paths complete: every degraded case names its trigger (case A whole-round / case B execution anomaly / case C failure-then-reverify) and no whole-round switch to sim happened due to isolated anomalies; an over-cap degraded-sim case is recorded as skipped with case name + reason, never as pass/fail, and its coverage cell is either back-filled by a backup selection from the same cell or recorded as a degraded coverage gap (degrade_note) — never silently dropped."
+      - "Deferred items closed: the template example and the aclnn-impl-smoke host-contract close (per-cell atc->OMC singleop conversion) each appear in the report with a status (PASS on-device / degraded-sim / blocked_with_note)."
+      - "test -s $WORK_DIR/ASSUMPTIONS.md exits 0 and it covers the workflow's TODO/假设 items (each with node id and status); no TODO/假设 item is silently dropped."
+      - "Each on-device FAIL that is also red in the whitebox sim batches or the degraded minimal set ($WORK_DIR/op/tests/sim_verify/ logs) is a kernel defect — attribute it and report; a device-runtime-rejected case is recorded as blocked_by_device_runtime with its degrade note, not as an operator failure."
+      - "Frozen assets unchanged: case CSVs, $WORK_DIR/golden.py, tolerances, design docs."
+    out_of_scope:
+      - "Write only under $WORK_DIR/op/tests/blackbox/device-verify/ and $WORK_DIR/ASSUMPTIONS.md; do not modify package sources (kernel/host fixes belong to the sim/whitebox gates)."
+      - "Do not execute destructive device operations (uninstall HAP) without user confirmation."
+      - "Rebuilding and re-installing the vendor into $ASCEND_OPP_PATH/vendors/ when code changed is permitted toolchain behavior (not a file write under out_of_scope); the operator sources themselves stay unmodified."
+    depends_on:
+      - blackbox-gen
+      - kernel-impl
+      - aclnn-impl-smoke
+      - setup-op-package
+      - gen-golden
+      - setup-sim-harness
+    max_retries: 2
+    on_exhaust: continue
+# kirin-adapt: doc-gen：相对 op-develop：由引用昇腾 NPU 测试报告作为文档证据，改为验证结果证据以麒麟设备
+#   验证为主、sim 为辅助（tests/ 下 blackbox/device-verify/ 报告为主、sim_verify/ 为降级补充），文档结构与
+#   校验器不变；依赖 aclnn-impl-smoke（手写公共头是文档校验的实质输入）。
+  - id: doc-gen
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Generate the operator docs under $WORK_DIR/docs/ (aclnn API doc + linked README) and pass the paired-docs validator
+    goal:
+      - "Execute the ascendc-docs-gen skill for the finished operator package at $WORK_DIR/op: generate the paired public docs — the aclnn API interface doc $WORK_DIR/op/docs/aclnn{OperatorName}.md first, then $WORK_DIR/op/README.md linking it (README delivery mode fixed to full) — and expose both under $WORK_DIR/docs/."
+      - "Completion gate: the deterministic paired-docs validator passes — the ascendc-docs-gen skill's scripts/validate_operator_docs.py --operator-dir $WORK_DIR/op exits 0 with STATUS: PASSED as its last output line."
+    approach:
+      - "Load the ascendc-docs-gen skill first (mandatory — it is the single execution authority for doc structure, evidence sourcing, community-template fetching, and the paired delivery order); run as agents/docs-writer.md."
+      - "Workflow overlays on the agent/skill docs (where an overlay differs, the overlay wins): the operator root is $WORK_DIR/op (not operators/{OP}_package); the fact inputs are $WORK_DIR/spec/spec.yaml, $WORK_DIR/requirements/REQUIREMENTS.md, $WORK_DIR/design/*.md, the package sources under $WORK_DIR/op/, and the verification results under $WORK_DIR/op/tests/ (kirin-device evidence as primary, simulator evidence as degradation/auxiliary, not NPU reports)."
+      - "The validator requires the docs inside the operator root: write $WORK_DIR/op/docs/aclnn{OperatorName}.md and overwrite the sample-derived $WORK_DIR/op/README.md. Once they validate, expose them at the workflow-level path: ln -sfn op/docs $WORK_DIR/docs."
+      - "Iterate until green: on non-zero exit or a last line other than STATUS: PASSED, fix per the validator's ERROR list from verifiable facts and rerun."
+    acceptance:
+      - "OP_PASCAL=$(python3 -c \"import yaml; n=yaml.safe_load(open('$WORK_DIR/spec/spec.yaml'))['op']['name']; print(''.join(w.capitalize() for w in n.split('_')))\") ; test -s $WORK_DIR/op/docs/aclnn${OP_PASCAL}.md && test -s $WORK_DIR/op/README.md && test -s $WORK_DIR/docs/aclnn${OP_PASCAL}.md."
+      - "Paired validation passes: the ascendc-docs-gen skill's scripts/validate_operator_docs.py --operator-dir $WORK_DIR/op exits 0 and its last line is exactly STATUS: PASSED."
+      - "README links the doc it ships with: grep -qF \"docs/aclnn${OP_PASCAL}.md\" $WORK_DIR/op/README.md."
+    out_of_scope:
+      - "Write only $WORK_DIR/op/docs/, $WORK_DIR/op/README.md, and the $WORK_DIR/docs symlink; do not modify package sources, tests, $WORK_DIR/spec/, $WORK_DIR/design/, $WORK_DIR/requirements/."
+    depends_on:
+      - blackbox-determinism
+      - blackbox-device-verify
+      - aclnn-impl-smoke
+    max_retries: 2
+    on_exhaust: exit
+  - id: code-review
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Review the finished operator code and record the findings under $WORK_DIR/code-review/
+    goal:
+      - "Review the finished operator sources under $WORK_DIR/op/ (op_host/ and op_graph/ as the Host side, op_kernel/ as the Kernel side, op_api/ as the aclnn layer) exactly per the scope defined in agents/code-reviewer.md — every applicable TOPK, security-redline (plus SIMT kernel redlines when SIMT code is present), and performance clause of the ascendc-code-review skill — and write the aggregated report to $WORK_DIR/code-review/CODE_REVIEW.md."
+      - "Completion gate: the report exists and is internally consistent — the first-line status matches the FAIL finding count, every finding carries a unique ID with file:line evidence that resolves under $WORK_DIR/op/, and the four deterministic ops-impl-review script logs are saved under $WORK_DIR/code-review/checks/. This task is explicitly NOT gated on zero findings: findings are recorded for the downstream fix-findings task, never fixed here."
+    approach:
+      - "Run as agents/code-reviewer.md with this workflow's path overlay: the review inputs are $WORK_DIR/op/op_host/, $WORK_DIR/op/op_graph/, $WORK_DIR/op/op_kernel/, and $WORK_DIR/op/op_api/; the report lands at $WORK_DIR/code-review/CODE_REVIEW.md."
+      - "Load the ascendc-code-review skill first (mandatory) and run its file-review workflow end to end (rule routing, per-clause review, line verification); every FAIL / SUSPICIOUS finding keeps its unique F / S ID, full file path, and line-verified line number."
+      - "Load the ops-impl-review skill and run its four deterministic scripts over the package, saving each full output to $WORK_DIR/code-review/checks/<script_name>.log: scalar_mainchain_check, vf_reachability_check, and non3510_scaffold_check against $WORK_DIR/op, and workspace_consistency_check with the design root $WORK_DIR."
+      - "Fold the deterministic results into the report: a script verdict of FAIL (exit 2) becomes at least one FAIL finding citing the offending location; INCONCLUSIVE (exit 1) is recorded as a SUSPICIOUS finding; PASS contributes no finding."
+    acceptance:
+      - "test -s $WORK_DIR/code-review/CODE_REVIEW.md exits 0, and the four deterministic logs exist non-empty."
+      - "The report's first line is a single status that matches its body: it is ❌失败 exactly when at least one FAIL finding is listed (verifier cross-checks the finding list)."
+      - "Every finding is re-checkable: each finding entry carries a unique ID, a severity, and a file path with line number that resolves under $WORK_DIR/op/."
+    out_of_scope:
+      - "Read-only over the code under review: do not modify anything under $WORK_DIR/op/, $WORK_DIR/design/, $WORK_DIR/spec/, the test suites, $WORK_DIR/golden.py, or tolerances."
+      - "Do not fix any finding — remediation belongs to the downstream fix-findings task; write only under $WORK_DIR/code-review/ and run no builds."
+    depends_on:
+      - doc-gen
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: fix-findings：相对 op-develop：由重跑昇腾门禁（TTK 黑盒 L0/L1/L2、GEIR、aclnn harness、
+#   torch e2e）改为重跑 kirin 门禁：tiling UT、白盒全量批次与受影响的麒麟设备验证覆盖格用例。
+#   载体优先级：回归以**麒麟设备验证为主**（受影响覆盖格用例必须重跑并通过；前序验证已降级到仿真即情形
+#   A/B/C 时，受影响覆盖格用例经 sim harness 重跑——sim 全量套件不单独重跑）；sim 载体受仿真 tick 上限
+#   （见头部统一定义）约束，超限用例跳过并显式记录。
+  - id: fix-findings
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Fix every code-review finding and re-run the affected kirin test gates green
+    goal:
+      - "Close every FAIL finding recorded in $WORK_DIR/code-review/CODE_REVIEW.md by fixing the operator sources, then re-run every test gate the touched code feeds and leave it green; record each closure in $WORK_DIR/code-review/CODE_REVIEW_FIX.md."
+      - "When the review recorded zero FAIL findings, change no code and only write the no-op record."
+      - "Completion gate: every FAIL finding ID from CODE_REVIEW.md is quoted and closed in CODE_REVIEW_FIX.md, and the regression gates below hold — or the zero-findings no-op is recorded."
+    approach:
+      - "Inventory: read $WORK_DIR/code-review/CODE_REVIEW.md and its checks/ logs; list every FAIL finding. Zero FAIL findings -> write the no-op record and stop."
+      - "Fix discipline: confirm each finding at its cited location before editing; fixes land only in $WORK_DIR/op/op_host/, $WORK_DIR/op/op_kernel/, $WORK_DIR/op/op_api/, $WORK_DIR/op/op_graph/, and $WORK_DIR/op/CMakeLists.txt; after any code change run cd $WORK_DIR/op && bash build.sh --soc=<soc> (exit 0, re-install vendor) before any test re-run."
+      - "Relevant tests = every gate fed by the whitelisted sources. Re-run each with the exact command form its gate node already recorded in its own evidence files: Tiling UT (cd $WORK_DIR/op/tests/tiling && ./run.sh, 0 failed); whitebox branch full batches through the sim harness (development-aid batches, commands from the RECORD files); **kirin-device verification coverage-cell cases that the changed code feeds — rerun via ops-kirin-device-verify on the coverage cells the change affects (primary regression); when the previous verification degraded to sim (case A/B/C), the affected cells are re-run through the sim harness instead**; the aclnn host-contract checks if aclnn-impl-smoke ran a sim direct-call of the harness (commands from its RECORD), otherwise the atc->OMC per-cell close stays with blackbox-device-verify. Degraded-sim reruns honor the sim-carrier tick cap defined in the workflow header (over-cap -> skip with case name + reason)."
+      - "Evidence: write $WORK_DIR/code-review/CODE_REVIEW_FIX.md quoting each FAIL finding verbatim with its fix and the per-gate rerun results."
+    acceptance:
+      - "test -s $WORK_DIR/code-review/CODE_REVIEW_FIX.md exits 0; every FAIL finding ID listed in CODE_REVIEW.md appears in CODE_REVIEW_FIX.md; the zero-findings case is explicitly recorded as a no-op."
+      - "cd $WORK_DIR/op && bash build.sh --soc=<SOC_VERSION lowercase> (build command per the unified conventions in the workflow header) exits 0."
+      - "Tiling UT green: cd $WORK_DIR/op/tests/tiling && ./run.sh exits 0 with no [  FAILED  ] line."
+      - "kirin-device verification coverage-cell cases affected by the change re-PASS (or are recorded as blocked/degraded per the kirin-device verification discipline) — the primary regression; degraded (case A/B/C) reruns go through the sim harness with over-cap cases recorded as skips."
+      - "Frozen assets unchanged: every case CSV, $WORK_DIR/golden.py, tolerances, the tiling UT oracle files, and $WORK_DIR/design/ docs are unmodified."
+    out_of_scope:
+      - "Modification whitelist: $WORK_DIR/op/op_host/, op_kernel/, op_graph/, CMakeLists.txt, plus the build/test artifacts the gates regenerate and CODE_REVIEW_FIX.md; everything else stays as-is."
+      - "Never modify test cases, suite CSVs, golden.py, tolerances, or thresholds to force a gate green."
+    depends_on:
+      - code-review
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: docs-consistency-check：以**麒麟设备验证为主**探测文档声明（能力用例 PASS、越界用例被干净
+#   拒绝），camodel sim 直调 harness 为辅助载体（仅情形 A/B/C 降级时使用），文档按实测修正。
+  - id: docs-consistency-check
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Docs consistency check - verify every checkable doc claim empirically against the final package; fix doc deltas only, never code
+    goal:
+      - "Empirically verify the public docs of the finished operator ($WORK_DIR/op/docs/aclnn{OperatorName}.md and $WORK_DIR/op/README.md, exposed via the $WORK_DIR/docs symlink) against the final post-fix package: extract every machine-checkable claim — supported dtypes, formats, shape/rank ranges, attribute defaults, empty-tensor stances, constraints, and error semantics — and drive each through the **kirin-device verification primarily** (ops-kirin-device-verify), with the simulator sim-direct harness as the degradation/auxiliary carrier (case A/B/C only)."
+    approach:
+      - "Load the ascendc-docs-gen skill first (mandatory — it is the authority for doc structure, evidence rules, and the closing validator gate)."
+      - "Inventory the claims: read both doc files end to end and list every checkable claim with its file:line, cross-checked against $WORK_DIR/spec/spec.yaml; this list becomes REPORT.md's claim table."
+      - "Build the probe cases under $WORK_DIR/docs-consistency/cases/ — a positive CSV and a negative CSV, projected from known-green $WORK_DIR/op/tests/blackbox/cases/blackbox_l0.csv rows where possible."
+      - "Execute both CSVs through the primary carrier (kirin-device verification via ops-kirin-device-verify) or, under degradation cases A/B/C only, through the sim harness (input bins from gen_cases.py, compare with golden): a documented-capability case must PASS; an out-of-scope case must be cleanly rejected (device rejection / sim execution failure / validation error), not silently execute. Degraded-sim cases are subject to the sim-carrier tick cap defined in the workflow header (over-cap -> skip with case name + reason)."
+      - "Mismatch rule (hard): any behavior deviating from the doc, in EITHER direction, is fixed by editing the DOC to match the observed behavior; the code is never touched in this task."
+      - "Re-validate after every doc edit and once on the final tree: the ascendc-docs-gen skill's scripts/validate_operator_docs.py --operator-dir $WORK_DIR/op — exit 0, last line STATUS: PASSED."
+      - "Evidence: $WORK_DIR/docs-consistency/REPORT.md holds the claim table (ID | doc claim with file:line | case name | observed result | verdict), the commands run, and the fix history."
+    acceptance:
+      - "test -s $WORK_DIR/docs-consistency/REPORT.md exits 0 and it holds the settled claim table; the zero-mismatch case is explicitly recorded as a no-op."
+      - "Cases cover the claims: the positive and negative CSVs under $WORK_DIR/docs-consistency/cases/ are non-empty, and every executable claim maps to at least one case row."
+      - "Full execution: each result CSV exists, is non-empty, and covers its cases CSV's full row set."
+      - "Validator green on the final tree: validate_operator_docs.py --operator-dir $WORK_DIR/op exits 0 and its last line is exactly STATUS: PASSED."
+      - "Frozen assets unchanged: $WORK_DIR/op package sources, $WORK_DIR/golden.py, $WORK_DIR/spec/spec.yaml, and every test suite under $WORK_DIR/op/tests/ are unmodified."
+    out_of_scope:
+      - "Write only under $WORK_DIR/docs-consistency/ and, for mismatch fixes, the two doc files $WORK_DIR/op/docs/aclnn{OperatorName}.md and $WORK_DIR/op/README.md."
+      - "Never modify package sources, golden.py, tolerances, test suites, or design docs to make a doc claim true; a suspected code defect is attributed in REPORT.md and left to the kernel tasks."
+    depends_on:
+      - fix-findings
+    max_retries: 2
+    on_exhaust: exit
+# kirin-adapt: prepare-performance-optimization：性能口径为 camodel tick 基线（total tick /
+#   cycles-per-element），决策文件 kirin-perf-decision.json，子图 kirin-perf-optimize.yaml（单任务，读决策后
+#   执行）。
+#   TODO：ops-perf-optimize-workflow 技能为昇腾设计，其优化执行环节对 kirin 的适配（tick 基线作为目标度量）
+#   尚需人工确认；本节点负责决策与基线采集，不臆造优化执行细节。
+#   tick 基线与验证一致受 camodel 单用例仿真 tick 上限（见头部统一定义）约束：超限的关键形状无法采集基线，
+#   显式记录（shape + 原因），不判定优化未达标。
+  - id: prepare-performance-optimization
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Record the kirin performance decision and prepare its simulator baseline inputs
+    goal:
+      - "Read $WORK_DIR/requirements/REQUIREMENTS.md (consulting the original user prompt when available) before writing $WORK_DIR/.workflow/kirin-perf-decision.json with RUN or SKIP, the reason and evidence. On the kirin platform the performance measurement is a **camodel simulator baseline** (total tick / cycles-per-element) — not a kirin-device latency/throughput; the decision compares against the requirement's tick-based targets when present."
+    approach:
+      - "Read the parent workflow path from $WORK_DIR/.workflow/status.json and resolve it as PARENT_WORKFLOW."
+      - "Read REQUIREMENTS.md and, when available, the original prompt from the file named by $USER_PROMPT. Retain its explicit opt-out and optimization options; conflicting explicit statements fail preparation; never resolve a conflict by defaulting to RUN."
+      - "For RUN, collect the camodel tick baseline for the key shapes in design/Validation.md via the sim harness (the harness's extract_perf step over the camodel run); targets are tick-based per REQUIREMENTS §7.4. For all_targets_met, include per-target/case measurements, units (tick / cycles-per-element), thresholds and the loaded-binary identity."
+      - "Atomically write $WORK_DIR/.workflow/kirin-perf-decision.json as a JSON object containing decision (RUN/SKIP), reason_code, reason, requirements_path, requirements_sha256 and evidence_paths. RUN additionally records request_path and provenance; SKIP omits request fields."
+      - "Generate $WORK_DIR/.workflow/kirin-perf-optimize.yaml as a single normal task (kirin-perf-execute, executor=general-executor, verifier=general-verifier) that reads the decision file before invoking the optimization skill — the cannbot plugin `ops-perf-optimize` (plugins-official/ops-perf-optimize, skills/ops-perf-optimize-workflow) — and passes it $WORK_DIR, the decision file path and the camodel tick-baseline evidence; do not generate alternative subgraphs."
+    acceptance:
+      - "$WORK_DIR/.workflow/kirin-perf-decision.json is a valid JSON object with decision, reason_code, reason, requirements_path, requirements_sha256 and evidence_paths."
+      - "RUN/optimization_needed also has request fields and a tick-baseline evidence file; SKIP/all_targets_met requires per-target tick measurements; SKIP/user_opt_out requires explicit intent evidence only."
+      - "$WORK_DIR/.workflow/kirin-perf-optimize.yaml is contract-valid (single normal task), and the verifier approves the decision before the child is dispatched."
+    out_of_scope:
+      - "Do not optimize, benchmark beyond the camodel baseline, freeze a run, or change framework code. Write only under $WORK_DIR/perf-optimize/, $WORK_DIR/.workflow/kirin-perf-decision.json and $WORK_DIR/.workflow/kirin-perf-optimize.yaml."
+      - "Do not execute the child task or start a CLI."
+    depends_on:
+      - docs-consistency-check
+      - kirin-env-check
+      - write-design-infershape-dtype
+      - setup-sim-harness
+    max_retries: 0
+    on_exhaust: exit
+# kirin-adapt: performance-optimization：子图指向 .workflow/kirin-perf-optimize.yaml（prepare-
+#   performance-optimization 生成的单任务子图，性能口径 camodel tick 基线）。
+  - id: performance-optimization
+    task_type: subgraph
+    file: .workflow/kirin-perf-optimize.yaml
+    depends_on:
+      - prepare-performance-optimization

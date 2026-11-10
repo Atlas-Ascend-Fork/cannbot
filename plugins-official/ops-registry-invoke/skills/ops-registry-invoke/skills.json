@@ -31,7 +31,11 @@
       "ascendc-whitebox-design",
       "npu-arch",
       "ops-design-paradigms",
-      "ops-spec-gen"
+      "ops-spec-gen",
+      "ascendc-kirin-env-check",
+      "ops-kirin-device-verify",
+      "tool-atc",
+      "tool-hdc"
     ]
   }
 }

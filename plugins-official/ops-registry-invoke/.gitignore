@@ -10,6 +10,10 @@
 /skills/npu-arch/
 /skills/ops-design-paradigms/
 /skills/ops-spec-gen/
+/skills/ascendc-kirin-env-check/
+/skills/ops-kirin-device-verify/
+/skills/tool-atc/
+/skills/tool-hdc/
 
 # skills CLI 的安装记录；本仓不 pin 外部依赖版本
 /skills-lock.json

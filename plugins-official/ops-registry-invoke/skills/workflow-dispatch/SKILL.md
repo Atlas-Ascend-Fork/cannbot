@@ -27,26 +27,25 @@ ops-incremental skill 的 `SKILL.md` 并原样交接：
 
 ## 路由规则
 
-以本机 NPU 架构号决定路由：
-
-| NPU arch | 平台代际 | 工作流 YAML |
+| 平台 | 判定值 | 工作流 YAML（相对 ops-registry-invoke skill） |
 |---|---|---|
-| `2201`（DAV_2201，如 Ascend 910B） | A2/A3 | ops-registry-invoke skill 的 `workflows/a2-a3-op-develop.yaml` |
-| `>= 3510`（DAV_3510 及更新，如 Ascend 950） | A5 及更新 | ops-registry-invoke skill 的 `workflows/op-develop.yaml` |
+| 昇腾 A2/A3 | 架构号 `2201`（如 Ascend 910B） | `workflows/a2-a3-op-develop.yaml` |
+| 昇腾 A5+ | 架构号 `>= 3510`（如 Ascend 950） | `workflows/op-develop.yaml` |
+| 麒麟 | KirinX90/Kirin9030 等端侧麒麟芯片 | `workflows/kirin-op-develop.yaml` |
 
-用户显式指定路线时以用户为准。其余 arch 值（早于 2201、介于两代之间、
-无法判定）不猜测：报告检测结果并请用户选择路线。
+用户显式指定平台或 YAML 时以用户为准。
 
 ## 步骤
 
-1. **获取 NPU 架构号。**
-   在 CANN 环境已生效的前提下（如先 source toolkit 的 `set_env.sh`）
-   运行 `asys info -r hardware`，读取 `Arch Info` 行给出的四位架构号
-   （如 `2201`、`3510`）。架构号由工具负责提供，本技能不从 SoC 芯片名
-   推测。用户在需求中明确指定 SoC 型号（如 Ascend910B）时，通过
-   npu-arch skill 的产品映射表查询该型号对应的架构号。无法取得明确
-   架构号时，报告已收集的证据（命令输出、报错信息）并请用户澄清，
-   不自行推断、不默认任何一条路线。
+1. **判定平台与架构号。**
+   - 昇腾：有 SoC 型号（如 Ascend910B）时经 npu-arch skill 的产品映射表查架构号；
+     否则先 source toolkit 的 `set_env.sh`，运行 `asys info -r hardware`，以
+     `Arch Info` 行的四位架构号为准。
+   - 麒麟：用户提及麒麟/麒麟芯片型号或端侧/鸿蒙（如 KirinX90/Kirin9030）时
+     判定为麒麟平台。
+
+   完成判据：能按路由表确定平台与判定值；否则报告已收集的证据并请用户澄清，
+   然后停止。
 2. **选定工作流 YAML。** 按路由规则选定后，对所选 YAML 运行 `realpath -m`
    并确认文件存在。派发前向用户报告检测到的架构号与所选路线。
 3. **派发至 workflow-orchestrator。** 加载 workflow-orchestrator skill 并
