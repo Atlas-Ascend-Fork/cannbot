@@ -39,6 +39,36 @@ node dsh/scripts/install-source.mjs --repository https://gitcode.com/cann/cannbo
 
 ## 安装
 
+### 一键安装（bash）
+
+Linux / WSL 终端在仓库根目录执行：
+
+```sh
+bash dsh/install.sh
+```
+
+脚本依次完成：
+
+1. 检查 Node.js 和 npm；缺少 Node.js 或版本低于 `24.9.0` 时，自动下载并安装 Node.js 24 LTS（默认 `v24.22.2`，从 npmmirror 下载；root 安装到 `/usr/local`，普通用户安装到 `~/.local`）；
+2. 检查 `dsh` 命令，未安装时通过 `npm install --global @deepseek-ai/dsh` 安装（默认 `latest`），已安装时直接复用；
+3. 检查 `pnpm`，缺少时通过 npm 全局安装；
+4. 将 `cannbot-dsh@latest` 安装到 DSH 的 `web` profile，并确认插件已加入启用列表。
+
+插件要求 DSH `>=0.1.1-rc.1 <0.3.0`。如果已有 DSH 不在该范围，请先切换版本，或用 `--dsh-version` 指定安装版本。
+
+完成后执行 `dsh web` 启动。常用选项：
+
+```sh
+bash dsh/install.sh --check                         # 只检查当前状态，不做修改
+bash dsh/install.sh --plugin-version 1.0.0-alpha.1  # 固定插件版本
+bash dsh/install.sh --node-version 24.22.2          # 缺少 Node.js 时安装指定版本
+bash dsh/install.sh --profile web --registry https://registry.npmmirror.com
+```
+
+完整选项见 `bash dsh/install.sh --help`。该脚本使用当前用户的全局 npm 前缀和现有 `DSH_HOME`（默认 `~/.dsh`），不会创建独立运行时；需要隔离安装时使用 `packages/install` 下的 Node.js 一键安装器。
+
+### npm 安装
+
 以下 npm 安装方式需对应版本已发布；本地源码安装使用上面的 `install:source` 命令。
 
 在 DSH **插件 → 添加插件** 中输入：
