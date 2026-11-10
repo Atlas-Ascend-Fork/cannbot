@@ -54,8 +54,10 @@ export function installWorkflowContext(ctx: Context, config: Config, content?: C
       let skill: Awaited<ReturnType<Context['skills']['get']>>
       for (let attempt = 0; attempt < 3; attempt++) {
         if (content) await content.prepare(cwd, id)
-        const revision = content?.getSource().revision
-        const candidate = await scoped.skills.get(id, { cwd, scope: agent, signal })
+        const snapshot = content?.getSource()
+        const revision = snapshot?.revision
+        const entry = snapshot?.catalog.exposedSkills.find(item => item.pluginId === id && item.entry)
+        const candidate = await scoped.skills.get(entry?.name ?? id, { cwd, scope: agent, signal })
         if (revision === content?.getSource().revision) { skill = candidate; break }
       }
       if (!skill || !isUserInvocable(skill)) throw new Error(`CANNBot DSH workflow is unavailable: ${id}`)

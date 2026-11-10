@@ -231,7 +231,6 @@ function assertUnifiedInstall(target, tool, plugin) {
     const instructions = readFileSync(instructionsPath, "utf8");
     const expected = plugin === "ops-direct-invoke" ? undefined : 1;
     assert.equal(instructions.match(new RegExp(`<!-- cannbot:${plugin}:start -->`, "g"))?.length, expected);
-    if (plugin === "ops-direct-invoke") assert.match(instructions, /<!-- cannbot:ops-perf-optimize:start -->/);
   }
 }
 
@@ -256,12 +255,17 @@ test("repository maps every official plugin to the Skill submodule", () => {
     const codexManifest = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
     assert.equal(codexManifest.homepage, "https://gitcode.com/cann/cannbot");
     assert.equal(codexManifest.repository, "https://gitcode.com/cann/cannbot");
-    const trackedFiles = spawnSync("git", ["ls-files", "-s", `plugins-official/${plugin}`], {
+    const trackedFiles = spawnSync("git", ["ls-files", "-s", "-z", `plugins-official/${plugin}`], {
       cwd: repositoryRoot,
       encoding: "utf8",
     });
     assert.equal(trackedFiles.status, 0, trackedFiles.stderr);
-    assert.equal(trackedFiles.stdout.split("\n").some((line) => line.startsWith("120000 ")), false);
+    for (const entry of trackedFiles.stdout.split("\0").filter((line) => line.startsWith("120000 "))) {
+      const path = join(repositoryRoot, entry.slice(entry.indexOf("\t") + 1));
+      assert.equal(isAbsolute(readlinkSync(path)), false);
+      const destination = realpathSync(path);
+      assert.ok(destination.startsWith(realpathSync(root) + "/"), `${path} must stay inside its plugin`);
+    }
   }
   // ops-direct-invoke ships self-contained workflow skills in plugins-official/<id>/skills/;
   // the other plugins above resolve all skills from the submodule only.
@@ -325,7 +329,7 @@ test("Claude marketplace matches the bundled official plugin manifests", () => {
     assert.deepEqual(plugin.dependencies, manifest.dependencies);
     assert.equal(manifest.homepage, "https://gitcode.com/cann/cannbot");
     assert.equal(manifest.repository, "https://gitcode.com/cann/cannbot");
-    assert.equal(manifest.skills, undefined);
+    for (const path of manifest.skills ?? []) assert.ok(existsSync(join(repositoryRoot, plugin.source, path, "SKILL.md")), path);
 
     const sourceDefinition = JSON.parse(readFileSync(
       join(repositoryRoot, "plugins-official", plugin.name, "plugin-sources.json"),
@@ -394,51 +398,6 @@ test("package bundle includes plugin licenses", () => {
     readFileSync(join(repositoryRoot, "vendor", "cannbot-skills", "LICENSE"), "utf8"),
   );
 });
-
-for (const source of sources) {
-  for (const tool of tools) {
-    test(`${source} installs ops-direct-invoke for ${tool}`, () => {
-      const { sandbox, target } = installPlugin("ops-direct-invoke", tool, source);
-      const root = configRoot(target, tool);
-      const agent = tool === "codex" ? "ops-direct-invoke-architect.toml" : "ops-direct-invoke-architect.md";
-      const workflowScript = join(skillRoot(target, tool), "ops-direct-invoke", "scripts", "assemble_workflow.py");
-      const installedSharedSkill = join(skillRoot(target, tool), "ascendc-env-check");
-      assert.equal(existsSync(join(installedSharedSkill, "SKILL.md")), true);
-      assertSkillInstallation(installedSharedSkill, source, "ops-direct-invoke", "ascendc-env-check");
-      assert.equal(existsSync(join(skillRoot(target, tool), "workflow-orchestrator", "SKILL.md")), true);
-      assert.equal(existsSync(join(skillRoot(target, tool), "ops-direct-invoke", "SKILL.md")), true);
-      assert.equal(existsSync(join(root, "agents", agent)), true);
-      assert.equal(existsSync(workflowScript), true);
-      assert.equal(existsSync(join(target, ".cannbot", "permissions", "PM.js")), false);
-      assert.equal(existsSync(join(target, ".cannbot", "settings.json")), false);
-      const record = readPluginRecord(target, tool, "ops-direct-invoke");
-      const configured = JSON.parse(readFileSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "plugin-sources.json"), "utf8"));
-      const localSkills = readdirSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "skills"))
-        .filter((name) => existsSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", "skills", name, "SKILL.md")));
-      assert.equal(record.skills.length, configured.skills.length + localSkills.length);
-      for (const name of ["cannbot-dsl-env-check", "cannbot-dsl-op-design", "cannbot-dsl-unit-planner", "cannbot-dsl-test-generator", "cannbot-dsl-best-practice", "cannbot-dsl-code-reviewer", "ops-design-paradigms"]) {
-        const installedSkill = join(skillRoot(target, tool), name);
-        assert.equal(existsSync(join(installedSkill, "SKILL.md")), true, name);
-        assertSkillInstallation(installedSkill, source, "ops-direct-invoke", name);
-      }
-      const declaredAgents = JSON.parse(readFileSync(join(repositoryRoot, "plugins-official", "ops-direct-invoke", ".claude-plugin", "plugin.json"), "utf8")).agents;
-      assert.equal(record.agents.length, declaredAgents.length);
-      const coordinator = tool === "codex" ? "ops-direct-invoke-perf-coordinator.toml" : "ops-direct-invoke-perf-coordinator.md";
-      assert.equal(existsSync(join(root, "agents", coordinator)), true);
-      for (const name of ["ops-perf-optimize-workflow", "ops-perf-baseline-evaluate", "ops-perf-preparation", "ops-perf-analysis", "ops-perf-implementation", "ops-perf-postprocess", "ops-perf-acceptance-criteria"]) {
-        assert.equal(existsSync(join(skillRoot(target, tool), name, "SKILL.md")), true, name);
-        assertSkillInstallation(join(skillRoot(target, tool), name), source, "ops-direct-invoke", name);
-      }
-      assert.equal(record.sourcePackage, sourcePackage);
-      assert.equal(record.source.kind, source);
-      assert.equal(record.skillInstallMode, source === "repository" ? "symlink" : "copy");
-      assertUnifiedInstall(target, tool, "ops-direct-invoke");
-      if (tool === "codex") {
-        assert.equal(existsSync(join(sandbox, "home", "plugins", "ops-direct-invoke", ".codex-plugin", "plugin.json")), true);
-      }
-    });
-  }
-}
 
 for (const source of sources) {
   for (const tool of tools) {
@@ -592,15 +551,6 @@ test("model-train-precision-diagnose source init delegates to the unified instal
     true,
   );
   assertUnifiedInstall(target, "opencode", plugin);
-});
-
-test("ops-direct-invoke source init uses the unified installer", () => {
-  const { target } = installWithSourceInit("ops-direct-invoke", "opencode");
-  const root = configRoot(target, "opencode");
-  assertUnifiedInstall(target, "opencode", "ops-direct-invoke");
-  assert.equal(existsSync(join(target, ".cannbot", "permissions", "PM.js")), false);
-  assert.equal(existsSync(join(skillRoot(target, "opencode"), "ops-direct-invoke", "SKILL.md")), true);
-  assert.equal(existsSync(join(root, "agents", "ops-direct-invoke-verifier.md")), true);
 });
 
 test("source init defaults to the source repository root and reads the manifest name", () => {
@@ -843,41 +793,6 @@ test("reinstall preserves user instructions and keeps one managed block", () => 
   const instructions = readFileSync(instructionsPath, "utf8");
   assert.match(instructions, /^user instructions/m);
   assert.equal(instructions.match(/<!-- cannbot:model-infer-optimize:start -->/g)?.length, 1);
-});
-
-test("multiple plugins keep independent instructions and install records", () => {
-  const first = installPlugin("ops-direct-invoke", "dsh", "package");
-  const result = spawnSync(process.execPath, [
-    cli,
-    "install",
-    "model-infer-optimize",
-    "--tool",
-    "dsh",
-    "--target",
-    first.target,
-  ], {
-    cwd: first.target,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      HOME: join(first.sandbox, "home"),
-      XDG_CACHE_HOME: join(first.sandbox, "cache"),
-      CANNBOT_SKIP_DEPENDENCY_REPOS: "1",
-    },
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-
-  const instructions = readFileSync(join(first.target, "AGENTS.md"), "utf8");
-  assert.doesNotMatch(instructions, /<!-- cannbot:ops-direct-invoke:start -->/);
-  assert.equal(instructions.match(/<!-- cannbot:model-infer-optimize:start -->/g)?.length, 1);
-  assert.match(instructions, /^# NPU 模型推理优化入口$/m);
-
-  const registry = JSON.parse(readFileSync(join(first.target, ".dsh", "cannbot-plugin.json"), "utf8"));
-  assert.equal(registry.schemaVersion, 2);
-  assert.deepEqual(registry.plugins.map((plugin) => plugin.plugin), ["model-infer-optimize", "ops-direct-invoke", "ops-perf-optimize"]);
-  assert.equal(registry.plugins.find((plugin) => plugin.plugin === "ops-direct-invoke").instructions, null);
-  assert.equal(existsSync(join(skillRoot(first.target, "dsh"), "ascendc-env-check", "SKILL.md")), true);
-  assert.equal(existsSync(join(skillRoot(first.target, "dsh"), "model-infer-migrator", "SKILL.md")), true);
 });
 
 test("Claude hook installation is idempotent", () => {
@@ -1795,3 +1710,48 @@ test("dependency ref reinstall preserves local commits when the branch has diver
   assert.equal(dependencyRefGit(f.checkout, "rev-parse", "HEAD"), local);
   assert.equal(readFileSync(join(f.target, "dependency", "value.txt"), "utf8"), "local committed bytes\n");
 });
+
+
+test("a declared plugin initializer delegates to the standard installer exactly once", () => {
+  const sandbox = createSandbox("cannbot-initializer-");
+  const bundle = createAssetsPluginBundle(sandbox, []);
+  const pluginRoot = join(bundle, "plugins-official/asset-fixture");
+  mkdirSync(join(pluginRoot, "skills"), { recursive: true });
+  writeFileSync(join(pluginRoot, "plugin-install.json"), JSON.stringify({ initializer: "initialize.mjs" }));
+  writeFileSync(join(pluginRoot, "initialize.mjs"), `
+    import { appendFileSync } from 'node:fs';
+    import { join } from 'node:path';
+    export async function initialize({ options, install }) {
+      appendFileSync(join(options.target, 'initializer-calls.txt'), 'called\\n');
+      return install(options);
+    }
+  `);
+  const target = join(sandbox, "target");
+  const result = installAssetsFixture(bundle, target, sandbox, "dsh");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(readFileSync(join(target, "initializer-calls.txt"), "utf8"), "called\n");
+  assert.equal(readPluginRecord(target, "dsh", "asset-fixture").plugin, "asset-fixture");
+});
+
+for (const mode of ["relative escape", "absolute path", "symlink escape", "missing export"]) {
+  test(`plugin initializer rejects ${mode} before installing`, () => {
+    const sandbox = createSandbox("cannbot-initializer-invalid-");
+    const bundle = createAssetsPluginBundle(sandbox, []);
+    const pluginRoot = join(bundle, "plugins-official/asset-fixture");
+  mkdirSync(join(pluginRoot, "skills"), { recursive: true });
+    const outside = join(sandbox, "outside.mjs");
+    writeFileSync(outside, "throw new Error('outside initializer executed');\n");
+    let initializer = "initialize.mjs";
+    if (mode === "relative escape") initializer = "../../../outside.mjs";
+    if (mode === "absolute path") initializer = outside;
+    if (mode === "symlink escape") symlinkSync(outside, join(pluginRoot, initializer));
+    if (mode === "missing export") writeFileSync(join(pluginRoot, initializer), "export const unrelated = true;\n");
+    writeFileSync(join(pluginRoot, "plugin-install.json"), JSON.stringify({ initializer }));
+    const target = join(sandbox, "target");
+    const result = installAssetsFixture(bundle, target, sandbox, "dsh");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /initializer must (?:be a file inside the plugin|export initialize)/);
+    assert.doesNotMatch(result.stderr, /outside initializer executed/);
+    assert.equal(existsSync(join(target, ".dsh/cannbot-plugin.json")), false);
+  });
+}

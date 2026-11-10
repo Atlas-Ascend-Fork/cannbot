@@ -195,6 +195,22 @@ export function assemblePlugins(repositoryRoot, outputRoot, selectedPluginIds) {
       }
     }
 
+    if (source.extraAssets !== undefined && !Array.isArray(source.extraAssets)) {
+      throw new Error(`extraAssets must be an array: ${source.definitionPath}`);
+    }
+    for (const path of source.extraAssets ?? []) {
+      if (typeof path !== "string" || !path || isAbsolute(path) || path === ".") {
+        throw new Error(`invalid extra asset path: ${path}`);
+      }
+      const asset = resolve(source.pluginRoot, path);
+      assertInside(source.pluginRoot, asset, "extra asset");
+      assertInside(realpathSync(source.pluginRoot), realpathSync(asset), "extra asset");
+      const output = resolve(destination, path);
+      assertInside(destination, output, "extra asset destination");
+      if (existsSync(output)) throw new Error(`extra asset destination already exists: ${path}`);
+      cpSync(asset, output, { recursive: true, dereference: true });
+    }
+
     manifest.skills = [...names].map((name) => `./skills/${name}`);
     delete manifest.dependencies;
     writeFileSync(

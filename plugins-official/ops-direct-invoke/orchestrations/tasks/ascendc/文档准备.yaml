@@ -1,0 +1,34 @@
+task_type: normal
+title: 文档准备
+goal:
+- 按仓内已有算子文档规范补全本算子的相关资料。
+approach:
+- 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，停止依赖该输入的操作，在本阶段报告中记录阻塞证据，按 harness 原生协议结束执行。
+- 必须加载 `ops-direct-invoke-repo-guide` Skill，按其中的要求执行。
+- 读取当前实现、测试及 $WORK_DIR/{{id:代码修复}}-修复记录.md、$WORK_DIR/{{id:代码修复}}-验收报告.md，以修复后版本为准。
+- 对照仓内已有同类算子文档，确定路径、章节与示例；若无已有文档，记录本节点前置条件不满足的证据，不凭空创建格式或文档要求。
+- 按仓内格式补全接口、参数、约束和使用资料，写入约定位置；给 operator_doc 赋实际绝对路径，多文件逐一检查。
+procedure:
+- 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，记录阻塞证据并判定验收失败。
+- 读取本次文档、仓内同类文档、当前代码/测试和 $WORK_DIR/{{id:代码修复}}-验收报告.md；给 operator_doc 赋实际路径，多文件逐一检查。
+- 核对格式、内容完整性及接口/约束/示例与最终交付的一致性，不要求未开展的性能产物。
+- 由 verifier 按已安装的 $DOC_TEMPLATES_DIR/templates/验收报告.md 写入 $WORK_DIR/{{id}}-验收报告.md，执行 test -s "$WORK_DIR/{{id}}-验收报告.md"；通过、失败或阻塞均记录逐项结论与证据路径。重试仅追加问题处理和受影响项复核结果；当前版本缺少有效证据即失败，不补造或重跑测试。
+acceptance:
+- test -s "$operator_doc"
+- 算子相关资料符合仓内已有格式和内容要求，与当前交付实现及验收证据一致。
+out_of_scope:
+- 改动已确认需求或放宽精度标准、以篡改 golden/用例掩盖失败、伪造确认或验证证据。
+- 加载本 task 明确引用以外的 Skill、向 PM 或用户发起交互、等待其答复、派发 Agent、修改 harness 或调度状态、重置或回退其他节点。
+- 将中间产物写出 $WORK_DIR，或使用不以 {{id}}- 开头的中间报告名；算子交付件按目标仓约定路径写入。
+- 性能采集与优化验收、回顾与经验总结、PR、外部 CI 或合并事务。
+- executor 编写或修改验收者报告、为等待验收报告而停止交付；verifier 重新构建、安装或运行测试、替执行者补造执行证据。
+executor: ops-direct-invoke-developer
+verifier: ops-direct-invoke-verifier
+on_exhaust: exit
+context:
+  execute:
+    skills:
+    - ops-direct-invoke-repo-guide
+  verify:
+    skills:
+    - ops-direct-invoke-doc-templates

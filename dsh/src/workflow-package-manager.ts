@@ -103,7 +103,7 @@ export class ContentManager {
       if (!validId(skill.name) || names.has(skill.name) || !/^[a-f0-9]{64}$/.test(skill.hash) || !statSync(check(join('resources', skill.path))).isFile()) throw new Error('Invalid packaged Skill')
       names.add(skill.name)
     }
-    if (!data.skills.some(item => item.name === entry.id && item.entry)) throw new Error('Workflow entry Skill is missing')
+    if (data.skills.filter(item => item.entry).length !== 1) throw new Error('Workflow entry Skill is missing')
     if (data.initialization?.kind === 'cannbot-cli') check(data.initialization.entry)
     else if (data.initialization?.kind !== 'skill-native') throw new Error('Unsupported workflow initializer')
     return data

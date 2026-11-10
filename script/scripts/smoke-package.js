@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { smokeDirectInvoke } from "../../plugins-official/ops-direct-invoke/tests/install/smoke.mjs";
+
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 const archiveName = `${packageJson.name.replace(/^@/, "").replace("/", "-")}-${packageJson.version}.tgz`;
@@ -86,40 +88,7 @@ try {
   for (const path of [...torchRecord.skills, ...torchRecord.agents]) {
     if (!existsSync(join(target, path))) throw new Error(`packaged torch-compile is missing: ${path}`);
   }
-  run(executable, ["install", "ops-direct-invoke", "--tool", "claude", "--target", target], consumer, {
-    ...process.env,
-    HOME: join(sandbox, "home"),
-    XDG_CACHE_HOME: join(sandbox, "cache"),
-    CANNBOT_SKIP_DEPENDENCY_REPOS: "1",
-  });
-  for (const path of [
-    join(target, ".claude", "skills", "repo-requirement", "SKILL.md"),
-    join(target, ".claude", "skills", "repo-requirement", "references", "requirement-checklist.md"),
-    join(target, ".claude", "skills", "ops-direct-invoke", "templates", "黑盒测试设计.md"),
-    join(target, ".claude", "skills", "ops-direct-invoke", "scripts", "generate_workflow_guide.py"),
-    join(target, ".claude", "skills", "ops-direct-invoke", "workflows", "ascendc/basic.yaml"),
-    join(target, ".claude", "skills", "ops-direct-invoke", "tasks", "ascendc", "白盒测试设计.yaml"),
-    join(target, ".claude", "skills", "ops-direct-invoke", "tasks", "ascendc", "算子开发.yaml"),
-    join(target, ".claude", "skills", "workflow-orchestrator", "scripts", "orchestrator.py"),
-    join(target, ".cannbot", "plugins", "ops-direct-invoke", "agents", "ops-direct-invoke-verifier.md"),
-    join(target, ".claude", "skills", "repo-env-check", "SKILL.md"),
-    join(target, "CLAUDE.md"),
-    join(target, ".claude", "skills", "ops-direct-invoke", "workflows", "ascendc/perf-optimize.yaml"),
-    join(target, ".claude", "skills", "ops-perf-optimize-workflow", "SKILL.md"),
-    join(target, ".claude", "agents", "perf-optimize.md"),
-  ]) {
-    if (!existsSync(path)) throw new Error(`packaged harness install is missing: ${path}`);
-  }
-  const workflowRun = join(sandbox, "workflow-run");
-  const entryRoot = join(target, ".claude", "skills", "ops-direct-invoke");
-  const guide = join(workflowRun, "workflow-guide.csv");
-  run("python3", [join(entryRoot, "scripts", "generate_workflow_guide.py"), "--output", guide], consumer);
-  for (const template of ["basic", "perf-optimize", "op-dev-with-perf"]) {
-    if (!readFileSync(guide, "utf8").includes(`ascendc/${template}.yaml`)) throw new Error(`${template} workflow missing from guide`);
-    run("python3", [join(entryRoot, "scripts", "run_workflow.py"),
-      "--template", `ascendc/${template}.yaml`, "--work-dir", join(workflowRun, template), "--provider", "claude",
-      "--prompt", "package workflow smoke test", "--foreground", "--dry-run"], consumer);
-  }
+  smokeDirectInvoke({ sandbox, target, consumer, executable, run });
   for (const tool of ["claude", "opencode"]) {
     const workspace = join(sandbox, `autoresearch-${tool}`);
     run(executable, ["install", "autoresearch", "--tool", tool, "--target", workspace], consumer);

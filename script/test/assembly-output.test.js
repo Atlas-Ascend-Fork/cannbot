@@ -166,3 +166,36 @@ test("library rejects an existing plugins output symlink to Skill sources", (t) 
   symlinkSync(join(box.repository, "vendor/cannbot-skills"), join(output, "plugins"), "dir");
   rejectsWithoutWrites(box, output, "library");
 });
+
+
+test("declared extra assets preserve classified resources without exposing them as Skills", (t) => {
+  const f = fixture(t);
+  const plugin = join(f.repository, "plugins-official/demo");
+  const definition = JSON.parse(readFileSync(join(plugin, "plugin-sources.json"), "utf8"));
+  definition.extraAssets = ["skills/variants"];
+  write(join(plugin, "plugin-sources.json"), JSON.stringify(definition));
+  write(join(plugin, "skills/variants/platform/language/SKILL.md"), "private variant\n");
+  const output = join(f.root, "output");
+  assemblePlugins(f.repository, output, ["demo"]);
+  const packaged = join(output, "plugins/demo");
+  assert.equal(readFileSync(join(packaged, "skills/variants/platform/language/SKILL.md"), "utf8"), "private variant\n");
+  assert.deepEqual(JSON.parse(readFileSync(join(packaged, ".claude-plugin/plugin.json"), "utf8")).skills, ["./skills/demo"]);
+});
+
+for (const mode of ["relative escape", "absolute path", "symlink escape", "existing destination"]) {
+  test(`extra assets reject ${mode}`, (t) => {
+    const f = fixture(t);
+    const plugin = join(f.repository, "plugins-official/demo");
+    const definition = JSON.parse(readFileSync(join(plugin, "plugin-sources.json"), "utf8"));
+    const outside = join(f.root, "outside.md");
+    write(outside, "private bytes\n");
+    let path = "../../../outside.md";
+    if (mode === "absolute path") path = outside;
+    if (mode === "symlink escape") { path = "private.md"; symlinkSync(outside, join(plugin, path)); }
+    if (mode === "existing destination") path = "README.md";
+    definition.extraAssets = [path];
+    write(join(plugin, "plugin-sources.json"), JSON.stringify(definition));
+    assert.throws(() => assemblePlugins(f.repository, join(f.root, "output"), ["demo"]), /extra asset/);
+    assert.equal(readFileSync(outside, "utf8"), "private bytes\n");
+  });
+}

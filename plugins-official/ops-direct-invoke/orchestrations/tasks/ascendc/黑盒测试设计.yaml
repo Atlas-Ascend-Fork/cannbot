@@ -1,0 +1,42 @@
+task_type: normal
+title: 黑盒测试设计
+goal:
+- 形成覆盖算子规格的黑盒测试方案。
+approach:
+- 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，停止依赖该输入的操作，在本阶段报告中记录阻塞证据，按 harness 原生协议结束执行。
+- 必须加载 `ops-direct-invoke-repo-guide`、`ops-direct-invoke-engineering` 及本阶段已绑定的测试设计 Skill，按其中的要求执行。
+- 依据已确认规格设计 golden、L0/L1/L2 用例、覆盖矩阵、预期错误及逐输出精度标准；按已安装的 $DOC_TEMPLATES_DIR/templates/黑盒测试设计.md 写入 $WORK_DIR/{{id}}-黑盒测试设计.md。
+procedure:
+- 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，记录阻塞证据并判定验收失败。
+- 必须加载 `ops-direct-invoke-repo-guide`、`ops-direct-invoke-engineering` Skill，按其中的要求执行。
+- 对照需求和已安装的 $DOC_TEMPLATES_DIR/templates/黑盒测试设计.md，检查 $WORK_DIR/{{id}}-黑盒测试设计.md 的规格覆盖、golden、预期结果及精度口径，记录缺口与依据。
+- 由 verifier 按已安装的 $DOC_TEMPLATES_DIR/templates/验收报告.md 写入 $WORK_DIR/{{id}}-验收报告.md，执行 test -s "$WORK_DIR/{{id}}-验收报告.md"；通过、失败或阻塞均记录逐项结论与证据路径。重试仅追加问题处理和受影响项复核结果；当前版本缺少有效证据即失败，不补造或重跑测试。
+acceptance:
+- test -s "$WORK_DIR/{{id}}-黑盒测试设计.md"
+- golden 与测试方案符合已确认需求。
+- L0/L1/L2 覆盖完整，覆盖矩阵、补充用例和预期错误明确。
+- 逐输出精度口径完整、权威且可执行，无未说明的差异。
+out_of_scope:
+- 改动已确认需求或放宽精度标准、以篡改 golden/用例掩盖失败、伪造确认或验证证据。
+- 加载本 task 明确引用以外的 Skill、向 PM 或用户发起交互、等待其答复、派发 Agent、修改 harness 或调度状态、重置或回退其他节点。
+- 将中间产物写出 $WORK_DIR，或使用不以 {{id}}- 开头的中间报告名；算子交付件按目标仓约定路径写入。
+- 性能采集与优化验收、回顾与经验总结、PR、外部 CI 或合并事务。
+- executor 编写或修改验收者报告、为等待验收报告而停止交付；verifier 重新构建、安装或运行测试、替执行者补造执行证据。
+executor: ops-direct-invoke-architect
+verifier: ops-direct-invoke-verifier
+on_exhaust: exit
+context:
+  execute:
+    skills:
+    - ops-direct-invoke-doc-templates
+    - ops-direct-invoke-engineering
+    - ops-direct-invoke-repo-guide
+    skills_by_platform:
+      ascend:
+      - ascendc-st-design
+      kirin: []
+  verify:
+    skills:
+    - ops-direct-invoke-doc-templates
+    - ops-direct-invoke-engineering
+    - ops-direct-invoke-repo-guide

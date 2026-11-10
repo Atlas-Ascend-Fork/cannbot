@@ -113,6 +113,9 @@ for (const plugin of config.plugins) {
   const output = join(target, plugin.id)
   const sourceManifest = join(upstream, '.claude-plugin/plugin.json')
   const manifest = existsSync(sourceManifest) ? json(sourceManifest) : { name: plugin.id, description: plugin.title }
+  const dependencyFile = join(upstream, 'plugin-install.json')
+  const installation = existsSync(dependencyFile) ? json(dependencyFile) : {}
+  const entrySkill = skillId(installation.entrySkill ?? plugin.id)
   copyTree(upstream, output)
   copyTree(join(source, 'plugins-official/LICENSE'), join(output, 'LICENSE'))
   copyTree(join(skillsSource, 'LICENSE'), join(output, 'SKILLS_LICENSE'))
@@ -143,7 +146,12 @@ for (const plugin of config.plugins) {
     for (const name of assets.skills.names.map(skillId)) copyTree(join(skillsSource, assets.skills.dir, name), join(output, 'skills', name))
     copyTree(dependencyRoot, join(output, 'dependencies/cannbot-skills/pypto-op-orchestrator'))
   }
-  const entryFile = join(output, 'skills', plugin.id, 'SKILL.md')
+  const declaredEntry = (manifest.skills ?? []).map(path => resolve(output, path, 'SKILL.md')).find(path => {
+    within(output, path)
+    return existsSync(path) && skillInfo(path).name === entrySkill
+  })
+  if (installation.entrySkill && !declaredEntry) throw new Error(`Declared workflow entry is missing: ${entrySkill}`)
+  const entryFile = declaredEntry ?? join(output, 'skills', plugin.id, 'SKILL.md')
   let generatedEntry = false
   if (!existsSync(entryFile)) {
     generatedEntry = true
@@ -152,16 +160,19 @@ for (const plugin of config.plugins) {
     writeFileSync(entryFile, `---\nname: ${plugin.id}\ndescription: ${JSON.stringify(manifest.description)}\n---\n\n# ${plugin.title}\n\n此入口加载随包的 CANNBot 官方插件 ${plugin.id}。\n先完整读取以下原始插件文档，再按其中的阶段、输入、执行与验收约定处理用户需求：\n\n${documents.map(path => `- [${path}](../../${path})`).join('\n')}\n\n脚本、角色和模板随原插件目录打包。使用安装包中的绝对路径读取资源，补齐原插件要求的运行环境后执行。\n`)
   }
   const skillNames = []
-  for (const directory of readdirSync(join(output, 'skills'), { withFileTypes: true }).filter(item => item.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
-    const path = join(output, 'skills', directory.name, 'SKILL.md')
+  // Custom initializers register their workspace Skills; only manifest entries are public here.
+  const directories = installation.initializer ? manifest.skills ?? []
+    : readdirSync(join(output, 'skills'), { withFileTypes: true }).filter(item => item.isDirectory()).map(item => 'skills/' + item.name)
+  for (const directory of directories.sort()) {
+    const path = resolve(output, directory, 'SKILL.md')
+    within(output, path)
     if (!existsSync(path)) continue
     const metadata = skillInfo(path)
     skillNames.push(metadata.name)
-    sources.push({ pluginId: plugin.id, originalName: metadata.name, path: relative(target, path).split(sep).join('/'), hash: treeHash(dirname(path)), entry: metadata.name === plugin.id })
+    sources.push({ pluginId: plugin.id, originalName: metadata.name, path: relative(target, path).split(sep).join('/'), hash: treeHash(dirname(path)), entry: metadata.name === entrySkill })
   }
-  if (!skillNames.includes(plugin.id)) throw new Error(`Workflow entry is not loadable: ${plugin.id}`)
-  const dependencyFile = join(upstream, 'plugin-install.json')
-  plugins.push({ ...plugin, version: manifest.version ?? config.commit, description: manifest.description, generatedEntry, skills: skillNames, runtimeDependencies: existsSync(dependencyFile) ? json(dependencyFile).dependencies ?? [] : [] })
+  if (!skillNames.includes(entrySkill)) throw new Error(`Workflow entry is not loadable: ${plugin.id}`)
+  plugins.push({ ...plugin, version: manifest.version ?? config.commit, description: manifest.description, generatedEntry, skills: skillNames, runtimeDependencies: installation.dependencies ?? [] })
 }
 const exposedSkills = []
 const winners = new Map()

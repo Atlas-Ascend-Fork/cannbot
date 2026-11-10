@@ -18,5 +18,9 @@
     "./agents/ops-direct-invoke-developer.md",
     "./agents/ops-direct-invoke-verifier.md",
     "./agents/ops-direct-invoke-perf-coordinator.md"
+  ],
+  "skills": [
+    "./skills/maintain",
+    "./skills/orchestrator"
   ]
 }

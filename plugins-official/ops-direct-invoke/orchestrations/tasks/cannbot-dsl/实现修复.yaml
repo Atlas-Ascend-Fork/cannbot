@@ -1,0 +1,31 @@
+title: 实现修复｜处理集成与检视问题
+goal:
+- 首轮核对 Unit 实现与测试清单；回滚时根据最新集成或检视报告修复实现问题。
+approach:
+- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，按其中协议处理版本；本节点 ID 为 `implementation-fix`（Unit 以生成节点 ID 为准）。用 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
+- 修改算子源码时，必须加载 `cannbot-dsl-best-practice` Skill，按其中的要求执行。
+- 将 `$CODE_DIR` 加入 `PYTHONPATH`，运行公开行为测试并交付 Unit 的 review_evidence。
+- 读取原生 design/units/U*.yaml、testcase.csv、Golden 及已有集成和检视报告；首轮无失败报告时仅完成一致性检查。
+- 有失败报告时逐项定位到 Unit、代码路径和可重现用例，在允许修改的实现代码范围内修复，并记录问题与改动的对应关系。
+- 发生修复时，运行受影响 Unit 的 TDD，并按代码影响覆盖其上游依赖及受影响的下游 Unit 回归；保留原始失败证据，供后续集成复验和检视使用。
+- 将核对或修复记录写入 `$WORK_DIR/implementation/<op>/implementation-fix-修复记录.md`。
+- 修复前区分实现缺陷与设计路线不可行；后者记录具体设计承诺、失败证据与影响，保持失败交既有耗尽/退出流程，由调用方在新轮修订设计与受影响资产，不在本节点替换冻结方案。
+- 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
+procedure:
+- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
+- 核对首轮清单完整且实现版本可追溯；回滚时报告中的每个阻断问题都有代码修复或有证据的误报判定。
+- 首轮未修改实现时，核对清单与已有证据的版本对应关系；发生修复时，核对受影响 Unit 及相关回归证据通过、改动未越过允许范围且原始失败证据完整。
+- 核对修复仍满足 Unit 的设计约束与补证通过判据，结构与数值证据分别闭合；设计不可行的记录不能作为修复完成或 PASS。
+- 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
+acceptance:
+- test -s "$WORK_DIR/implementation/<op>/implementation-fix-修复记录.md"
+out_of_scope:
+- 不修改已冻结的 DESIGN.md、unit 设计、Golden、TDD 断言或精度阈值，不跳过失败用例。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-best-practice
+    - ops-direct-invoke-engineering
+  verify:
+    skills:
+    - ops-direct-invoke-engineering

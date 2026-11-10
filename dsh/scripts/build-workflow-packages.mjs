@@ -1,9 +1,9 @@
 /** Build one or all independent, resource-only workflow packages from a verified source snapshot. */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { basename, dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -63,12 +63,18 @@ for (const plugin of catalog.plugins) {
   mkdirSync(directory, { recursive: true })
   const resources = join(directory, 'resources')
   cpSync(join(assets, plugin.id), resources, { recursive: true })
-  const skills = readdirSync(join(resources, 'skills'), { withFileTypes: true }).filter(item => item.isDirectory() && existsSync(join(resources, 'skills', item.name, 'SKILL.md'))).map(item => {
-    const content = readFileSync(join(resources, 'skills', item.name, 'SKILL.md'), 'utf8')
+  const installationFile = join(resources, 'plugin-install.json')
+  const installation = existsSync(installationFile) ? JSON.parse(readFileSync(installationFile, 'utf8')) : {}
+  const directories = installation.initializer
+    ? JSON.parse(readFileSync(join(resources, '.claude-plugin/plugin.json'), 'utf8')).skills ?? []
+    : readdirSync(join(resources, 'skills'), { withFileTypes: true }).filter(item => item.isDirectory() && existsSync(join(resources, 'skills', item.name, 'SKILL.md'))).map(item => 'skills/' + item.name)
+  const entrySkill = catalog.exposedSkills.find(skill => skill.pluginId === plugin.id && skill.entry)?.originalName
+  const skills = directories.map(path => {
+    const content = readFileSync(join(resources, path, 'SKILL.md'), 'utf8')
     const frontmatter = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(content)
-    if (!frontmatter) throw new Error(`Missing Skill metadata: ${item.name}`)
+    if (!frontmatter) throw new Error(`Missing Skill metadata: ${path}`)
     const info = parse(frontmatter[1])
-    return { name: info.name, path: `skills/${item.name}/SKILL.md`, hash: hashTree(join(resources, 'skills', item.name)), entry: info.name === plugin.id }
+    return { name: info.name, path: join(path, 'SKILL.md').split('\\').join('/'), hash: hashTree(join(resources, path)), entry: info.name === entrySkill }
   })
   const upstreamManifest = join(resources, '.claude-plugin/plugin.json')
   const initialization = existsSync(upstreamManifest) ? { kind: 'cannbot-cli', entry: 'upstream/bin/cannbot.js' } : { kind: 'skill-native' }
@@ -86,6 +92,14 @@ for (const plugin of catalog.plugins) {
     cpSync(join(source, 'script/lib'), join(directory, 'upstream/lib'), { recursive: true })
     writeFileSync(join(directory, 'upstream/package.json'), JSON.stringify({ name, version, type: 'module', license: 'MIT' }, null, 2) + '\n')
     cpSync(join(source, 'script/LICENSE'), join(directory, 'upstream/LICENSE'))
+    if (installation.nativeWorkflow) {
+      if (typeof installation.nativeWorkflow !== 'string' || isAbsolute(installation.nativeWorkflow)) throw new Error('Invalid workflow adapter')
+      const adapter = realpathSync(resolve(resources, installation.nativeWorkflow))
+      const path = relative(resources, adapter)
+      if (path === '..' || path.startsWith('../') || path.startsWith('..\\') || isAbsolute(path)) throw new Error('Workflow adapter escapes its package')
+      const module = await import(pathToFileURL(adapter).href)
+      await module.bundleResources?.({ assets, directory, resources })
+    }
   }
   const contentHash = hashTree(directory)
   const descriptor = { contentHash, schemaVersion: 1, id: plugin.id, title: plugin.title, version, initialization, skills, source: { repository: catalog.repository, commit: catalog.commit, skillsCommit: catalog.skillsCommit } }

@@ -1,0 +1,8 @@
+{
+  "platforms": [
+    "ascend"
+  ],
+  "languages": [
+    "dsl"
+  ]
+}

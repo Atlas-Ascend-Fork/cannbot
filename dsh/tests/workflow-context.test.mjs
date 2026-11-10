@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { installWorkflowContext, Config } from '../src/workflow-context.ts'
 
-function setup(config, legacy = false) {
+function setup(config, legacy = false, content) {
   let hook
   let legacyValue = config
   const skill = {
@@ -20,7 +20,7 @@ function setup(config, legacy = false) {
     skills: { get: async () => skill },
   }
   // The official Loader passes parsed Config, whose volatile fields expose get().
-  installWorkflowContext(ctx, Config(config))
+  installWorkflowContext(ctx, Config(config), content)
   return { run: (sessionId, messages) => hook({ agent: { id: sessionId }, signal: new AbortController().signal }, async () => ({ kind: 'continue', messages })),
     setLegacy: value => { legacyValue = value }, ctx }
 }
@@ -61,4 +61,22 @@ test('unavailable or user-disabled workflows cannot silently fall back to ordina
   const app = setup({ selections: [{ sessionId: 'A', workflow: 'ops-direct-invoke' }] })
   app.ctx.skills.get = async () => undefined
   await assert.rejects(app.run('A', []), /workflow is unavailable/)
+})
+
+
+test('selected workflow resolves its explicitly declared entry Skill name', async () => {
+  const content = {
+    async prepare() {},
+    getSource: () => ({ revision: 'fixed', catalog: { exposedSkills: [
+      { pluginId: 'example-workflow', name: 'example-entry', entry: true },
+    ] } }),
+  }
+  const app = setup({ selections: [{ sessionId: 'A', workflow: 'example-workflow' }] }, false, content)
+  const get = app.ctx.skills.get
+  app.ctx.skills.get = async name => {
+    assert.equal(name, 'example-entry')
+    return get()
+  }
+  const result = await app.run('A', [])
+  assert.equal(result.messages.length, 1)
 })

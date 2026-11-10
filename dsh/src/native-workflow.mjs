@@ -2,7 +2,8 @@
 import { spawn } from 'node:child_process'
 import { pythonBootstrap } from './native-workflow-bootstrap.mjs'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, realpath, open } from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
+import { access, mkdir, readFile, realpath, open } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { WorkflowTodos, readTaskNames, readCompletionOrder } from './workflow-todos.mjs'
@@ -12,10 +13,33 @@ export function within(root, path) {
   return diff !== '..' && !diff.startsWith('../') && !diff.startsWith('..\\') && !isAbsolute(diff)
 }
 
+/** A workflow may prepare its runner and node contexts without owning the host loop. */
+export async function prepareWorkflow(resources, options) {
+  const definition = await readFile(join(resources, 'plugin-install.json'), 'utf8').then(JSON.parse).catch(error => {
+    if (error.code === 'ENOENT') return {}
+    throw error
+  })
+  if (definition.nativeWorkflow) {
+    const root = await realpath(resources), path = definition.nativeWorkflow
+    if (typeof path !== 'string' || isAbsolute(path)) throw new Error('Invalid native workflow adapter')
+    const entry = await realpath(resolve(root, path))
+    if (!within(root, entry)) throw new Error('Native workflow adapter escapes its package')
+    const adapter = await import(pathToFileURL(entry).href)
+    const prepared = await adapter.prepareRun({ ...options, resources: root })
+    const runner = await realpath(prepared.runner)
+    if (!within(root, runner) && !within(await realpath(options.cwd), runner)) throw new Error('Workflow runner escapes its resources')
+    if (typeof prepared.prepareNode !== 'function') throw new Error('Invalid workflow node adapter')
+    return { runner, prepareNode: prepared.prepareNode }
+  }
+  const runner = join(resources, 'skills/workflow-orchestrator/scripts/orchestrator.py')
+  await access(runner)
+  return { runner }
+}
+
 export class NativeWorkflow {
   constructor(ctx) { this.ctx = ctx; this.todos = new WorkflowTodos(ctx); this.runs = new Map(); this.closed = false }
 
-  async start(parent, { runner, yaml, cwd, resources, prompt, workflow = '', goalId }) {
+  async start(parent, { runner, yaml, cwd, resources, prompt, workflow = '', goalId, prepareNode }) {
     if (this.closed) throw new Error('DSH workflow runner is stopping')
     await mkdir(cwd, { recursive: true })
     cwd = await realpath(cwd)
@@ -59,7 +83,7 @@ export class NativeWorkflow {
           run.error = String(error); controller.abort(); child.kill(); return
         }
         // Python's max_parallel controls admission. Independent nodes stay concurrent.
-        const job = this.executeNode(parent, request, resources, controller.signal)
+        const job = this.executeNode(parent, request, resources, controller.signal, prepareNode)
           .catch(error => ({ ok: false, error: String(error) }))
           .then(result => {
             if (!child.stdin.destroyed && !controller.signal.aborted) child.stdin.write(JSON.stringify({ id: request.id, ...result }) + '\n')
@@ -104,20 +128,27 @@ export class NativeWorkflow {
     poll()
   }
 
-  async executeNode(parent, request, resources, signal) {
+  async executeNode(parent, request, resources, signal, prepareNode) {
     if (typeof request.role !== 'string' || !/^[\w-]+$/.test(request.role)) throw new Error('Invalid workflow role')
-    const role = await readFile(join(resources, 'agents', request.role + '.md'), 'utf8')
+    let cwd = request.workDir, prompt
+    if (prepareNode) {
+      const prepared = await prepareNode(request, signal)
+      cwd = await realpath(prepared.cwd)
+      if (!within(await realpath(request.workDir), cwd) || typeof prepared.prompt !== 'string') throw new Error('Invalid prepared workflow node')
+      prompt = prepared.prompt
+    } else {
+      const role = await readFile(join(resources, 'agents', request.role + '.md'), 'utf8')
+      prompt = `Execute one Python-scheduled workflow node using the DSH agent loop.\n`
+        + `Workflow resources: ${resources}\nSkills: ${join(resources, 'skills')}\n`
+        + `Role instructions (frontmatter is metadata):\n${role}\n\n`
+        + `Follow the task's verdict callback instructions. Python owns dependencies, retries, approvals and status updates.\n`
+        + request.prompt
+    }
     signal.throwIfAborted()
     const activation = await this.ctx.subagents.startActivation({
       provider: 'spawn', delivery: 'caller', signal,
       label: `CANNBot ${request.taskId} · ${request.phase}`,
-      request: { parent, cwd: request.workDir, prompt: [{ type: 'text', text:
-        `Execute one Python-scheduled workflow node using the DSH agent loop.\n`
-        + `Workflow resources: ${resources}\nSkills: ${join(resources, 'skills')}\n`
-        + `Role instructions (frontmatter is metadata):\n${role}\n\n`
-        + `Follow the task's verdict callback instructions. Python owns dependencies, retries, approvals and status updates.\n`
-        + request.prompt,
-      }] },
+      request: { parent, cwd, prompt: [{ type: 'text', text: prompt }] },
     })
     const cancel = () => { void activation.dispose().catch(() => {}) }
     signal.addEventListener('abort', cancel, { once: true })

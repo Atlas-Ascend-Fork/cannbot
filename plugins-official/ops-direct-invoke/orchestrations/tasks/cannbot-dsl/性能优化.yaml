@@ -1,0 +1,58 @@
+title: 性能优化｜原 Skill 五阶段优化与回集成
+goal:
+- 优化已通过精度与检视修复的 DSL 实现，交付满足原性能 Skill 完成条件的最终版本及可追溯证据。
+approach:
+- 读取 $OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md，使用 harness 提供的完整节点 ID，通过 $OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py status 获取 CODE_DIR，WORK_DIR 保持原值。核对 review-fix/selected.json 的 commit 与当前代码仓 HEAD 一致；原 Skill 的隔离候选沿用其版本协议，不直接写主代码仓。
+- 加载实际安装的 ops-perf-optimize-workflow，解析其真实 SKILL_DIR 和 scripts 绝对路径，完整读取其工作流契约。不要加载注册式工程的 perf-optimize.yaml，不以本子图文件位置推导性能
+  Skill 路径。
+- 消费 $WORK_DIR/review-fix/selected.json、运行入口、$WORK_DIR/design/doc/spec.yaml、DESIGN.md、environment/environment.yaml、env_selected_soc.yaml
+  和已确认需求。用 spec.op.name 定位 operators/<op>；DSL 参考仓为 $WORK_DIR/cannbot-dsl。full/compile_only 是环境能力，不是 jit/aot；从实际构建/入口记录取得执行模式。缺少优化配置或模式时本节点阻塞，由
+  PM 补齐，不编造确认。
+- 用选定 Python 执行 $OPS_DIRECT_INVOKE_ROOT/tools/prepare_dsl_performance.py --work-dir "$WORK_DIR" --code-dir "$CODE_DIR"。该脚本把冻结测试适配到 perf-optimize/inputs/functional/cases.csv、performance.csv
+  与 execution-map.json；原 testcase.csv、runner、Golden 和辅助模块保留。原 raises_error:错误码 用例映射为非计时的 host_only，host_assertion 保留原 runner 判定，expected_error 留空；
+  由原异常属性或 CANNBOTDSL_ERROR_MATCHER 验证错误码，不把错误码当作异常消息子串，阶段取证时记录实际异常匹配依据。
+- 已有 perf-optimize/optimization-request.json 时调用原 prepare_case_sets.py validate-request 并复用匹配的确认。首次调用原 create-request：backend=cannbot_dsl、code_dir=$CODE_DIR/operators/<op>、dsl.repo_root=$WORK_DIR/cannbot-dsl、entrypoint=原
+  module:callable、execution_mode=原 jit/aot、functional_mode=existing、functional_cases=inputs/functional、performance_cases=inputs/performance.csv；所有参数使用绝对路径。优化目标、轮数、对标、环境及其他选项来自有效需求/确认，未指定的默认由安装版本
+  Skill 的接入规则取得，不硬编码或声称用户逐项确认。request 字段来源记录在 HANDOFF.md。
+- 按原 Skill 五阶段及 task-prompts.md 派发；每阶段 INPUT_ARTIFACTS 附原规格、职责相关设计、原运行配置、execution-map.json 和原测试资产绝对路径。功能 case 用
+  sheet + case_id 调用固定 runner，不虚构 pytest nodeid。性能 case 使用同一原始输入配方、seed、调用序列、重复和状态恢复要求，完整 target launches 按原采样协议计时；不得将序列拆成无关单次调用。
+- 前处理建立隔离项目根，保持 operators/<op>/ 包层级、原公开入口和全部共享依赖；code_dir 只界定算子源码范围，不代表 Python 导入根。沿抽取映射复制依赖，原测试在候选的同相对路径执行，PYTHONPATH
+  只指向候选项目根；参考仓和原 WORK_DIR 均不能作为候选 import 后备。在实际执行进程中取证 __file__、源码、构建与加载身份，候选错误匹配器亦遵循同一隔离要求。
+- 功能逐例复验使用 $OPS_DIRECT_INVOKE_ROOT/tools/run_dsl_performance_case.py --candidate-root <隔离项目根> --execution-map "$WORK_DIR/perf-optimize/inputs/execution-map.json"
+  --case-id <原case_id> --entry <原module:callable> --device <原设备>，需要时传 --error-matcher <原匹配器模块>；包装器保持原 runner/Golden 资产并核验候选 import
+  来源。它只执行功能用例，不能作为正式性能采集器或替代原 Skill 的编译/加载门禁。
+- 本轮原 Skill OUTPUT_DIR 固定为 $WORK_DIR/perf-optimize/run。已有 manifest/state 时按原公开 inspect/verify 和恢复协议继续，不重建冻结输入、不清空状态、不重开轮数。知识库不可用按原
+  Skill 记录 kb_unavailable 并继续。
+- 回集成写入 CODE_DIR 前按代码版本协议 begin，--allow 仅授权算子源码及明确依赖，禁止覆盖冻结测试；回写完成后 checkpoint，通过 verify 执行原冻结功能全集及原 Skill 的最终验证，记录当前完整 SHA 的证据，由独立 verifier 登记验收。
+- 执行至原 Skill 的后处理回集成通过；仅在授权 operators/<op> 及已明确依赖范围内回写，保护冻结测试。Native/AOT 产物按最终源码重新生成和验证。保留生成阶段证据，不能把优化前结果冒充优化后结果；无有效收益按原规则保留基线。
+- 按原 workflow_state.py finish/verify 协议结束并复核实际完成状态，将最终 verify 标准输出和退出码保存在 perf-optimize/run/verify-result.json 与
+  verify-exit.txt；成功要求原 Skill 完整门禁，不能只凭退出码或局部轮次。写 perf-optimize/HANDOFF.md：请求及确认来源、run/state/report 路径、优化前 selected.json
+  来源、最终保留源码/构建/加载身份、回写映射、功能和性能全集证据、目标达成/结束原因、未解决项及下游运行入口。阶段报告仍由原 Skill 管理，不另造状态机。
+procedure:
+- 通过完整节点 ID 的 status 核对 CODE_DIR、最终 SHA、冻结测试及本轮 verify 证据；HANDOFF.md 必须对应已验收的最终提交，不以优化前 selected.json 的通过记录替代。
+- 独立审查 perf-optimize/HANDOFF.md 及其引用的真实原始产物；只读核对执行端保存的原 workflow_state.py verify 输出、退出码及原始证据身份；verifier 不调用会写状态的
+  verify/finish，确认 verify 退出码为 0 且输出 status=valid，核对终态为 success、五阶段与原完成条件齐全。缺证据、过期、未完成、失败或等待输入均不得放行。
+- 对照原 testcase.csv 与 execution-map.json 核对三个功能分组、case 身份、输入配方、序列、精度阈值和非设备分类完整；不得通过子集性能改善掩盖原功能集合缺失或退化。审查实际执行日志与原
+  Skill 门禁，不重复跑同一批设备采集。
+- 核对最终原入口实际导入、构建与加载身份对应回集成后的源码，候选证据未借用原实现；最终 Native/AOT 产物与源码一致。优化前 selected.json 只证明输入来源，不作为优化后的版本验收依据。
+- 核对按原 Skill 冻结的目标和停止规则判定，并如实区分基线保留、有效收益及目标未达；外层没有加轮或放宽门槛。请求确认无效、原输入变化或恢复身份不匹配时拒绝通过。
+- 验收报告写入 $WORK_DIR/.workflow/reports/，文件名包含完整节点 ID；不修改执行者报告或业务/调度状态。
+acceptance:
+- test -s "$WORK_DIR/perf-optimize/inputs/execution-map.json"
+- test -s "$WORK_DIR/perf-optimize/optimization-request.json"
+- test -s "$WORK_DIR/perf-optimize/run/run-manifest.json"
+- test -s "$WORK_DIR/perf-optimize/run/workflow-state.json"
+- test -s "$WORK_DIR/perf-optimize/run/性能调优报告.md"
+- test -s "$WORK_DIR/perf-optimize/run/integration/VERIFY_REPORT.md"
+- test -s "$WORK_DIR/perf-optimize/HANDOFF.md"
+- test -s "$WORK_DIR/perf-optimize/run/verify-result.json"
+- test -s "$WORK_DIR/perf-optimize/run/verify-exit.txt"
+out_of_scope:
+- 不修改需求、规格、原设计、冻结用例/Golden/阈值、优化前 selected.json 或外层 harness 状态。不新增独立性能摸底或绕过原 Skill 门禁。
+- 外层执行者承担性能编排，阶段代理按原 Skill 执行，外层 verifier 独立裁决；不得自行宣布外层验收通过。
+context:
+  execute:
+    skills:
+    - ops-perf-optimize-workflow
+  verify:
+    skills: []

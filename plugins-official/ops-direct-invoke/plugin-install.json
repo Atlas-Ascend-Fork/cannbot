@@ -1,5 +1,5 @@
 {
-  "initializeBefore": ["ops-perf-optimize"],
+  "entrySkill": "ops-direct-invoke",
   "dependencies": [
     {
       "name": "asc-devkit",
@@ -21,5 +21,7 @@
       "repository": "https://gitcode.com/cann/cann-bench.git",
       "ref": "master"
     }
-  ]
+  ],
+  "initializer": "tools/install.mjs",
+  "nativeWorkflow": "tools/dsh-native.mjs"
 }

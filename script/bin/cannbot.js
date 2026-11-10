@@ -20,7 +20,7 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { findPluginDirectory, pluginSourceDefinition } from "../lib/plugin-bundle.js";
 import { isInside, prepareSharedSkills, resolveSkillSource, sourceRevisions } from "../lib/skills-source.js";
 import { installWorkspace, hasWorkspace, preflightWorkspaceFiles } from "../lib/workspace-install.js";
@@ -1185,11 +1185,11 @@ function installKnowledgeConsumer(provisioned, target, tool) {
   }
 }
 
-function install(options, initializing = []) {
+async function install(options, initializing = [], skipInitializer = false) {
   if (initializing.includes(options.pluginId)) {
     fail(`plugin initialization cycle: ${[...initializing, options.pluginId].join(" -> ")}`);
   }
-  if (options.tool === "codex") loadCodexMarketplace();
+  const registerNative = options.registerNative !== false;
   const sourceRoot = options.source ?? process.env.CANNBOT_SOURCE_ROOT ?? process.env.CANNBOT_SKILLS_PATH;
   const sourceRepositoryRoot = sourceRoot ? resolve(sourceRoot) : null;
   const selectedDirectory = options.pluginDir
@@ -1208,6 +1208,26 @@ function install(options, initializing = []) {
   if (plugin.name !== options.pluginId) {
     fail(`plugin name mismatch: requested ${options.pluginId}, manifest declares ${plugin.name}`);
   }
+  const installDefinition = join(pluginDir, "plugin-install.json");
+  const definition = existsSync(installDefinition) ? readJson(installDefinition) : {};
+  if (definition.initializer !== undefined && !skipInitializer) {
+    const entry = definition.initializer;
+    if (typeof entry !== "string" || !entry || isAbsolute(entry)
+      || !isWithin(pluginDir, resolve(pluginDir, entry))
+      || !isWithin(realpathSync(pluginDir), realpathSync(resolve(pluginDir, entry)))) {
+      fail(`initializer must be a file inside the plugin: ${entry}`);
+    }
+    const { initialize } = await import(pathToFileURL(resolve(pluginDir, entry)).href);
+    if (typeof initialize !== "function") fail(`initializer must export initialize: ${entry}`);
+    return initialize({ options, pluginDir, sourceRepositoryRoot, sourceDefinition,
+      installerRoot: BUNDLED_REPOSITORY,
+      pathsFor: (target, tool) => ({ configDir: toolConfigDir(target, tool), skillsDir: toolSkillsDir(target, tool),
+        registries: [...new Set(Object.values(TOOL_DIRECTORIES).flatMap((layout) => layout.configDirs))]
+          .map((directory) => join(target, directory, "cannbot-plugin.json")) }),
+      install: (next) => install(next, next.pluginId === plugin.name ? initializing : [...initializing, plugin.name],
+        next.pluginId === plugin.name) });
+  }
+  if (options.tool === "codex" && registerNative) loadCodexMarketplace();
   if (hasWorkspace(pluginDir)) {
     const configDir = toolConfigDir(options.target, options.tool);
     const registryPath = join(configDir, "cannbot-plugin.json");
@@ -1266,21 +1286,19 @@ function install(options, initializing = []) {
       skill.source = source;
     }
   }
-  if (options.tool === "codex") {
+  if (options.tool === "codex" && registerNative) {
     assertCodexInputsOutsidePluginRoot(plugin, options.target, pluginDir, resolvedSkills);
   }
-  const installDefinition = join(pluginDir, "plugin-install.json");
-  const initializeBefore = existsSync(installDefinition)
-    ? readJson(installDefinition).initializeBefore ?? [] : [];
+  const initializeBefore = definition.initializeBefore ?? [];
   if (!Array.isArray(initializeBefore)) fail("initializeBefore must be an array of plugin names");
   for (const prerequisite of initializeBefore) {
     validateInstallName(prerequisite, "initializeBefore plugin");
     if (process.env.CANNBOT_PREINITIALIZED_PLUGIN === prerequisite) continue;
-    install({ ...options, pluginId: prerequisite, pluginDir: undefined, overrideSkills: undefined,
+    await install({ ...options, pluginId: prerequisite, pluginDir: undefined, overrideSkills: undefined,
       skills: sharedSkills?.root ?? options.skills }, [...initializing, plugin.name]);
   }
   // Prerequisite plugins can add their own catalogue entries during initialization.
-  const codexMarketplace = options.tool === "codex" ? loadCodexMarketplace() : null;
+  const codexMarketplace = options.tool === "codex" && registerNative ? loadCodexMarketplace() : null;
   // Resolve required repositories before replacing any live Skills or instructions.
   const provisioned = provisionDependencies(pluginDir, plugin, options.target, resolvedSkills);
   const skillsDir = toolSkillsDir(options.target, options.tool);
@@ -1311,7 +1329,9 @@ function install(options, initializing = []) {
       source: join(skillsDir, name),
     }))),
   ];
-  const nativePlugin = options.tool === "codex"
+  const nativePlugin = !registerNative
+    ? { initializer: null, discovery: relative(options.target, skillsDir) }
+    : options.tool === "codex"
     ? installCodexPlugin(plugin, nativeSkills, options.target, skillInstallMode, codexMarketplace)
     : options.tool === "opencode"
       ? installOpenCodePlugin(options.target)
@@ -1353,9 +1373,9 @@ function install(options, initializing = []) {
   if (record.unsupported.length) {
     console.log("  note: this client uses its native project configuration instead of Claude Code hooks");
   }
-  if (options.tool === "codex") {
+  if (options.tool === "codex" && registerNative) {
     console.log(`  codex plugin: ${plugin.name}@${nativePlugin.marketplaceName}`);
-  } else if (options.tool === "opencode") {
+  } else if (options.tool === "opencode" && registerNative) {
     console.log(`  opencode plugin: ${nativePlugin.package}`);
   } else {
     console.log(`  ${options.tool} skills: ${nativePlugin.discovery}`);
@@ -1374,11 +1394,12 @@ function install(options, initializing = []) {
     console.log("");
     console.log(`  Full guide: ${join(assets.destinationRoot, "quickstart.md")}`);
   }
+  return record;
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    install(parseArgs(process.argv.slice(2)));
+    await install(parseArgs(process.argv.slice(2)));
   } catch (error) {
     fail(error.message);
   }

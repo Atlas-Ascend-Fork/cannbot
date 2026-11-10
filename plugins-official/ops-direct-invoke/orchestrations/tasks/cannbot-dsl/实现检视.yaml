@@ -1,0 +1,27 @@
+title: 实现检视｜审核代码与集成证据
+goal:
+- 审核完整实现对设计、Unit 边界和测试证据的符合性，阻断尚未解决的问题。
+approach:
+- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，按其中协议处理版本；本节点 ID 为 `implementation-review`（Unit 以生成节点 ID 为准）。用 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
+- 核对 `$WORK_DIR/design/doc/DESIGN.md`、原生 design/units/U*.yaml、testcase.csv、实现子图、代码差异与最新 `$WORK_DIR/implementation/<op>/unit-integration-report.yaml`。
+- 检查设计约束、允许修改路径、资源与同步处理、边界条件、错误处理，以及 TDD、Golden、白盒和必要黑盒证据是否完整。
+- 将每个阻断问题定位到代码、Unit 与复现用例，写入 `$WORK_DIR/implementation/<op>/implementation-review-report.yaml`；失败时由工作流回滚到实现修复节点。
+- 逐项追溯原生 Unit 的 design_constraints、feasibility_checks、verification_obligations 到当前源码、编译或设备证据和真实测试输入，区分规格数值正确与设计承诺完成；将未满足项定位到具体承诺、证据缺口及受影响 Unit。
+- 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
+procedure:
+- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
+- 核对报告给出明确 PASS 结论，所有阻断问题均已关闭；集成报告对应当前实现版本且所有必测回归通过。
+- 核对必备导出入口、共享编译工厂及 Native 验证证据符合冻结设计，并对应当前实现版本。
+- 核对不存在以缺少证据、跳过测试或放宽阈值换取的通过结论。
+- 核对每项设计强制承诺有符合通过判据的当前版本证据；允许选项内的重构已回归受影响能力，改变强制承诺的替代路线未被数值通过掩盖。
+- 核对结构检查证据来自当前源码、编译产物或外部设备记录，实际触发条件与生命周期覆盖成立；设计不可行的问题保持失败，不能在只允许改实现的修复节点中静默降级。
+- 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
+acceptance:
+- test -s "$WORK_DIR/implementation/<op>/implementation-review-report.yaml"
+out_of_scope:
+- 不自行改写实现、冻结设计、Golden、测试用例或阈值；不代替全量设备精度验证。
+context:
+  execute:
+    skills: []
+  verify:
+    skills: []

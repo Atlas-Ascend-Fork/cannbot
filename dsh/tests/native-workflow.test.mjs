@@ -141,3 +141,6 @@ test('goal pause stops Python and native children, then goal resume completes sa
   assert.equal(parent.session.todos.length, 4)
   assert(parent.session.todos.slice(1).every(todo => todo.status === 'completed'))
 })
+
+import '../../plugins-official/ops-direct-invoke/tests/dsh/native.test.mjs'
+import '../../plugins-official/ops-direct-invoke/tests/dsh/package.test.mjs'

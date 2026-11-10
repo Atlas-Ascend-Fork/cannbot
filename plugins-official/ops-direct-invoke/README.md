@@ -4,26 +4,26 @@
 
 ### 【2026-10-31】
 
-- 新增 [perf-optimize](skills/ops-direct-invoke/workflows/ascendc/perf-optimize.yaml) 入口，用于已有 Ascend C 算子的性能优化。
-- 新增 [op-dev-with-perf](skills/ops-direct-invoke/workflows/ascendc/op-dev-with-perf.yaml) 入口，用于对算子开发有较高性能要求的任务。
+- 新增 [perf-optimize](orchestrations/workflows/ascendc/perf-optimize.yaml) 入口，用于已有 Ascend C 算子的性能优化。
+- 新增 [op-dev-with-perf](orchestrations/workflows/ascendc/op-dev-with-perf.yaml) 入口，用于对算子开发有较高性能要求的任务。
 
 ### 【2026-10-29】DSL Git 检查点
 
 - 新 DSL 运行在独立代码仓中保存每轮修改，验证证据绑定完整提交 SHA；失败尝试保留，按指定版本恢复并检查代码树一致性。
 - 并行 Unit 使用独立 worktree；依赖版本汇合后重新验证，旧依赖证据不能继续放行。
 - 新运行的源码根目录为 `CODE_DIR`，工作流报告仍在 `WORK_DIR`；已有运行不原地迁移。Git `rollback` 与 harness 返回节点返工分别处理。
-- 交付附 Git bundle 和版本清单。调用与恢复方法见 [代码版本协议](skills/ops-direct-invoke/references/code-versions.md)。这是任务契约与脚本校验，不是编辑工具强制拦截。
+- 交付附 Git bundle 和版本清单。调用与恢复方法见 [代码版本协议](docs/code-versions.md)。这是任务契约与脚本校验，不是编辑工具强制拦截。
 
 ### 【2026-10-28】
 
 - 新增 **Kirin 平台 Ascend C 直调算子开发支持**：`ops-direct-invoke` 工作流覆盖 Kirin9030、KirinX90 直调算子的需求对齐、方案设计、实现、功能验收与交付。对齐 [cannbot-skills PR1518](https://gitcode.com/cann/cannbot-skills/pull/1518)：`npu-arch` 新增 Vector 编程模式（MemBase/RegBase/SIMT）与架构支持矩阵，修正 Kirin 端侧平台硬件参数；新增 `ops-kirin-simulator` Skill 提供 Kirin 仿真指南。所选 skills 版本需包含该 PR；统一 init 默认自动更新，指定 SHA 或本地 skills 仓时由调用方选择兼容版本。
-- 新增 [repo-test-develop-kirin](skills/repo-test-develop-kirin/SKILL.md) Skill：面向 Kirin 直调工程的测试方法论与框架。黑盒测试设计、白盒测试设计、测试工程开发三个 task 的 Kirin 直调工程自动路由至该 Skill，其余节点不变。
-- 新增 [repo-env-check-kirin](skills/repo-env-check-kirin/SKILL.md) Skill：面向 Kirin 平台的启动前环境检查，提供 conda/Python 与 mobile-station CANN 候选，检查 Simulator 支持并记录授权与证据。
+- Kirin 工程与测试能力位于 [ops-direct-invoke-engineering](skills/custom-skills/engineering/kirin-common/SKILL.md) Skill：面向 Kirin 直调工程的测试方法论与框架。Kirin 直调工程使用该能力。
+- Kirin 环境能力位于 [ops-direct-invoke-env-check](skills/custom-skills/env-check/kirin/ascendc/SKILL.md) Skill：面向 Kirin 平台的启动前环境检查，提供 conda/Python 与 mobile-station CANN 候选，检查 Simulator 支持并记录授权与证据。
 - 安装、启动与恢复命令不变，安装与使用统一见 [QUICKSTART.md](QUICKSTART.md)。
 
 ### 【2026-10-14】
 
-- DSL 全量精度验证后新增 [review-fix 子图](skills/ops-direct-invoke/workflows/cannbot-dsl/review-fix.yaml)：由 Agent 通过统一 code_versions 管理 Git 基线、候选提交与恢复，review_fix 脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并复跑全部 case；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可在恢复提交全量复验后验收基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
+- DSL 全量精度验证后新增 [review-fix 子图](orchestrations/workflows/cannbot-dsl/review-fix.yaml)：由 Agent 通过统一 code_versions 管理 Git 基线、候选提交与恢复，review_fix 脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并复跑全部 case；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可在恢复提交全量复验后验收基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
 - 固定子图随主图组装到本轮目录；性能优化与回集成、文档和交付统一使用修复后通过的版本或恢复的基线。安装、启动与恢复命令不变。
 
 ### 【2026-10-13】
@@ -36,12 +36,12 @@
 - 新增 **CANNBot-DSL 算子开发支持**：按开发语言选择 DSL 工作流，支持设计、动态实现子图生成、开发与验收。
 - DSL 的环境节点记录环境证据，在本轮 `cannbot-dsl/docs/` 根目录内定位开发指南与 API 正文，记录实际入口供后续节点使用，不限定语言目录或子目录布局；性能优化与回集成完成后再生成最终版本的文档。
 - 提供 `ops-direct-invoke-maintain`，按模块记录工作流设计与维护约定。
-- 回归测试随维护 Skill 分发，修改工作流后运行完整测试；检查自身脚本和 harness 调用衔接，不重复验证框架内部调度。
+- 回归测试随插件分发，修改工作流后运行完整测试；检查自身脚本和 harness 调用衔接，不重复验证框架内部调度。
 - 安装与使用统一见 [QUICKSTART.md](QUICKSTART.md)。
 
 ## 功能概览
 
-`ops-direct-invoke` 提供直调算子的需求对齐、方案设计、实现、功能验收、代码检视和交付文档流程。插件名称、安装 ID 与入口 Skill 名称统一为 `ops-direct-invoke`。
+`ops-direct-invoke` 提供直调算子的需求对齐、方案设计、实现、功能验收、代码检视和交付文档流程。插件名称、安装 ID 与入口 Skill 名称均为 `ops-direct-invoke`。
 
 Ascend C 直调支持独立 Tensor API 路线：用户明确要求 Tensor API 时，需求清单记录该路线约束，后续节点加载 ascendc-tensor-api-best-practice；若该路线无法闭合关键约束，输出 unsupported 和证据，交用户决定是否调整路线。用户未指定路线且无其他支持的合适路线时，以 Tensor API 为兜底开发路线。
 
@@ -67,7 +67,7 @@ Ascend C 直调支持独立 Tensor API 路线：用户明确要求 Tensor API �
 bash init.sh [project] [opencode|codex|claude|trae|dsh] [install_path] [--skills <SHA|path>]
 ```
 
-默认客户端为 opencode；省略 `install_path` 时安装到 cannbot 仓根，而不是当前执行目录。只支持 project 级安装，每次安装一种客户端，多个客户端分别执行。参数帮助见 `bash init.sh --help`。init 调用的统一 CLI 也可在 cannbot 根目录直接使用：
+默认客户端为 opencode；省略 `install_path` 时安装到 cannbot 仓根，而不是当前执行目录。只支持 project 级安装，每次安装一种客户端，多个客户端分别执行。安装时按编号 `(i/N)` 的问卷选择仓库、平台和交互偏好，语言和工程在任务需求对齐时确定；自动化安装可设置 `CANNBOT_DIRECT_INVOKE_CONFIG=<JSON文件>` 提供已确认选择，源码 init 也支持 `--init-config <JSON文件>`。参数帮助见 `bash init.sh --help`。init 调用的统一 CLI 也可在 cannbot 根目录直接使用：
 
 ```bash
 node script/bin/cannbot.js install ops-direct-invoke \
@@ -88,27 +88,27 @@ node script/bin/cannbot.js install ops-direct-invoke \
 
 客户端配置目录的 `cannbot-plugin.json`（例如 `.codex/cannbot-plugin.json`）记录 `source.revisions`：主仓 SHA、公共仓实际完整 SHA、选择方式、请求值、dirty 状态及本地来源路径。默认模式记录 `selection: "latest-branch"`，`requested` 为实际选中的分支名（回退时为 `master`）。同一插件重装会更新记录。公共字段定义和跨工作流适用范围见 [统一安装指南](../../script/docs/cannbot-workflows.md#安装方式)。
 
-安装器先完整初始化性能插件再初始化直调，两个插件均记录在客户端安装清单中。性能插件的角色、入口和知识环境按其自身声明安装，直调不重复维护内部 Skill 清单。
+安装器先在独立依赖目录完整初始化性能插件，再初始化直调，各自保留安装清单。性能插件的角色、入口和知识环境按其自身声明安装，直调不重复维护内部 Skill 清单。
 
 源码安装使用软链接，指定 SHA 也只固定本次选择；以后修改或更新共享工作树，会影响之前安装的项目。版本记录不是内容快照，dirty 内容不能仅由 SHA 复现。需要多个项目使用不同版本时，用独立 checkout 并分别指定 `--skills <path>`。更新 vendor 后，主仓可能显示子模块 HEAD 与 gitlink 不一致。
 
 ### 工作区资产与定制
 
-PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装记录。源码 Skill 的修改会通过软链接生效；角色配置是生成文件，修改源文件后需重新安装同步。
+PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装记录。主工作区保留维护、编排及已选需求和仓库能力；本轮固定所用资源，各 execute/verifier 在独立阶段目录加载原有身份及所需 Skill。源码 Skill 的修改会通过软链接影响后续新运行；已有运行沿用原快照。
 
-子仓可在统一 CLI 命令后添加 `--override-skills /absolute/overrides`，用该目录下的同名实现替换已有 `repo-*` Skills。入口及调度 Skill 不允许覆盖。此参数用于替换仓库知识，`--skills` 用于选择公共 cannbot-skills 仓，两者用途不同。
+子仓可在统一 CLI 命令后添加 `--override-skills /absolute/overrides`，用该目录下的同名实现替换 `ops-direct-invoke-requirement`、`ops-direct-invoke-repo-guide`。入口及调度 Skill 不允许覆盖。此参数用于替换仓库知识，`--skills` 用于选择公共 cannbot-skills 仓，两者用途不同。
 
 ### 任务输入与恢复
 
-任务请求提供已确认的开发语言、目标平台和相关资料。PM 先生成并读取 workflow 引导，再按模板的 `use_when` 选择流程并准备输入；具体方法见 [流程编排入口](skills/ops-direct-invoke/SKILL.md#从生成的引导选择模板)。
+任务请求提供已确认的开发语言、目标平台和相关资料。PM 先生成并读取 workflow 引导，再按模板的 `use_when` 选择流程并准备输入；具体方法见 [流程编排入口](skills/orchestrator/SKILL.md#从生成的引导选择模板)。
 
-每轮 YAML、日志和交付记录位于 `.cannbot/<任务名>/workflow<序号>/`。恢复同一轮时沿用原 YAML 和工作目录，通过 harness 公开恢复接口执行；新一轮修复使用新目录，不删除或复制旧调度状态。手动组装与启动参数见 [算子流程入口](skills/ops-direct-invoke/SKILL.md)。
+每轮 YAML、日志和交付记录位于 `.cannbot/<任务名>/workflow<序号>/`。恢复同一轮时沿用原 YAML 和工作目录，通过 harness 公开恢复接口执行；新一轮修复使用新目录，不删除或复制旧调度状态。手动组装与启动参数见 [算子流程入口](skills/orchestrator/SKILL.md)。
 
 ## 设计思想与入口
 
-插件的 [ops-direct-invoke Skill](skills/ops-direct-invoke/SKILL.md) 是主会话按算子任务加载的 PM 入口，负责需求对齐、流程编排与交付组织。PM 职责作用于承接完整任务的主会话，节点职责由子 Agent 角色和 task 定义。
+插件的 [ops-direct-invoke Skill](skills/orchestrator/SKILL.md) 是主会话按算子任务加载的 PM 入口，负责需求对齐、流程编排与交付组织。PM 职责作用于承接完整任务的主会话，节点职责由子 Agent 角色和 task 定义。
 
-主会话从用户的原始算子需求进入该 Skill，完成需求与环境对齐后编排工作流。子 Agent 在 Workflow YAML 落盘后由 harness 拉起，按自身角色和节点任务执行，按需读取模板或脚本资源。`agents/` 定义 `ops-direct-invoke-architect`、`ops-direct-invoke-developer`、`ops-direct-invoke-verifier` 角色，分别安装为 Codex 的 TOML 或 OpenCode、Claude 的 Markdown 角色配置。CANNBot-DSL 的“环境检查”“需求分析”“黑盒设计”“代码检视”等节点按工作性质分配给这些角色。
+主会话从用户的原始算子需求进入该 Skill，完成需求与环境对齐后编排工作流。子 Agent 在 Workflow YAML 落盘后由 harness 拉起，按自身角色和节点任务执行，按需读取模板或脚本资源。`agents/` 定义 `ops-direct-invoke-architect`、`ops-direct-invoke-developer`、`ops-direct-invoke-verifier` 角色，在阶段目录按客户端要求加载原有角色配置；原有性能编排身份 `ops-direct-invoke-perf-coordinator` 继续用于其专用任务。CANNBot-DSL 的“环境检查”“需求分析”“黑盒设计”“代码检视”等节点按工作性质分配给这些角色。
 
 每个任务、每轮 Workflow 独立存放 YAML 和运行记录：
 
@@ -130,9 +130,9 @@ PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装�
 
 ## 从需求到执行
 
-- 需求对齐：必须加载 [repo-requirement](skills/repo-requirement/SKILL.md) Skill，按其中的要求执行。
-- 启动前环境检查由 PM 负责：必须加载 [repo-env-check](skills/repo-env-check/SKILL.md) Skill，按其中的要求执行。
-- 算子开发：必须加载 [ops-direct-invoke](skills/ops-direct-invoke/SKILL.md) Skill，按其中的要求执行。
+- 需求对齐：必须加载 [ops-direct-invoke-requirement](skills/custom-skills/requirement/README.md) Skill，按其中的要求执行。
+- 启动前环境检查由 PM 负责：必须加载 [ops-direct-invoke-env-check](skills/custom-skills/env-check/README.md) Skill，按其中的要求执行。
+- 算子开发：必须加载 [ops-direct-invoke](skills/orchestrator/SKILL.md) Skill，按其中的要求执行。
 - Workflow 执行：必须加载 [workflow-orchestrator](../../harness/workflow-orchestrator/SKILL.md) Skill，按其中的要求执行。
 
 ## 默认流程与角色
@@ -151,37 +151,49 @@ flowchart TD
 
 开发图中的知识搜集形成可溯源的资料与初版实现参考；测试工程、实现、白盒测试及代码修复各自交付证据并独立验收。节点的具体工作方法与完成标准由 task 维护。
 
-[generate_workflow_guide.py](skills/ops-direct-invoke/scripts/generate_workflow_guide.py) 扫描模板的 `use_when` 并生成本轮 `workflow-guide.csv`。PM 读取引导后再打开匹配模板，不在入口维护另一份模板清单或节点省略规则。模板声明节点及依赖，组装脚本展开 task、变量和报告引用，harness 执行完整图。
+[generate_workflow_guide.py](tools/generate_workflow_guide.py) 扫描模板的 `use_when` 并生成本轮 `workflow-guide.csv`。PM 读取引导后再打开匹配模板，不在入口维护另一份模板清单或节点省略规则。模板声明节点及依赖，组装脚本展开 task、变量和报告引用，harness 执行完整图。
 
 | 角色 | 职责 |
 |---|---|
-| [主会话 PM](skills/ops-direct-invoke/SKILL.md) | 理解用户目标、规划协作与多轮交付；不进入 task 图 |
+| [主会话 PM](skills/orchestrator/SKILL.md) | 理解用户目标、规划协作与多轮交付；不进入 task 图 |
 | [ops-direct-invoke-architect](agents/ops-direct-invoke-architect.md) | 需求、规格、黑盒设计、方案、实现规划与任务拆分 |
 | [ops-direct-invoke-developer](agents/ops-direct-invoke-developer.md) | 工作区、环境、代码实现与修复、精度和性能验证、文档及交付 |
 | `perf-optimize`（性能插件安装） | 独立性能流程的主执行者，负责其内部派发与完整优化 |
 | [ops-direct-invoke-verifier](agents/ops-direct-invoke-verifier.md) | 需求/规格/方案/设计与通用验收，以及代码检视；不重复构建或运行测试 |
 
-节点通过 `executor` / `verifier` 名称引用安装后的客户端角色，不在 prompt 中额外读取角色文件。主会话的 PM 入口与运行期子 Agent 派发是两个层次；实际 provider 是否正确加载角色、Skill 和权限仍需真实调用验证。
+节点通过 `executor` / `verifier` 名称引用原有角色，阶段目录的 `AGENTS.md` 链接到对应身份文件。主会话的 PM 入口与运行期子 Agent 派发是两个层次；实际 provider 是否正确加载角色、Skill 和权限仍需真实调用验证。
 
-执行者提供原始构建日志、本阶段测试结果及全量交付证据、源码/测试/构建产物哈希及实际加载路径，使用 [测试执行记录模板](skills/ops-direct-invoke/templates/测试执行记录.md)。验收者核对证据是否真实、完整、对应当前版本并独立检视代码；证据不足则失败，不代跑测试补证据。所有节点均按 [验收报告模板](skills/ops-direct-invoke/templates/验收报告.md) 生成 `<节点ID>-验收报告.md`，其中记录结论及具体修改意见。共享 acceptance 只列执行者交付件；验收报告由 verifier 在 procedure 中生成并检查，executor 根据回传反馈按需读取详情，不代写或等待它。
+执行者提供原始构建日志、本阶段测试结果及全量交付证据、源码/测试/构建产物哈希及实际加载路径，使用所选 `ops-direct-invoke-doc-templates` 实现中的测试执行记录模板。验收者核对证据是否真实、完整、对应当前版本并独立检视代码；证据不足则失败，不代跑测试补证据。AscendC 节点按所选实现的验收报告模板生成 `<节点ID>-验收报告.md`，其中记录结论及具体修改意见；DSL 沿用其 task 与原 Skill 的报告格式。共享 acceptance 只列执行者交付件；验收报告由 verifier 在 procedure 中生成并检查，executor 根据回传反馈按需读取详情，不代写或等待它。
 
 性能优化作为独立 task 与开发图组合，接入原工作流所需的输入并交付结果索引；执行由性能插件的 `perf-optimize` Agent 调用 `ops-perf-optimize-workflow`，外层验收者核对最终版本的原有全量用例。
 
 报告保留关键结论和证据路径，每次真实执行的输入/版本清单、原始日志与用例明细只存一份；后续节点引用并核对差异，每个验收者仍独立出具本阶段报告。返工依据 harness 回传的失败摘要，按需读取所引用报告的未解决项，并补充变更证据；版本变化使旧证据失效时重新验证。确定性阻塞未变时只记录条件复核，当前 harness 仍按预算重试，不能凭报告自动跳过重试。
 
-固定绑定采用与当前节点契约兼容的仓库能力：工程骨架由 `repo-op-templates` 承担，白盒方法由 `repo-test-develop` 承担，Kirin 平台的测试方法由 `repo-test-develop-kirin` 承担。PM 按任务需要选择补充 Skill，并核对其完整契约与节点的交互、派发及权限边界兼容。
+固定绑定采用与当前节点契约兼容的仓库能力：工程骨架由 `ops-direct-invoke-engineering` 承担，仓库测试方法由 `ops-direct-invoke-repo-guide` 承担；Kirin 工程使用已选 kirin-common 实现。PM 按任务需要选择补充 Skill，并核对其完整契约与节点的交互、派发及权限边界兼容。
 
 公共 Skill 的规则由来源仓维护；本插件只调整绑定与流程，不复制或覆盖其规则。已知 Ascend 950 路由组合问题见 [cannbot-skills #688](https://gitcode.com/cann/cannbot-skills/issues/688)。
 
 ## 任务、模板与运行接口
 
-必须加载 [ops-direct-invoke](skills/ops-direct-invoke/SKILL.md) Skill，按其中的要求执行。
+必须加载 [ops-direct-invoke](skills/orchestrator/SKILL.md) Skill，按其中的要求执行。
 
-- [任务定义](skills/ops-direct-invoke/tasks/)
-- [引导生成脚本](skills/ops-direct-invoke/scripts/generate_workflow_guide.py)
-- [文档模板](skills/ops-direct-invoke/templates/)
-- [组装脚本](skills/ops-direct-invoke/scripts/assemble_workflow.py)
-- [启动脚本](skills/ops-direct-invoke/scripts/run_workflow.py)
+- [任务定义](orchestrations/tasks/)
+- [引导生成脚本](tools/generate_workflow_guide.py)
+- [文档模板](skills/custom-skills/doc-templates/README.md)
+- [组装脚本](tools/assemble_workflow.py)
+- [启动脚本](tools/run_workflow.py)
+
+补充 Skill 使用节点的 `variables.executor_skills` / `variables.verifier_skills`，以 `text` 保留加载条件，以 `skills` 显式列出要挂载的名称。组装器将二者分别写入提示词与对应阶段的能力绑定；候选 Skill 挂载后仍按 `text` 中的条件加载。例如：
+
+```yaml
+variables:
+  executor_skills:
+    text: 必须加载 `ascendc-simt-tiling-design` Skill，按其中的要求执行。
+    skills:
+    - ascendc-simt-tiling-design
+```
+
+平台专用项写入可选的 `skills_by_platform`，例如 `ascend: [ascendc-precision-debug]`、`kirin: []`；`skills` 保留各平台共用项。没有补充时继续使用 `无补充 Skill。`；旧的自由文本声明须改为上述结构。普通字符串变量不变，非法声明在组装时拒绝，当前组合无法提供的 Skill 在调度前报错。
 
 ## 知识与范围
 
@@ -189,25 +201,25 @@ PM 入口负责跨 Skill 的流程编排，task 的 approach/procedure 声明节
 
 角色、task、脚本、仓库知识及交付模板均由本插件独立维护，安装与运行使用本目录声明的资产及公共依赖。
 
-本仓 `repo-*` 知识按 CANN Bench 的直调工程与评测契约组织，包含需求、环境、接口、模板、构建、测试和编码规则。初始化会获取 `cann-bench` 到 `.cannbot/dependencies/ops-direct-invoke/cann-bench/`，实际运行记录所用 commit；已有 checkout 可作为任务输入复用。跨仓定制继续通过同名 `repo-*` Skill 覆写，不将仓库知识复制进 task。
+本仓默认仓库能力按 CANN Bench 的直调工程与评测契约组织；需求、环境、工程、仓库指南与报告模板分别在 custom-skills 中维护。初始化会获取 `cann-bench` 到 `.cannbot/dependencies/ops-direct-invoke/cann-bench/`，实际运行记录所用 commit；已有 checkout 可作为任务输入复用。跨仓定制通过已支持能力的同名 Skill 覆写，不将仓库知识复制进 task。
 
 交付范围与验证要求由所选模板和 task 明确，性能诉求在需求阶段如实记录；超出当前能力的目标先对齐安排，不把未执行的工作写成已验证。引用业务知识时不启用其中遗留的 PM 派发、状态维护或回退指令。
 
 ## 维护与验证
 
-修改相关组件前加载 [ops-direct-invoke-maintain](skills/ops-direct-invoke-maintain/SKILL.md)，按模块资料维护设计，并检查 README 与 QUICKSTART 一致性。
+修改相关组件前加载 [ops-direct-invoke-maintain](skills/maintain/SKILL.md)，按模块资料维护设计，并检查 README 与 QUICKSTART 一致性。
 
 每次工作流改动后，在应用仓根目录完整运行：
 
 ```bash
-python3 plugins-official/ops-direct-invoke/skills/ops-direct-invoke-maintain/test/ut/test_all.py
+python3 plugins-official/ops-direct-invoke/tests/test_all.py
 ```
 
-回归需要 Python 3.9+、PyYAML 和 harness，不调用真实模型或 NPU。安装后可从实际 Skill 目录调用同一入口：默认使用同级安装的 harness，源码仓使用应用仓的 harness；其他布局通过 `--harness-skill /absolute/workflow-orchestrator` 指定。测试在临时目录运行，不需要 tmux，可从任意当前目录启动。
+完整回归需要源码仓中的公共安装器与 DSH 资源，以及 Node.js、Python 3.9+、PyYAML 和 harness，不调用真实模型或 NPU。源码安装可从实际插件资产目录调用同一入口；打包安装中的独立 Python 脚本分类可通过 `--harness-skill /absolute/workflow-orchestrator` 指定依赖。测试在临时目录运行，不需要 tmux，可从任意当前目录启动。
 
-测试验证引导、组装、变量、DSL 设计与子图生成，以及启动参数和全部模板到 harness 的接口冒烟。harness 作为可信依赖，不在插件中重复测试重试、回滚与反馈状态机；也不固定节点数量、Skill 数量、业务顺序或提示词措辞。测试设计与边界见 [测试体系](skills/ops-direct-invoke-maintain/reference/tests.md)。测试通过不代表真实 Agent 行为或 NPU 算子验证已通过。
+测试验证引导、组装、变量、DSL 设计与子图生成，以及启动参数和全部模板到 harness 的接口冒烟。harness 作为可信依赖，不在插件中重复测试重试、回滚与反馈状态机；也不固定节点数量、Skill 数量、业务顺序或提示词措辞。测试设计与边界见 [测试体系](skills/maintain/reference/tests.md)。测试通过不代表真实 Agent 行为或 NPU 算子验证已通过。
 
-应用仓 `script/test/` 负责安装与打包集成测试，维护 Skill 内的 `test/ut/` 负责工作流回归。
+直调的安装、打包、DSH 接入和工作流回归统一放在插件 `tests/`；应用仓 `script/test/` 保留公共安装器验证入口。
 
 ## 目录与接口
 
@@ -215,43 +227,20 @@ python3 plugins-official/ops-direct-invoke/skills/ops-direct-invoke-maintain/tes
 ops-direct-invoke/
 ├── README.md                       # 新特性、设计与功能
 ├── QUICKSTART.md                   # 安装与使用
-├── agents/                         # architect / developer / verifier
 ├── init.sh                         # 统一安装器的薄入口
 ├── plugin-sources.json             # 公共 Skill 来源与安装方式
-├── plugin-install.json             # 前置插件初始化与外部依赖仓声明
-└── skills/
-    ├── ops-direct-invoke-maintain/
-    │   ├── SKILL.md                 # 维护入口与完整回归要求
-    │   ├── reference/               # 模块设计与维护方法
-    │   └── test/ut/                 # 所有维护回归测试
-    ├── repo-env-check/             # PM 的启动前环境检查
-    ├── repo-requirement/
-    │   ├── SKILL.md
-    │   └── references/requirement-checklist.md
-    ├── ops-direct-invoke/
-    │   ├── SKILL.md                 # 主会话 PM 入口与算子流程
-    │   ├── scripts/
-    │   │   ├── generate_workflow_guide.py
-    │   │   ├── assemble_workflow.py
-    │   │   └── run_workflow.py
-    │   ├── tasks/
-    │   │   ├── ascendc/             # <步骤名>.yaml，不带编号
-    │   │   ├── cannbot-dsl/
-    │   │   └── common/
-    │   ├── workflows/
-    │   │   ├── cannbot-dsl/          # op-dev 主图与展示资料
-    │   │   └── ascendc/
-    │   │       ├── basic.yaml       # 正式开发，含 use_when
-    │   │       ├── op-dev-with-perf.yaml # 完整开发后性能优化，含 use_when
-    │   │       └── perf-optimize.yaml # 已有算子的独立性能优化，含 use_when
-    │   └── templates/              # 文档模板平铺，文件名不带编号
-    ├── repo-knowledge/
-    ├── repo-build-guide/
-    ├── repo-op-templates/
-    ├── repo-coding-rules/
-    ├── repo-test-develop/
-    ├── repo-test-develop-kirin/
-    └── repo-env-check-kirin/
+├── plugin-install.json             # 插件初始化入口与依赖声明
+├── agents/                         # 原有 architect / developer / perf-coordinator / verifier
+├── docs/                           # 运行协议
+├── orchestrations/
+│   ├── tasks/                      # task，按开发语言组织
+│   └── workflows/                  # 编排模板及 use_when
+├── skills/
+│   ├── orchestrator/               # 主会话 PM 入口
+│   ├── maintain/                   # 维护入口、reference 与 golden
+│   └── custom-skills/              # requirement / repo-guide / engineering / env-check / doc-templates
+├── tools/                          # 初始化、组装、启动、版本与阶段工作区工具
+└── tests/                          # 维护回归，共享测试脚本放 helpers/
 ```
 
 

@@ -1,7 +1,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { access, realpath } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
-import { NativeWorkflow, within } from './native-workflow.mjs'
+import { realpath } from 'node:fs/promises'
+import { isAbsolute, resolve } from 'node:path'
+import { NativeWorkflow, within, prepareWorkflow } from './native-workflow.mjs'
 import { installGoalWorkflowResume } from './goal-workflow-resume.mjs'
 import { PmProgress } from './pm-progress.mjs'
 
@@ -20,8 +20,6 @@ export function installNativeWorkflowTools(ctx, content) {
       const plugin = source.catalog.plugins.find(item => item.id === args.workflow)
       if (!plugin) throw new Error('Unknown workflow package')
       const resources = await realpath(resolve(source.assets, plugin.resourceDirectory ?? plugin.id))
-      const runner = join(resources, 'skills/workflow-orchestrator/scripts/orchestrator.py')
-      await access(runner)
       const yaml = await realpath(isAbsolute(args.yaml) ? args.yaml : resolve(resources, args.yaml))
       if (!within(resources, yaml) && !within(workspace, yaml)) throw new Error('Workflow YAML must belong to the package or workspace')
       const cwd = resolve(workspace, args.workDir ?? '.')
@@ -37,8 +35,9 @@ export function installNativeWorkflowTools(ctx, content) {
           ancestor = resolve(ancestor, '..')
         }
       }
+      const prepared = await prepareWorkflow(resources, { cwd, yaml, workflow: args.workflow, signal })
       signal.throwIfAborted()
-      return execution.start(agent, { runner, yaml, cwd, resources, prompt: args.prompt, workflow: args.workflow, goalId: goals?.get(agent)?.id })
+      return execution.start(agent, { ...prepared, yaml, cwd, resources, prompt: args.prompt, workflow: args.workflow, goalId: goals?.get(agent)?.id })
     }
     scoped.inject(['goals'], goalScope => {
       goals = goalScope.goals
