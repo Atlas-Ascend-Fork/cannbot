@@ -23,8 +23,6 @@ import shlex
 import shutil
 import sys
 import tempfile
-from urllib.parse import quote
-
 import yaml
 
 from assemble_workflow import context_path, load_yaml, validate_context
@@ -473,6 +471,17 @@ def link_phase_skills(cwd, skills, provider, identity, role):
     return skill_dir
 
 
+def task_directory_name(task_id: str) -> str:
+    """Flatten a task id into one path-safe directory name.
+
+    Subgraph children are materialized as ``parent/child``. Clients such as
+    opencode percent-decode ``PWD`` when they create a session, so escapes like
+    ``%2F`` must not appear in the directory name; flatten with the same ``__``
+    separator the harness already uses for report file names.
+    """
+    return task_id.replace("/", "__")
+
+
 def write_phase_context(cwd, envelope, skill_dir, prompt):
     manifest = cwd / "context.json"
     if manifest.exists() and read_json(manifest) != envelope:
@@ -496,7 +505,7 @@ def prepare_phase(entry, work, context=None):
     if not isinstance(task_id, str) or not task_id or task_id in {".", ".."}:
         raise ValueError("invalid task id")
     name = "verifier" if phase == "verify" else phase
-    cwd = work / "agents" / quote(task_id, safe="") / name
+    cwd = work / "agents" / task_directory_name(task_id) / name
     role = entry["agent"] if phase != "advice" else "ops-direct-invoke-architect"
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", role):
         raise ValueError("invalid role name")

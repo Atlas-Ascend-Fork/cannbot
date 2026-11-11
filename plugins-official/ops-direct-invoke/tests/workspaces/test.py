@@ -27,7 +27,16 @@ sys.dont_write_bytecode = True
 PLUGIN = Path(__file__).resolve().parents[2]
 REPO = PLUGIN.parents[1]
 sys.path.insert(0, str(PLUGIN / "tools"))
-from workspace import prepare, prepare_phase, load_context, write_json, metadata, phase_skills, validate_graph_context
+from workspace import (
+    prepare,
+    prepare_phase,
+    load_context,
+    write_json,
+    metadata,
+    phase_skills,
+    task_directory_name,
+    validate_graph_context,
+)
 from assemble_workflow import assemble, context_path, split_context, publish_workflow, write_template
 
 
@@ -459,6 +468,16 @@ if phase['phase'] == 'verify':
         (self.work / "generated.yaml").write_text(yaml.safe_dump(changed))
         with self.assertRaisesRegex(ValueError, "frozen workflow changed"):
             validate_graph_context(workflow, self.work, context)
+
+
+class TaskDirectoryNameTests(unittest.TestCase):
+    def test_task_id_with_slash_is_one_path_safe_directory(self):
+        self.assertEqual(task_directory_name("solution-design/design"), "solution-design__design")
+        for task_id in ("solution-design/design", "a/b/c", "节点/子节点"):
+            name = task_directory_name(task_id)
+            self.assertNotIn("/", name)
+            self.assertNotIn("%", name)
+            self.assertNotIn(os.sep, name)
 
 
 if __name__ == "__main__":
