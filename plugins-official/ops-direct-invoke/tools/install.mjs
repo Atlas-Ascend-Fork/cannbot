@@ -8,6 +8,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { prepareDirectInvokeConfig, directInvokeSkillPaths } from "./direct-invoke-config.mjs";
+import { selectChoice } from "./terminal-select.mjs";
 
 const NAME = "ops-direct-invoke";
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
@@ -75,9 +76,46 @@ function noAssetOverlap(destination, sources, replaceLeaf = false) {
   }
 }
 
+const repositoryIdentity = (url) => url.replace(/^git@gitcode\.com:/, "https://gitcode.com/")
+  .replace(/\.git$/, "").replace(/\/$/, "");
+
+// Reuse repositories the performance plugin already prepared instead of cloning them twice.
+export function linkSharedDependencies(source, target, dependencies) {
+  for (const dependency of dependencies) {
+    const prepared = join(source, dependency.name);
+    if (!dependency?.name || !dependency?.repository || !existsSync(join(prepared, ".git"))) continue;
+    const remote = spawnSync("git", ["-C", prepared, "remote", "get-url", "origin"], { encoding: "utf8" });
+    if (remote.status !== 0
+      || repositoryIdentity(remote.stdout.trim()) !== repositoryIdentity(dependency.repository)) continue;
+    const destination = join(target, dependency.name);
+    if (present(destination)) continue;
+    mkdirSync(dirname(destination), { recursive: true });
+    symlinkSync(process.platform === "win32" ? resolve(prepared) : relative(dirname(destination), prepared),
+      destination, process.platform === "win32" ? "junction" : "dir");
+  }
+}
+
+// A non-empty target is updated in place unless the user chooses a clean reinstall.
+export async function resolveTargetMode(target, { input = process.stdin, output = process.stdout } = {}) {
+  if (!existsSync(target) || !lstatSync(target).isDirectory() || !readdirSync(target).length) return "fresh";
+  if (!input.isTTY || !output.isTTY) return "fresh";
+  const choice = await selectChoice(`目标目录 ${target} 已有内容，请选择处理方式？`,
+    ["更新现有工作流组件", "清空目录后重新安装（删除目录内所有内容）"], { input, output, initial: 0 });
+  if (choice !== "2") return "update";
+  for (const entry of readdirSync(target)) rmSync(join(target, entry), { recursive: true, force: true });
+  return "clean";
+}
+
 export async function initialize({ options, pluginDir, sourceRepositoryRoot, sourceDefinition,
   installerRoot, pathsFor, install }) {
-  const config = await prepareDirectInvokeConfig(options);
+  const mode = await resolveTargetMode(options.target);
+  const config = await prepareDirectInvokeConfig({ ...options, refresh: mode === "update" });
+  // The questionnaire has closed its screen; report coarse install progress next.
+  const steps = 6;
+  let step = 0;
+  const green = process.stdout.isTTY ? (line) => `\x1b[32m${line}\x1b[0m` : (line) => line;
+  const report = (label) => console.log(green(`(${Math.round((step++ * 100) / steps)}%) ${label}`));
+  report("准备平台声明、公共 Skills 与定制覆盖");
   const paths = pathsFor(options.target, options.tool);
   const selected = directInvokeSkillPaths(config).map((path) => ({ ...skill(join(pluginDir, path)), assetPath: path }));
   const declaration = join(pluginDir, "skills/custom-skills/env-check", config.platform, "platform.json");
@@ -123,15 +161,20 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
   }
 
   // The performance plugin keeps its own installation and runtime; only its target is private.
+  report("安装性能优化插件 ops-perf-optimize");
   const performance = await install({ ...options, pluginId: "ops-perf-optimize", pluginDir: undefined,
-    overrideSkills: undefined, target: config.performance_root, registerNative: false,
+    overrideSkills: undefined, target: config.performance_root, registerNative: false, summary: false,
     skills: shared?.root ?? options.skills });
+  report("准备性能插件资源与 OpModel 运行时");
   const { findPluginDirectory } = await import(pathToFileURL(join(installerRoot, "lib/plugin-bundle.js")).href);
   const repository = sourceRepositoryRoot ?? installerRoot;
   const perfPlugin = ["plugins-official", "plugins-community", "dist/plugins"]
     .map((parent) => findPluginDirectory(repository, parent, "ops-perf-optimize"))
     .find((path) => path !== null);
   if (!perfPlugin) throw new Error("performance plugin source is unavailable");
+  const perfDefinitionPath = join(perfPlugin, "plugin-install.json");
+  const perfDependencyNames = new Set((existsSync(perfDefinitionPath)
+    ? (readJson(perfDefinitionPath).dependencies ?? []) : []).map((entry) => entry.name));
   const perfAssets = join(config.performance_root, ".cannbot/plugins/ops-perf-optimize");
   copy(join(perfPlugin, "AGENTS.md"), join(perfAssets, "AGENTS.md"));
   for (const path of performance.skills) {
@@ -140,14 +183,18 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
     rmSync(destination, { recursive: true, force: true });
     copy(realpathSync(entry.source), destination, performance.skillInstallMode === "symlink");
   }
+  // pip maps PIP_NO_WARN_CONFLICTS to --no-warn-conflicts (a store_false option),
+  // so 0 skips its post-install scan. That scan reports CANN packages leaked via
+  // PYTHONPATH as broken; the wheel itself is unaffected.
   const runtime = spawnSync("bash", [join(perfPlugin, "installer/install-opmodel.sh"), options.tool, config.performance_root],
-    { cwd: config.performance_root, stdio: "inherit" });
+    { cwd: config.performance_root, stdio: "inherit", env: { ...process.env, PIP_NO_WARN_CONFLICTS: "0" } });
   if (runtime.error || runtime.status !== 0) {
     console.warn("cannbot: OpModel setup unavailable; plugin installation will continue");
     if (process.env.CANNBOT_OPMODEL_STRICT === "1") throw new Error("OpModel setup failed in strict mode");
   }
 
   // Feed a standard four-Skill plugin to the shared installer, then publish private resources.
+  report("安装直调插件、依赖仓库与客户端配置");
   const temporary = mkdtempSync(join(tmpdir(), "ops-direct-invoke-install-"));
   const cleanup = () => rmSync(temporary, { recursive: true, force: true });
   process.once("exit", cleanup);
@@ -169,9 +216,13 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
       if (existsSync(source)) copy(source, join(temporary, name));
       else if (fallback && existsSync(fallback)) copy(fallback, join(temporary, name));
     }
+    linkSharedDependencies(join(config.performance_root, ".cannbot/dependencies", performance.plugin),
+      join(options.target, ".cannbot/dependencies", NAME),
+      dependencies.filter((entry) => perfDependencyNames.has(entry.name)));
     const record = await install({ ...options, pluginDir: temporary, skills: undefined,
-      overrideSkills: undefined, registerNative: false });
+      overrideSkills: undefined, registerNative: false, summary: false });
     const linked = sourceDefinition?.skillInstallMode === "symlink";
+    report("发布工作区资产与外部 Skills");
     for (const entry of resources) {
       const destination = join(config.asset_root, entry.name);
       rmSync(destination, { recursive: true, force: true });
@@ -191,6 +242,7 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
       copy(source, destination, true);
     }
     for (const path of stale) rmSync(path, { recursive: true, force: true });
+    report("写入安装记录与初始化配置");
     for (const dependency of dependencies) {
       const cleaner = external.find((entry) => entry.name === dependency.cleanMarkdownWithSkill);
       const checkout = join(options.target, ".cannbot/dependencies", NAME, dependency.name);
@@ -210,6 +262,12 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
     writeJson(registryPath, registry);
     config.performance_registry = join(pathsFor(config.performance_root, options.tool).configDir, "cannbot-plugin.json");
     writeJson(join(options.target, ".cannbot/ops-direct-invoke.json"), config);
+    console.log(green("(100%) 安装完成"));
+    console.log(green(`安装目录：${options.target}`));
+    console.log(green("使用方法："));
+    console.log(green(`1. cd ${options.target}`));
+    console.log(green("2. 启动客户端"));
+    console.log(green("3. 描述算子开发需求"));
     return record;
   } finally {
     cleanup();

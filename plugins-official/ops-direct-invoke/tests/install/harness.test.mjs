@@ -40,7 +40,8 @@ function install(box, tool, source, extra = []) {
   else args.push('--plugin-dir', bundleDirectory);
   const result = spawnSync(process.execPath, [...args, ...extra], { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.ok(result.stdout.indexOf(`Installed ${performance}@`) >= 0 && result.stdout.indexOf(`Installed ${performance}@`) < result.stdout.indexOf(`Installed ${plugin}@`), result.stdout);
+  assert.match(result.stdout, /安装目录：/, result.stdout);
+  assert.match(result.stdout, /使用方法：/, result.stdout);
   return join(box.target, ['codex', 'opencode'].includes(tool) ? '.agents' : `.${tool}`, 'skills');
 }
 
@@ -208,9 +209,8 @@ test('harness source init initializes performance first and installs each plugin
     '--skills', join(repository, 'vendor/cannbot-skills')],
     { env: box.env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.equal(result.stdout.match(/Installed ops-perf-optimize@/g)?.length, 1, result.stdout);
-  assert.equal(result.stdout.match(/Installed ops-direct-invoke@/g)?.length, 1, result.stdout);
-  assert.ok(result.stdout.indexOf('Installed ops-perf-optimize@') < result.stdout.indexOf('Installed ops-direct-invoke@'));
+  assert.equal(result.stdout.match(/安装目录：/g)?.length, 1, result.stdout);
+  assert.equal(result.stdout.match(/使用方法：/g)?.length, 1, result.stdout);
   const config = configuration(box);
   assert.ok(existsSync(join(config.performance_root, '.agents/skills/ops-perf-optimize-workflow/SKILL.md')));
   assert.ok(existsSync(join(config.performance_root, '.codex/agents/perf-optimize.toml')));

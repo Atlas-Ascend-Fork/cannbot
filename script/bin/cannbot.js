@@ -1363,6 +1363,8 @@ async function install(options, initializing = [], skipInitializer = false) {
   record.knowledgeIndex = installKnowledgeConsumer(provisioned, options.target, options.tool) ? "ready" : "pending";
   updateInstallRegistry(join(configDir, "cannbot-plugin.json"), record);
 
+  // Initializers may defer the summary so it prints after their own steps.
+  if (options.summary === false) return record;
   console.log(`Installed ${plugin.name}@${plugin.version} for ${options.tool}`);
   console.log(`  skills: ${installedSkills.length}`);
   console.log(`  agents: ${installedAgents.length}`);

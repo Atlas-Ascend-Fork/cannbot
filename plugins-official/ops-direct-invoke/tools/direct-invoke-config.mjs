@@ -3,23 +3,48 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
+import { QuestionnaireScreen, selectChoice, textQuestion } from "./terminal-select.mjs";
 
 const choices = (values) => (value) => values.includes(value);
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
+// Model names verified against CANN 9.3.0 data/platform_config/*.ini.
+// Menus list at most three models per series; the rest are covered by "等".
+const chipSeries = {
+  ascend: [
+    ["ascend950", "Ascend950 系列（950PR/950DT）"],
+    ["ascend910", "Ascend910 系列（910_9391/910B/910A 等）"],
+  ],
+  kirin: [["kirin9030", "Kirin9030 系列"], ["kirinx90", "KirinX90 系列"]],
+};
+const interactionScopes = {
+  autonomous: "在当前任务和已有修改权限内自主选择方案、实现及验证方式，不主动请求确认；无法确定的必要输入如实记录为阻塞。",
+  confirm: "常规实现与验证自主推进；仅在需求分析等必要确认点，以及需求、交付标准或权限发生实质变化时询问。",
+  supervised: "在已有明确约定内执行；所有不确定项及时通过问卷询问用户，不自行作出尚未确认的取舍。",
+};
 const fields = [
-  { key: "platform", prompt: "硬件平台 ascend/kirin", valid: choices(["ascend", "kirin"]) },
-  { key: "repo", prompt: "仓库规则 cannbench（仅 Ascend）/common [cannbench]", valid: choices(["cannbench", "common"]), fallback: "cannbench" },
-  { key: "chip", prompt: "具体芯片型号（尚未确认请填 unknown）", valid: nonempty },
-  { key: "interaction", prompt: "交互偏好 confirm/autonomous [confirm]", valid: choices(["confirm", "autonomous"]), fallback: "confirm" },
-  { key: "autonomy", prompt: "允许自主决策的范围 [仅已明确授权范围]", valid: nonempty, fallback: "仅已明确授权范围" },
-  { key: "review_points", prompt: "额外人工检视点（逗号分隔；无则留空）", valid: (value) => Array.isArray(value) && value.every(nonempty), parse: (text) => text.split(/[,，]/).map((part) => part.trim()).filter(Boolean) },
+  { key: "platform", prompt: "您在哪种硬件平台上进行开发？", labels: ["昇腾(Ascend)系列", "麒麟(Kirin)系列"],
+    options: ["ascend", "kirin"], valid: choices(["ascend", "kirin"]) },
+  { key: "chip", prompt: "您开发的芯片型号或系列是？", valid: nonempty },
+  { key: "repo", prompt: "您希望使用哪种工程框架？", labels: ["通用框架", "cannbench评测框架"],
+    options: ["common", "cannbench"], valid: choices(["common", "cannbench"]) },
+  { key: "language", prompt: "您使用哪种开发语言？",
+    labels: ["AscendC", "CANNBot-DSL", "暂不确定"],
+    options: ["ascendc", "dsl", "unspecified"], valid: choices(["ascendc", "dsl", "unspecified"]) },
+  { key: "interaction", prompt: "您的交互偏好是？", initial: 1,
+    labels: ["静默运行，你替我做决定", "重要节点和我确认（推荐）", "我监督所有细节"],
+    options: ["autonomous", "confirm", "supervised"], valid: choices(Object.keys(interactionScopes)) },
 ];
 
 function answers(config) {
-  return { repo: config.repo, platform: config.platform, chip: config.chip,
-    interaction: config.preferences?.interaction, autonomy: config.preferences?.autonomy,
-    review_points: config.preferences?.review_points };
+  return { repo: config.repo, platform: config.platform, chip: config.chip, language: config.language,
+    interaction: config.preferences?.interaction };
+}
+
+function supportsLanguage(platform, language) {
+  if (language === "unspecified") return true;
+  if (!["ascend", "kirin"].includes(platform)) return false;
+  const declaration = new URL(`../skills/custom-skills/env-check/${platform}/platform.json`, import.meta.url);
+  return JSON.parse(readFileSync(declaration, "utf8")).languages.includes(language);
 }
 
 export async function prepareDirectInvokeConfig(options, io = {}) {
@@ -32,6 +57,7 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
   }
   const values = answers(previous);
   const explicit = answers(supplied);
+  if (explicit.chip === "") explicit.chip = "unknown";
   const origins = { ...(previous.sources ?? {}) };
   for (const field of fields) {
     if (explicit[field.key] === undefined) continue;
@@ -42,44 +68,135 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
   // A model from another platform is not a confirmed answer for the new platform.
   if (explicit.platform && explicit.platform !== previous.platform && explicit.chip === undefined) delete values.chip;
   const valid = (field, value) => field.valid(value)
-    && !(field.key === "repo" && value === "cannbench" && values.platform !== "ascend");
+    && !(field.key === "repo" && value === "cannbench" && values.platform !== "ascend")
+    && (field.key !== "language" || supportsLanguage(values.platform, value));
   const conflict = "cannbench 仅支持 Ascend；Kirin 平台请选择 common 仓库规则";
-  const pending = fields.filter((field) => !valid(field, values[field.key]));
-  if (pending.length && !(io.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY))) {
+  const isTTY = io.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY);
+  // A reinstall on an existing target asks every applicable question again.
+  const refresh = options.refresh === true && isTTY;
+  const asked = new Set();
+  if (!isTTY && values.chip === undefined) {
+    values.chip = "unknown";
+    origins.chip = "default";
+  }
+  if (!isTTY && values.language === undefined) {
+    values.language = "unspecified";
+    origins.language = "default";
+  }
+  const pendingQuestions = () => {
+    const pending = [];
+    for (const candidate of fields) {
+      if (refresh ? asked.has(candidate.key) : valid(candidate, values[candidate.key])) continue;
+      let field = candidate;
+      // Do not filter dependent menus until the platform has been chosen.
+      if (["ascend", "kirin"].includes(values.platform)) {
+        if (field.key === "chip") field = {
+          ...field,
+          options: [...chipSeries[values.platform].map(([value]) => value), "other", "unknown"],
+          labels: [...chipSeries[values.platform].map(([, label]) => label), "其他（自行输入）", "暂不确定"],
+        };
+        if (field.key === "language") {
+          // "暂不确定" is a fallback, not an alternative: a platform with a single
+          // supported language adopts it without asking.
+          const supported = field.options.filter((value) => value !== "unspecified" && valid(field, value));
+          if (supported.length === 1 && (isTTY || explicit[field.key] === undefined)) {
+            values[field.key] = supported[0];
+            origins[field.key] = "inferred";
+            continue;
+          }
+        }
+        const available = field.options?.map((value, index) => ({ value, label: field.labels[index] }))
+          .filter(({ value }) => valid(field, value));
+        if (available) field = { ...field, options: available.map(({ value }) => value), labels: available.map(({ label }) => label) };
+        if (field.options?.length === 1 && (isTTY || explicit[field.key] === undefined)) {
+          values[field.key] = field.options[0];
+          origins[field.key] = "inferred";
+          continue;
+        }
+      }
+      if (refresh && field.options) {
+        const saved = field.options.indexOf(values[field.key]);
+        const fallback = field.key === "chip" ? field.options.indexOf("other") : (field.initial ?? 0);
+        field = { ...field, initial: saved >= 0 ? saved : fallback };
+      }
+      pending.push(field);
+    }
+    return pending;
+  };
+  let pending = pendingQuestions();
+  if (pending.length && !isTTY) {
     if (values.repo === "cannbench" && values.platform === "kirin") throw new Error(conflict);
+    if (values.language && !supportsLanguage(values.platform, values.language)) {
+      throw new Error(`${values.platform} 不支持开发语言 ${values.language}，请按平台支持范围选择，或使用 unspecified 暂不指定。`);
+    }
     throw new Error(`ops-direct-invoke needs initialization answers (${pending.map((field) => field.key).join(", ")}); use an interactive terminal or CANNBOT_DIRECT_INVOKE_CONFIG=<JSON file> (init.sh: --init-config)`);
   }
-  let terminal;
+  const screen = pending.length && !io.question ? new QuestionnaireScreen() : null;
+  const total = pending.length;
+  const progress = (fraction) => { io.progress?.(fraction); };
+  let answered = 0;
   try {
-    const ask = io.question ?? ((prompt) => {
-      terminal ??= createInterface({ input: process.stdin, output: process.stdout });
-      return terminal.question(prompt);
-    });
-    for (const [index, field] of pending.entries()) {
-      const kirinRepo = field.key === "repo" && values.platform === "kirin";
+    // Percent of the questions that actually remain, so inferred fields do not
+    // make the counter jump. Color the parentheses only on an interactive screen.
+    const share = () => (answered + pending.length ? answered / (answered + pending.length) : 1);
+    const prefix = (percent) => screen?.display
+      ? `\x1b[32m(${percent}%)\x1b[0m` : `(${percent}%)`;
+    const labeled = (prompt) => total ? `${prefix(Math.round(share() * 100))} ${prompt}` : prompt;
+    const defaultAsk = (prompt, field) => field.options
+      ? selectChoice(prompt, field.labels, { initial: field.initial ?? 0, screen })
+      : textQuestion(prompt, { screen, initial: field.defaultText });
+    const ask = (prompt, field) => (io.question ?? defaultAsk)(labeled(prompt), field);
+    if (total) progress(0);
+    while (pending.length) {
+      const field = pending[0];
       while (true) {
-        const response = await ask(`(${index + 1}/${pending.length}) ${kirinRepo ? "仓库规则 common（cannbench 仅支持 Ascend）[common]" : field.prompt}: `);
-        const text = response.trim() || (kirinRepo ? "common" : field.fallback) || "";
-        const value = field.parse ? field.parse(text) : text;
+        const response = await ask(field.prompt, field);
+        const text = response.trim();
+        let value = field.options
+          ? (/^[1-9]$/.test(text) ? field.options[Number(text) - 1] : undefined)
+          : text || "unknown";
+        if (field.key === "chip" && value === "other") {
+          // Keep a previously typed model as an editable default.
+          const custom = refresh && values.chip && field.options && !field.options.includes(values.chip);
+          let prompt = "请输入具体芯片型号？";
+          let defaultText = custom ? values.chip : "";
+          while (true) {
+            value = (await ask(prompt, { defaultText })).trim();
+            defaultText = "";
+            if (nonempty(value)) break;
+            prompt = "芯片型号不能为空，请输入具体芯片型号？";
+          }
+        }
         if (!valid(field, value)) {
-          (io.log ?? console.log)(kirinRepo && value === "cannbench" ? conflict : `无效回答：${field.key}`);
+          (io.log ?? console.log)(`输入无效，请输入一个数字（${field.options.map((_, option) => option + 1).join(" 或 ")}）。`);
           continue;
         }
         values[field.key] = value;
         origins[field.key] = "questionnaire";
+        const label = field.labels?.[field.options.indexOf(value)] ?? value;
+        screen?.answer(field.prompt, screen.display ? `\x1b[1;32m${label}\x1b[0m` : label);
         break;
       }
+      asked.add(field.key);
+      answered += 1;
+      pending = pendingQuestions();
+      progress(share());
     }
   } finally {
-    terminal?.close();
+    screen?.close();
   }
+  // Keep existing explicit review gates, but do not ask users to configure them during init.
+  const reviewPoints = supplied.preferences?.review_points ?? previous.preferences?.review_points ?? [];
+  if (!Array.isArray(reviewPoints) || !reviewPoints.every(nonempty)) throw new Error("invalid initialization value: review_points");
+  origins.autonomy = "interaction";
   const assetRoot = resolve(options.target, ".cannbot/plugins/ops-direct-invoke");
   return {
     schema_version: 1,
     repo: values.repo,
     platform: values.platform,
     chip: values.chip,
-    preferences: { interaction: values.interaction, autonomy: values.autonomy, review_points: values.review_points },
+    language: values.language,
+    preferences: { interaction: values.interaction, autonomy: interactionScopes[values.interaction], review_points: reviewPoints },
     sources: origins,
     asset_root: assetRoot,
     external_skills_root: join(assetRoot, "external-skills"),

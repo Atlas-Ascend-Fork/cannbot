@@ -39,7 +39,7 @@ test('classified resources package the declared entry and isolated prerequisite,
   for (const repo of ['cannbench', 'common']) skill(`${direct}/skills/custom-skills/repo-guide/${repo}`, 'ops-direct-invoke-repo-guide')
   write(`${direct}/skills/custom-skills/env-check/ascend/platform.json`, { languages: ['ascendc', 'dsl'] })
   write(`${direct}/tools/runtime.py`, '# preserved tool\n')
-  for (const name of ['install.mjs', 'direct-invoke-config.mjs', 'dsh-native.mjs']) cpSync(join(repository, direct, 'tools', name), join(source, direct, 'tools', name))
+  for (const name of ['install.mjs', 'direct-invoke-config.mjs', 'terminal-select.mjs', 'dsh-native.mjs']) cpSync(join(repository, direct, 'tools', name), join(source, direct, 'tools', name))
   write(`${direct}/orchestrations/workflows/basic.yaml`, 'workflow: fixture\n')
   cpSync(join(repository, 'script/lib'), join(source, 'script/lib'), { recursive: true })
   mkdirSync(join(source, 'script/bin'), { recursive: true })

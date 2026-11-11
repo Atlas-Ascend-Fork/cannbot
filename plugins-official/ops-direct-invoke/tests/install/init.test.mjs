@@ -6,20 +6,162 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import { assemblePlugins } from "../../../../script/lib/plugin-bundle.js";
 import { prepareDirectInvokeConfig } from "../../tools/direct-invoke-config.mjs";
+import { linkSharedDependencies, resolveTargetMode } from "../../tools/install.mjs";
+import { QuestionnaireScreen, selectChoice, textQuestion } from "../../tools/terminal-select.mjs";
 
 const repository = resolve(import.meta.dirname, "../../../..");
 const cli = join(repository, "script/bin/cannbot.js");
 const selected = ["ops-direct-invoke", "ops-direct-invoke-maintain", "ops-direct-invoke-repo-guide", "ops-direct-invoke-requirement"];
-const answers = { repo: "common", platform: "ascend", chip: "Ascend950",
+const answers = { repo: "common", platform: "ascend", chip: "Ascend950", language: "unspecified",
   preferences: { interaction: "confirm", autonomy: "仅已明确授权范围", review_points: [] } };
 
 function write(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`);
 }
+
+function menuTerminal(t, raw = false, term = "xterm") {
+  const previousTerm = process.env.TERM;
+  process.env.TERM = term;
+  t.after(() => {
+    if (previousTerm === undefined) delete process.env.TERM;
+    else process.env.TERM = previousTerm;
+  });
+  const input = new PassThrough();
+  const output = new PassThrough();
+  input.isRaw = raw;
+  input.setRawMode = (value) => { input.isRaw = value; };
+  output.columns = 40;
+  let text = "";
+  output.on("data", (chunk) => { text += chunk; });
+  t.after(() => { input.destroy(); output.destroy(); });
+  return { input, output, text: () => text };
+}
+
+test("menu supports arrow navigation, wrapping, numeric jumps and resize", async (t) => {
+  const terminal = menuTerminal(t);
+  const labels = ["静默运行，你替我做决定", "重要节点和我确认（推荐）", "我监督所有细节"];
+  for (const [keys, expected] of [["\x1b[B\r", "2"], ["\x1b[A\r", "3"], ["3\x1b[B\r", "1"], ["9x2\r", "2"]]) {
+    const selection = selectChoice("(4/4) 您的交互偏好是？", labels, terminal);
+    assert.equal(terminal.input.isRaw, true);
+    terminal.output.columns = 30;
+    terminal.output.emit("resize");
+    terminal.input.write(keys);
+    assert.equal(await selection, expected);
+    assert.equal(terminal.input.isRaw, false);
+    assert.equal(terminal.input.listenerCount("keypress"), 0);
+    const finalDisplay = terminal.text().split("\x1b[0J").at(-1);
+    assert.ok(finalDisplay.includes(`您的交互偏好是：\x1b[1;32m${labels[Number(expected) - 1]}`));
+    assert.doesNotMatch(finalDisplay, /❯|数字跳转|您的交互偏好是？/);
+  }
+  assert.match(terminal.text(), /输入无效/);
+  assert.match(terminal.text(), /❯ 2\./);
+  assert.ok(terminal.text().includes("\x1b[1;32m❯"));
+  const defaultChoice = selectChoice("交互偏好", labels, { ...terminal, initial: 1 });
+  terminal.input.write("\r");
+  assert.equal(await defaultChoice, "2");
+});
+
+test("menu cancellation and EOF restore terminal state and remove handlers", async (t) => {
+  for (const key of ["\x03", "\x04", null]) {
+    const terminal = menuTerminal(t, true);
+    const choice = selectChoice("选择平台", ["Ascend", "Kirin"], terminal);
+    const cancelled = assert.rejects(choice, /初始化已取消/);
+    if (key === null) terminal.input.end();
+    else terminal.input.write(key);
+    await cancelled;
+    assert.equal(terminal.input.isRaw, true);
+    assert.equal(terminal.input.listenerCount("keypress"), 0);
+    assert.equal(terminal.input.listenerCount("end"), 0);
+  }
+});
+
+test("dumb terminals fall back to numeric input without ANSI menus", async (t) => {
+  const terminal = menuTerminal(t, false, "dumb");
+  const choice = selectChoice("选择平台？", ["Ascend", "Kirin"], terminal);
+  terminal.input.write("2\n");
+  assert.equal(await choice, "2");
+  assert.match(terminal.text(), /请输入数字/);
+  assert.equal(terminal.text().includes("\x1b"), false);
+  assert.equal(terminal.input.isRaw, false);
+});
+
+test("questionnaire collapses answers while editing without banner or progress bar", async (t) => {
+  const terminal = menuTerminal(t);
+  const screen = new QuestionnaireScreen(terminal.output);
+  t.after(() => screen.close());
+  const selected = selectChoice("平台？", ["Ascend", "Kirin"], { ...terminal, screen });
+  terminal.input.write("\r");
+  assert.equal(await selected, "1");
+  screen.answer("平台？", "Ascend");
+  const typed = textQuestion("芯片型号？", { ...terminal, screen });
+  terminal.input.write("Ascend950PX\x7fR\r");
+  assert.equal(await typed, "Ascend950PR");
+  screen.answer("芯片型号？", "Ascend950PR");
+  const finalDisplay = terminal.text().split("\x1b[0J").at(-1);
+  const plainDisplay = finalDisplay.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+  assert.equal(plainDisplay.split("平台：Ascend").length, 2);
+  assert.match(plainDisplay, /芯片型号：Ascend950PR/);
+  assert.doesNotMatch(plainDisplay, /[█░━─]|%|OPS-DIRECT-INVOKE/);
+  assert.doesNotMatch(finalDisplay, /❯|数字跳转/);
+  assert.equal(terminal.input.isRaw, false);
+});
+
+test("reinstall refresh asks every question with saved answers preselected", async (t) => {
+  const f = fixture(t);
+  write(join(f.target, ".cannbot/ops-direct-invoke.json"), {
+    ...answers, platform: "ascend", chip: "ascend950", language: "ascendc",
+    preferences: { interaction: "confirm", autonomy: "test", review_points: [] },
+  });
+  const asked = [];
+  const replies = ["1", "1", "1", "2", "3"];
+  const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh", refresh: true }, {
+    isTTY: true, question: async (_prompt, field) => {
+      asked.push({ key: field.key, initial: field.initial });
+      return replies.shift();
+    },
+  });
+  assert.deepEqual(asked.map(({ key }) => key), ["platform", "chip", "repo", "language", "interaction"]);
+  assert.deepEqual(asked.map(({ initial }) => initial), [0, 0, 0, 0, 1]);
+  assert.equal(config.platform, "ascend");
+  assert.equal(config.chip, "ascend950");
+  assert.equal(config.repo, "common");
+  assert.equal(config.language, "dsl");
+  assert.equal(config.preferences.interaction, "supervised");
+});
+
+test("refresh preselects a custom chip and prefills its model", async (t) => {
+  const f = fixture(t);
+  write(join(f.target, ".cannbot/ops-direct-invoke.json"), { ...answers, chip: "Ascend910B" });
+  const fields = [];
+  const replies = ["1", "3", "Ascend910B2", "1", "1", "2"];
+  const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh", refresh: true }, {
+    isTTY: true, question: async (_prompt, field) => {
+      fields.push(field);
+      return replies.shift();
+    },
+  });
+  const chip = fields.find((field) => field.key === "chip");
+  assert.equal(chip.initial, chip.options.indexOf("other"));
+  assert.ok(fields.some((field) => field.defaultText === "Ascend910B"), JSON.stringify(fields));
+  assert.equal(config.chip, "Ascend910B2");
+});
+
+test("text prompt prefill is editable", async (t) => {
+  const terminal = menuTerminal(t);
+  const screen = new QuestionnaireScreen(terminal.output);
+  t.after(() => screen.close());
+  const kept = textQuestion("芯片型号？", { ...terminal, screen, initial: "Ascend910B" });
+  terminal.input.write("\r");
+  assert.equal(await kept, "Ascend910B");
+  const edited = textQuestion("芯片型号？", { ...terminal, screen, initial: "Ascend910B" });
+  terminal.input.write("\x7f\r");
+  assert.equal(await edited, "Ascend910");
+});
 
 function fixture(t) {
   const box = mkdtempSync(join(tmpdir(), "direct-init-"));
@@ -40,7 +182,7 @@ function fixture(t) {
     symlinkSync("../references", join(plugin, "skills/custom-skills/requirement", platform, "references"));
   }
   for (const platform of ["ascend", "kirin"]) {
-    write(join(plugin, "skills/custom-skills/env-check", platform, "platform.json"), { languages: ["ascendc"] });
+    write(join(plugin, "skills/custom-skills/env-check", platform, "platform.json"), { languages: platform === "ascend" ? ["ascendc", "dsl"] : ["ascendc"] });
   }
   for (const path of ["tools/runtime.py", "docs/contract.md", "orchestrations/tasks/task.yaml", "agents/developer.md", "skills/custom-skills/common/shared.md"]) {
     write(join(plugin, path), path);
@@ -50,7 +192,7 @@ function fixture(t) {
   write(join(plugin, ".claude-plugin/plugin.json"), { name: "ops-direct-invoke", version: "1.0.0", description: "fixture", skills: ["./skills/maintain", "./skills/orchestrator"] });
   write(join(plugin, "plugin-sources.json"), { skillsRepository: ".", skills: ["shared/short"], skillInstallMode: "symlink", preserveSkillInvocationPolicy: true, extraAssets: ["skills/custom-skills"] });
   write(join(plugin, "plugin-install.json"), { initializer: "tools/install.mjs", initializeBefore: ["ops-perf-optimize"] });
-  for (const name of ["install.mjs", "direct-invoke-config.mjs"]) cpSync(join(repository, "plugins-official/ops-direct-invoke/tools", name), join(plugin, "tools", name));
+  for (const name of ["install.mjs", "direct-invoke-config.mjs", "terminal-select.mjs"]) cpSync(join(repository, "plugins-official/ops-direct-invoke/tools", name), join(plugin, "tools", name));
   const perf = join(source, "plugins-official/ops-perf-optimize");
   write(join(perf, ".claude-plugin/plugin.json"), { name: "ops-perf-optimize", version: "1.0.0", description: "perf" });
   write(join(perf, "plugin-sources.json"), { skillsRepository: ".", skills: [], skillInstallMode: "symlink" });
@@ -81,7 +223,7 @@ for (const packaged of [false, true]) {
       assert.equal(result.status, 0, result.stdout + result.stderr);
       const config = JSON.parse(readFileSync(join(f.target, ".cannbot/ops-direct-invoke.json")));
       assert.equal(config.repo, "common");
-      assert.equal(config.language, undefined);
+      assert.equal(config.language, "unspecified");
       const configDir = tool === "codearts" ? ".codeartsdoer" : `.${tool}`;
       const skillsDir = tool === "codex" || tool === "opencode" ? ".agents/skills" : `${configDir}/skills`;
       assert.deepEqual(readdirSync(join(f.target, skillsDir)).sort(), selected);
@@ -101,7 +243,8 @@ for (const packaged of [false, true]) {
         "skills/custom-skills/requirement/kirin/SKILL.md", "skills/custom-skills/common/shared.md",
         "external-skills/public-dependency/scripts/run.py"]) assert.ok(existsSync(join(config.asset_root, path)), path);
       assert.match(readFileSync(join(config.external_skills_root, "public-dependency/SKILL.md"), "utf8"), /disable-model-invocation: true/);
-      assert.ok(result.stdout.indexOf("Installed ops-perf-optimize@") < result.stdout.indexOf("Installed ops-direct-invoke@"));
+      assert.match(result.stdout, /安装目录：/);
+      assert.match(result.stdout, /使用方法：/);
       write(join(f.target, "USER.md"), "keep user file");
       write(join(f.target, ".cannbot/runs/existing/context.json"), "frozen run");
       const repeated = f.install(root, tool, null);
@@ -157,42 +300,38 @@ test("noninteractive cannbench with Kirin fails before any installation", (t) =>
   assert.equal(existsSync(f.target), false);
 });
 
-test("questionnaire corrects an incompatible saved repository without adding questions", async (t) => {
+test("questionnaire skips the only compatible framework when correcting a saved repository", async (t) => {
   const f = fixture(t);
   write(join(f.target, ".cannbot/ops-direct-invoke.json"), { ...answers, repo: "cannbench", platform: "kirin" });
-  const replies = ["cannbench", ""];
-  const prompts = [];
-  const messages = [];
   const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
-    isTTY: true, question: async (prompt) => { prompts.push(prompt); return replies.shift(); },
-    log: (message) => messages.push(message),
+    isTTY: true, question: async () => assert.fail("single-choice framework must not be asked"),
   });
   assert.equal(config.repo, "common");
   assert.equal(config.platform, "kirin");
-  assert.equal(config.sources.repo, "questionnaire");
-  assert.equal(prompts.length, 2);
-  prompts.forEach((prompt) => assert.match(prompt, /^\(1\/1\).*common/));
-  assert.match(messages[0], /cannbench.*Ascend.*Kirin.*common/);
+  assert.equal(config.sources.repo, "inferred");
 });
 
-test("questionnaire counts only pending answers and never asks for a language", async (t) => {
+test("questionnaire counts only pending answers and reuses the language preference", async (t) => {
   const f = fixture(t);
   write(join(f.target, ".cannbot/ops-direct-invoke.json"), { ...answers, chip: "" });
   const prompts = [];
+  const replies = ["3", "Ascend910B"];
   const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
-    isTTY: true, question: async (prompt) => { prompts.push(prompt); return "Ascend910"; },
+    isTTY: true, question: async (prompt) => { prompts.push(prompt); return replies.shift(); },
   });
-  assert.equal(prompts.length, 1);
-  assert.match(prompts[0], /^\(1\/1\).*芯片/);
-  assert.equal(config.chip, "Ascend910");
-  assert.equal(config.language, undefined);
+  assert.equal(prompts.length, 2);
+  prompts.forEach((prompt) => assert.match(prompt, /芯片/));
+  assert.equal(config.chip, "Ascend910B");
+  assert.equal(config.language, "unspecified");
 });
 
-test("changing platform requires a new chip answer and rejects invalid explicit choices", async (t) => {
+test("changing platform clears the old chip and rejects invalid explicit choices", async (t) => {
   const f = fixture(t);
   write(join(f.target, ".cannbot/ops-direct-invoke.json"), answers);
   write(f.input, { platform: "kirin" });
-  await assert.rejects(prepareDirectInvokeConfig({ target: f.target, tool: "dsh", initConfig: f.input }, { isTTY: false }), /chip/);
+  const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh", initConfig: f.input }, { isTTY: false });
+  assert.equal(config.platform, "kirin");
+  assert.equal(config.chip, "unknown");
   write(f.input, { platform: "unknown" });
   await assert.rejects(prepareDirectInvokeConfig({ target: f.target, tool: "dsh", initConfig: f.input }), /invalid initialization value: platform/);
 });
@@ -248,19 +387,159 @@ test("switching clients reuses confirmed answers and the shared main Skill regis
 });
 
 for (const platform of ["ascend", "kirin"]) {
-  test(`first ${platform} questionnaire uses the actual six pending questions and confirms defaults`, async (t) => {
+  test(`first ${platform} questionnaire follows dependencies, skips singleton choices and accepts an unknown chip`, async (t) => {
     const f = fixture(t);
-    const replies = [platform, "", "unknown", "", "", "需求,交付"];
+    const replies = platform === "ascend" ? ["1", "4", "1", "3", "2"] : ["2", "4", "2"];
     const prompts = [];
+    const questions = [];
+    const progress = [];
     const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
-      isTTY: true, question: async (prompt) => { prompts.push(prompt); return replies.shift(); },
+      progress: (fraction) => progress.push(fraction),
+      isTTY: true, question: async (prompt, field) => {
+        if (field.key) questions.push(field.key);
+        if (field.key === "repo") {
+          assert.equal(platform, "ascend");
+          assert.deepEqual(field.options, ["common", "cannbench"]);
+        }
+        if (field.key === "language") assert.deepEqual(field.options, ["ascendc", "dsl", "unspecified"]);
+        prompts.push(prompt);
+        return replies.shift();
+      },
     });
-    assert.equal(prompts.length, 6);
-    prompts.forEach((prompt, index) => assert.ok(prompt.startsWith(`(${index + 1}/6)`)));
-    assert.equal(config.repo, platform === "ascend" ? "cannbench" : "common");
-    assert.deepEqual(config.preferences.review_points, ["需求", "交付"]);
+    assert.equal(prompts.length, platform === "ascend" ? 5 : 3);
+    prompts.forEach((prompt) => assert.doesNotMatch(prompt, /\(\d+\/\d+\)/));
+    prompts.forEach((prompt) => assert.match(prompt, /^\(\d+%\) /));
+    assert.equal(progress[0], 0);
+    assert.equal(progress.at(-1), 1);
+    progress.slice(1).forEach((fraction, index) => assert.ok(fraction > progress[index]));
+    assert.deepEqual(questions, platform === "ascend"
+      ? ["platform", "chip", "repo", "language", "interaction"] : ["platform", "chip", "interaction"]);
+    assert.equal(config.platform, platform);
+    assert.equal(config.repo, "common");
+    assert.equal(config.chip, "unknown");
+    assert.equal(config.language, platform === "ascend" ? "unspecified" : "ascendc");
+    assert.equal(config.preferences.interaction, "confirm");
+    assert.deepEqual(config.preferences.review_points, []);
   });
 }
+
+test("choice questions reject blank, words, multiple digits and out-of-range numbers", async (t) => {
+  const f = fixture(t);
+  const replies = ["", "ascend", "12", "0", "3", "1", "1", "common", "2", "3", "4", "3"];
+  const prompts = [];
+  const messages = [];
+  const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
+    isTTY: true, question: async (prompt) => { prompts.push(prompt); return replies.shift(); },
+    log: (message) => messages.push(message),
+  });
+  assert.equal(messages.length, 7);
+  messages.forEach((message) => assert.match(message, /请输入一个数字/));
+  assert.match(messages.at(-1), /1 或 2 或 3/);
+  prompts.slice(0, 6).forEach((prompt) => assert.match(prompt, /硬件平台/));
+  assert.equal(config.repo, "cannbench");
+  assert.equal(config.chip, "ascend950");
+  assert.equal(config.preferences.interaction, "supervised");
+});
+
+for (const [platform, models] of [["ascend", ["ascend950", "ascend910"]], ["kirin", ["kirin9030", "kirinx90"]]]) {
+  test(`${platform} chip menu offers only the selected platform's series`, async (t) => {
+    const f = fixture(t);
+    write(join(f.target, ".cannbot/ops-direct-invoke.json"), { ...answers, platform, chip: "" });
+    for (const [index, chip] of models.entries()) {
+      const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
+        isTTY: true, question: async (_prompt, field) => {
+          assert.deepEqual(field.options, [...models, "other", "unknown"]);
+          assert.deepEqual(field.labels.slice(-2), ["其他（自行输入）", "暂不确定"]);
+          return String(index + 1);
+        },
+      });
+      assert.equal(config.chip, chip);
+    }
+  });
+}
+
+for (const [digit, mode, scope] of [
+  ["1", "autonomous", /不主动请求确认/],
+  ["2", "confirm", /仅在需求分析等必要确认点/],
+  ["3", "supervised", /所有不确定项及时通过问卷/],
+]) {
+  test(`interaction choice ${digit} derives ${mode} scope and reuses saved choices`, async (t) => {
+    const f = fixture(t);
+    write(join(f.target, ".cannbot/ops-direct-invoke.json"), {
+      ...answers, preferences: { review_points: ["delivery"], autonomy: "old scope" },
+    });
+    const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
+      isTTY: true, question: async (prompt) => {
+        assert.match(prompt, /交互偏好/);
+        return digit;
+      },
+    });
+    assert.equal(config.preferences.interaction, mode);
+    assert.match(config.preferences.autonomy, scope);
+    assert.deepEqual(config.preferences.review_points, ["delivery"]);
+    write(join(f.target, ".cannbot/ops-direct-invoke.json"), config);
+    const reused = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, { isTTY: false });
+    assert.deepEqual(reused.preferences, config.preferences);
+  });
+}
+
+test("explicit configuration can omit chip, autonomy and review points", async (t) => {
+  const f = fixture(t);
+  write(f.input, { platform: "ascend", repo: "common", preferences: { interaction: "supervised" } });
+  const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh", initConfig: f.input }, { isTTY: false });
+  assert.equal(config.chip, "unknown");
+  assert.equal(config.preferences.interaction, "supervised");
+  assert.match(config.preferences.autonomy, /所有不确定项/);
+  assert.deepEqual(config.preferences.review_points, []);
+  assert.equal(config.language, "unspecified");
+});
+
+test("language choice is saved and reused without asking again", async (t) => {
+  const f = fixture(t);
+  for (const [index, language] of ["ascendc", "dsl", "unspecified"].entries()) {
+    write(join(f.target, ".cannbot/ops-direct-invoke.json"), { ...answers, language: undefined });
+    const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
+      isTTY: true, question: async (prompt, field) => {
+        assert.match(prompt, /开发语言/);
+        assert.equal(field.key, "language");
+        return String(index + 1);
+      },
+    });
+    assert.equal(config.language, language);
+    write(join(f.target, ".cannbot/ops-direct-invoke.json"), config);
+    const reused = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh" }, {
+      isTTY: true, question: async () => assert.fail("saved language must not be asked again"),
+    });
+    assert.equal(reused.language, language);
+  }
+});
+
+test("switching to Kirin adopts its only supported language without asking", async (t) => {
+  const f = fixture(t);
+  write(join(f.target, ".cannbot/ops-direct-invoke.json"), { ...answers, language: "dsl" });
+  write(f.input, { platform: "kirin", chip: "kirin9030" });
+  const config = await prepareDirectInvokeConfig({ target: f.target, tool: "dsh", initConfig: f.input }, {
+    isTTY: true, question: async () => assert.fail("Kirin supports only AscendC"),
+  });
+  assert.equal(config.language, "ascendc");
+  assert.equal(config.sources.language, "inferred");
+});
+
+test("noninteractive Kirin infers its only framework but rejects DSL", (t) => {
+  const f = fixture(t);
+  write(f.input, { ...answers, repo: undefined, platform: "kirin", language: "dsl" });
+  const invalid = f.install(f.source, "dsh");
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /kirin.*不支持开发语言 dsl/);
+  assert.equal(existsSync(f.target), false);
+  write(f.input, { ...answers, repo: undefined, platform: "kirin", language: "ascendc" });
+  const installed = f.install(f.source, "dsh");
+  assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  const config = JSON.parse(readFileSync(join(f.target, ".cannbot/ops-direct-invoke.json")));
+  assert.equal(config.repo, "common");
+  assert.equal(config.sources.repo, "inferred");
+  assert.equal(config.language, "ascendc");
+});
 
 for (const packaged of [false, true]) {
   test(`${packaged ? "package" : "source"} preserves standalone performance installation and prepares delegated resources`, (t) => {
@@ -292,6 +571,79 @@ for (const packaged of [false, true]) {
 }
 
 
+test("installation reports each step with an increasing completion percentage", (t) => {
+  const f = fixture(t);
+  const result = f.install(f.source, "dsh");
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const steps = result.stdout.split("\n").map((line) => /^\((\d+)%\) (.+)$/.exec(line)).filter(Boolean)
+    .map((match) => ({ percent: Number(match[1]), label: match[2] }));
+  assert.ok(steps.length >= 5, result.stdout);
+  assert.equal(steps[0].percent, 0);
+  const percents = steps.map(({ percent }) => percent);
+  assert.deepEqual(percents, [...percents].sort((a, b) => a - b));
+  assert.equal(steps.at(-1).percent, 100);
+  assert.match(steps.at(-1).label, /安装完成/);
+  assert.ok(steps.every(({ label }) => label.trim().length > 0), result.stdout);
+});
+
+
+test("non-empty target asks whether to update or reinstall from scratch", async (t) => {
+  const terminal = menuTerminal(t);
+  terminal.input.isTTY = true;
+  terminal.output.isTTY = true;
+  const target = mkdtempSync(join(tmpdir(), "target-mode-"));
+  t.after(() => rmSync(target, { recursive: true, force: true }));
+  write(join(target, "AGENTS.md"), "keep");
+  write(join(target, ".cannbot/ops-direct-invoke.json"), "{}");
+  const updating = resolveTargetMode(target, terminal);
+  terminal.input.write("\r");
+  assert.equal(await updating, "update");
+  assert.equal(readFileSync(join(target, "AGENTS.md"), "utf8"), "keep");
+  const cleaning = resolveTargetMode(target, terminal);
+  terminal.input.write("\x1b[B\r");
+  assert.equal(await cleaning, "clean");
+  assert.deepEqual(readdirSync(target), []);
+  // An empty target and a non-interactive run install without asking.
+  assert.equal(await resolveTargetMode(target, terminal), "fresh");
+  write(join(target, ".cannbot/ops-direct-invoke.json"), "{}");
+  const silent = new PassThrough();
+  assert.equal(await resolveTargetMode(target, { input: silent, output: terminal.output }), "fresh");
+  assert.ok(existsSync(join(target, ".cannbot/ops-direct-invoke.json")));
+});
+
+
+test("shared dependency checkouts are linked instead of cloned twice", (t) => {
+  const box = mkdtempSync(join(tmpdir(), "shared-deps-"));
+  t.after(() => rmSync(box, { recursive: true, force: true }));
+  const source = join(box, "performance");
+  const target = join(box, "project");
+  const repo = (path, origin) => {
+    mkdirSync(path, { recursive: true });
+    spawnSync("git", ["init", "-q", path], { encoding: "utf8" });
+    spawnSync("git", ["-C", path, "remote", "add", "origin", origin], { encoding: "utf8" });
+  };
+  repo(join(source, "asc-devkit"), "https://gitcode.com/cann/asc-devkit.git");
+  repo(join(source, "cann-samples"), "https://gitcode.com/cann/other.git");
+  repo(join(source, "ops-tensor"), "https://gitcode.com/cann/ops-tensor.git");
+  mkdirSync(join(target, "ops-tensor"), { recursive: true });
+  write(join(target, "ops-tensor", "keep.txt"), "keep");
+  linkSharedDependencies(source, target, [
+    { name: "asc-devkit", repository: "https://gitcode.com/cann/asc-devkit.git" },
+    { name: "cann-samples", repository: "https://gitcode.com/cann/cann-samples.git" },
+    { name: "ops-tensor", repository: "https://gitcode.com/cann/ops-tensor.git" },
+    { name: "cann-bench", repository: "https://gitcode.com/cann/cann-bench.git" },
+  ]);
+  const linked = join(target, "asc-devkit");
+  assert.equal(lstatSync(linked).isSymbolicLink(), true);
+  assert.equal(realpathSync(linked), realpathSync(join(source, "asc-devkit")));
+  // Mismatched origins, missing checkouts and existing destinations are left alone.
+  assert.equal(existsSync(join(target, "cann-samples")), false);
+  assert.equal(existsSync(join(target, "cann-bench")), false);
+  assert.equal(lstatSync(join(target, "ops-tensor")).isSymbolicLink(), false);
+  assert.equal(readFileSync(join(target, "ops-tensor", "keep.txt"), "utf8"), "keep");
+});
+
+
 for (const location of ["private assets", "registered client Skills"]) {
   test(`reinitialization rejects overrides inside ${location} before changing installed content`, (t) => {
     const f = fixture(t);
@@ -312,7 +664,7 @@ for (const location of ["private assets", "registered client Skills"]) {
       "--target", f.target, "--tool", "dsh", "--override-skills", overrides], { env: f.env, encoding: "utf8" });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /overlap/);
-    assert.doesNotMatch(result.stdout, /Installed ops-perf-optimize@/);
+    assert.doesNotMatch(result.stdout, /安装目录：/);
     watched.forEach((path, index) => assert.equal(readFileSync(path, "utf8"), original[index], path));
   });
 }
