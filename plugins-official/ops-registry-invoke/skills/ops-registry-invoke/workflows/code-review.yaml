@@ -88,7 +88,7 @@ nodes:
     write the aggregated report to $WORK_DIR/code-review/CODE_REVIEW.md.'
   - 'Completion gate: the report exists and is internally consistent — the first-line status
     matches the FAIL finding count, every finding carries a unique ID with file:line evidence
-    that resolves under $WORK_DIR/op/, and the four code↔design conformance checks are recorded
+    that resolves to a reviewed input, and the four code↔design conformance checks are recorded
     under $WORK_DIR/code-review/checks/. This task is explicitly NOT gated on zero findings:
     findings are recorded for the downstream fix stage, never fixed here.'
   approach:
@@ -99,6 +99,10 @@ nodes:
   - 'Load the ascendc-code-review skill first (mandatory) and run its file-review workflow end
     to end (rule routing, per-clause review, line verification); every FAIL / SUSPICIOUS finding
     keeps its unique F / S ID, full file path, and line-verified line number.'
+  - 'Read ../references/supplemental-review-checklist.md relative to this workflow file and apply its
+    supplemental checks and reporting instructions to the existing review. Record each checklist ID
+    and its conclusion in CODE_REVIEW.md; findings may cite the reviewed sources, Golden/plugins,
+    specifications or compatibility baseline. Existing review rules and fix permissions remain in force.'
   - 'Apply the four code↔design conformance checks explicitly over the package and record each
     conclusion with its evidence under $WORK_DIR/code-review/checks/<check>.md: (1) scalar mainchain
     — no hand-written scalar transcendental approximation (`KScalar*`, libm `expf`/`logf`/`powf`/`tanhf`,
@@ -121,8 +125,10 @@ nodes:
     | grep -qE ''^\*\*状态\*\*:[[:space:]]*(✅通过|❌失败)[[:space:]]*$'' exits 0, and it is ❌失败
     exactly when at least one FAIL finding is listed (verifier cross-checks the finding list).'
   - 'Every finding is re-checkable: each finding entry carries a unique ID, a severity, and a
-    file path with line number that resolves under $WORK_DIR/op/ (verifier spot-checks); no finding
+    file path with line number that resolves to a reviewed input (verifier spot-checks); no finding
     lacks evidence.'
+  - 'Every supplemental checklist ID has a PASS / FAIL / SUSPICIOUS / N/A conclusion with evidence
+    or an applicability reason in CODE_REVIEW.md; duplicate findings share the existing finding ID.'
   out_of_scope:
   - 'Read-only over the code under review: do not modify anything under $WORK_DIR/op/, $WORK_DIR/design/,
     $WORK_DIR/spec/, the test suites, $WORK_DIR/golden.py, or tolerances.'
