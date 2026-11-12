@@ -1,0 +1,37 @@
+# 性能探索 → 统一检视整改 → 最终验证
+use_when: 用户要求性能优化，已有全量精度通过的实现及已确认 case、目标和预算；完成探索、统一检视整改及最终验证后交付
+workflow: perf-opt
+max_parallel: 1
+nodes:
+- id: opt-baseline
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/寻优基线.yaml
+  depends_on: []
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: exit
+- id: opt-iterate
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/联合迭代优化.yaml
+  depends_on:
+  - opt-baseline
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
+- id: review-fix
+  task_type: subgraph
+  template: review-fix.yaml
+  file: perf-opt/review-fix/workflow.yaml
+  depends_on:
+  - opt-iterate
+- id: opt-regression
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/寻优回归.yaml
+  depends_on:
+  - review-fix
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit

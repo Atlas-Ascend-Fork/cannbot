@@ -8,3 +8,5 @@ description: 说明 Ascend CANNBot-DSL 节点的报告与证据记录约定，�
 按[报告使用说明](usage.md)记录本节点报告。DSL 的 spec、设计、Unit、casebook、环境 YAML 与性能工作流报告保留原 Skill 格式，不另造 schema。
 
 报告引用 CODE_DIR 的完整 SHA、冻结测试及实际公开入口，区分 JIT/AOT 与环境 full/compile_only，保留 blackbox/whitebox/tdd 的 case 身份和结果。报告不证明执行或性能通过。
+
+当前 DSL 任务按需引用本 Skill 的 templates/ 下设计落稿、测试交接、性能契约及证据资料；仅承接任务已有要求，不新增门槛。跨模块脚本与协议通过本轮 OPS_DIRECT_INVOKE_ROOT 定位，不能按扁平安装后的父目录推导。

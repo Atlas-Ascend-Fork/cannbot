@@ -1,0 +1,34 @@
+title: 精度预检｜白盒与黑盒设备首轮
+goal:
+- 在实现节点验收通过的版本上，用目标设备先跑白盒与黑盒用例及非空 performance 分组，记录逐例结果与失败清单，供修复节点定位。
+approach:
+- 正式执行沿冻结完整数值策略，未指定时使用已写入 spec 的内置默认策略；TDD、筛选、预检及 --all 的结果由同一固定 runner 判定。两阶段的最终 status 直接进入既有结果绑定和门禁，旁路检查只用于诊断；不能为消除阶段一红灯改算法/阈值或自行追加比较文件代替正式绿灯。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 读取 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/operators/<op>/test/testcase.csv`、`$WORK_DIR/design/units/`、最终算子源码与实现节点的验收报告；缺失或前序未通过时停止。
+- 将 `$WORK_DIR` 加入 `PYTHONPATH`，`CANNBOTDSL_OP_MODULE` 设为 `operators.<op>.<op>`（`<op>` 取 `spec.op.name`）；公开入口不是 run 时设置 `CANNBOTDSL_OP_ENTRY`，异常用例未直接暴露 spec 错误码时提供并验证 `CANNBOTDSL_ERROR_MATCHER`。分别通过 `"$PYTHON" "$WORK_DIR/scripts/check_impl_progress.py" --work-dir "$WORK_DIR" --run-sheet whitebox --device <目标设备>` 及同入口的 --run-sheet blackbox 运行固定 runner，工具自动传入 --require-accelerator 并绑定新结果；执行与后续聚合沿用相同运行环境、入口和错误匹配器，设备名按环境取实际目标，禁止用 CPU 冒充。
+- 先白盒后黑盒各跑一次，把 `testcase_output/{whitebox,blackbox}/verify_result_*.csv` 复制到 `$WORK_DIR/precision/precheck/{whitebox,blackbox}/`，同时复制各分组 execution.json，保留命令、退出码、设备与实现版本；原位置结果及绑定也保留，供最终聚合核对。
+- 将失败清单写入 `$WORK_DIR/precision/precheck.yaml`：每组 active case 总数、通过数、失败 case_id，并带上定位信息——白盒取 `branch_ids` 与 `design_ref`，黑盒取 spec 路径与 `condition`，TDD 关联项取 `unit_id`；错误摘要保持原始 detail，不改写。
+- 本节点只采集与记录，不判绿也不修：用例失败不作为节点失败，处置留给修复节点；不修改实现、用例、Golden、阈值或设计。
+- performance 有 active 行时，同样经上述工具的 `--run-sheet performance --device <目标设备>` 验证正确性，结果及 execution.json 复制到 `$WORK_DIR/precision/precheck/performance/`；在 precheck.yaml 按 spec 引用记录统计和失败。为空时注明未提供并跳过，不调用空分组、不生成通过结果。
+procedure:
+- 核对正式结果反映 spec 的完整策略、参考身份及当前 runner 版本，复用仍有效的完整策略结果，不给旧单阶段/旁路 CSV 补签。比较器能力或契约不一致时按原协议报告，不将其误判为候选算法错误，也不降低设备、覆盖或结构证据要求。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对必测分组结果及 execution.json 来自工具实际运行，绑定当前源码、测试、Unit、入口与运行环境，且原生结果和归档副本对应；不接受缺失或过期绑定，不给历史 CSV 补签。
+- 核对必测分组结果 CSV 覆盖全部 active case，命令、退出码、设备与实现版本可追溯，未运行项没有被记成通过。
+- 核对 `precheck.yaml` 统计与原生 CSV 一致，每条失败项都有 case_id 与定位信息（白盒含 branch_ids/design_ref，黑盒及 performance 含 spec 路径），环境或输入构造错误没有被记为业务失败。
+- 核对没有改动实现、用例、Golden 或阈值；本节点不运行 tdd。
+- 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
+acceptance:
+- 'test -s "$WORK_DIR/precision/precheck.yaml"'
+- 'test -s "$WORK_DIR/precision/precheck/whitebox/verify_result_whitebox.csv"'
+- 'test -s "$WORK_DIR/precision/precheck/blackbox/verify_result_blackbox.csv"'
+out_of_scope:
+- 不修改实现、用例、Golden、断言、精度阈值或设计；不运行 TDD 与性能采集。
+- 不把失败判为本节点失败，也不在节点内做修复或放宽判定。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-test-generator
+  verify:
+    skills:
+    - cannbot-dsl-test-generator

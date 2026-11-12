@@ -2,24 +2,28 @@ title: 检视修复｜落实高置信度意见并保持全量功能
 goal:
 - 按 harness 的节点重试预算修复高置信度可读性问题并保持已验证功能；最后一轮仍功能失败时验收恢复的基线作为托底。
 approach:
-- 读取 $OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md，以节点 ID review-fix 开启每轮 begin，允许路径仅为原算子非测试 Python 源码；从 status 获取 CODE_DIR，所有修改与提交由 $OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py 管理。
-- 每次派发只完成本轮修复与全量回归；若已有修复报告或验收失败反馈，先读取上轮提交、问题与原始证据。是否重试及执行次数由 harness core 决定，不在节点内自行循环或另建工作流规避预算。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 每次派发只完成本轮修复与所需全量验证（符合下述零修改条件时复用）；若已有修复报告或验收失败反馈，先读取上轮提交、问题与原始证据。是否重试及执行次数由 harness core 决定，不在节点内自行循环或另建工作流规避预算。
 - 读取 $WORK_DIR/review-fix/baseline.json 和 review-report.md；修改算子时加载 cannbot-dsl-best-practice，仅在本轮算子目录的非测试 Python 源码中落实置信度不低于 80 且判定为 FAIL 的有效意见。
 - 保持冻结的算法、接口、分块、同步、搬运、布局和导出契约；只调整命名、注释、格式及保持求值阶段和值不变的常量表达。低置信度意见按需处理，不改变原检视报告。
 - 在 $WORK_DIR/review-fix/fix-report.md 按原意见编号逐项记录已修复、豁免或未落实，并给出实际修改位置与证据或理由；豁免必须有真实依据，由验收者确认。零发现也明确说明。
 - 执行本轮回归前，核对待交付 Native 产物对应实际源码；失败修复的产物不得作为基线产物交付，版本失效的导出产物按已有构建契约重新生成并保存证据。
-- 使用 checkpoint 保存本轮修复提交并记录完整 SHA，通过 verify 执行每个分组测试，沿用 baseline.json 中的运行入口、错误匹配器和设备环境，使用已有 $CODE_DIR/operators/<op>/test/test_<op>.py 入口分别运行 --sheet blackbox、whitebox、tdd，并传入 --device <原设备> --require-accelerator。按 baseline.json 的 runtime 设置 CANNBOTDSL_OP_MODULE、CANNBOTDSL_OP_ENTRY、CANNBOTDSL_ERROR_MATCHER，PYTHONPATH 包含 $CODE_DIR；为本轮提交使用独立 CANNBOTDSL_CACHE_DIR。由 verify 归档逐例 CSV 到 versioning/artifacts 并记录命令、退出码和日志，review-fix 中引用其实际证据路径；遗留结果先核对归属并保留，不直接删除。零发现也执行全量回归。
+- 需要实际回归时，自行管理本轮修复 Git 提交并记录提交号，沿用 baseline.json 中的运行入口、错误匹配器和设备环境，使用已有 test/test_<op>.py 入口运行 --all --device <原设备> --require-accelerator，验证冻结 CSV 的全部 active case。按 baseline.json 的 runtime 设置 CANNBOTDSL_OP_MODULE、CANNBOTDSL_OP_ENTRY、CANNBOTDSL_ERROR_MATCHER，PYTHONPATH 包含 $WORK_DIR；为本轮提交使用独立 CANNBOTDSL_CACHE_DIR。将逐例 CSV、完整命令、退出码及日志按提交分别保存在 $WORK_DIR/review-fix/ 下。零修改且满足下述复用条件时引用已有全量结果；有任何源码或其他决定结果的输入变化、原证据失效或缺失时实际全量回归，不凭“零发现”跳过。实际重跑通过本轮固定工具 `"$PYTHON" "$WORK_DIR/scripts/check_impl_progress.py" --work-dir "$WORK_DIR" --run-sheet all --device <原设备>` 启动同一 --all --require-accelerator runner 并绑定新结果，保留其原始输出和退出码。
+- 零修改路径：先沿用 baseline 的入口、错误匹配器及已确认运行环境，运行只读 `"$PYTHON" "$WORK_DIR/scripts/review_fix.py" baseline --work-dir "$WORK_DIR"`，将输出中的源码/测试资产、冻结输入、设备、runtime 和来源选择与已冻结 baseline.json 逐项比较，不覆盖基线；再运行不带 --run-sheet 的 `"$PYTHON" "$WORK_DIR/scripts/check_impl_progress.py" --work-dir "$WORK_DIR" --require-whitebox --require-blackbox --require-performance --device <原设备>`。只有实际源码/测试/Native 产物与决定结果的输入未变、完整逐例结果和绑定当前有效、原始日志/实际加载及环境证据可读且适用、全部适用分组通过时，才复用已验收全量正确性结果；不以 Git 提交名、CSV 全绿或基线脚本单独通过代替这些条件，不给旧结果补签。缺少绑定或条件无法确认时实际全量回归，条件变更超出授权时如实阻塞。
+- 复用时在 fix-report.md 注明“零修改、复用全量正确性结果、未重跑”，索引原执行命令/退出码、逐例 CSV 与 execution.json、日志、版本和当前只读复核依据，不复制或改写原始记录；沿用实际未变提交，不制造空修复提交。selected.json 沿用 repaired 模式表示检视要求已满足，记录实际 commit、runtime、证据来源及复用事实；此路径不是 baseline_fallback，不能借零修改跳过有效 FAIL 意见的处置或声称本轮新增设备执行。零修改复用不替代后续独立交付副本复跑或性能采用条件核对。
 - 执行中断时先排查原因，保持本轮源码不变并补齐验证；不能把中断、结果缺失或环境错误当作完整功能失败，也不能混用其他提交的结果。
-- 本轮出现完整功能失败时，在交给验收者前调用 $OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py restore，传当前预期 HEAD、baseline 完整 SHA 和失败原因，创建恢复提交，处理本轮新增的 helper 与 Native 产物，确认当前完整代码树与冻结基线一致。恢复后开启新的只读验证尝试，全量复验恢复提交，不复用旧 SHA 的通过登记。保留本轮失败提交及全部证据，在修复报告中明确整改 FAIL；恢复成功不表示本轮修复通过，是否重试或托底由验收者按 core 的实际预算判断。
+- 本轮出现完整功能失败时，在交给验收者前自行使用本轮独立 Git 仓库（元数据 $WORK_DIR/review-fix/git，工作树 $WORK_DIR/operators/<spec.op.name>）恢复 baseline.json 对应的 baseline 提交，处理本轮新增的 helper 与 Native 产物，确认当前提交、源码和测试资产与冻结基线一致，不操作宿主仓库或受管 CODE_DIR。保留本轮失败提交及全部证据，在修复报告中明确整改 FAIL；原基线结果只在身份和适用条件仍有效时沿下述托底规则复用，失效或无法确认时补齐必要验证。恢复成功不表示本轮修复通过，是否重试或托底由验收者按 core 的实际预算判断。
 - 按实际交付版本写入 $WORK_DIR/review-fix/selected.json，记录 mode（repaired 或 baseline_fallback）、commit、function_status、运行入口与功能证据路径；选定版本或证据失效时及时更新，不能继续引用旧记录。Git 提交、恢复与版本选择均由执行者完成，不交给基线检查脚本。
 - 将执行与修复记录写入 $WORK_DIR/review-fix/fix-report.md，保留各轮提交与原始证据路径，列出逐项处置、选定版本及功能/整改结论；执行过程写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID，并记录最终交付版本对应的 CANNBOTDSL_CACHE_DIR 绝对路径供后续复用，无可复用缓存时如实说明。不覆盖上轮失败证据。
+- 基线恢复时复用原全量正确性结果；performance 为空时记录未提供，不要求该组结果。本节点不做性能计时。
 procedure:
-- 通过 $OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py status --node review-fix 核对当前完整 SHA、路径授权、冻结输入及全部测试证据，通过后按协议登记验收；selected.json 的 commit 必须为当前提交，恢复提交另记 baseline_commit，不把目标 SHA 当作恢复后的 HEAD。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
 - 只读读取 $WORK_DIR/.workflow/status.json 中验收回调命令所指定完整 task-id 的 retries，并从本轮落盘工作流定位同一节点的 max_retries；retries + 1 <= max_retries 表示本次返回失败后 core 仍会重试，否则为最后一轮。以 core 状态及配置为准，不按 Git 提交数量推定预算，不修改状态或次数；预算信息无法核实时不按托底放行。
 - 对照 baseline.json、Git 历史与实际源码核对提交号、冻结资产及当前选定版本；逐组读取原始 CSV，核对 case ID、设备、逐例结果、命令与退出码。尚无有效 selected.json 或证据不完整时不通过，失败反馈引用本轮结果和验收报告路径。
 - repaired 模式必须原全量 case 均通过；验收者对照 review-report.md、fix-report.md 和本轮提交差异，逐项确认置信度不低于 80 的有效 FAIL 意见已实际修复，独立核实修改与豁免依据。意见未落实时节点验收不通过，不能凭报告自述放行。不重新展开全面风格检视，不重复运行测试。
-- baseline_fallback 模式必须有本轮完整功能失败及原始证据，核实失败来自修复改动而非环境、导入、输入构造或用例错误，且已恢复与 baseline 一致的源码和测试资产。若 core 仍有重试预算，返回失败并给出本轮问题与证据，让 core 重派；只有最后一轮且恢复提交的全量复验通过才可验收恢复的基线，明确整改未通过。功能通过但 HIGH 未落实、运行未验证或冻结资产被修改时不得托底放行。
-- 核对实际加载路径、设备及选定源码/导出版本，三个分组的 case 集合完全一致，无停用、跳过、修改 Golden 或阈值；不接受只有通过自述的记录。
+- 对零修改复用，独立比较实际文件、Git/Native 身份、冻结 baseline 与当前输入/环境，核对只读基线输出一致及完整结果门禁返回 0，原始执行/加载和全部适用分组证据仍有效；不是只看零发现声明。确认所有有效意见已处置，selected 的实际未变版本和原证据一致、复用未记作新执行。条件满足时不因本轮没有新 CSV 或新测试命令要求重复上板；有变更、缺失/过期绑定、未关闭意见或证据不足时不得按此路径通过。
+- baseline_fallback 模式必须有本轮完整功能失败及原始证据，核实失败来自修复改动而非环境、导入、输入构造或用例错误，且已恢复与 baseline 一致的源码和测试资产。若 core 仍有重试预算，返回失败并给出本轮问题与证据，让 core 重派；只有最后一轮才可复用原全量通过证据验收恢复的基线，明确整改未通过。功能通过但 HIGH 未落实、运行未验证或冻结资产被修改时不得托底放行。
+- 核对实际加载路径、设备及选定源码/导出版本，各适用分组的结果分别覆盖 baseline.json 中对应组的全部冻结 case（包括非空 performance），无停用、跳过、修改 Golden 或阈值；performance 为空时记录未提供，不接受只有通过自述的记录。
 - 将最终验收与豁免判定写入 $WORK_DIR/.workflow/reports/，文件名包含节点 ID；托底通过表示已恢复可交付基线，不表示风格整改通过。
 acceptance:
 - test -s "$WORK_DIR/review-fix/fix-report.md"

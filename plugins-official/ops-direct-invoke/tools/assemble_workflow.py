@@ -602,6 +602,65 @@ def assemble_static_child(node, path, children, ancestors):
     return {key: value for key, value in node.items() if key != "template"}
 
 
+def dsl_perf_tail_nodes(definition):
+    """Identify the optional DSL tail by its public node IDs, not user prose."""
+    if not isinstance(definition, dict) or definition.get("workflow") != "op-dev":
+        return None
+    nodes = definition.get("nodes")
+    if not isinstance(nodes, list):
+        return None
+    if not any(isinstance(node, dict) and node.get("id") == "perf-opt" for node in nodes):
+        return None
+    selected = {}
+    for tid in ("perf-opt", "review-fix", "documentation"):
+        matches = [node for node in nodes if isinstance(node, dict) and node.get("id") == tid]
+        if len(matches) > 1:
+            raise ValueError(f"op-dev: duplicate {tid} node")
+        selected[tid] = matches[0] if matches else None
+    perf, review, documentation = (selected.get(key) for key in ("perf-opt", "review-fix", "documentation"))
+    if perf.get("task_type") != "subgraph":
+        raise ValueError("op-dev: perf-opt must be a subgraph")
+    if review is not None and review.get("task_type") != "subgraph":
+        raise ValueError("op-dev: cannot replace a non-subgraph review-fix node")
+    if documentation is None:
+        raise ValueError("op-dev with perf-opt requires documentation")
+    return nodes, perf, review, documentation
+
+
+def validate_dsl_perf_tail(definition):
+    """Reject an unsafe complete input without rewriting frozen workflows."""
+    tail = dsl_perf_tail_nodes(definition)
+    if tail is None:
+        return
+    _, _, review, documentation = tail
+    if review is not None:
+        raise ValueError("op-dev with perf-opt must not retain the main review-fix; reassemble the template")
+    dependencies = documentation.get("depends_on")
+    if not isinstance(dependencies, list) or "perf-opt" not in dependencies:
+        raise ValueError("op-dev documentation must depend on perf-opt; reassemble the template")
+
+
+def normalize_dsl_perf_tail(definition):
+    """Wire an explicitly mounted optimization tail before expanding any children."""
+    tail = dsl_perf_tail_nodes(definition)
+    if tail is None:
+        return
+    nodes, perf, _, documentation = tail
+    if "review-fix" in perf.get("depends_on", []):
+        raise ValueError("perf-opt cannot depend on the main review-fix it replaces")
+    definition["nodes"] = [node for node in nodes if node.get("id") != "review-fix"]
+    for node in definition["nodes"]:
+        dependencies = node.get("depends_on")
+        if not isinstance(dependencies, list) or any(not isinstance(value, str) for value in dependencies):
+            raise ValueError(f"node {node.get('id')}: depends_on must be a list of strings")
+        node["depends_on"] = list(dict.fromkeys(
+            "perf-opt" if parent == "review-fix" else parent for parent in dependencies
+        ))
+    if "perf-opt" not in documentation["depends_on"]:
+        documentation["depends_on"].append("perf-opt")
+    validate_dsl_perf_tail(definition)
+
+
 def assemble_template(path, children=None, ancestors=()):
     """Compile a template; collect static child outputs separately from harness data."""
     path = path.resolve(strict=True)
@@ -610,6 +669,7 @@ def assemble_template(path, children=None, ancestors=()):
     if children is None:
         children = {}
     template = load_yaml(path)
+    normalize_dsl_perf_tail(template)
     if isinstance(template, dict) and isinstance(template.get("nodes"), list):
         template["nodes"] = [
             assemble_static_child(node, path, children, (*ancestors, path))

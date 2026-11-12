@@ -2,23 +2,24 @@ title: 交付｜汇总最终产物
 goal:
 - 汇总当前算子的全部交付件与验收证据，形成可追溯交付清单。
 approach:
-- 读取 $WORK_DIR/perf-optimize/HANDOFF.md 与其引用的最终回集成证据，以最终源码、构建及加载身份编写文档和交付。优化前 selected.json 与 precision 报告仅作为历史来源；不引用淘汰候选或过期
-  Native/AOT 产物。
-
-- 交付源码与测试取自最终 CODE_DIR；用 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" status --bundle <交付目录>/code-history.bundle` 导出完整历史和清单，附 versioning 证据及 $OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md 中的独立恢复说明。DELIVERY.md 记录最终完整 SHA 与 bundle 摘要。
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，按其中协议处理版本；本节点 ID 为 `delivery`（Unit 以生成节点 ID 为准）。用 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 本轮存在已启用的性能契约时，必须读取最终验证通过的 opt/selected.json；缺失或失效时终止，不降级读取 review-fix/selected.json 或 opt/pre-review.json。无优化分支才直接使用
+  review-fix 的功能交付指针。
+- 归档 DESIGN.md、selection.yaml 及其引用的原生模型/成本/VF 证据，保持相对路径关系并在 DELIVERY.md 记录原路径与交付路径映射；模型运行时版本/来源只用于设计复现，不作为独立生产副本运行的额外依赖。
 - 按已确认需求清单中的交付绝对路径，交付验收通过的源码、测试、文档、Native 产物及验证证据。
+- 读取最终版本指针：存在 `$WORK_DIR/opt/selected.json` 时以其中 commit 为准，否则读取 `$WORK_DIR/review-fix/selected.json`；交付的源码、文档与证据须对应同一版本。`$WORK_DIR/opt/`
+  已存在产物但缺少 `opt/selected.json` 时终止本节点并说明寻优未完成。
 - 逐项读取上游节点的通过状态、最终文件路径、适用环境与结果证据。
-- 仅使用交付目录中的文件，离开原 workflow 目录完成独立副本复跑，并保存证据。
+- 仅使用交付目录中的文件，离开原 workflow 目录，清除原目录的模块与缓存绑定，用副本的 `test/test_<op>.py --all --device <原目标设备> --require-accelerator`
+  完成全量正确性复跑；沿用最终版本的运行入口、错误匹配器与冻结精度标准。保留本次命令、退出码、版本、实际加载路径、日志与逐例 CSV，在 DELIVERY.md 引用；performance 为空时记录未提供，不要求该组结果，不额外增加性能采集。
 - 在交付目录下写入 DELIVERY.md，并将相同索引保存在 `$WORK_DIR/DELIVERY.md`；列出交付件、运行、导出与复验入口、Native 产物及其验证证据、限制和未解决的非阻断事项。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
-- 核对当前源码和交付产物身份与性能节点选定的最终回集成版本一致；性能报告来自 perf-optimize/run/，未引用旧 performance/performance-report.md。
-
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
-- 核对独立副本复跑通过，实际加载的源码、测试及辅助模块来自交付目录，交付位置及版本与需求清单和本次验收记录一致。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对独立副本复跑的原生结果逐例覆盖冻结 CSV 的全部 active case 且在原目标设备通过（含非空 performance，基础三组保持非空），空 performance 记录未提供；实际加载的源码、测试及辅助模块来自交付目录，不依赖原
+  workflow 的模块、缓存或旧结果，交付位置及版本与需求清单、本次验收记录和最终版本指针一致（优先 `opt/selected.json`，其次 `review-fix/selected.json`）。
 - 核对 `DELIVERY.md` 所列交付件均可定位到真实文件。
-- 核对必需的功能、精度、性能、文档及上游验收证据齐备且相互对应；未将未通过的节点或测试描述为已通过。
+- 核对必需的功能、精度、文档及上游验收证据齐备且相互对应；性能证据仅在本轮已确认要求并启用对应阶段时要求，默认流程不因缺少摸底报告阻断，也不宣称完成性能验证；未将未通过的节点或测试描述为已通过。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
 - test -s "$WORK_DIR/DELIVERY.md"

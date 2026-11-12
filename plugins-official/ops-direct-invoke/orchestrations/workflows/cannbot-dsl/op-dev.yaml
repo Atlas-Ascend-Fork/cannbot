@@ -1,5 +1,5 @@
 # CANNBot-DSL 完整算子开发工作流
-use_when: CANNBotDSL 算子开发全流程（需求、规格、设计、TDD 实现、精度与性能验证、交付）
+use_when: CANNBotDSL 算子开发全流程（需求、规格、设计、TDD 实现、精度验证与交付；性能优化按需挂载）
 workflow: op-dev
 max_parallel: 4
 max_rollbacks: 4
@@ -19,7 +19,7 @@ nodes:
   - create-workspace
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
-  max_retries: 2
+  max_retries: 0
   on_exhaust: exit
 - id: requirements
   task_type: normal
@@ -39,6 +39,15 @@ nodes:
   verifier: ops-direct-invoke-verifier
   max_retries: 2
   on_exhaust: exit
+- id: performance-cases
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/性能用例准备.yaml
+  depends_on:
+  - spec
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
 - id: blackbox-design
   task_type: normal
   yaml: ../../tasks/cannbot-dsl/黑盒用例设计.yaml
@@ -49,87 +58,60 @@ nodes:
   max_retries: 2
   on_exhaust: exit
 - id: solution-design
-  task_type: normal
-  yaml: ../../tasks/cannbot-dsl/方案设计.yaml
+  task_type: subgraph
+  template: design-opt.yaml
+  file: design-opt/workflow.yaml
   depends_on:
+  - performance-cases
   - spec
   - environment
-  executor: ops-direct-invoke-architect
-  verifier: ops-direct-invoke-verifier
-  max_retries: 2
-  on_exhaust: exit
-- id: implementation-gate
-  task_type: normal
-  yaml: ../../tasks/cannbot-dsl/实现门禁.yaml
-  depends_on:
-  - solution-design
-  executor: ops-direct-invoke-architect
-  verifier: ops-direct-invoke-verifier
-  max_retries: 0
-  on_exhaust: exit
 - id: unit-planning
   task_type: normal
   yaml: ../../tasks/cannbot-dsl/单元任务拆分.yaml
   depends_on:
-  - implementation-gate
+  - solution-design
   executor: ops-direct-invoke-architect
   verifier: ops-direct-invoke-verifier
   max_retries: 2
   on_exhaust: exit
 - id: test-generator
-  task_type: normal
-  yaml: ../../tasks/cannbot-dsl/测试生成.yaml
+  task_type: subgraph
+  template: test-generation.yaml
+  file: test-generation/workflow.yaml
   depends_on:
-  - implementation-gate
+  - performance-cases
   - unit-planning
   - blackbox-design
-  executor: ops-direct-invoke-architect
-  verifier: ops-direct-invoke-verifier
-  max_retries: 2
-  on_exhaust: exit
-- id: implementation-loop
-  task_type: subgraph
-  file: .workflow/implementation-tasks.yaml
-  depends_on:
-  - test-generator
-- id: precision-validation
+- id: implementation
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/精度验证.yaml
+  yaml: ../../tasks/cannbot-dsl/全量实现.yaml
   depends_on:
-  - implementation-loop
-  - blackbox-design
   - test-generator
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
-  max_retries: 2
+  max_retries: 3
   on_exhaust: exit
+- id: precision-validation
+  task_type: subgraph
+  template: precision.yaml
+  file: precision/workflow.yaml
+  depends_on:
+  - performance-cases
+  - implementation
+  - blackbox-design
+  - test-generator
 - id: review-fix
   task_type: subgraph
   template: review-fix.yaml
   file: review-fix/workflow.yaml
   depends_on:
   - precision-validation
-- id: performance
-  task_type: subgraph
-  template: performance.yaml
-  file: perf-optimize/workflow.yaml
-  depends_on:
-  - review-fix
 - id: documentation
   task_type: normal
   yaml: ../../tasks/cannbot-dsl/文档生成.yaml
   depends_on:
-  - performance
+  - review-fix
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
   max_retries: 2
-  on_exhaust: exit
-- id: delivery
-  task_type: normal
-  yaml: ../../tasks/cannbot-dsl/交付.yaml
-  depends_on:
-  - documentation
-  executor: ops-direct-invoke-developer
-  verifier: ops-direct-invoke-verifier
-  max_retries: 1
   on_exhaust: exit

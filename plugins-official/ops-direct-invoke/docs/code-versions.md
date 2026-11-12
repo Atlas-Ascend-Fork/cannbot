@@ -1,5 +1,7 @@
 # DSL 代码版本协议
 
+适用范围由所选模板和节点任务声明。当前默认 op-dev 的定制单节点实现流程沿用 WORK_DIR/operators 与原证据协议，不因本参考存在而自动迁移到 CODE_DIR；使用受管目录的独立模板按下文执行，不能在同一运行中混用两种路径。
+
 此协议用于新启动的 DSL 工作流。脚本为 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py`；以下 `CV` 表示该脚本的绝对路径，用 `python "$CV"` 调用。`WORK_DIR` 是 harness 传入的原工作流目录，不能改写。Git 不配置 remote、不推送；不操作宿主项目 Git 或只读示例仓。
 
 ## 目录和权限

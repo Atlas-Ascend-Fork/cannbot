@@ -26,7 +26,7 @@ from pathlib import Path
 import yaml
 
 SHEETS = ("blackbox", "whitebox", "tdd")
-IGNORED = {".git", "__pycache__", "testcase_output", ".pytest_cache"}
+IGNORED = {".case_cache", ".git", "__pycache__", "testcase_output", ".pytest_cache"}
 
 
 def digest(path):
@@ -83,7 +83,8 @@ class BaselineCheck:
     @staticmethod
     def results(folder, baseline):
         statuses = []
-        for sheet in SHEETS:
+        sheets = (*SHEETS, "performance") if baseline["cases"].get("performance") else SHEETS
+        for sheet in sheets:
             path = folder / sheet / f"verify_result_{sheet}.csv"
             if not path.is_file():
                 return "UNVERIFIED"
@@ -104,6 +105,16 @@ class BaselineCheck:
                 return "UNVERIFIED"
             statuses.extend(row["status"] for row in rows)
         return "PASS" if all(status == "passed" for status in statuses) else "FAIL"
+
+    @staticmethod
+    def baseline_device(result_root):
+        with (result_root / "blackbox/verify_result_blackbox.csv").open(
+            encoding="utf-8-sig", newline=""
+        ) as stream:
+            devices = {r["device"] for r in csv.DictReader(stream)}
+        if len(devices) != 1 or next(iter(devices)).split(":")[0] == "cpu":
+            raise ValueError("baseline requires one real accelerator device")
+        return next(iter(devices))
 
     def git(self, *args, binary=False):
         if args[0] not in {"rev-parse", "ls-tree", "show"}:
@@ -145,6 +156,9 @@ class BaselineCheck:
         }
         if not all(cases.values()):
             raise ValueError("all three logical sheets must be nonempty")
+        performance = [r["case_id"] for r in rows if r["sheet"] == "performance" and r["status"] == "active"]
+        if performance:
+            cases["performance"] = performance
         return cases
 
     def validate_managed_baseline(self, commit):
@@ -188,7 +202,7 @@ class BaselineCheck:
                 )
 
     def validate_baseline_inputs(self, baseline):
-        for directory in ("design/doc", "design/units", "environment", "precision"):
+        for directory in ("design", "environment", "precision"):
             root = self.work / directory
             for name, sha in inventory(root).items():
                 baseline["inputs"][f"{directory}/{name}"] = sha
@@ -200,10 +214,7 @@ class BaselineCheck:
             if name not in baseline["inputs"]:
                 raise ValueError(f"missing baseline evidence: {name}")
 
-    def baseline(self):
-        files = inventory(self.operator)
-        if f"{self.op}.py" not in files:
-            raise ValueError("missing public operator module")
+    def baseline_commit(self, files):
         commit = self.git(
             "rev-parse", "--verify", (self.commit or "baseline") + "^{commit}"
         )
@@ -220,17 +231,36 @@ class BaselineCheck:
             raise ValueError(
                 "baseline commit does not match all current source and test assets"
             )
+        return commit
+
+    def selected_results(self, files):
         result_root = self.results_dir or self.test / "testcase_output"
-        with (result_root / "blackbox/verify_result_blackbox.csv").open(
-            encoding="utf-8-sig", newline=""
-        ) as stream:
-            devices = {r["device"] for r in csv.DictReader(stream)}
-        if len(devices) != 1 or next(iter(devices)).split(":")[0] == "cpu":
-            raise ValueError("baseline requires one real accelerator device")
+        selection = None
+        selection_path = self.work / "opt/pre-review.json"
+        if not self.code and selection_path.exists():
+            selection = json.loads(selection_path.read_text())
+            if not isinstance(selection, dict):
+                raise ValueError("optimization selection must be a mapping")
+            if selection.get("operator_files") != files:
+                raise ValueError("optimization selection does not match current source and test assets")
+            if not selection.get("commit") or not isinstance(selection.get("runtime"), dict):
+                raise ValueError("optimization selection lacks source identity or runtime")
+            result_root = Path(selection["results_root"]).resolve()
+            if result_root != (self.work / "opt/pre-review-results").resolve():
+                raise ValueError("optimization results must be in opt/pre-review-results")
+        return result_root, selection
+
+    def baseline(self):
+        files = inventory(self.operator)
+        if f"{self.op}.py" not in files:
+            raise ValueError("missing public operator module")
+        commit = self.baseline_commit(files)
+        result_root, selection = self.selected_results(files)
+        device = self.baseline_device(result_root)
         baseline = {
             "commit": commit,
             "cases": self.cases(),
-            "device": next(iter(devices)),
+            "device": device,
             "operator_files": files,
             "inputs": {},
             "runtime": {
@@ -239,6 +269,10 @@ class BaselineCheck:
                 "error_matcher": os.environ.get("CANNBOTDSL_ERROR_MATCHER", ""),
             },
         }
+        if selection is not None:
+            if selection.get("device") != baseline["device"] or selection["runtime"] != baseline["runtime"]:
+                raise ValueError("optimization selection runtime/device differs from review baseline")
+            baseline["input_selection"] = selection
         if self.results(result_root, baseline) != "PASS":
             raise ValueError("baseline full-case evidence is incomplete or failed")
         self.validate_baseline_inputs(baseline)

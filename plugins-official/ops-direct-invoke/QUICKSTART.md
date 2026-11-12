@@ -44,3 +44,9 @@ opencode
 根据 Agent 的集中问卷补齐算子规格、目标芯片、conda/Python 与 CANN 环境，以及允许修改的范围；也可在最初请求中直接提供。完成后查看 Agent 的交付说明；运行记录在工作区 `.cannbot/` 下。
 
 详细安装参数见 [README](README.md#安装详解)。
+
+## DSL 任务
+
+1. 初始化时选择 Ascend 和 CANNBot-DSL，并提供实际 skills 来源。
+2. 启动前确认是否接入后续性能优化；需要时补齐目标、case 和预算，已有有效答复直接复用。
+3. 默认单节点 op-dev 的代码目录使用本轮 WORK_DIR；采用受管模板时按对应 CODE_DIR 准备上下文。恢复使用原 YAML、快照和状态，不迁移正在运行的目录。

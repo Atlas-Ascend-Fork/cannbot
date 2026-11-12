@@ -1,0 +1,42 @@
+title: 寻优｜检视整改后最终验证与版本冻结
+goal:
+- 确认统一检视后的交付版本满足原正确性及已确认采用条件，冻结最终交付指针。
+approach:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 读取 `$WORK_DIR/opt/decision.yaml`、`$WORK_DIR/opt/pre-review.json`、`$WORK_DIR/opt/iteration.yaml`、`$WORK_DIR/opt/baseline.yaml`、`$WORK_DIR/review-fix/baseline.json`、`$WORK_DIR/review-fix/selected.json`
+  、`$WORK_DIR/contract/perf-contract.yaml` 及检视整改报告；直接消费上游已验收证据，不再进行代码检视或修复。
+- 最终待验证源码以 review-fix/selected.json 为准；通过 review-fix/baseline.json 的 input_selection 和文件哈希关联 opt/pre-review 的来源候选及
+  opt/git 提交，不能把不同 Git 元数据下的提交号当成同一身份，也不能直接交付 decision 的旧 commit。检视的 baseline_fallback 指恢复检视前的选定版本，可能仍是优化候选，不等于原始性能控制。
+- 检视修复已在最终版本上完成 --all 全量正确性回归（基础三组及非空 performance）时，引用其完整证据，不重复跑同一版本同一用例；未改动且上游已验收复用的证据同样可复用。最终源码、用例或必要环境变化使证据失效时，由本节点在既定预算内补全 --all
+  全分组验证；失败或证据不足就地终止，不修改代码、Golden 或精度条件，不放行到文档。
+- 所有全量正确性运行统一用既有 test/test_<op>.py --all --device <原目标设备> --require-accelerator；基础 blackbox/whitebox/tdd 保持非空，非空
+  performance 必须覆盖，空 performance 记录未提供，不额外采集性能。采用或复用的原始结果须覆盖同一冻结 CSV 全部 active case。
+- decision 选择 baseline 表示保留原控制，不属于采用新优化候选，不要求证明相对自身加速；目标未达成如实记录。检视若只做可读性整改仍须复测，按原契约对保留基线、交付及退化的限制判断，不擅自新增改善门槛或放宽明确性能硬要求；此类约定存在影响交付的歧义时终止并报告。最终源码与原始性能控制完全一致时，记录无优化实现变更，复用有效控制证据，不能因为它来自检视
+  baseline_fallback 就跳过身份核对。任何源码改动包括可读性整改，都按冻结 protocol.comparison 对最终版本复测全部约定性能 case；仅有相同候选名、行为等价或旧版本测量不足以复用性能结论。
+- 对比仍使用 opt/baseline.yaml 冻结的原始控制，independent 仅复用仍可比的控制样本，interleaved 按原协议真实配对采集控制与最终实现。沿用预热、样本数、顺序、工具和统计量，保留源码及用例身份、全部有效/无效尝试、命令、退出码、原始文件、snapshot/protocol_id；使用
+  "$PYTHON" "$WORK_DIR/scripts/check_perf_contract.py" --contract <契约路径> --purpose comparison --measurement <最终记录>
+  --reference <控制记录> 并保存输出。设备不要求独占，共享观测不可得记 unknown；不挑慢样本、不取最快轮次。中断沿用逻辑 collection 和累计无效补采预算，按性能寻优记录恢复。
+- 逐项报告最终版本对自然语言 target 的实际结果，采用新候选时按已确认 adopt_rule 判断；保留原控制按上述基线分支处理，目标未达成是否禁止采用沿用原契约，不新增门槛；预算耗尽、目标达成及采用成立分别记录。新候选复测证据不足、原正确性失败或其采用条件不满足时，保留全部证据并终止，不用旧测量交付整改后的新版本，不改写原
+  decision 或无预算重启探索。
+- 最终验证失败时，不把未经统一检视的原始性能控制直接作为交付托底；记录原控制的可恢复身份及需要的检视/验证，移除本节点产生但已失效的 selected 指针并保留历史副本。若要转交原控制，PM 必须通过 harness 另行安排对其检视与最终验证，沿用有效授权及剩余预算；当前节点不能带着问题放行。
+- 所有最终验证及复用依据写入 opt/regression/，写入 opt/selected.json：最终 commit、git_dir、operator_files、来源候选及来源 opt commit、最终检视 commit、正确性证据、性能结果与口径、目标逐项响应及采用结论。该文件只在最终验证成立时产生，是文档和交付唯一优化版本指针。节点恢复先核对已有版本与证据，预算跨轮与重试累计，不覆盖失败记录；执行过程写入
+  .workflow/reports/ 的节点报告。
+procedure:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对最终指针对应实际源码和 review-fix/selected.json，通过 input_selection 及源码/测试哈希关联选优来源，未把检视前版本或不同 Git 仓的同名标记当成交付版本；检视、整改和最终精度证据均覆盖当前实现。
+- 核对全部 active case 的全分组原始结果（基础三组及非空 performance）、用例、设备、命令和版本完整一致；复用依据已说明且仍有效，不重复上板替执行者补证据。最终版本发生变化时，未引用失效精度证据。
+- 核对性能与原始控制同口径，正式样本完整、配对真实、失败尝试及预算可追溯；有源码整改时已对整改后版本完成复测，不仅凭可读性等价复用旧耗时。共享及 unknown 不作独占门禁，脚本通过不替代原始证据和稳定性判断。
+- 对照原始要求及冻结 target/adopt_rule 核对计算和逐项响应，没有新增目标门槛或改变范围、比值方向、权重及统计量；目标未达成、预算耗尽、采用条件不满足分别记录。原始控制无变更时未虚构新收益。
+- 新候选存在精度失败、证据不足或最终采用条件不满足时不得通过；保留原控制不要求自我加速，须按原契约核对基线交付资格及检视整改后的复测，不虚构目标已达成；未经本次统一检视的原控制不得直接托底。selected 只有有效最终验证时才存在，任何旧指针失效均明确留证，未把问题后移到文档或交付。
+- 将验收结论与证据写入 .workflow/reports/ 的节点报告。
+acceptance:
+- test -s "$WORK_DIR/opt/selected.json"
+out_of_scope:
+- 不创建、改写或扩展本轮 scripts/ 中由启动器提供的工作流工具，不通过自行生成验收脚本绕过门禁；缺失、参数不兼容或哈希失效时保留错误并终止，由 PM 处理工具供应。
+- 不重新检视、修复或探索候选，不修改原 decision、perf-contract.yaml、预算、用例、Golden、精度标准或计量协议。
+- 不修改 ops-opmodel-toolkit 参考、通用框架或调度状态，不以未检视版本托底或以旧性能证据交付新代码。
+context:
+  execute:
+    skills: []
+  verify:
+    skills: []

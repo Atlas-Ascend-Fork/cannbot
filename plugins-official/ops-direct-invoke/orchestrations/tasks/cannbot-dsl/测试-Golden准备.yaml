@@ -1,0 +1,39 @@
+title: 测试准备｜Golden 与固定入口
+goal:
+- 生成有独立数值依据的 CPU Golden 与可用测试入口。
+approach:
+- 默认完整两阶段提供独立高精度主参考与 NATIVE_REFERENCE_FUNCTION：主参考沿 spec 数学语义高精度计算后按输出契约转换；同精度参考依据 spec 及不违反其明确要求的冻结 DESIGN 数值链，承接实际计算精度、累加类型和中间舍入/转换边界。原始参考全程高精度或 fp32 的写法不自动成为实现必须保持的中间精度；最终输出 dtype 相同也不证明路径同精度。设计合法选定的低精度计算链须在独立 CPU 参考中表达相应舍入，不用仅末尾 cast 代替；spec 明确要求的中间精度或禁止转换优先，冲突按原协议交接。同一物化输入的隔离副本供两路使用，已有明确其他契约仍按冻结策略执行。
+- 按冻结 per_dtype 绑定完整的内置比较策略，默认完整两阶段仅在无明确其他标准时适用；需要同精度参考时按公开 NATIVE_REFERENCE_FUNCTION 绑定，复用同一物化输入并保持主参考独立。经公开准备入口安装策略，不另写每算子比较器或将缺能力延期给实现阶段。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 读取已安装 ops-direct-invoke 的 $DOC_TEMPLATES_DIR/templates/测试生成子图.md 中本节点适用的方法与证据约定，不调用 PM 入口；<op> 取 design/doc/spec.yaml 的 op.name。直接消费已验收规格、需求、DESIGN、selection、Unit、环境与已有
+  blackbox/performance，不重新决定已冻结语义。
+- 加载 cannbot-dsl-test-generator，沿用规格的精度预检与权威 checker。只编写 operators/<op>/test/<op>_golden.py，调用 Skill 的 prepare_golden.py
+  安装固定 runner 和公共辅助模块；不写 CSV 或其他准备分支。
+- 按共享模板“Golden 与 CPU 方法”完成参考实现及计算方法的独立核验，覆盖影响正确性的数学分支、dtype、数值和异常语义，记录参考来源、同输入两路结果、适用判据和局限；不以样例数量或逐条正式 case 另建独立参考作为完成标准。先安排已知输入的资源策略；完整 case 的资源安排由汇合后 CPU 节点在首次完整 TDD 校验和缓存准备前补齐。
+- 保存 test-generation/golden-evidence.md，在现有参考计算路径说明中对应 spec/DESIGN 的实际计算精度、累加类型及影响数值的舍入位置和来源，自检两份函数确实落实各自职责；不要求新表格、逐 API 映射或完整调度模拟。参考独立于候选实现，不以候选红灯作为追加未确认 cast、补偿或放宽标准的依据；漏表达已确认合法舍入时按来源修正并更新受影响参考证据与缓存。明确的合法路径在真实目标验证前确定，后续合法变更仍按原版本失效规则处理。索引当前 Golden/入口/辅助模块版本、预检与独立核验原始记录，并说明适用语义、实际覆盖范围及未解决缺口，供 CPU 节点复用；不新增记录格式。已有适用证据直接引用，变更使其失效时仅补齐受影响部分，不因新增 case 默认重验整个 Golden。
+- 发现上游冲突、工具或环境缺口时保留事实、最小证据、影响及建议责任阶段，按既有阻塞交接协议结束；同条件重试只做最小复核，不越权修订上游。
+procedure:
+- 默认 native 绑定在公开准备及缓存加载时必须存在，缺失、非法或调用失败明确失败，不自动用截断主参考替代；独立核对两份参考的实际函数、数值精度、累加和舍入位置及其 spec/DESIGN 来源；设计路线不违反规格明确要求，原始高精度参考的写法未被无依据地当作低精度路线，设计特有调度或未确认补偿也未混入参考。来源缺口不能靠增加使候选更易通过的转换消除；尚未真实执行目标不判为精度失败。核对固定 runner 绑定并复用公共比较器回归，不要求本节点提前执行目标算子。
+- 核对正式 runner 实际消费的 Golden 策略与 spec 一致；同精度绑定、缺失/异常处理与约定一致，辅助函数存在或独立对拍成功不证明正式入口已接入。尚不支持的完整判据属于当前工具缺口，不以报告要求后续叠加判定放行。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对本节点实际输入版本、允许写入范围、原始命令/退出码和证据，不能只接受自述；不代跑整批测试，不替执行者补证据。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/测试生成子图.md` 中“Golden 与 CPU 方法”核对 Golden 纯 CPU、独立于目标实现和模型，精度元数据、公共接口及固定入口对应 spec；独立核验的来源、计算路径、适用语义和实际结果足以支撑当前版本，关键数值缺口未解决时不通过。已有适用证据可复用，不重复执行有效核验，也不以样例数量或为每个正式 case 另建参考作为验收门槛。
+- 核对只修改本节点授权资产；完整 CSV 尚未形成不作为本节点失败条件，不要求提前执行全部 CPU case。
+acceptance:
+- test -s "$WORK_DIR/test-generation/golden-evidence.md"
+- test -s "$WORK_DIR/operators/<op>/test/<op>_golden.py"
+- test -s "$WORK_DIR/operators/<op>/test/test_<op>.py"
+out_of_scope:
+- 不派发其他 Agent、启动子工作流或修改调度状态、已启动 YAML；调度仅由当前 harness 子图承担。
+- 不创建或修改本轮 scripts/ 中的固定工作流工具，不修改外部 Skill、生产算子、冻结 spec/DESIGN/Unit、performance 行、环境或精度标准。
+- 不删除用例、改为 excluded、缩小真实输入或放宽断言换取通过；未验证事项如实记录。
+- 不写正式 CSV、白盒/TDD 暂存行，不提前调用依赖完整白盒/TDD 的全量校验或缓存准备。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-test-generator
+    - ops-precision-standard
+  verify:
+    skills:
+    - cannbot-dsl-test-generator
+    - ops-precision-standard

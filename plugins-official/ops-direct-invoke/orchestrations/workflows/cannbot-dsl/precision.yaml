@@ -1,0 +1,32 @@
+# CANNBot-DSL 精度子图：白盒黑盒及非空 performance 预检 → 按失败清单修复 → 全部适用分组放行，op-dev 默认挂载
+use_when: 需要在实现验收通过后完成设备精度放行时（op-dev 默认挂载；也可单独运行做预检与修复）
+workflow: precision
+max_parallel: 1
+nodes:
+- id: precision-check
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/精度预检.yaml
+  depends_on: []
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: exit
+- id: precision-fix
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/精度修复.yaml
+  depends_on:
+  - precision-check
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
+- id: precision-final
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/精度验证.yaml
+  depends_on:
+  - precision-fix
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: rollback
+  rollback_to: precision-fix

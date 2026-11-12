@@ -1,0 +1,21 @@
+title: 性能用例准备
+goal:
+- 将用户提供的性能 case 整理为符合冻结规格的标准用例。
+approach:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 加载 `cannbot-dsl-test-generator` 的性能用例准备指引，读取 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/REQUIREMENTS.md` 和原始任务/用户附件，只标准化用户场景并保留已给 case ID 与来源；契约若存在则沿用其 case ID 对应关系，缺少契约不代表无 case。不自主增加 case、不按 shape 去重。
+- 使用 Skill 的分组安全更新入口维护 `$WORK_DIR/operators/<op>/test/testcase.csv` 的 performance 行，补齐输入配方、spec 引用和来源并校验；无 case 时保存标准表头并在节点报告注明未提供，输入不足或与 spec 冲突时记录并终止。
+procedure:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对用户 case 无遗漏、输入条件有依据、性能分组校验通过且未修改其他分组；未提供与信息缺失已区分，报告写入 `.workflow/reports/`。
+acceptance:
+- 'test -s "$WORK_DIR/operators/<op>/test/testcase.csv"'
+- 用户性能 case 全部录入且通过 Skill 校验；未提供时不生成默认 case。
+out_of_scope:
+- 不生成其他分组、Golden 或实现，不执行设备测试与性能采集。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-test-generator
+  verify:
+    skills: []

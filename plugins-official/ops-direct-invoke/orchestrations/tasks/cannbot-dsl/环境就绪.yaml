@@ -1,24 +1,27 @@
 title: M0｜环境检查（并行分支 A）
 goal:
-- 确认本轮 CANNBotDSL 开发环境，并提供对应的 API 参考。
+- 确认本轮 CANNBotDSL 开发环境具备可用 NPU，并提供对应的 API 参考；环境不满足时阻止本轮继续派发任务。
 approach:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
 - 先读取需求与环境记录中的 conda/Python、CANN 选择和修改授权，按固定激活方式进入该环境。若存在已获授权的准备缺口，在指定的新环境或允许修改的环境内补齐并记录命令与结果；无权限则报告阻塞，不更换环境。后续使用选定 Python 的绝对路径，不使用默认解释器；环境准备已由上游完成时直接使用其激活脚本。
 - 必须加载 `cannbot-dsl-env-check` Skill，按其中的要求执行环境探测和证据记录。
 - 以 `$WORK_DIR` 作为 Skill 的 `--output-dir`；不得重命名或改写 Skill 固定生成的文件及 schema。
-- 以 `$WORK_DIR/cannbot-dsl/docs/` 为本轮 DSL 文档与 API 参考的唯一来源；通过 README、文档索引和目录检索定位实际开发指南与 API 正文，不限定子目录层级或语言布局。将实际入口、正文位置及所属 commit SHA 写入本节点执行记录，版本沿用创建工作区节点的记录；不再提取或生成其他 API 文档产物。
-- 本工作流对 `WARNING/compile_only` 采取更严格的业务政策：仅继续完成方案设计，设计后不进入实现；不得把这一工作流政策写回或伪装成环境 Skill 的原始能力结论。
+- 以 `$WORK_DIR/cannbot-dsl/docs/` 为本轮开发指南与 API 文档的固定参考目录，通过 README、文档索引和目录检索定位正文，不限定子目录层级或语言布局；记录实际入口、正文位置及所属 commit SHA，源码版本沿用创建工作区节点的记录。接口兼容性以选定 Python 实际加载的 DSL 版本为准，按已安装 ops-direct-invoke 的 `$DOC_TEMPLATES_DIR/templates/运行工具.md` 中“DSL 版本与 API 依据”执行；在既有节点报告索引实际包版本、模块加载路径、解释器和文档提交，不改 Skill 产物 schema，不生成另一套 API 文档。环境阶段只核对已用接口，不全量枚举 API；设计、实现和调优按各自消费范围补齐证据。
+- '探测后仅在 `final_status.status: PASS`、`final_status.execution_mode: full` 且设备选择有效时继续文档定位与后续验收。无可用 NPU 的 `WARNING/compile_only`、`FAIL/blocked` 或设备选择无效时，保留 Skill 原始产物并记录阻塞原因，结束本节点执行、交由验收者判失败；不继续方案设计，不把 Skill 的原始状态改写为工作流结论。'
+- '本节点不重试，验收失败由 harness 按 `on_exhaust: exit` 停止新任务派发，等待在途任务收尾后非零退出；不自行终止其他任务或修改调度状态。报告明确“环境不满足，工作流提前终止”，并说明并行分支可能留下部分产物、未完成算子交付。'
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
 - 核对实际解释器、conda 前缀、CANN 根路径及版本与用户确认一致，准备或安装操作未超出修改授权；所有证据来自同一选定组合，不接受自动切换环境后的通过结果。
 - 验证 `environment.yaml` 与 `env_selected_soc.yaml` 均可被 YAML 解析，且结论与探测证据一致。
 - 核对 `final_status.status` 为 `PASS`、`WARNING` 或 `FAIL` 之一，并与 `compile_gate`、`execution_mode`、允许/禁止动作及各阶段证据一致。
-- '`final_status.status: PASS` 时，确认 `env_selected_soc.yaml` 的 `selection.selection_status` 为 `SELECTED`，且包含唯一、非空的逻辑设备与芯片标识。'
-- '`final_status.status: WARNING` 时，确认 `final_status.execution_mode` 为 `compile_only`、编译门禁通过且 NPU 运行环境失败。'
-- 确认 `PASS` 与 `WARNING` 的原生语义及本工作流的额外限制均被准确记录、未被混写；`FAIL` 不得被验收为通过。
+- '仅当 `final_status.status: PASS`、`final_status.execution_mode: full`、编译门禁与 NPU 运行环境均通过，且 `env_selected_soc.yaml` 的 `selection.selection_status` 为 `SELECTED`、包含唯一非空的逻辑设备与芯片标识时，允许本节点验收通过。'
+- '`WARNING/compile_only`、`FAIL/blocked`、设备选择无效或状态矛盾时，核对并保留原始探测证据，在验收报告中说明环境阻塞并判失败；不因产物文件存在、编译通过或诊断记录完整而放行，不要求无 NPU 的分支继续文档定位或方案设计。'
 - 在 `$WORK_DIR/cannbot-dsl/docs/` 内查阅开发指南与 API 文档，依据 API 索引及正文中的接口定义、参数说明或使用约束，确认正确找到 DSL API 文档后才能通过文档验收，不能仅凭文件可读取判定通过。执行记录中的路径不准确时，自行在该根目录内重新定位，并在验收报告中记录确认的 API 文档位置与依据；不因子目录改名、层级调整或语言目录变化要求返工。根目录不存在或找不到实际文档时不通过，空目录、空索引或翻译占位说明不能代替 API 正文。
-- 核对文档来自本轮固定版本的 `$WORK_DIR/cannbot-dsl/docs/`，所属 commit SHA 与创建工作区节点的记录一致，未生成或引用其他 API 提取产物。
+- 核对文档来自本轮固定版本的 `$WORK_DIR/cannbot-dsl/docs/`，所属 commit SHA 与创建工作区节点的记录一致；按已安装 ops-direct-invoke 的 `$DOC_TEMPLATES_DIR/templates/运行工具.md` 中“DSL 版本与 API 依据”审查既有报告中的选定解释器、DSL 实际版本与模块路径及相关原始证据。文档提交、样例符号名或版本号相同不能单独证明接口兼容；已发现的加载身份或接口冲突未解决时不通过，不接受擅自换环境或升降级后的结论，不重复探测仍有效的环境证据。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
+- 环境为 `PASS/full`，编译门禁与 NPU 运行环境通过，且唯一可用设备已有效选定；其他结论均不放行
 - 'test -s "$WORK_DIR/environment/environment.yaml"'
 - 'test -s "$WORK_DIR/environment/env_selected_soc.yaml"'
 - 'test -d "$WORK_DIR/cannbot-dsl/docs"'

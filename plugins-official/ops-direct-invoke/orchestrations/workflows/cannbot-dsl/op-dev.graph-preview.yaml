@@ -1,58 +1,26 @@
 # 只供 workflow-graph 展示运行时生成的子图，不传给 harness。
 subgraphs:
-  implementation-loop:
-    title: 实现与检视 Agent Loop
-    runtime_file: $WORK_DIR/.workflow/implementation-tasks.yaml
-    summary: 按原生 Unit 与 TDD/Golden 逐步实现，并遵循 cannbot-dsl-best-practice 生产代码规范；集成或检视失败回到修复节点，通过后进入全量精度测试。
-    note: 这里展示生成规则。真实 implement-Uxx 节点数量与依赖由原生 units/Uxx.yaml、testcase.csv 确定；test-generator 执行阶段生成并校验 implementation-tasks.yaml，验收通过后调度子图。回滚次数由主工作流 max_rollbacks 限制。
-    nodes:
-    - id: implement-Uxx
-      task_type: normal
-      title: Unit 实现 × N（规划占位）
-      goal:
-      - 每个 Unit 通过单元 Red → Green；实际数量与依赖在运行时生成，当前节点表示 Unit 集合，不表示只有一个 Unit。
-      approach:
-      - 绑定原生 Unit、TDD case、Golden 和允许修改范围；Unit 内部依赖及重叠写集按生成器串行约束处理。
-      depends_on: []
-      executor: ops-direct-invoke-developer
-      verifier: ops-direct-invoke-verifier
-    - id: implementation-fix
-      task_type: normal
-      yaml: ../../tasks/cannbot-dsl/实现修复.yaml
-      depends_on: [implement-Uxx]
-      executor: ops-direct-invoke-developer
-      verifier: ops-direct-invoke-verifier
-      max_retries: 2
-      on_exhaust: exit
-    - id: unit-integration
-      task_type: normal
-      yaml: ../../tasks/cannbot-dsl/单元集成复验.yaml
-      depends_on: [implementation-fix]
-      executor: ops-direct-invoke-developer
-      verifier: ops-direct-invoke-verifier
-      max_retries: 0
-      on_exhaust: rollback
-      rollback_to: implementation-fix
-    - id: implementation-review
-      task_type: normal
-      yaml: ../../tasks/cannbot-dsl/实现检视.yaml
-      depends_on: [unit-integration]
-      executor: ops-direct-invoke-verifier
-      verifier: ops-direct-invoke-verifier
-      max_retries: 0
-      on_exhaust: rollback
-      rollback_to: implementation-fix
+  solution-design:
+    title: 性能分组建模与 DSL 方案落稿
+    workflow_file: design-opt.yaml
+    summary: 有性能 case 时由 Agent 分组建模、搜索并逐组选一个共享优选方案；缺少 VF 成本时允许有界微实验。无 case 走范式设计；两条路线均输出完整 DSL 设计。
+    note: selection.yaml 唯一记录路线、分组与赢家；模型失败不静默降级。DESIGN.md 定义输入分发和剩余合法域的设计默认路径，附必要的 SoC 事实。
     stages:
-    - title: implement-Uxx × N
-      description: 每个节点绑定原生 units/Uxx.yaml、TDD case、<op>_golden.py 与允许修改范围；按 cannbot-dsl-best-practice 生产代码规范实现，微模块知识按需读取，重叠写集串行。
-    - title: 单元 Red → Green
-      description: 新增能力先确认可信 Red 再实现 Green；重试复用有效 Red，已有能力提供复用与当前验证证据，并执行任务要求的回归。
-    - title: implementation-fix
-      description: 首轮核对实现与测试清单；回滚时根据集成或检视报告修复代码，不改冻结设计、Golden、TDD 断言或精度阈值。
-    - title: unit-integration ↩ implementation-fix
-      description: 汇合全部 Unit，实现全量单元 TDD、Golden、白盒及必要黑盒回归；失败回滚到 implementation-fix。
-    - title: implementation-review ↩ implementation-fix
-      description: 检视实现及完整测试证据；发现问题回滚到 implementation-fix，复验通过后 Agent Loop 才完成并进入全量精度测试。
+    - title: design · 同会话建模与落稿
+      description: 同一执行者完成路线判断、分组建模、阶段自检与完整 DESIGN/soc-info 落稿，随后一次独立验收；原生重试基于现有产物恢复，不默认重跑模型。
+  precision:
+    title: 精度预检、修复与放行
+    runtime_file: $WORK_DIR/precision/workflow.yaml
+    workflow_file: precision.yaml
+    summary: 先用目标设备跑白盒、黑盒及非空 performance；无失败则零修复并复用预检结果直接放行，有失败进入修复节点按 case 归因整改，修复后逐组复用当前有效完整结果，补跑缺失或失效分组，最终聚合放行。
+    note: 预检只记录不判绿，判定与重试交给修复节点；最终节点仍有失败时由 harness 回退到修复节点重做（受 max_rollbacks 预算约束），修复后按当前绑定复用或补跑。失败源于冻结用例或设计时带证据终止，不改冻结资产。
+    stages:
+    - title: precision-check
+      description: 在目标设备跑白盒、黑盒及非空 performance 各一次，逐例结果复制到 precision/precheck/，失败清单按 branch_ids、design_ref 与 unit_id 聚合写入 precheck.yaml。
+    - title: precision-fix
+      description: 按失败清单逐项归因；实现问题在 Unit 源码范围内修复并重跑受影响组，用例或设计冲突记录后终止；零失败只写零修复记录。
+    - title: precision-final · 全量放行
+      description: 逐组复用预检、实现完整 TDD、修复或本节点的当前有效完整结果，只补跑缺失或失效分组；全部适用分组通过聚合门禁后放行，失败由 harness 回退到 precision-fix。
   review-fix:
     title: 可读性检视与修复
     runtime_file: $WORK_DIR/review-fix/workflow.yaml
@@ -65,4 +33,4 @@ subgraphs:
     - title: review
       description: 实际阅读算子，产生可读性报告及带固定 ID、置信度与真实位置的意见清单。
     - title: fix · 原生重试
-      description: 修复 HIGH 意见并执行全部黑盒、白盒、TDD case；验收失败由 harness 按预算重试。本轮功能失败先恢复 baseline，有预算时返回失败，最后一轮验收基线托底；性能、文档和交付统一消费验收通过的选定版本。
+      description: 修复 HIGH 意见并用 --all 验证全部 active case（含非空 performance）；验收失败由 harness 按预算重试。本轮功能失败先恢复 baseline，有预算时返回失败，最后一轮验收基线托底；性能、文档和交付统一消费验收通过的选定版本。

@@ -1,25 +1,27 @@
-title: M7｜文档生成与补充
+title: 文档与交付｜最终版本说明、独立副本验证与交付
 goal:
-- 为最终算子实现补齐接口、构建、运行、约束和验证文档。
+- 由同一执行者完成最终文档、交付打包和独立副本验证，随后一次独立验收。
 approach:
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，按其中协议处理版本；本节点 ID 为 `documentation`（Unit 以生成节点 ID 为准）。用 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
-- 读取 $WORK_DIR/perf-optimize/HANDOFF.md 与其引用的最终回集成证据，以最终源码、构建及加载身份编写文档和交付。优化前 selected.json 与 precision 报告仅作为历史来源；不引用淘汰候选或过期
-  Native/AOT 产物。
-- 读取 $WORK_DIR/perf-optimize/HANDOFF.md，围绕最终选定版本编写文档；基线托底时如实说明风格整改未通过及未解决意见，不引用失败候选的性能或功能结果。
-- 基于已通过验收的规格、设计、实现和测试证据编写文档，并标明环境与目标 SoC。
-- 将文档及其来源索引保存到 `$WORK_DIR/documentation/`；文档中的命令和路径须与交付代码一致。
-- 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
+- 按 $DOC_TEMPLATES_DIR/templates/节点资料与报告.md 定向读取必要资料，报告只索引当前版本、原始依据、结果和未关闭项，不复制历史报告。
+- 本轮启用性能契约时必须使用已验收的 opt/selected.json；缺失或失效时停止，不降级到 review-fix 或 pre-review。未启用时使用 review-fix/selected.json；opt 已有模型或候选产物但无 selected.json 时先确认寻优完成，不提前交付旧版本。源码、文档、测试与证据始终对应同一最终指针。
+- 基于已验收的 spec、DESIGN、selection、最终源码和验证证据在 $WORK_DIR/documentation/ 编写适用范围、接口参数、边界、环境/目标 SoC、构建运行、导出/Native 产物与验证结果，命令和路径对应实际代码。模型预测与设备实测区分；无性能优化时注明未做性能验证，不补造收益或要求摸底报告；基线托底、寻优采用或无变更结论如实说明，失败候选的结果不能冒充交付结果。
+- 按需求清单确认的交付绝对路径打包源码、测试、文档、Native 产物及必要验证证据。归档 DESIGN.md、selection.yaml 及其引用的原生模型/成本/VF 证据，保持相对路径关系，在 DELIVERY.md 记录原路径与交付路径映射。模型运行时仅用于设计复现，不自动成为生产依赖；逐项引用上游通过状态、文件与适用环境，不重新审查已有效的设计或实现。
+- 仅用交付目录中的文件，离开原 workflow 目录，清除原目录模块与缓存绑定，用副本 test/test_<op>.py --all --device <原目标设备> --require-accelerator 全量正确性复跑。沿用最终入口、错误匹配器和冻结标准，基础三组及非空 performance 全部 active case 通过；空 performance 记未提供，不新增性能采集。保存命令、退出码、版本、实际加载路径、日志与原生逐例结果，不能以原工作区通过代替副本验证。
+- 执行者自检最终版本与交付副本身份、文档和路径、证据关联、完整 case 覆盖及模块/缓存独立性；不修改冻结设计、测试或生产代码来通过交付，发现上游缺陷按原协议交接。文档或打包问题在本节点允许范围内修正，实际执行依赖或副本输入变化后补齐失效验证。
+- 在交付目录写 DELIVERY.md，同一索引保存在 $WORK_DIR/DELIVERY.md，列明交付件、版本、运行/导出/复验入口、Native 与设计复现证据、限制和未解决的非阻断事项。节点执行记录保存到 .workflow/reports/，独立验收前不自行宣称通过。
+- 原生重试以现有文档、副本、反馈及原始结果为起点，按实际变化修复；只改说明且副本运行资产、环境和有效证据未变时复用本节点副本验证，不重复全量。原工作区或来源不明结果不能替代副本结果，不跳过缺失或失效验证，不重做无关调查或另设重试循环。
 procedure:
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
-- 核对当前源码和交付产物身份与性能节点选定的最终回集成版本一致；性能报告来自 perf-optimize/run/，未引用旧 performance/performance-report.md。
-- 核对交付件或报告的源码提交、选定模式和证据与 perf-optimize/HANDOFF.md 一致；基线托底与正常整改结论分别表述。
-- 核对文档覆盖适用范围、参数、边界、构建运行步骤和验证结果，且与当前实现一致。
-- 抽查文档中的命令和路径与交付代码真实对应。
-- 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
+- 按相同最终指针独立验收文档与交付副本；启用优化时必须对应 opt/selected.json，无优化时对应 review-fix 的已验选定版本，未完成或失效版本不放行。
+- 核对文档的支持域、参数、边界、构建运行、导出及验证结论与最终实现一致，抽查实际命令和路径；设计模型与设备结果、托底与采用结论区分，未开展的验证不冒充通过。复用有效上游裁决，不重做设计、实现或性能审查。
+- 核对副本真实加载源码、测试和辅助模块均来自交付目录，未依赖原 workflow 模块、缓存或旧结果；原生逐例 CSV、命令、退出码、环境、设备与副本版本相符，覆盖全部 active case 并通过。只改说明时允许复用仍有效的本节点副本实跑；文件存在、原工作区通过或不完整结果不能替代独立副本验证，不替执行者重跑补证。
+- 核对需求确认的交付路径、DELIVERY.md 索引、文档、源码、测试、Native 产物和必要证据均可定位且属于同一交付版本，模型归档关系与生产依赖边界正确；未通过或未验证事项没有写成通过。性能证据仅在已确认启用时要求。
+- 保存本次独立验收结论和证据到 .workflow/reports/；验收失败由本节点原生重试处理，不重置状态或另派文档/交付节点。
 acceptance:
 - find "$WORK_DIR/documentation" -name "*.md" -size +0 | grep -q .
+- test -s "$WORK_DIR/DELIVERY.md"
 out_of_scope:
-- 不修改算子实现、测试用例或性能测量结果。
+- 不修改 harness、已启动 YAML、运行状态、冻结 spec/DESIGN/Unit、Golden、测试用例、精度阈值或生产实现，不扩大交付路径授权。
+- 不新增设备实验、性能采集或依赖安装；独立副本正确性复跑沿用原交付要求，不复用失败或失效结果冒充通过。
 context:
   execute:
     skills: []

@@ -1,0 +1,33 @@
+title: 测试准备｜白盒用例草拟
+goal:
+- 从冻结设计准备可追溯的白盒标准行。
+approach:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/测试生成子图.md` 中“真实输入、派生参数与覆盖事实”，从设计与真实输入推导本分支的触发条件和相关参数，区分必要谓词与示例值；condition 和证据只引用可追溯事实。多分块场景按实际变化说明触发范围，不用单块值代表整行，也不把设计路径引用直接当作实际覆盖。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 读取已安装 ops-direct-invoke 的 $DOC_TEMPLATES_DIR/templates/测试生成子图.md 中本节点适用的方法与证据约定，不调用 PM 入口；<op> 取 design/doc/spec.yaml 的 op.name。直接消费已验收规格、需求、DESIGN、selection、Unit、环境与已有
+  blackbox/performance，不重新决定已冻结语义。
+- 加载测试生成 Skill 的白盒及 CSV 方法；从 DESIGN 的真实路径、条件、边界、优先级和默认路径设计输入与预期，保留设计来源，按 Skill 的 WB case/branch ID 契约准备行。
+- 只写 test-generation/whitebox-rows.json（公开分组写入入口所接收的标准 JSON 行数组，所有单元格为字符串）及 whitebox-evidence.md。按当前 spec、DESIGN
+  和 CSV 基线记录完成范围及来源版本。草稿不等于正式校验通过，不等待 Golden 或 TDD。
+- 发现上游冲突、工具或环境缺口时保留事实、最小证据、影响及建议责任阶段，按既有阻塞交接协议结束；同条件重试只做最小复核，不越权修订上游。
+procedure:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/测试生成子图.md` 中“真实输入、派生参数与覆盖事实”，核对输入及实际派生行为满足所声称的分支条件，必要谓词与示例参数未混淆，分块与统计口径清楚；检查只覆盖已有草稿及其依据，不要求尚未产生的 Golden/正式绑定或新增实验。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对本节点实际输入版本、允许写入范围、原始命令/退出码和证据，不能只接受自述；不代跑整批测试，不替执行者补证据。
+- 核对标准行格式、真实设计来源、可执行输入、分支与覆盖意图；不检查尚未生成的 Golden，不要求提前修改正式 CSV。
+- 核对只写本分支暂存行与证据、未写正式用例；有尚不能确定的输入或上游冲突时如实阻塞，不伪造完整设计。
+acceptance:
+- test -s "$WORK_DIR/test-generation/whitebox-rows.json"
+- test -s "$WORK_DIR/test-generation/whitebox-evidence.md"
+out_of_scope:
+- 不派发其他 Agent、启动子工作流或修改调度状态、已启动 YAML；调度仅由当前 harness 子图承担。
+- 不创建或修改本轮 scripts/ 中的固定工作流工具，不修改外部 Skill、生产算子、冻结 spec/DESIGN/Unit、performance 行、环境或精度标准。
+- 不删除用例、改为 excluded、缩小真实输入或放宽断言换取通过；未验证事项如实记录。
+- 不写 Golden、固定 runner、正式 CSV 或 TDD 暂存行。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-test-generator
+  verify:
+    skills:
+    - cannbot-dsl-test-generator

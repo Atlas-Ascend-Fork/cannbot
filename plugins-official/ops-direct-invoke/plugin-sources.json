@@ -34,7 +34,8 @@
     "vendor/cannbot-skills/ops/ops-simulator",
     "vendor/cannbot-skills/ops/ops-kirin-simulator",
     "vendor/cannbot-skills/ops/ops-spec-gen",
-    "vendor/cannbot-skills/ops/ops-design-paradigms"
+    "vendor/cannbot-skills/ops/ops-design-paradigms",
+    "vendor/cannbot-skills/ops/ops-theoretical-performance-estimation"
   ],
   "preserveSkillInvocationPolicy": true,
   "extraAssets": [

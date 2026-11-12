@@ -1,0 +1,40 @@
+# CANNBot-DSL 测试生成子图；复用原生调度与返工
+use_when: 生成 DSL Golden、白盒与 Unit TDD：Golden、白盒和 TDD 三路并行准备，测试集成负责汇合、自检、CPU 检查和修复，由独立验收放行
+workflow: test-generation
+max_parallel: 3
+nodes:
+- id: golden
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/测试-Golden准备.yaml
+  depends_on: []
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: exit
+- id: whitebox
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/测试-白盒草拟.yaml
+  depends_on: []
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: exit
+- id: tdd
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/测试-TDD草拟.yaml
+  depends_on: []
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: exit
+- id: integrate
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/测试-集成.yaml
+  depends_on:
+  - golden
+  - whitebox
+  - tdd
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit

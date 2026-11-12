@@ -291,6 +291,7 @@ class InventoryTests(unittest.TestCase):
             root = Path(directory)
             candidate = root / "operators/reduce_sum"
             candidate.mkdir(parents=True)
+            (candidate.parent / "__init__.py").write_text("", encoding="utf-8")
             (candidate / "reduce_sum.py").write_text(
                 "def run(): return 'candidate'\n", encoding="utf-8"
             )
@@ -337,7 +338,7 @@ class InventoryTests(unittest.TestCase):
                 sys.executable,
                 str(script),
                 "--template",
-                str(WORKFLOWS / "cannbot-dsl/op-dev.yaml"),
+                str(WORKFLOWS / "cannbot-dsl/performance.yaml"),
                 "--output",
                 str(output),
             ],
@@ -347,9 +348,7 @@ class InventoryTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         graph = yaml.safe_load(output.read_text(encoding="utf-8"))
-        node = next(n for n in graph["nodes"] if n["id"] == "performance")
-        child = yaml.safe_load((self.work / node["file"]).read_text(encoding="utf-8"))
-        executor = child["nodes"][0]["executor"]
+        executor = graph["nodes"][0]["executor"]
         self.assertTrue((PLUGIN_ROOT / "agents" / (executor + ".md")).is_file())
 
 

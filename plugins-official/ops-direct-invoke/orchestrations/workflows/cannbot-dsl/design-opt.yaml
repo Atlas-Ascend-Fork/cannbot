@@ -1,0 +1,13 @@
+# CANNBot-DSL 方案子图：同一执行会话完成建模选型与设计落稿，最终独立验收
+use_when: 需要产出算子设计方案时（op-dev 默认挂载；也可单独运行按已有性能 case 决策并完成方案落稿）
+workflow: design-opt
+max_parallel: 1
+nodes:
+- id: design
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/方案设计.yaml
+  depends_on: []
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit

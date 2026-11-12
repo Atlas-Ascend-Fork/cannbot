@@ -14,6 +14,9 @@
 import argparse
 import hashlib
 import logging
+import os
+import json
+import uuid
 import shlex
 import shutil
 import subprocess
@@ -22,11 +25,13 @@ from pathlib import Path
 
 import yaml
 
-from assemble_workflow import write_template
+from assemble_workflow import load_yaml, validate_dsl_perf_tail, write_template
 from workspace import load_context
+from runtime_tools import prepare as prepare_runtime_tools
 
 sys.dont_write_bytecode = True
 LOGGER = logging.getLogger(__name__)
+SCHEDULING_LOGGER = logging.getLogger(__name__ + ".scheduling")
 
 
 def argument_parser():
@@ -129,6 +134,7 @@ def with_environment(command, work, env_script):
         "env",
         f"WORK_DIR={work}",
         f"USER_PROMPT={work / '.workflow/user_prompt.md'}",
+        f"PYTHON={os.environ.get('PYTHON') or sys.executable}",
         *command,
     ]
 
@@ -151,13 +157,7 @@ def resolve_launch_inputs(args):
     return prompt, env_script, tmux
 
 
-def launch(args):
-    work = args.work_dir.resolve()
-    context = load_context(work) if (work / "context.json").exists() else None
-    if context is None and not args.dry_run:
-        raise ValueError("prepare context.json with tools/workspace.py before starting a real workflow")
-    root = Path(context["plugin_root"]) if context else None
-    workflow = resolve_workflow(args, root)
+def resolve_harness(args, context):
     # Installed workspaces pass the dependency path from their installation record.
     harness = (
         (Path(context["skills"]["workflow-orchestrator"]) if context else args.harness_skill)
@@ -166,13 +166,71 @@ def launch(args):
     orchestrator = (harness / "scripts/orchestrator.py").resolve(strict=True)
     if not orchestrator.is_file():
         raise ValueError("workflow-orchestrator CLI not found; specify --harness-skill")
-    template = workflow if args.template is not None else None
-    prompt, env_script, tmux = resolve_launch_inputs(args)
-    if template is not None:
+    return harness, orchestrator
+
+
+def prepare_workflow(args, workflow, work):
+    if args.template is not None:
+        template = workflow
         workflow = work / f"{work.name}.yaml"
         if workflow.exists():
             raise ValueError(f"workflow already exists; resume with --yaml {workflow}")
         write_template(template, workflow)
+    # Observe the final input only; never infer, restore or override a user's cap.
+    definition = load_yaml(workflow)
+    cap = definition.get("max_parallel") if isinstance(definition, dict) else None
+    SCHEDULING_LOGGER.info(
+        "scheduling: top-level max_parallel=%s; %s",
+        cap if cap is not None else "not declared (harness default)",
+        "independent branches are serialized" if cap == 1
+        else "actual concurrency depends on dependencies and resources",
+    )
+    # New complete inputs must obey the same tail contract; recovery keeps frozen inputs.
+    if not (work / ".workflow/status.json").exists():
+        validate_dsl_perf_tail(definition)
+    return workflow
+
+
+def preflight_runtime_tools(workflow, work, env_script):
+    tool_root = prepare_runtime_tools(workflow, work)
+    if tool_root is None:
+        return
+    # Select the task interpreter after environment activation, without shell expansion.
+    bootstrap = (
+        "import os, subprocess, sys; "
+        "interpreter=os.environ.get('PYTHON') or sys.executable; "
+        "sys.stdout.write('tool interpreter: '+interpreter+'\\n'); sys.stdout.flush(); "
+        "sys.exit(subprocess.run([interpreter, *sys.argv[1:]]).returncode)"
+    )
+    preflight_command = with_environment([
+        sys.executable, "-c", bootstrap,
+        str(tool_root / "bootstrap.py"),
+        "--preflight", str(tool_root),
+    ], work, env_script)
+    result = subprocess.run(preflight_command, cwd=work, capture_output=True, text=True)
+    launch_record = tool_root / f"launch-preflight-{uuid.uuid4().hex}.json"
+    launch_record.write_text(json.dumps({
+        "status": "fail" if result.returncode else "pass",
+        "env_script": str(env_script) if env_script else None,
+        "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
+    }, ensure_ascii=False, indent=2))
+    if result.returncode:
+        raise ValueError(f"runtime tools preflight failed before harness launch; evidence: {launch_record}: "
+                         + (result.stderr or result.stdout).strip())
+    LOGGER.info("%s", result.stdout.strip())
+
+
+def launch(args):
+    work = args.work_dir.resolve()
+    context = load_context(work) if (work / "context.json").exists() else None
+    if context is None and not args.dry_run:
+        raise ValueError("prepare context.json with tools/workspace.py before starting a real workflow")
+    root = Path(context["plugin_root"]) if context else None
+    workflow = resolve_workflow(args, root)
+    harness, orchestrator = resolve_harness(args, context)
+    prompt, env_script, tmux = resolve_launch_inputs(args)
+    workflow = prepare_workflow(args, workflow, work)
+    preflight_runtime_tools(workflow, work, env_script)
     command = [
         sys.executable,
         *([str(root / "tools/harness_entry.py"), str(harness)] if context else [str(orchestrator)]),
@@ -196,6 +254,8 @@ def launch(args):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
+    SCHEDULING_LOGGER.addHandler(logging.StreamHandler(sys.stderr))
+    SCHEDULING_LOGGER.propagate = False
     parser = argument_parser()
     args = parser.parse_args()
     try:

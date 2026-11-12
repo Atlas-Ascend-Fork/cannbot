@@ -1,0 +1,37 @@
+title: 寻优｜冻结契约并建立对照
+goal:
+- 在性能优化阶段建立可追溯的正确版本对照与测量证据。
+approach:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 读取 `$WORK_DIR/contract/perf-contract.yaml`、`$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/environment/soc-info.yaml`、`$WORK_DIR/operators/<op>/test/testcase.csv` 与 `$WORK_DIR/precision/execution.yaml` 及其全量通过证据，不依赖单独的摸底节点或预先存在的性能报告。契约、case、目标、采用条件或预算缺失时停止，不自行发明；toolkit 的用户模型工作区 仅在确有模型搜索或校准需求时读取。
+- 必须加载 `ops-theoretical-performance-estimation` Skill，读取其 ops-opmodel-toolkit/SKILL.md 进入 OpModel 路径，按其中的要求执行；本轮只执行冻结契约、建立对照及必要的设备诊断，不提出候选、不修改实现、不与用户交互。
+- 沿用 PM 已确认的自然语言目标及原始需求、出处和确认记录，理解比较对象、case 范围、优劣方向及适用的比值/汇总方法；未解决的语义冲突就地记录并终止，不改写冻结目标。数学、接口、Golden、精度标准与副作用约束沿用已验收输入。
+- 使用精度节点已验收的当前实现，在 `opt/git` 自行管理独立 Git 元数据并冻结源码、测试资产和原始控制 commit，保留代码及用例文件哈希、原精度证据和独立缓存，禁止使用宿主仓库暂存区；从精度执行记录确认实际加载入口、源码及测试版本、设备和驱动、缓存策略、编译选项与计时边界；公开入口和输入/输出配方沿用原 case，保留 seed、预处理及调用序列，输入准备、编译与测试辅助工作不计入设备耗时。只测控制版本，不改实现或已验收测试资产。
+- 采集脚本和临时资料写入 `opt/`，在已确认运行环境中以 `$WORK_DIR` 为 `PYTHONPATH` 加载冻结的公开模块和入口；沿用 `CANNBOTDSL_OP_MODULE`、`CANNBOTDSL_OP_ENTRY` 及既有参数约定，记录实际加载位置和缓存命中/编译情况。输入、输出初始化及必要状态恢复放在计时区间外；采集不设置 `CANNBOTDSL_DUMP_*`、`CANNBOTDSL_PRINT_*`、`CANNBOTDSL_REUSE_ASCENDC` 或 `CANNBOTDSL_PIPE_STAGE` 旁路。
+- 消费启动前的有效 comparison 协议校验；缺记录时运行 `"$PYTHON" "$WORK_DIR/scripts/check_perf_contract.py" --contract <契约路径> --purpose comparison` 并保存输出与退出码。按已确认预热、样本数、顺序、工具和统计量准备测量，协议与实际不一致时记录并终止，不取“更严格”的一方后沿用旧样本。
+- independent 顺序在本节点采集契约全部 case 的控制样本，保存 `$WORK_DIR/opt/control.yaml`；已有同版本、同协议、同用例版本的有效证据可按确认来源复用，不重复采集。interleaved 顺序尚无候选时只冻结控制版本和比较协议，明确待后续同次配对，不伪造控制样本；联合迭代节点同时采集控制和候选。
+- 为优化当前具体疑点按需做瓶颈诊断，使用已确认的 diagnostics 配置；不要求先对全部 case 采集管线数据，也不另设摸底任务。选择 case 时说明范围与依据，保留设备原始记录、命令、退出码、版本及任务关联，诊断数据不替代正式比较；PipeUtilization 的计算与搬运忙时可重叠，不能相加推断总耗时，不能仅凭占比认定根因，不折算 MFU/MBU，不把模型预测写成设备事实。
+- 不要求独占、不获取独占锁、不等待安静窗口；记录可得的轻量共享观测或 unknown，本任务自身串行执行。保留全部有效与无效尝试，不丢弃慢样本；工具错误、缺数据或任务无法关联才按协议预算补采，重试保留已有证据与剩余预算。固定环境与设备，不设调试旁路，不用重复取优掩盖失败。
+- 按性能寻优记录模板保存测量文件和原始资料到 `$WORK_DIR/opt/`，用 `"$PYTHON" "$WORK_DIR/scripts/check_perf_contract.py" --contract <契约路径> --purpose comparison --measurement <控制记录>` 校验已生成的控制记录。诊断原始资料按需保存在 `opt/diagnostics/` 并明确 case 子集和用途，不冒充完整比较记录。
+- 写入 `$WORK_DIR/opt/baseline.yaml`：契约摘要、comparison snapshot/protocol_id、控制身份、比较记录路径或待配对状态、已知设备观察与局限及原始证据索引、预算及基线/探索/最终回归的开销划分与必要预留、已有授权。不授予 ops-opmodel-toolkit 参考 Skill 或通用框架的写权限；划分缺失且影响执行上限时就地终止，由 PM 澄清后再启动。不再记录 MFU/MBU，不由本节点判定优化达标；执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
+procedure:
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对基线身份来自精度节点已验收实现、源码与用例哈希及 `opt/git` 冻结提交，实际加载版本、输入配方、case 集、用例版本、设备、缓存与编译选项可追溯，未修改冻结实现、测试或正确性标准。
+- 核对契约摘要忠实于已确认自然语言要求，比较对象、方向、case 范围和适用汇总方法一致，未用默认规则替换特殊目标；未解决的语义冲突不通过，协议脚本不承担目标达标裁决。
+- independent 核对控制记录和全部原始样本满足 comparison snapshot，样本完整、无效尝试和补采预算有依据、结构校验通过；interleaved 核对控制版本和协议已冻结、明确待配对且未用诊断数据伪装比较样本。不要求独占或安静窗口证明，共享记录不自动证明可比或抵消波动。
+- 若开展诊断，核对所选 case 范围及依据、源码版本、设备任务和报告对应，管线数据及局限真实可复核，未凭 busy 占比判根因、将重叠管线忙时相加或把模型预测当实测；未开展的诊断如实记录，不凭缺少全量管线报告拒收。
+- 核对 `opt/baseline.yaml` 索引足以让后续联合迭代节点定位控制版本、协议、当前测量和可用诊断证据；预算、目标及授权来自已确认输入。证据不足或实际口径不一致时退回补齐，不重复上板替执行者提供证据。
+- 将验收结论及证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
+acceptance:
+- 'test -s "$WORK_DIR/opt/baseline.yaml"'
+out_of_scope:
+- 不创建、改写或扩展本轮 scripts/ 中由启动器提供的工作流工具，不通过自行生成验收脚本绕过门禁；缺失、参数不兼容或哈希失效时保留错误并终止，由 PM 处理工具供应。
+- 不提出或实现候选，不修改算子实现、已验收测试、Golden、精度标准与 `perf-contract.yaml`。
+- 不修改 opmodel 通用框架，不自行增加预算、改变设备或补默认目标。
+- 不依赖独立摸底任务，不把诊断性采样、模型排名或结构校验通过表述为优化收益。
+context:
+  execute:
+    skills:
+    - ops-theoretical-performance-estimation
+  verify:
+    skills: []

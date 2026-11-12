@@ -2,13 +2,13 @@ title: 性能优化｜原 Skill 五阶段优化与回集成
 goal:
 - 优化已通过精度与检视修复的 DSL 实现，交付满足原性能 Skill 完成条件的最终版本及可追溯证据。
 approach:
-- 读取 $OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md，使用 harness 提供的完整节点 ID，通过 $OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py status 获取 CODE_DIR，WORK_DIR 保持原值。核对 review-fix/selected.json 的 commit 与当前代码仓 HEAD 一致；原 Skill 的隔离候选沿用其版本协议，不直接写主代码仓。
+- 读取 $OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md，使用 harness 提供的完整节点 ID，通过 code_versions.py status 获取 CODE_DIR，WORK_DIR 保持原值。核对 review-fix/selected.json 的 commit 与当前代码仓 HEAD 一致；原 Skill 的隔离候选沿用其版本协议，不直接写主代码仓。
 - 加载实际安装的 ops-perf-optimize-workflow，解析其真实 SKILL_DIR 和 scripts 绝对路径，完整读取其工作流契约。不要加载注册式工程的 perf-optimize.yaml，不以本子图文件位置推导性能
   Skill 路径。
 - 消费 $WORK_DIR/review-fix/selected.json、运行入口、$WORK_DIR/design/doc/spec.yaml、DESIGN.md、environment/environment.yaml、env_selected_soc.yaml
   和已确认需求。用 spec.op.name 定位 operators/<op>；DSL 参考仓为 $WORK_DIR/cannbot-dsl。full/compile_only 是环境能力，不是 jit/aot；从实际构建/入口记录取得执行模式。缺少优化配置或模式时本节点阻塞，由
   PM 补齐，不编造确认。
-- 用选定 Python 执行 $OPS_DIRECT_INVOKE_ROOT/tools/prepare_dsl_performance.py --work-dir "$WORK_DIR" --code-dir "$CODE_DIR"。该脚本把冻结测试适配到 perf-optimize/inputs/functional/cases.csv、performance.csv
+- 用选定 Python 执行本入口 scripts/prepare_dsl_performance.py --work-dir "$WORK_DIR" --code-dir "$CODE_DIR"。该脚本把冻结测试适配到 perf-optimize/inputs/functional/cases.csv、performance.csv
   与 execution-map.json；原 testcase.csv、runner、Golden 和辅助模块保留。原 raises_error:错误码 用例映射为非计时的 host_only，host_assertion 保留原 runner 判定，expected_error 留空；
   由原异常属性或 CANNBOTDSL_ERROR_MATCHER 验证错误码，不把错误码当作异常消息子串，阶段取证时记录实际异常匹配依据。
 - 已有 perf-optimize/optimization-request.json 时调用原 prepare_case_sets.py validate-request 并复用匹配的确认。首次调用原 create-request：backend=cannbot_dsl、code_dir=$CODE_DIR/operators/<op>、dsl.repo_root=$WORK_DIR/cannbot-dsl、entrypoint=原
@@ -18,7 +18,7 @@ approach:
   sheet + case_id 调用固定 runner，不虚构 pytest nodeid。性能 case 使用同一原始输入配方、seed、调用序列、重复和状态恢复要求，完整 target launches 按原采样协议计时；不得将序列拆成无关单次调用。
 - 前处理建立隔离项目根，保持 operators/<op>/ 包层级、原公开入口和全部共享依赖；code_dir 只界定算子源码范围，不代表 Python 导入根。沿抽取映射复制依赖，原测试在候选的同相对路径执行，PYTHONPATH
   只指向候选项目根；参考仓和原 WORK_DIR 均不能作为候选 import 后备。在实际执行进程中取证 __file__、源码、构建与加载身份，候选错误匹配器亦遵循同一隔离要求。
-- 功能逐例复验使用 $OPS_DIRECT_INVOKE_ROOT/tools/run_dsl_performance_case.py --candidate-root <隔离项目根> --execution-map "$WORK_DIR/perf-optimize/inputs/execution-map.json"
+- 功能逐例复验使用本入口 scripts/run_dsl_performance_case.py --candidate-root <隔离项目根> --execution-map "$WORK_DIR/perf-optimize/inputs/execution-map.json"
   --case-id <原case_id> --entry <原module:callable> --device <原设备>，需要时传 --error-matcher <原匹配器模块>；包装器保持原 runner/Golden 资产并核验候选 import
   来源。它只执行功能用例，不能作为正式性能采集器或替代原 Skill 的编译/加载门禁。
 - 本轮原 Skill OUTPUT_DIR 固定为 $WORK_DIR/perf-optimize/run。已有 manifest/state 时按原公开 inspect/verify 和恢复协议继续，不重建冻结输入、不清空状态、不重开轮数。知识库不可用按原

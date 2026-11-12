@@ -31,6 +31,9 @@ class CodeVersionsTests(unittest.TestCase):
         self.work.mkdir()
         self.code = self.work / "code"
         self.initial = self.call("init")["head"]
+        # Use a real package so installed OpModel operators cannot shadow the fixture.
+        self.initial = self.change("package", "a1", self.initial,
+                                   "operators/__init__.py", "")
 
     def call(self, action, *args, ok=True):
         result = run_code_versions(self.work, action, *args)
@@ -214,7 +217,7 @@ class CodeVersionsTests(unittest.TestCase):
             sha = self.checkpoint(node, "a1", self.initial)
             self.verify(node, "a1", sha)
             units[node] = sha
-        self.assertFalse((self.code / "operators").exists())
+        self.assertEqual({p.name for p in (self.code / "operators").iterdir()}, {"__init__.py"})
         self.assertFalse((self.work / "code-worktrees/u1/operators/u2.py").exists())
         deps = [arg for n, s in units.items() for arg in ["--dependency", n + "=" + s]]
         return units, deps

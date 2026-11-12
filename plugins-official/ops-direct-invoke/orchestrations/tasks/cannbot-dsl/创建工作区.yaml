@@ -2,17 +2,16 @@ title: 初始化｜创建工作目录
 goal:
 - 初始化本轮算子开发工作目录。
 approach:
-- 执行 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" init`，保存返回的 CODE_DIR 与初始 SHA；仅新运行初始化，旧目录不迁移、不清空。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
 - 保留 harness 已创建的 `$WORK_DIR` 及其中的 `.workflow/`，只补齐本轮需要的工作目录，不得清空或覆盖既有运行状态。
 - 优先复用 `$WORK_DIR/cannbot-dsl` 或任务输入明确指定的前轮只读示例仓，记录实际路径、官方 remote 和 commit SHA；需要本轮固定路径时可链接已授权读取的快照。仅在无有效资产时执行 `git clone --depth 1 https://gitcode.com/cann/cannbot-dsl.git "$WORK_DIR/cannbot-dsl"`。已有目录不得清空、覆盖、pull 或切换版本；来源不符则报告冲突。该仓只读，不修改、不构建、不安装。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
-- 运行 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" status`，核对独立代码仓、初始 SHA、版本记录与 WORK_DIR 对应。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
 - 核对 `.workflow/` 下的 harness 运行状态未被删除或修改。
 - 核对 `$WORK_DIR/cannbot-dsl` 的 remote 为官方仓、工作树无修改（`git status --porcelain` 为空），commit SHA 与执行记录一致。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
-- test -s "$WORK_DIR/versioning/state.json"
 - 'test -d "$WORK_DIR" && test -w "$WORK_DIR"'
 - 'test -d "$WORK_DIR/.workflow"'
 - 'test -d "$WORK_DIR/cannbot-dsl/samples"'

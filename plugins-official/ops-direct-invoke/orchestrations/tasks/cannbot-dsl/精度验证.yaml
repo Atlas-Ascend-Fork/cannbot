@@ -1,30 +1,49 @@
-title: 全量精度验证｜冻结用例与阈值的设备实测
+title: 全量精度验证｜全部适用分组设备放行
 goal:
-- 在实现与检视 Agent Loop 完全通过后，用最终算子源码运行已接入的黑盒、白盒和 TDD 用例，依据已校验的独立 <op>_golden.py 完成全量精度验证。
-- 保存逐例原始结果和可复核的精度结论，交给检视修复子图保存基线和冻结用例。
+- 完成最终算子版本的全量正确性放行，保存逐例可复核结果。
 approach:
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，按其中协议处理版本；本节点 ID 为 `precision-validation`（Unit 以生成节点 ID 为准）。用 `$OPS_DIRECT_INVOKE_ROOT/tools/code_versions.py --work-dir "$WORK_DIR" status --node <节点ID>` 获取 CODE_DIR，WORK_DIR 始终保持为原工作流目录。
-- 核对 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/DESIGN.md`、`$CODE_DIR/operators/<op>/test/<op>_golden.py`、`$CODE_DIR/operators/<op>/test/test_<op>.py`、`$CODE_DIR/operators/<op>/test/testcase.csv`、最终算子源码以及实现集成和检视报告；缺失或前序工作未通过时停止。
-- 将 `$CODE_DIR` 加入 `PYTHONPATH`，将 `CANNBOTDSL_OP_MODULE` 设为 `operators.<op>.<op>`（`<op>` 取 `spec.op.name`）。公开入口不是 run 时设置 CANNBOTDSL_OP_ENTRY；目标异常未直接暴露 spec 错误代码时，提供并验证 CANNBOTDSL_ERROR_MATCHER。分别以 `--sheet blackbox|whitebox|tdd --device npu --require-accelerator` 运行固定 test_<op>.py；实际设备名可按环境替换，但禁止 CPU 冒充目标设备。三个逻辑分组都必须非空且逐例通过。Golden 的公开接口与当前 spec 一致，精度容差以 spec.yaml 的 numerical_tolerance.per_dtype 为准。
+- 正式执行沿冻结完整数值策略，未指定时使用已写入 spec 的内置默认策略；TDD、筛选、预检及 --all 的结果由同一固定 runner 判定。两阶段的最终 status 直接进入既有结果绑定和门禁，旁路检查只用于诊断；不能为消除阶段一红灯改算法/阈值或自行追加比较文件代替正式绿灯。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 核对 `$WORK_DIR/design/doc/spec.yaml`、`$WORK_DIR/design/doc/DESIGN.md`、`$WORK_DIR/operators/<op>/test/<op>_golden.py`、`$WORK_DIR/operators/<op>/test/test_<op>.py`、`$WORK_DIR/operators/<op>/test/testcase.csv`、最终算子源码、实现节点的验收报告与
+  `$WORK_DIR/precision/fix-report.md`；缺失或前序工作未通过时停止。
+- 收到本节点重试反馈时，先读取本节点上一轮原始执行及验收报告，沿用相同运行环境、模块入口和错误匹配器，运行只读门禁 `"$PYTHON" "$WORK_DIR/scripts/check_impl_progress.py" --work-dir "$WORK_DIR" --require-whitebox --require-blackbox --require-performance --device <目标设备>`，不带 --run-sheet。记录命令、输出及退出码；该检查不启动 runner，不重签旧 CSV。
+- 只有上一轮确属本节点已经完成的全量设备验证，所有适用分组（基础三组及非空 performance）的 case 均有完整结果、execution.json 仍绑定当前源码/测试/Unit/入口/配置环境和目标设备，且原始日志与实际加载路径可核对、失败已定位为未解决的算子业务错误、决定结果的条件未变时，才复用该失败证据。只读门禁返回 1 仅是必要条件，不能单凭退出码或 CSV 的 failed 状态排除环境、输入构造、编译工具或契约错误。
+- 满足上述条件时，保留原始全量结果、绑定、日志及各轮报告，只追加当前条件复核、失败 case 与原证据的实际绝对路径；在 execution.yaml、execution.log 和 precision-report.md 的当前索引明确“复用本节点失败证据、未重跑、仍未通过”。不再次执行 --run-sheet all、不在本节点修代码，也不把失败记录用于放行；按正常执行协议交付失败事实，verifier 仍判 fail，由 harness 消耗原重试预算并按现有 rollback_to 回到 precision-fix，不手改状态或另建循环。
+- 条件复核不成立时不能复用失败来跳过验证：缺失/过期绑定、门禁返回 2、漏测、进程中断或基础设施错误都属于需要处理的执行/证据缺口；在授权及既定环境内排除后按下述入口实际补齐本阶段完整验证，不能修复时如实阻塞。源码、用例或相关环境变化使旧结果失效时，须为每个适用分组取得当前版本的有效完整结果，按下述分组规则实际补跑，不能沿用旧版本通过。有效记录不补签，失败或未完成均不得标为 PASS。
+- 成功放行按分组核对既有结果，不以 fix-report.md 是否零修复决定能否复用。复用来源可为预检、实现最后一轮完整 tdd、精度修复的完整分组回归或本节点已完成结果；每个分组的原生完整 CSV、execution.json、原始日志及实际加载证据必须匹配当前源码、测试、Unit、工具、运行环境、入口、判据与目标设备，且覆盖该组全部 active case 并通过。只读身份门禁及原始记录共同确认适用性，不能凭声明影响较小保留已失效分组。仅在这些条件成立时记录“复用预检结果”或其他实际来源、未重跑；诊断、局部 Unit 结果、旧版本、未完成或缺绑定结果不能充当完整分组证据，不补签、不拼接单例。
+- 逐组确定缺失、失效或未通过的结果，除上述已确认业务失败重试复用外，经下述公开入口补跑所需分组；同一交付版本已完整通过且绑定有效的分组不再运行，不因经过修复节点强制 --all。源码发生修改后按工具实际身份失效规则检查所有分组，可能需要全部重跑，不能仅跑原失败组。最终 blackbox、whitebox、tdd 三个基础分组非空，非空 performance 一并覆盖，所有适用分组逐例通过并通过最终聚合门禁。
+- 沿用选定运行环境，将 $WORK_DIR 加入 PYTHONPATH，并设置 CANNBOTDSL_OP_MODULE=operators.<op>.<op>；非 run 入口和错误匹配器沿用原确认值。仅补跑所需分组时使用 "$PYTHON" "$WORK_DIR/scripts/check_impl_progress.py" --work-dir "$WORK_DIR" --run-sheet <分组> --device <目标设备>；所有适用分组均需补跑时可用 --run-sheet all。工具启动固定 runner 的 --require-accelerator 模式并生成真实绑定，禁止 CPU 冒充目标设备。补齐后在相同环境下运行不带 --run-sheet 的 --require-whitebox --require-blackbox --require-performance --device <目标设备> 聚合门禁，全部通过才放行；Golden 与精度容差仍以当前 spec 为准。
 - 黑盒 case 必须与 CSV 黑盒行及按需重算的覆盖报告对齐；`match_golden_nan` 只在 spec 明示的 NaN 场景采用，`raises_error:<code>` 必须由目标入口实际抛出匹配的错误语义，环境、输入构造或任意异常都不得算作成功。
-- 固定算子实现版本、设备型号、驱动与运行环境、测试框架版本和输入集合；在目标设备上执行全部黑盒、白盒和 TDD 用例，分别保留 test_<op>.py 写入 testcase_output/{blackbox,whitebox,tdd}/、再由 verify 归档到 versioning/artifacts/<证据ID>/ 的逐例结果 CSV；以 verify 返回的归档路径作为持久证据、运行命令、退出码、逐例结果和原始日志；如逐例调用则保留带 case_id 的独立结果文件。
-- 对 NaN/Inf、尾块、dtype、shape、layout、边界值与多输出逐项检查；任何失败都保留可重现输入和失败诊断，不删除用例、不修改 Golden、规格或阈值以换取通过。
-- 将命令、退出码、环境及实现/用例版本记录写入 `$WORK_DIR/precision/execution.yaml`，原始运行日志写入 `$WORK_DIR/precision/execution.log`，汇总结论写入 `$WORK_DIR/precision/precision-report.md`；报告引用三个分组原生结果 CSV 的路径、用例清单及覆盖关系；如果设备不可用、用例未接入或实际运行被跳过，结论必须为未验证，不得标记 PASS。
+- 实际补跑固定当前源码、测试、目标设备和环境，保留命令、退出码、原始日志及完整逐例 CSV；未重跑分组保留原始证据并索引实际来源，不伪称本轮新执行。execution.yaml、execution.log 和 precision-report.md 区分复用、补跑、失败和未验证范围。
+- 对 NaN/Inf、尾块、dtype、shape、layout、边界值与多输出逐项检查；任何失败都保留可重现输入和失败诊断，不删除用例、不修改 Golden、规格或阈值以换取通过。本节点不做实现修复：仍有失败时记录失败清单与证据后按执行协议结束，由 harness 回退到修复节点重做，修复后本节点按当前版本的分组复用与补跑规则重新核验。
+- 将命令、退出码、环境及实现/用例版本记录写入 `$WORK_DIR/precision/execution.yaml`，原始运行日志写入 `$WORK_DIR/precision/execution.log`，汇总结论写入
+  `$WORK_DIR/precision/precision-report.md`；报告引用全部适用分组原生结果 CSV 的路径、用例清单及覆盖关系，performance 为空时注明未提供，不要求结果 CSV；如果没有当前适用的真实执行证据，或必需分组既未有效复用、也未实际补跑，结论必须为未验证，不得标记 PASS。有效复用不属于跳过验证，不因本轮未重跑单独判为未验证；复用仍须满足前述完整性、当前身份绑定和通过条件。
 - 将本节点执行过程记录写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID；业务产物仍写入本任务约定的位置。
 procedure:
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，通过本节点 status 取得 CODE_DIR；审查提交、依赖版本、冻结输入及原始证据的一致性。发生代码写入的节点须完成协议中的 verifier 登记；不得将 checkpoint 成功视作验证或验收通过。
-- 核对 `$WORK_DIR/precision/` 中的执行记录、日志及汇总报告，并读取报告引用的原生逐例结果 CSV；确认全部证据可追溯到冻结用例清单。
-- 核对 blackbox、whitebox、tdd 三组全部必测用例均在目标设备真实执行且通过当前生效的判定规则；不存在跳过、伪造结果、缺失输出或未经解释的覆盖缺口。
+- 核对正式结果反映 spec 的完整策略、参考身份及当前 runner 版本，复用仍有效的完整策略结果，不给旧单阶段/旁路 CSV 补签。比较器能力或契约不一致时按原协议报告，不将其误判为候选算法错误，也不降低设备、覆盖或结构证据要求。
+- 按本轮固定插件资源的 `$DOC_TEMPLATES_DIR/templates/节点资料与报告.md`，围绕本节点职责读取必要资料并引用原始证据，避免重复调查和报告全文抄写；保留本任务要求的实际执行与独立审查。
+- 读取实现及精度修复已验收的设计一致性证据，运行 "$PYTHON" "$WORK_DIR/scripts/check_design_evidence.py" --work-dir "$WORK_DIR" 确认仍绑定当前源码；记录缺失或失效时退回执行者补齐，不把三组全绿当作结构符合设计，不重复开展已有效完成的符合性审查。
+- 核对 `$WORK_DIR/precision/` 中的执行记录、日志及汇总报告，并读取报告引用的原生逐例结果 CSV；确认全部证据可追溯到冻结用例清单与最终实现版本。
+- 在与执行相同的环境、目标设备及入口设置下运行不带 --run-sheet 的结果聚合门禁，核对每个完整分组的 execution.json、当前输入身份与 CSV 摘要匹配；工具无补签模式。缺失或失效的分组须实际补跑，不能刷新哈希或按人工影响判断绕过失效边界。
+- 成功放行逐组核对实际来源、完整执行范围、当前版本/设备绑定、日志与实际加载依据；预检、实现完整 tdd、修复完整分组或本节点有效结果均可复用，不要求 fix-report.md 为零修复。复用明确记录未重跑，补跑有本次真实结果；所有结果对应同一当前交付身份且覆盖完整适用分组，不接受诊断、局部结果、跨版本拼接或补签。失败重试复用仍只能支持 fail，不能据此放行。
+- 本节点复用失败证据时，独立核对上一轮完整设备执行及全部适用分组原始结果、当前版本/目标设备绑定、实际加载与环境证据、具体失败 case 和业务归因；门禁返回 1 不等于已证明业务失败。缺失、过期、未完成、基础设施或契约错误不能按该路径跳过。条件未变且证据完整时接受“未重复运行”的事实，但最终 verdict 仍必须 fail，并引用原始失败与当前复核报告路径供原生回滚反馈使用，不能因为本轮没有新全量执行就要求重复上板。源码修复后旧失败不得继续作为当前结论，须核对新版本全部适用分组的真实完整执行和有效绑定，按同一分组规则复用或补跑。
+- 核对 CSV 全部 active case 均在目标设备真实执行且通过当前生效的判定规则，blackbox、whitebox、tdd 三个基础分组非空，非空 performance 同样覆盖，空 performance
+  记录未提供而非通过；预检失败清单与 `fix-report.md` 中的条目均已关闭，不存在跳过、伪造结果、缺失输出或未经解释的覆盖缺口。
 - 核对数值例报告包含实际生效的误差指标与阈值、实测值和 pass/fail；行为例报告包含每项可执行断言及实际观测结果，结构承诺另有 review_evidence 验收。
-- 核对精度容差以 `spec.yaml` 的 `numerical_tolerance.per_dtype` 为准；`match_golden_nan` 只在 spec 明示的 NaN 场景采用；`raises_error:<code>` 由目标入口实际抛出匹配的错误语义，环境、输入构造或任意异常均未算作成功。
-- 核对失败、超时或环境问题均未被汇总为通过。
+- 核对精度容差以 `spec.yaml` 的 `numerical_tolerance.per_dtype` 为准；`match_golden_nan` 只在 spec 明示的 NaN 场景采用；`raises_error:<code>`
+  由目标入口实际抛出匹配的错误语义，环境、输入构造或任意异常均未算作成功。
+- 核对失败、超时或环境问题均未被汇总为通过，且本节点未在内部修改实现来换取通过。没有当前适用的真实执行证据，或必需分组既未有效复用、也未实际补跑时须判为未验证；满足前述完整性、当前身份绑定和通过条件的有效复用不属于跳过验证，不因本轮未重跑单独拒收。
 - 将验收结论与证据写入 `$WORK_DIR/.workflow/reports/`，文件名包含节点 ID。
 acceptance:
-- 'test -s "$WORK_DIR/precision/execution.yaml"'
-- 'test -s "$WORK_DIR/precision/execution.log"'
-- 'test -s "$WORK_DIR/precision/precision-report.md"'
+- test -s "$WORK_DIR/precision/execution.yaml"
+- test -s "$WORK_DIR/precision/execution.log"
+- test -s "$WORK_DIR/precision/precision-report.md"
+- "\"$PYTHON\" \"$WORK_DIR/scripts/check_impl_progress.py\" --work-dir \"$WORK_DIR\" --require-whitebox --require-blackbox --require-performance"
 out_of_scope:
-- 不修改已冻结的规格、设计、用例、Golden 或精度阈值，不做性能优化，不以精度节点内的隐式修复代替重新执行实现与检视闭环。
+- 不创建、改写或扩展本轮 scripts/ 中由启动器提供的工作流工具，不通过自行生成验收脚本绕过门禁；缺失、参数不兼容或哈希失效时保留错误并终止，由 PM 处理工具供应。
+- 不修改已冻结的规格、设计、用例、Golden 或精度阈值，不在本节点修复实现；不以精度节点内的隐式修复代替前置修复节点的整改闭环。
+- 不做性能优化与性能采集，不执行性能放行。
+- 不以复用失败证据代表精度通过，不仅凭退出码、失败状态或摘要跳过验证；不重复运行条件未变且证据完整的已确认业务失败以代替修复。
 context:
   execute:
     skills:
