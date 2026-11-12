@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { QuestionnaireScreen, selectChoice, textQuestion } from "./terminal-select.mjs";
+import { BACK, QuestionnaireScreen, selectChoice, textQuestion } from "./terminal-select.mjs";
 
 const choices = (values) => (value) => values.includes(value);
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
@@ -38,6 +38,31 @@ const fields = [
 function answers(config) {
   return { repo: config.repo, platform: config.platform, chip: config.chip, language: config.language,
     interaction: config.preferences?.interaction };
+}
+
+// Rebuild the questionnaire's question/answer lines for install pages and the final summary.
+export function questionnaireSummary(config) {
+  const field = (key) => fields.find((candidate) => candidate.key === key);
+  const label = (key, value) => {
+    const candidate = field(key);
+    const index = candidate?.options?.indexOf(value) ?? -1;
+    return index >= 0 ? candidate.labels[index] : value;
+  };
+  const question = (key, value) => `${field(key).prompt.replace(/[？?]$/, "：")}${value}`;
+  const chip = (() => {
+    if (!config.chip) return null;
+    if (config.chip === "unknown") return "暂不确定";
+    const series = (chipSeries[config.platform] ?? []).find(([value]) => value === config.chip);
+    return series ? series[1] : config.chip;
+  })();
+  const interaction = config.preferences?.interaction;
+  return [
+    config.platform && question("platform", label("platform", config.platform)),
+    chip && question("chip", chip),
+    config.repo && question("repo", label("repo", config.repo)),
+    config.language && question("language", label("language", config.language)),
+    interaction && question("interaction", label("interaction", interaction)),
+  ].filter(Boolean);
 }
 
 function supportsLanguage(platform, language) {
@@ -75,6 +100,8 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
   // A reinstall on an existing target asks every applicable question again.
   const refresh = options.refresh === true && isTTY;
   const asked = new Set();
+  const backStack = [];
+  const prefill = new Map();
   if (!isTTY && values.chip === undefined) {
     values.chip = "unknown";
     origins.chip = "default";
@@ -119,6 +146,12 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
         const fallback = field.key === "chip" ? field.options.indexOf("other") : (field.initial ?? 0);
         field = { ...field, initial: saved >= 0 ? saved : fallback };
       }
+      const remembered = prefill.get(field.key);
+      if (remembered !== undefined && field.options) {
+        const index = field.options.indexOf(remembered);
+        const fallback = field.key === "chip" ? field.options.indexOf("other") : (field.initial ?? 0);
+        field = { ...field, initial: index >= 0 ? index : fallback };
+      }
       pending.push(field);
     }
     return pending;
@@ -131,7 +164,11 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
     }
     throw new Error(`ops-direct-invoke needs initialization answers (${pending.map((field) => field.key).join(", ")}); use an interactive terminal or CANNBOT_DIRECT_INVOKE_CONFIG=<JSON file> (init.sh: --init-config)`);
   }
-  const screen = pending.length && !io.question ? new QuestionnaireScreen() : null;
+  const prelude = options.prelude && typeof options.prelude.label === "string" ? options.prelude : null;
+  const screen = pending.length && !io.question ? new QuestionnaireScreen(io.output ?? process.stdout) : null;
+  if (screen && prelude) {
+    screen.answer(prelude.prompt, screen.display ? `\x1b[1;32m${prelude.label}\x1b[0m` : prelude.label);
+  }
   const total = pending.length;
   const progress = (fraction) => { io.progress?.(fraction); };
   let answered = 0;
@@ -143,23 +180,38 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
       ? `\x1b[32m(${percent}%)\x1b[0m` : `(${percent}%)`;
     const labeled = (prompt) => total ? `${prefix(Math.round(share() * 100))} ${prompt}` : prompt;
     const defaultAsk = (prompt, field) => field.options
-      ? selectChoice(prompt, field.labels, { initial: field.initial ?? 0, screen })
-      : textQuestion(prompt, { screen, initial: field.defaultText });
+      ? selectChoice(prompt, field.labels, { initial: field.initial ?? 0, screen, allowBack: field.allowBack,
+        input: io.input, output: io.output })
+      : textQuestion(prompt, { screen, initial: field.defaultText, input: io.input, output: io.output });
     const ask = (prompt, field) => (io.question ?? defaultAsk)(labeled(prompt), field);
     if (total) progress(0);
     while (pending.length) {
       const field = pending[0];
       while (true) {
-        const response = await ask(field.prompt, field);
+        const response = await ask(field.prompt, { ...field, allowBack: backStack.length > 0 });
+        if (response === BACK) {
+          const previous = backStack.pop();
+          if (!previous) continue;
+          asked.delete(previous.key);
+          delete values[previous.key];
+          delete origins[previous.key];
+          prefill.set(previous.key, previous.value);
+          answered = Math.max(0, answered - 1);
+          screen?.popAnswer();
+          pending = pendingQuestions();
+          progress(share());
+          break;
+        }
         const text = response.trim();
         let value = field.options
           ? (/^[1-9]$/.test(text) ? field.options[Number(text) - 1] : undefined)
           : text || "unknown";
         if (field.key === "chip" && value === "other") {
           // Keep a previously typed model as an editable default.
-          const custom = refresh && values.chip && field.options && !field.options.includes(values.chip);
+          const remembered = values.chip ?? prefill.get(field.key);
+          const custom = remembered && field.options && !field.options.includes(remembered);
           let prompt = "请输入具体芯片型号？";
-          let defaultText = custom ? values.chip : "";
+          let defaultText = custom ? remembered : "";
           while (true) {
             value = (await ask(prompt, { defaultText })).trim();
             defaultText = "";
@@ -175,6 +227,8 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
         origins[field.key] = "questionnaire";
         const label = field.labels?.[field.options.indexOf(value)] ?? value;
         screen?.answer(field.prompt, screen.display ? `\x1b[1;32m${label}\x1b[0m` : label);
+        backStack.push({ key: field.key, value, label });
+        prefill.delete(field.key);
         break;
       }
       asked.add(field.key);

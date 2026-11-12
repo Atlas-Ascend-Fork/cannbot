@@ -4,6 +4,9 @@
 import { createInterface, cursorTo, emitKeypressEvents, moveCursor } from "node:readline";
 import { PassThrough } from "node:stream";
 
+// Resolved by selectChoice when the user asks to return to the previous question.
+export const BACK = Symbol("questionnaire-back");
+
 async function lineQuestion(prompt, input, output) {
   const terminal = createInterface({ input, output });
   try {
@@ -46,6 +49,11 @@ export class QuestionnaireScreen {
     this.answers.push(line);
     if (this.display) this.show("");
     else this.output.write(line + "\n");
+  }
+
+  popAnswer() {
+    this.answers.pop();
+    if (this.display) this.show("");
   }
 
   close() {
@@ -106,7 +114,8 @@ export async function textQuestion(prompt, { input = process.stdin, output = pro
   return result;
 }
 
-export async function selectChoice(prompt, labels, { input = process.stdin, output = process.stdout, initial = 0, screen } = {}) {
+export async function selectChoice(prompt, labels, { input = process.stdin, output = process.stdout,
+  initial = 0, screen, allowBack = false } = {}) {
   if (process.env.TERM === "dumb") {
     return lineQuestion(`${prompt}\n${labels.map((label, index) => `${index + 1}. ${label}`).join("\n")}\n请输入数字：`, input, output);
   }
@@ -119,7 +128,9 @@ export async function selectChoice(prompt, labels, { input = process.stdin, outp
     else { display.setPrompt(body); display.prompt(); }
   };
   let selected = initial;
-  let message = "↑/↓ 移动，数字跳转，回车确认，Ctrl+C 取消";
+  const help = allowBack ? "↑/↓ 移动，数字跳转，回车确认，退格返回，Ctrl+C 取消"
+    : "↑/↓ 移动，数字跳转，回车确认，Ctrl+C 取消";
+  let message = help;
   const render = () => {
     const options = labels.map((label, index) => index === selected
       ? `\x1b[1;32m❯ ${index + 1}. ${label}\x1b[0m` : `  ${index + 1}. ${label}`);
@@ -127,6 +138,7 @@ export async function selectChoice(prompt, labels, { input = process.stdin, outp
   };
   try {
     const result = readKeys(input, (text, key, resolve) => {
+        if (allowBack && key.name === "backspace") return resolve(BACK);
         if (key.name === "return" || key.name === "enter") {
           show(`${prompt.replace(/[？?]$/, "：")}\x1b[1;32m${labels[selected]}\x1b[0m`);
           return resolve(String(selected + 1));
@@ -139,7 +151,7 @@ export async function selectChoice(prompt, labels, { input = process.stdin, outp
           render();
           return;
         }
-        message = "↑/↓ 移动，数字跳转，回车确认，Ctrl+C 取消";
+        message = help;
         render();
     });
     render();

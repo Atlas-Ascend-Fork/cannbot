@@ -3,11 +3,11 @@
 
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
   realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { prepareDirectInvokeConfig, directInvokeSkillPaths } from "./direct-invoke-config.mjs";
+import { prepareDirectInvokeConfig, directInvokeSkillPaths, questionnaireSummary } from "./direct-invoke-config.mjs";
 import { selectChoice } from "./terminal-select.mjs";
 
 const NAME = "ops-direct-invoke";
@@ -76,6 +76,42 @@ function noAssetOverlap(destination, sources, replaceLeaf = false) {
   }
 }
 
+const DSH_WORKFLOW_PACKAGE = "@cannbot-plugin/workflow-ops-direct-invoke";
+
+// Warn when the installed DSH workflow package cannot host phase workspaces.
+export function dshWorkflowWarning({ dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh"),
+  profile = process.env.DSH_PROFILE ?? "web" } = {}) {
+  const resources = join(dshHome, "profiles", profile, "node_modules", DSH_WORKFLOW_PACKAGE, "resources");
+  const definitionPath = join(resources, "plugin-install.json");
+  if (!existsSync(definitionPath)) return "missing";
+  let definition = {};
+  try { definition = readJson(definitionPath); } catch { definition = {}; }
+  const harness = join(resources, "skills/workflow-orchestrator/scripts/orchestrator.py");
+  const compatible = typeof definition.nativeWorkflow === "string"
+    || (existsSync(harness) && readFileSync(harness, "utf8").includes("task_executor"));
+  return compatible ? null : "old";
+}
+
+export function dshWorkflowMessage(kind, command) {
+  const lead = kind === "missing"
+    ? "警告：未检测到 DSH 工作流模块，插件功能可能受损。请重新安装 DSH 插件与工作流模块后启动开发流程。"
+    : "警告：DSH 部分模块版本过低，插件功能可能受损。请重新安装 DSH 插件与工作流模块后启动开发流程。";
+  return `${lead}\n${command}`;
+}
+
+// Child installers can print hundreds of lines; keep only a bounded tail on the page.
+function runCaptured(command, args, options, maxLines = 8) {
+  const result = spawnSync(command, args, { ...options, stdio: ["inherit", "pipe", "pipe"], encoding: "utf8" });
+  const lines = `${result.stdout ?? ""}${result.stderr ?? ""}`.replaceAll("\r", "").split("\n").filter(Boolean);
+  const limit = result.status === 0 ? maxLines : Math.max(maxLines, 20);
+  if (lines.length > limit) console.log(`  …（已省略 ${lines.length - limit} 行日志）`);
+  for (const line of lines.slice(-limit)) console.log(`  ${line}`);
+  return result;
+}
+
+const shellQuoted = (value) => (/^[A-Za-z0-9_./:=@+-]+$/.test(value)
+  ? value : `'${value.replaceAll("'", "'\\''")}'`);
+
 const repositoryIdentity = (url) => url.replace(/^git@gitcode\.com:/, "https://gitcode.com/")
   .replace(/\.git$/, "").replace(/\/$/, "");
 
@@ -95,11 +131,17 @@ export function linkSharedDependencies(source, target, dependencies) {
   }
 }
 
+// Keep the existing-workspace choice as the questionnaire's first answered line.
+const TARGET_MODE_LINES = {
+  update: ["目标目录已有内容，请选择处理方式？", "更新现有工作流组件"],
+  clean: ["目标目录已有内容，请选择处理方式？", "清空目录后重新安装（删除目录内所有内容）"],
+};
+
 // A non-empty target is updated in place unless the user chooses a clean reinstall.
 export async function resolveTargetMode(target, { input = process.stdin, output = process.stdout } = {}) {
   if (!existsSync(target) || !lstatSync(target).isDirectory() || !readdirSync(target).length) return "fresh";
   if (!input.isTTY || !output.isTTY) return "fresh";
-  const choice = await selectChoice(`目标目录 ${target} 已有内容，请选择处理方式？`,
+  const choice = await selectChoice("目标目录已有内容，请选择处理方式？",
     ["更新现有工作流组件", "清空目录后重新安装（删除目录内所有内容）"], { input, output, initial: 0 });
   if (choice !== "2") return "update";
   for (const entry of readdirSync(target)) rmSync(join(target, entry), { recursive: true, force: true });
@@ -137,17 +179,46 @@ export async function confirmDshPlugin({ tool, installer, profile }, {
 
 export async function initialize({ options, pluginDir, sourceRepositoryRoot, sourceDefinition,
   installerRoot, pathsFor, install }) {
+  // Interactive terminals get one page per phase: prompts, then one page per install step.
+  // The saved cursor keeps the user's earlier terminal content; pages only clear
+  // what this installer printed after the command line.
+  const isTTY = Boolean(process.stdout.isTTY);
+  if (isTTY) process.stdout.write("\x1b7");
+  const clearPage = () => { if (isTTY) process.stdout.write("\x1b8\x1b[0J"); };
+  // The final page starts from a clean viewport; scrollback (and the command's
+  // earlier output) stays available above it.
+  const clearViewport = () => { if (isTTY) process.stdout.write("\x1b[2J\x1b[H"); };
   const mode = await resolveTargetMode(options.target);
   const repositoryRoot = sourceRepositoryRoot ?? dirname(dirname(pluginDir));
   const dshProfile = process.env.DSH_PROFILE || "web";
   const dshInstaller = join(repositoryRoot, "dsh", "install.sh");
   const dshWanted = await confirmDshPlugin({ tool: options.tool, installer: dshInstaller, profile: dshProfile });
-  const config = await prepareDirectInvokeConfig({ ...options, refresh: mode === "update" });
+  clearPage();
+  const prelude = TARGET_MODE_LINES[mode]
+    ? { prompt: TARGET_MODE_LINES[mode][0], label: TARGET_MODE_LINES[mode][1] } : null;
+  const config = await prepareDirectInvokeConfig({ ...options, refresh: mode === "update", prelude });
+  const answers = [
+    ...(prelude ? [`${prelude.prompt.replace(/[？?]$/, "：")}${prelude.label}`] : []),
+    ...questionnaireSummary(config),
+  ];
   // The questionnaire has closed its screen; report coarse install progress next.
   const steps = 6 + (dshWanted ? 1 : 0);
   let step = 0;
-  const green = process.stdout.isTTY ? (line) => `\x1b[32m${line}\x1b[0m` : (line) => line;
-  const report = (label) => console.log(green(`(${Math.round((step++ * 100) / steps)}%) ${label}`));
+  const green = isTTY ? (line) => `\x1b[32m${line}\x1b[0m` : (line) => line;
+  // Keep the questionnaire's green answer text when the pages redraw it.
+  const answered = (line) => {
+    const index = line.indexOf("：");
+    return !isTTY || index < 0 ? line
+      : `${line.slice(0, index + 1)}\x1b[1;32m${line.slice(index + 1)}\x1b[0m`;
+  };
+  const report = (label) => {
+    const percent = Math.round((step++ * 100) / steps);
+    if (isTTY) {
+      clearPage();
+      for (const line of answers) console.log(answered(line));
+    }
+    console.log(green(`(${percent}%) ${label}`));
+  };
   report("准备平台声明、公共 Skills 与定制覆盖");
   const paths = pathsFor(options.target, options.tool);
   const selected = directInvokeSkillPaths(config).map((path) => ({ ...skill(join(pluginDir, path)), assetPath: path }));
@@ -219,8 +290,8 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
   // pip maps PIP_NO_WARN_CONFLICTS to --no-warn-conflicts (a store_false option),
   // so 0 skips its post-install scan. That scan reports CANN packages leaked via
   // PYTHONPATH as broken; the wheel itself is unaffected.
-  const runtime = spawnSync("bash", [join(perfPlugin, "installer/install-opmodel.sh"), options.tool, config.performance_root],
-    { cwd: config.performance_root, stdio: "inherit", env: { ...process.env, PIP_NO_WARN_CONFLICTS: "0" } });
+  const runtime = runCaptured("bash", [join(perfPlugin, "installer/install-opmodel.sh"), options.tool, config.performance_root],
+    { cwd: config.performance_root, env: { ...process.env, PIP_NO_WARN_CONFLICTS: "0" } });
   if (runtime.error || runtime.status !== 0) {
     console.warn("cannbot: OpModel setup unavailable; plugin installation will continue");
     if (process.env.CANNBOT_OPMODEL_STRICT === "1") throw new Error("OpModel setup failed in strict mode");
@@ -306,12 +377,34 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
         console.log("CANNBot DSH 插件已安装，重启 DSH 后生效。");
       }
     }
-    console.log(green("(100%) 安装完成"));
+    const invocation = ["cannbot", "install", NAME, "--tool", options.tool, "--target", options.target]
+      .map(shellQuoted).join(" ");
+    if (isTTY) {
+      clearViewport();
+      console.log(`$ ${invocation}`);
+      console.log("");
+      for (const line of answers) console.log(answered(line));
+      console.log(green("(100%) 安装完成"));
+      console.log("");
+    } else {
+      console.log(green("(100%) 安装完成"));
+    }
     console.log(green(`安装目录：${options.target}`));
     console.log(green("使用方法："));
     console.log(green(`1. cd ${options.target}`));
     console.log(green("2. 启动客户端"));
     console.log(green("3. 描述算子开发需求"));
+    if (options.tool === "dsh") {
+      const warning = dshWorkflowWarning();
+      if (warning) {
+        const repo = sourceRepositoryRoot ? resolve(sourceRepositoryRoot) : "<cannbot>";
+        const profile = process.env.DSH_PROFILE ?? "web";
+        const command = `bash ${shellQuoted(join(repo, "dsh/install.sh"))} --profile ${shellQuoted(profile)}`;
+        const message = dshWorkflowMessage(warning, command);
+        console.log("");
+        console.log(isTTY ? `\x1b[31m${message}\x1b[0m` : message);
+      }
+    }
     return record;
   } finally {
     cleanup();

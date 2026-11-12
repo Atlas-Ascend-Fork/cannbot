@@ -33,6 +33,14 @@ export async function prepareWorkflow(resources, options) {
   }
   const runner = join(resources, 'skills/workflow-orchestrator/scripts/orchestrator.py')
   await access(runner)
+  // The DSH host drives nodes through the plugin-owned executor, so the bundled
+  // harness must accept it. Old workflow packages would otherwise run nodes in
+  // the workflow directory without their phase skills.
+  const harness = await readFile(runner, 'utf8')
+  if (!harness.includes('task_executor')) {
+    throw new Error('Workflow package is incompatible with this DSH plugin: it has no nativeWorkflow adapter '
+      + 'and its bundled harness cannot host DSH nodes. Update the workflow package before starting the run.')
+  }
   return { runner }
 }
 

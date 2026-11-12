@@ -9,9 +9,9 @@ import { spawnSync } from "node:child_process";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { assemblePlugins } from "../../../../script/lib/plugin-bundle.js";
-import { prepareDirectInvokeConfig } from "../../tools/direct-invoke-config.mjs";
-import { confirmDshPlugin, linkSharedDependencies, resolveTargetMode } from "../../tools/install.mjs";
-import { QuestionnaireScreen, selectChoice, textQuestion } from "../../tools/terminal-select.mjs";
+import { prepareDirectInvokeConfig, questionnaireSummary } from "../../tools/direct-invoke-config.mjs";
+import { confirmDshPlugin, dshWorkflowMessage, dshWorkflowWarning, linkSharedDependencies, resolveTargetMode } from "../../tools/install.mjs";
+import { BACK, QuestionnaireScreen, selectChoice, textQuestion } from "../../tools/terminal-select.mjs";
 
 const repository = resolve(import.meta.dirname, "../../../..");
 const cli = join(repository, "script/bin/cannbot.js");
@@ -575,6 +575,7 @@ test("installation reports each step with an increasing completion percentage", 
   const f = fixture(t);
   const result = f.install(f.source, "dsh");
   assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.stdout.includes("\x1b[2J"), false, result.stdout);
   const steps = result.stdout.split("\n").map((line) => /^\((\d+)%\) (.+)$/.exec(line)).filter(Boolean)
     .map((match) => ({ percent: Number(match[1]), label: match[2] }));
   assert.ok(steps.length >= 5, result.stdout);
@@ -586,6 +587,102 @@ test("installation reports each step with an increasing completion percentage", 
   assert.ok(steps.every(({ label }) => label.trim().length > 0), result.stdout);
 });
 
+
+test("dsh workflow check warns on missing or incompatible packages", (t) => {
+  const box = mkdtempSync(join(tmpdir(), "dsh-workflows-"));
+  t.after(() => rmSync(box, { recursive: true, force: true }));
+  const install = (profile, definition, harness) => {
+    const resources = join(box, "profiles", profile, "node_modules",
+      "@cannbot-plugin/workflow-ops-direct-invoke", "resources");
+    mkdirSync(resources, { recursive: true });
+    if (definition) write(join(resources, "plugin-install.json"), definition);
+    if (harness) write(join(resources, "skills/workflow-orchestrator/scripts/orchestrator.py"), harness);
+  };
+  assert.equal(dshWorkflowWarning({ dshHome: box, profile: "missing" }), "missing");
+  install("old", {}, "def main():\n    pass\n");
+  assert.equal(dshWorkflowWarning({ dshHome: box, profile: "old" }), "old");
+  install("native", { nativeWorkflow: "tools/dsh-native.mjs" });
+  assert.equal(dshWorkflowWarning({ dshHome: box, profile: "native" }), null);
+  install("harness", {}, "def main(task_executor=None, args=None):\n    pass\n");
+  assert.equal(dshWorkflowWarning({ dshHome: box, profile: "harness" }), null);
+  assert.equal(dshWorkflowMessage("missing", "cmd"), "警告：未检测到 DSH 工作流模块，插件功能可能受损。请重新安装 DSH 插件与工作流模块后启动开发流程。\ncmd");
+  assert.equal(dshWorkflowMessage("old", "cmd"), "警告：DSH 部分模块版本过低，插件功能可能受损。请重新安装 DSH 插件与工作流模块后启动开发流程。\ncmd");
+});
+
+test("menu backspace returns to the previous question only when allowed", async (t) => {
+  const terminal = menuTerminal(t);
+  const back = selectChoice("平台？", ["Ascend", "Kirin"], { ...terminal, allowBack: true });
+  terminal.input.write("\x7f");
+  assert.equal(await back, BACK);
+  const ignored = selectChoice("平台？", ["Ascend", "Kirin"], terminal);
+  terminal.input.write("\x7f\r");
+  assert.equal(await ignored, "1");
+});
+
+test("questionnaire backspace re-asks the previous question", async (t) => {
+  const terminal = menuTerminal(t);
+  terminal.input.isTTY = true;
+  terminal.output.isTTY = true;
+  const f = fixture(t);
+  const keys = ["\r", "\x7f", "\r", "4\r", "1\r", "1\r", "2\r"];
+  const result = prepareDirectInvokeConfig({ target: f.target, tool: "dsh" },
+    { input: terminal.input, output: terminal.output, isTTY: true });
+  (async () => {
+    for (const key of keys) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      terminal.input.write(key);
+    }
+  })();
+  const config = await result;
+  assert.equal(config.platform, "ascend");
+  assert.equal(config.chip, "unknown");
+  assert.equal(config.repo, "common");
+  assert.equal(config.language, "ascendc");
+  assert.equal(config.preferences.interaction, "confirm");
+  const text = terminal.text();
+  const chip = text.indexOf("您开发的芯片型号或系列是？");
+  assert.ok(chip >= 0, text);
+  assert.ok(text.indexOf("您在哪种硬件平台上进行开发？", chip) > chip, text);
+});
+
+test("questionnaire keeps the existing-workspace choice as an answered prelude", async (t) => {
+  const terminal = menuTerminal(t);
+  terminal.input.isTTY = true;
+  terminal.output.isTTY = true;
+  const f = fixture(t);
+  const keys = ["\r", "4\r", "1\r", "1\r", "2\r"];
+  const result = prepareDirectInvokeConfig({ target: f.target, tool: "dsh",
+    prelude: { prompt: "目标目录已有内容，请选择处理方式？", label: "更新现有工作流组件" } },
+    { input: terminal.input, output: terminal.output, isTTY: true });
+  (async () => {
+    for (const key of keys) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      terminal.input.write(key);
+    }
+  })();
+  await result;
+  assert.match(terminal.text(), /目标目录已有内容，请选择处理方式：\x1b\[1;32m更新现有工作流组件/);
+});
+
+test("questionnaire summary rebuilds answered labels", () => {
+  assert.deepEqual(questionnaireSummary({
+    platform: "ascend", chip: "ascend950", repo: "common", language: "ascendc",
+    preferences: { interaction: "confirm" },
+  }), [
+    "您在哪种硬件平台上进行开发：昇腾(Ascend)系列",
+    "您开发的芯片型号或系列是：Ascend950 系列（950PR/950DT）",
+    "您希望使用哪种工程框架：通用框架",
+    "您使用哪种开发语言：AscendC",
+    "您的交互偏好是：重要节点和我确认（推荐）",
+  ]);
+  const custom = questionnaireSummary({
+    platform: "kirin", chip: "KirinX90A", repo: "common", language: "unspecified",
+    preferences: { interaction: "supervised" },
+  });
+  assert.ok(custom.includes("您开发的芯片型号或系列是：KirinX90A"), custom.join("\n"));
+  assert.ok(custom.includes("您使用哪种开发语言：暂不确定"), custom.join("\n"));
+  assert.ok(custom.includes("您的交互偏好是：我监督所有细节"), custom.join("\n"));
+});
 
 test("non-empty target asks whether to update or reinstall from scratch", async (t) => {
   const terminal = menuTerminal(t);
