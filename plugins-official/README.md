@@ -10,6 +10,7 @@ This directory contains the official CANNBot plugin definitions and non-Skill fi
 - `hccl-op-generator`
 - `triton-op-generator`
 - `ops-perf-optimize`
+- `ops-registry-invoke`
 - `pypto-op-orchestrator`
 - `tilelang-op-orchestrator`
 
