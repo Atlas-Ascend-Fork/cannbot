@@ -106,12 +106,45 @@ export async function resolveTargetMode(target, { input = process.stdin, output 
   return "clean";
 }
 
+// DSH reaches workflows only through the CANNBot DSH plugin, which lives in a user profile.
+export async function confirmDshPlugin({ tool, installer, profile }, {
+  input = process.stdin, output = process.stdout, env = process.env } = {}) {
+  if (tool !== "dsh") return false;
+  const forced = env.CANNBOT_INSTALL_DSH_PLUGIN;
+  if (forced === "1") return true;
+  if (forced === "0") return false;
+  const paint = (line) => (output.isTTY ? `\x1b[32m${line}\x1b[0m` : line);
+  const hint = [
+    "选择 DSH 时，需要安装 CANNBot DSH 插件。",
+    paint("该功能需要安装在当前指定目录之外，用户全局的 DSH 环境里。"),
+    "安装完成后需要重启 DSH。",
+  ];
+  const say = (line) => output.write(`${line}\n`);
+  if (!existsSync(installer)) {
+    say(`提示：${hint.join("")} 可执行：dsh plugin --profile ${profile} add cannbot-dsh@latest`);
+    return false;
+  }
+  if (!input.isTTY || !output.isTTY) {
+    say(`提示：${hint.join("")} 可执行：bash ${installer} --profile ${profile}`);
+    return false;
+  }
+  const answer = await selectChoice([...hint, "是否继续安装？"].join("\n"),
+    ["继续", "取消"], { input, output, initial: 0 });
+  if (answer === "1") return true;
+  say(`已取消安装 CANNBot DSH 插件；需要时执行 bash ${installer} --profile ${profile}，然后重启 DSH。`);
+  return false;
+}
+
 export async function initialize({ options, pluginDir, sourceRepositoryRoot, sourceDefinition,
   installerRoot, pathsFor, install }) {
   const mode = await resolveTargetMode(options.target);
+  const repositoryRoot = sourceRepositoryRoot ?? dirname(dirname(pluginDir));
+  const dshProfile = process.env.DSH_PROFILE || "web";
+  const dshInstaller = join(repositoryRoot, "dsh", "install.sh");
+  const dshWanted = await confirmDshPlugin({ tool: options.tool, installer: dshInstaller, profile: dshProfile });
   const config = await prepareDirectInvokeConfig({ ...options, refresh: mode === "update" });
   // The questionnaire has closed its screen; report coarse install progress next.
-  const steps = 6;
+  const steps = 6 + (dshWanted ? 1 : 0);
   let step = 0;
   const green = process.stdout.isTTY ? (line) => `\x1b[32m${line}\x1b[0m` : (line) => line;
   const report = (label) => console.log(green(`(${Math.round((step++ * 100) / steps)}%) ${label}`));
@@ -262,6 +295,17 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
     writeJson(registryPath, registry);
     config.performance_registry = join(pathsFor(config.performance_root, options.tool).configDir, "cannbot-plugin.json");
     writeJson(join(options.target, ".cannbot/ops-direct-invoke.json"), config);
+    if (dshWanted) {
+      report("安装 CANNBot DSH 插件");
+      const installed = spawnSync("bash", [dshInstaller, "--profile", dshProfile],
+        { cwd: repositoryRoot, stdio: "inherit" });
+      if (installed.error || installed.status !== 0) {
+        console.warn(`cannbot: CANNBot DSH 插件安装失败；请手动执行 bash ${dshInstaller} `
+          + `--profile ${dshProfile}，然后重启 DSH`);
+      } else {
+        console.log("CANNBot DSH 插件已安装，重启 DSH 后生效。");
+      }
+    }
     console.log(green("(100%) 安装完成"));
     console.log(green(`安装目录：${options.target}`));
     console.log(green("使用方法："));

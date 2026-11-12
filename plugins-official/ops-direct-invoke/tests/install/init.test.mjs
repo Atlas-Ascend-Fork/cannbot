@@ -10,7 +10,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { assemblePlugins } from "../../../../script/lib/plugin-bundle.js";
 import { prepareDirectInvokeConfig } from "../../tools/direct-invoke-config.mjs";
-import { linkSharedDependencies, resolveTargetMode } from "../../tools/install.mjs";
+import { confirmDshPlugin, linkSharedDependencies, resolveTargetMode } from "../../tools/install.mjs";
 import { QuestionnaireScreen, selectChoice, textQuestion } from "../../tools/terminal-select.mjs";
 
 const repository = resolve(import.meta.dirname, "../../../..");
@@ -609,6 +609,41 @@ test("non-empty target asks whether to update or reinstall from scratch", async 
   const silent = new PassThrough();
   assert.equal(await resolveTargetMode(target, { input: silent, output: terminal.output }), "fresh");
   assert.ok(existsSync(join(target, ".cannbot/ops-direct-invoke.json")));
+});
+
+
+test("dsh install asks before installing the CANNBot DSH plugin", async (t) => {
+  const terminal = menuTerminal(t);
+  terminal.input.isTTY = true;
+  terminal.output.isTTY = true;
+  const box = mkdtempSync(join(tmpdir(), "dsh-confirm-"));
+  t.after(() => rmSync(box, { recursive: true, force: true }));
+  const installer = join(box, "install.sh");
+  write(installer, "#!/usr/bin/env bash\nexit 0\n");
+  const ask = (env = {}, io = terminal) => confirmDshPlugin(
+    { tool: "dsh", installer, profile: "web" }, { ...io, env });
+  const accepted = ask();
+  terminal.input.write("\r");
+  assert.equal(await accepted, true);
+  const skipped = ask();
+  terminal.input.write("\x1b[B\r");
+  assert.equal(await skipped, false);
+  assert.match(terminal.text(), /\x1b\[32m该功能需要安装在当前指定目录之外，用户全局的 DSH 环境里。\x1b\[0m/);
+  assert.equal(await ask({ CANNBOT_INSTALL_DSH_PLUGIN: "1" }), true);
+  assert.equal(await ask({ CANNBOT_INSTALL_DSH_PLUGIN: "0" }), false);
+  assert.equal(await confirmDshPlugin({ tool: "opencode", installer, profile: "web" },
+    { ...terminal, env: {} }), false);
+  const silent = new PassThrough();
+  const nonTty = new PassThrough();
+  let text = "";
+  nonTty.on("data", (chunk) => { text += chunk; });
+  assert.equal(await confirmDshPlugin({ tool: "dsh", installer, profile: "web" },
+    { input: silent, output: nonTty, env: {} }), false);
+  assert.match(text, /bash .*install\.sh --profile web/);
+  text = "";
+  assert.equal(await confirmDshPlugin({ tool: "dsh", installer: join(box, "missing.sh"), profile: "web" },
+    { input: silent, output: nonTty, env: {} }), false);
+  assert.match(text, /dsh plugin --profile web add cannbot-dsh@latest/);
 });
 
 
