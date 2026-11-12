@@ -34,8 +34,9 @@ python3 orchestrator.py --yaml <wf.yaml> --work-dir <dir> [--provider opencode]
   等在飞全部收尾并回收后重新裁决，杜绝孤儿 agent 进程。
 - get_task 输出映射：batch → 派发；[ALL TASK FINISHED] 无 skipped → exit 0；
   带 skipped（耗尽+continue 的跳过任务清单）→ 报告跳过清单，exit 1；[STUCK] → exit 1；
-  [] → 有在飞则等待；无在飞但有待审批任务则按固定间隔轮询（不计空轮、不退出，
-  等人工审批到达）；其余无在飞则原地重置瞬态再试，连续 3 轮仍空 → exit 2。
+  [] → 有在飞则等待；存在待审批任务时按固定间隔轮询（即使有其他任务在飞，
+  也不计空轮、不退出，等人工审批到达）；其余无在飞则原地重置瞬态再试，
+  连续 3 轮仍空 → exit 2。
 - 单实例互斥：.workflow/orchestrator.lock（pid + 存活探测，陈旧锁自动接管）。
   所有 status.json 写入均为临时文件 + rename 原子替换，写半截崩溃不损坏旧文件。
 
@@ -597,8 +598,11 @@ def loop_step(ctx):
             return err("连续 %d 轮无可派发任务" % MAX_EMPTY_ROUNDS)
         reset_transient(ctx.work_dir)
         return None
-    # ③ 等任一完成 → 回 ①
-    wait(list(ctx.inflight), return_when=FIRST_COMPLETED)
+    # Approvals arrive independently of worker completion. Keep checking the
+    # dispatcher while a gate is waiting for an external decision.
+    timeout = APPROVAL_POLL_SECONDS if has_awaiting_approval(ctx.work_dir) else None
+    # ③ 等任一完成或待审批轮询到期 → 回 ①
+    wait(list(ctx.inflight), timeout=timeout, return_when=FIRST_COMPLETED)
     return None
 
 
