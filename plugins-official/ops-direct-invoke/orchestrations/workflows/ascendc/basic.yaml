@@ -10,7 +10,7 @@ nodes:
   variables:
     executor_skills: 无补充 Skill。
     verifier_skills: 无补充 Skill。
-    research_focus: 重点搜集算子专项资料、目标芯片 API 组合和不同 shape 的初版 Tiling。
+    research_focus: 重点搜集算子专项资料、目标芯片 API 组合、不同 shape 的初版 Tiling，以及 SIMD 与 SIMT 两条实现路线的适用性对比。
 - id: '0.1'
   yaml: ../../tasks/ascendc/黑盒测试设计.yaml
   depends_on: []

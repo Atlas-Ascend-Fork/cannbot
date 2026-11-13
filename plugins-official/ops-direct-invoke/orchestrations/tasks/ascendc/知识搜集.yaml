@@ -1,17 +1,18 @@
 variables:
-  research_focus: 目标芯片、算子专项资料、可组合 API 与需求 shape 范围的初版 Tiling。
+  research_focus: 目标芯片、算子专项资料、可组合 API 与需求 shape 范围的初版 Tiling，以及 SIMD 与 SIMT 两条实现路线的适用性对比。
   executor_skills: 无补充 Skill。
   verifier_skills: 无补充 Skill。
 task_type: normal
 title: 知识搜集
 goal:
-- 形成可溯源的算子知识资料与初版实现草稿。
+- 形成可溯源的算子知识资料、初版实现草稿与实现路线推荐依据。
 approach:
 - 读取 $USER_PROMPT、$WORK_DIR/需求分析.md 和 $WORK_DIR/环境信息.md；必要输入缺失、失效或冲突时，停止依赖该输入的操作，在本阶段报告中记录阻塞证据，按 harness 原生协议结束执行。
-- 必须加载 `ops-direct-invoke-repo-guide` 及本阶段已绑定的平台知识与工程资料 Skill，按其中的要求执行。
+- 必须加载 `ops-direct-invoke-repo-guide` 及本阶段已绑定的平台知识与工程资料 Skill，按其中的要求执行；实现路线判据不限于已绑定 Skill，引用 Skill 内容时以正文记载为准，不以名称、目录条目或摘要推断代替，其他可靠来源的信息注明出处即可。
 - '{{var:executor_skills}}'
 - 按 {{var:research_focus}} 检索目标仓、Skill 库和可用资料库，仅记录与本轮重点相关的关键资料、路径、版本和适用范围；不遍历无关资料，不给所有读过的文件逐一计算哈希；新增 Skill 建议注明适用任务、执行/验收阶段及依据，仅供整轮结束后的编排参考，不改变本轮 Skill
   清单。
+- 实现路线评估须同时给出 SIMD 与 SIMT 两个候选并逐条核查（目标芯片不支持某候选时记为不适用并给出依据）：默认推荐 SIMD；仅当通过已绑定 Skill 的 SIMT 适用判据或其他可靠途径（如官方文档、参考实现等）核查、且查到明确证据时才推荐 SIMT，并逐条记录证据及其来源；未查到明确证据时保持 SIMD 并说明核查结论。只出推荐并给出依据，不代替用户决定架构。
 - 归纳算法路线、API 签名与组合、数据流及平台约束；按需求中的代表性 shape 分组给出多核、块大小、Buffer 和尾块处理草稿，区分证据、推导和待验证项；非关键资料未命中或无法复核时，删去无依据断言并标注未知。
 - 按已安装的 $DOC_TEMPLATES_DIR/templates/知识搜集.md 写入 $WORK_DIR/{{id}}-知识搜集.md；草稿供实现尝试，不作为必须照搬的方案。
 procedure:
@@ -20,6 +21,7 @@ procedure:
 - '{{var:verifier_skills}}'
 - 读取 $WORK_DIR/{{id}}-知识搜集.md，按 {{var:research_focus}} 核对决定路线和 API 使用的关键引用、芯片/版本/dtype 适用范围；不重新执行全库检索，不扩展本轮搜集范围。
 - 核对 API 组合与代表性 shape 分组的 Tiling 草稿具有可尝试的方向；关键引用虚构、证据矛盾或遗漏搜集要求时失败。非关键资料未命中或无法复核但已标注未知且未被当作事实使用时，不以其单独阻断；残留无依据断言时指出位置并要求执行者修正；待验证假设不等于路线已验证。
+- 核对实现路线推荐：候选枚举完整（不支持的候选记为不适用）；默认取向为 SIMD，推荐 SIMT 时须有可追溯的明确证据（来源与位置可核对），保持 SIMD 时核查结论完整。
 - 由 verifier 按已安装的 $DOC_TEMPLATES_DIR/templates/验收报告.md 写入 $WORK_DIR/{{id}}-验收报告.md，执行 test -s "$WORK_DIR/{{id}}-验收报告.md"；通过、失败或阻塞均记录逐项结论与证据路径。重试仅追加问题处理和受影响项复核结果；当前版本缺少有效证据即失败，不补造或重跑测试。
 acceptance:
 - test -s "$WORK_DIR/{{id}}-知识搜集.md"
@@ -43,6 +45,7 @@ context:
       ascend:
       - npu-arch
       - ascendc-docs-search
+      - ascendc-simt-best-practices
       kirin:
       - ops-direct-invoke-engineering
   verify:
@@ -52,5 +55,6 @@ context:
       ascend:
       - npu-arch
       - ascendc-docs-search
+      - ascendc-simt-best-practices
       kirin:
       - ops-direct-invoke-engineering
