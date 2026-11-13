@@ -140,12 +140,6 @@ for (const plugin of config.plugins) {
       if (!existsSync(join(output, 'skills', name, 'SKILL.md'))) throw new Error(`Unbundled registry workflow dependency: ${name}`)
     }
   }
-  if (plugin.id === 'pypto-op-orchestrator') {
-    const dependencyRoot = join(skillsSource, 'plugins-official/pypto-op-orchestrator')
-    const assets = json(join(dependencyRoot, 'plugin-assets.json'))
-    for (const name of assets.skills.names.map(skillId)) copyTree(join(skillsSource, assets.skills.dir, name), join(output, 'skills', name))
-    copyTree(dependencyRoot, join(output, 'dependencies/cannbot-skills/pypto-op-orchestrator'))
-  }
   const declaredEntry = (manifest.skills ?? []).map(path => resolve(output, path, 'SKILL.md')).find(path => {
     within(output, path)
     return existsSync(path) && skillInfo(path).name === entrySkill

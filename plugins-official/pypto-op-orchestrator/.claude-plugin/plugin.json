@@ -1,7 +1,7 @@
 {
   "name": "pypto-op-orchestrator",
-  "version": "1.0.0",
-  "description": "PyPTO 算子开发编排工作流：7 阶段状态机（需求规划→Golden→设计→验证准备→按模块编码→E2E 验证→性能调优）经 harness 节点即 agent 编排驱动；Skills/hooks 等资产在安装时从 cannbot-skills 仓拉取并即时软链。",
+  "version": "1.1.0",
+  "description": "PyPTO 算子开发编排工作流：7 阶段状态机（需求规划→Golden→设计→验证准备→按模块编码→E2E 验证→性能调优）经 harness 编排驱动。",
   "author": {
     "name": "CANNBot"
   },
@@ -13,6 +13,27 @@
     "operator",
     "workflow",
     "harness"
+  ],
+  "skills": [
+    "./skills/pypto-op-orchestrator",
+    "./skills/workflow-orchestrator",
+    "./skills/pypto-api-explore",
+    "./skills/pypto-docs-search",
+    "./skills/pypto-general-debug",
+    "./skills/pypto-golden-generate",
+    "./skills/pypto-intent-understand",
+    "./skills/pypto-memory-template",
+    "./skills/pypto-op-design",
+    "./skills/pypto-op-develop",
+    "./skills/pypto-op-knowledge",
+    "./skills/pypto-op-perf-tune",
+    "./skills/pypto-op-plan",
+    "./skills/pypto-op-review",
+    "./skills/pypto-op-verify",
+    "./skills/pypto-orchestration-manual",
+    "./skills/pypto-op-perf-panko-manual",
+    "./skills/pypto-precision-compare",
+    "./skills/pypto-precision-debug"
   ],
   "agents": [
     "./agents/general-executor.md",

@@ -2,9 +2,9 @@
 # 节点即 agent：所有节点 executor/verifier 为 general-executor/general-verifier
 # 协议薄壳（插件 agents/ 下），阶段行为定义在节点的 goal/approach/acceptance/
 # out_of_scope 字段（源自 PyPTO 算子开发角色 agent 体系），裁判方法论在 procedure
-# （只进 verify 提示词）。Skills 由安装时从 cannbot-skills 仓拉取并软链进
-# $WORK_DIR/.agents/skills/（preflight-env 节点装配），hooks（state_transition +
-# pypto-op-lint）装配进 $WORK_DIR/.opencode/，阶段门禁照旧写
+# （只进 verify 提示词）。Skills 按插件声明装配，source 安装时软链、打包安装时复制到
+# $WORK_DIR/.agents/skills/；hooks（state_transition +
+# pypto-op-lint）从插件资产装配并接线进 $WORK_DIR/.opencode/，阶段门禁照旧写
 # custom/<op>/.orchestrator_state.json。
 # 插件内脚本定位: SCRIPTS=$(dirname "$WORKFLOW_YAML")/scripts，其中
 #   WORKFLOW_YAML=$(python3 -c "import json;print(json.load(open(
@@ -31,23 +31,22 @@ nodes:
     title: 校验 CANN/PyPTO/NPU 环境并装配 pypto 资产
     goal:
       - "CANN/PyPTO/NPU 环境可用: pypto 可导入, npu-smi 可见目标设备 (若 $USER_PROMPT 指定了 device id)"
-      - "cannbot 仓定位成功并记录到 $WORK_DIR/env.json"
-      - "插件资产装配进 $WORK_DIR: cannbot-skills 依赖仓检出、pypto skills 软链、hooks 接线、两个通用 agent 就位"
+      - "工作区资产与环境检查结果记录到 $WORK_DIR/env.json"
+      - "插件资产装配进 $WORK_DIR: 入口与工作流 Skills、hooks 接线、两个通用 agent 就位"
     approach:
       - "定位插件脚本: WORKFLOW_YAML=$(python3 -c \"import json;print(json.load(open('$WORK_DIR/.workflow/status.json'))['workflow'])\"); SCRIPTS=$(dirname \"$WORKFLOW_YAML\")/scripts。"
-      - "定位 cannbot 仓根: $USER_PROMPT 指定或环境变量 CANNBOT_ROOT 优先; 否则由插件路径推导(插件根的上两级); 验证其下存在 script/bin/cannbot.js 与 plugins-official/pypto-op-orchestrator。"
-      - "运行 python3 $SCRIPTS/assemble_workspace.py --cannbot-root <cannbot仓根> --target $WORK_DIR, 确认 stdout JSON 的 status 为 ok(安装器幂等: 克隆/更新 cannbot-skills 到 $WORK_DIR/.cannbot/dependencies/pypto-op-orchestrator/cannbot-skills 并按其 plugin-assets.json 软链 skills、装配 hooks)。"
+      - "若 $USER_PROMPT 显式指定 cannbot 仓路径或设置了 CANNBOT_ROOT, 运行 python3 $SCRIPTS/assemble_workspace.py --cannbot-root <仓根> --target $WORK_DIR; 否则运行 python3 $SCRIPTS/assemble_workspace.py --target $WORK_DIR, 校验已安装资产并接线 OpenCode hooks。确认 stdout JSON 的 status 为 ok; 资产缺失时报告具体缺项并提示先安装本插件。"
       - "若存在 CANN set_env 脚本 (如 /usr/local/Ascend/ascend-toolkit/set_env.sh 或 $ASCEND_HOME/set_env.sh) 则 source 之; 随后 python3 -c \"import pypto\" 确认可导入。"
       - "npu-smi info 确认 $USER_PROMPT 指定的 device id 在设备列表中可见 (未指定时跳过, 后续按 TILE_FWK_DEVICE_ID 环境变量或默认设备执行)。"
-      - "把定位结果 (cannbot_root / device_id) 写入 $WORK_DIR/env.json 供后续节点使用。"
+      - "把装配结果 (status / skills / agents / plugins) 与 device_id 写入 $WORK_DIR/env.json 供后续节点使用。"
     acceptance:
       - "python3 -c \"import pypto\" 退出码 0"
       - "test -f $WORK_DIR/.opencode/agents/general-executor.md 且 test -f $WORK_DIR/.opencode/agents/general-verifier.md"
-      - "test -d $WORK_DIR/.cannbot/dependencies/pypto-op-orchestrator/cannbot-skills"
+      - "test -d $WORK_DIR/.cannbot/plugins/pypto-op-orchestrator/hooks && test -f $WORK_DIR/.opencode/plugins/pypto-state-transition.ts && test -f $WORK_DIR/.opencode/hooks/pypto-op-lint/rules.json"
       - "assemble_workspace.py 实际运行输出的 JSON status 为 ok (可在 $WORK_DIR/env.json 或执行记录中核对)"
     out_of_scope:
       - "安装/升级 CANN、pypto、驱动等任何系统级变更"
-      - "修改 cannbot 仓与依赖仓检出的任何内容"
+      - "修改 cannbot 仓或已安装工作区的算子产物"
     depends_on: []
     executor: general-executor
     verifier: general-verifier

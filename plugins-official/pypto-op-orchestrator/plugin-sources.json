@@ -1,7 +1,25 @@
 {
   "skillsRepository": ".",
   "skillInstallMode": "symlink",
+  "preserveSkillInvocationPolicy": true,
   "skills": [
-    "harness/workflow-orchestrator"
+    "harness/workflow-orchestrator",
+    "vendor/cannbot-skills/ops/pypto-api-explore",
+    "vendor/cannbot-skills/ops/pypto-docs-search",
+    "vendor/cannbot-skills/ops/pypto-general-debug",
+    "vendor/cannbot-skills/ops/pypto-golden-generate",
+    "vendor/cannbot-skills/ops/pypto-intent-understand",
+    "vendor/cannbot-skills/ops/pypto-memory-template",
+    "vendor/cannbot-skills/ops/pypto-op-design",
+    "vendor/cannbot-skills/ops/pypto-op-develop",
+    "vendor/cannbot-skills/ops/pypto-op-knowledge",
+    "vendor/cannbot-skills/ops/pypto-op-perf-tune",
+    "vendor/cannbot-skills/ops/pypto-op-plan",
+    "vendor/cannbot-skills/ops/pypto-op-review",
+    "vendor/cannbot-skills/ops/pypto-op-verify",
+    "vendor/cannbot-skills/ops/pypto-orchestration-manual",
+    "vendor/cannbot-skills/ops/pypto-op-perf-panko-manual",
+    "vendor/cannbot-skills/ops/pypto-precision-compare",
+    "vendor/cannbot-skills/ops/pypto-precision-debug"
   ]
 }

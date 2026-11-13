@@ -42,7 +42,7 @@ nodes:
       - "test -s $OP_DIR/<op>_impl.py 且 test -s $OP_DIR/test_<op>.py (op/op_dir 来自 $WORK_DIR/prepared_case.json)"
       - "test -f $OP_DIR/MEMORY.md 且 test -s $WORK_DIR/prepared_case.json"
       - "精度证据在场: python3 -c \"import json; s=json.load(open('$OP_DIR/.orchestrator_state.json')); assert s['stage_status']['6']=='completed'\" 退出码 0, 或重跑 test_<op>.py 实际退出码 0 且输出逐叶 all_close"
-      - "test -d $WORK_DIR/.cannbot/dependencies/pypto-op-orchestrator/cannbot-skills 且 test -d $WORK_DIR/.agents/skills/pypto-op-perf-tune"
+      - "test -d $WORK_DIR/.cannbot/plugins/pypto-op-orchestrator/hooks 且 test -f $WORK_DIR/.opencode/plugins/pypto-state-transition.ts 且 test -d $WORK_DIR/.agents/skills/pypto-op-perf-tune"
     out_of_scope:
       - "任何调优与实现修改 (属 stage7-tune)"
       - "修改 <op>_impl.py / test_<op>.py / 既有 MEMORY.md 内容"
