@@ -1,0 +1,77 @@
+# Performance optimization module for an existing operator with an explicit
+# optimization request. Input: the original request and authorized source scope,
+# the actual source/build entry, target SoC, cases/golden and Python/CANN environment;
+# reuse a confirmed optimization-request.json when supplied. The caller resolves
+# these inputs and dependencies for its own project before instantiating the tasks.
+# Composition: the installed Skill owns baseline measurements, optimization
+# design, candidate implementation and final functional/performance acceptance.
+# Caller tasks supply facts and inputs, passing the original targets unchanged.
+# Add caller checks only for explicit requirements the Skill does not cover, not
+# prerequisite optimization designs or candidate screening. Reuse valid evidence
+# under the Skill's gates, adding only missing or invalidated coverage.
+# Output: the performance Skill's verified implementation and evidence, summarized
+# in perf-optimize/HANDOFF.md, or an explicit blocker/opt-out. This module only
+# connects the project to ops-perf-optimize; the installed Skill owns optimization.
+workflow: performance-optimization
+max_parallel: 1
+nodes:
+  - id: install-performance-optimization
+    task_type: normal
+    title: Prepare the ops-perf-optimize plugin for this project
+    executor: general-executor
+    verifier: general-verifier
+    depends_on: []
+    goal:
+      - "Make the complete ops-perf-optimize plugin available in the harness's project-level configuration for $WORK_DIR and record its resolved entry in $WORK_DIR/perf-optimize/install.json. This task installs only; it does not start an optimization."
+    approach:
+      - "Probe for an existing ops-perf-optimize-workflow Skill first. Reuse it only when its workflow, scripts, stage skills and perf-optimize primary-agent registration all resolve; a missing installer record alone is not an incomplete install."
+      - "Otherwise resolve the source ops-perf-optimize plugin from the actual plugin or Skill installation location and record its absolute path. In a source checkout it is a sibling of ops-registry-invoke. Do not derive the source from the generated workflow.yaml's ancestors or assume the task directory has the source repository layout."
+      - "Install with `CANNBOT_INIT_CONTEXT= bash <resolved-plugin>/init.sh project $WORK_DIR`. The harness owns process selection and project-level configuration discovery; do not guess, pass or record a process selector. If neither a complete install nor a source plugin is available, report the missing installation prerequisite and stop."
+      - "Use the existing installer without disabling its dependencies by default. Record dependency-clone warnings separately from a non-zero installer exit; the latter fails this task. Preserve configuration outside the installer's managed instruction block and check that a repeated install is idempotent."
+      - "Resolve the installed ops-perf-optimize-workflow Skill's SKILL.md, perf-optimize.yaml, references/workflow-contract.md, references/request-intake.md, scripts/prepare_case_sets.py and scripts/workflow_state.py. Verify the workflow parses with non-empty nodes and prepare_case_sets.py --help exits 0."
+      - "Verify the stage Skill entries ops-perf-baseline-evaluate, ops-perf-preparation, ops-perf-analysis, ops-perf-implementation, ops-perf-postprocess and ops-perf-acceptance-criteria, plus the perf-optimize primary-agent registration in the configuration the harness loads."
+      - "Write $WORK_DIR/perf-optimize/INSTALL.md and install.json with the install or reuse route, source plugin when used, command and exit status, resolved absolute entry_skill, workflow_path, contract_path, request_intake_path, scripts and stage_skills paths, agent_registration, dependency status and verification results."
+    acceptance:
+      - "INSTALL.md and install.json exist under $WORK_DIR/perf-optimize/; the JSON is valid and its recorded paths resolve to the installed assets."
+      - "The entry Skill, workflow, contract, request intake, scripts and all six supporting Skill entries exist; workflow YAML parsing and prepare_case_sets.py --help succeed; the perf-optimize primary Agent is registered."
+      - "For an installation, the installer exits 0, changes only its managed configuration and instruction block, and a repeated installation leaves that block unchanged. For reuse, the complete existing installation is verified without rewriting it."
+      - "No optimization request, run, profiling, benchmark or operator-source change was made by this task."
+    out_of_scope:
+      - "Do not start optimization, create optimization-request.json, or change operator sources, cases, golden or tolerances."
+      - "Write only under $WORK_DIR/perf-optimize/ and project-level locations managed by the existing installer; do not edit shared plugin sources or global configuration."
+    max_retries: 2
+    on_exhaust: exit
+  - id: performance-optimization
+    task_type: normal
+    title: Optimize the existing operator through the installed performance Skill
+    executor: general-executor
+    verifier: general-verifier
+    depends_on:
+      - install-performance-optimization
+    goal:
+      - "Carry the user's explicit performance request through ops-perf-optimize-workflow within the authorized source scope, delivering its verified result and $WORK_DIR/perf-optimize/HANDOFF.md. The installed Skill owns request validation, stages, rounds, gates, regression and integration."
+    approach:
+      - "Read the original user request and the resolved project inputs, then INSTALL.md and install.json. An explicit prohibition of optimization takes precedence: write a HANDOFF citing the opt-out and stop without a request, run, measurements or source changes. A requirement for performance non-regression alone is not an optimization request."
+      - "Fully read the installed ops-perf-optimize-workflow SKILL.md and references/workflow-contract.md. Act as its primary Agent within the harness-managed session; do not start another primary-agent process or orchestrator, or modify $WORK_DIR/.workflow/status.json."
+      - "Pass the actual source directory and build entry, authorized modification scope, actually tested SoC, performance cases, complete existing functional inventory, golden and precision criteria, and Python/CANN environment. Use this project's assets and invocation path; do not require a new-operator op/ package, design/ documents or blackbox_l0.csv layout. Any case-format adaptation preserves all values, rows and source mappings."
+      - "Follow the Skill's references/request-intake.md: validate and reuse a matching confirmed request, or obtain only missing confirmation and let its own scripts create and validate $WORK_DIR/perf-optimize/optimization-request.json. Authorization, mode and stopping policy must follow the original request; generated analysis documents are not user confirmation. Missing confirmation remains an execution prerequisite in plan-only and blocks execution until supplied."
+      - "Run the Skill under $WORK_DIR/perf-optimize/run/ according to the validated request and its public contract. Delegate baseline evaluation, preparation, analysis and design, candidate implementation, iteration and integration to it; do not add prerequisite design or candidate-screening tasks, another optimization loop, or measurements that meet its evidence-reuse gates."
+      - "Keep the original interface, semantics, cases, golden and precision criteria frozen. Source writes are limited to the authorized scope through the Skill's verified integration procedure; do not enlarge scope to satisfy a performance target."
+      - "Write HANDOFF.md with the outcome, request path and SHA, run root and 性能调优报告.md, retained or optimized implementation, final source/build/loaded-binary identities, functional and performance evidence for the frozen inventories, terminal workflow-state status and reason, and any blockers. If awaiting a user decision, record the existing request/manifest/state and exact next action; do not claim completion or start a replacement run."
+    acceptance:
+      - "HANDOFF.md exists and matches the original request and the Skill's evidence. A skip cites an explicit opt-out; a missing input or awaiting decision is reported as blocked, not completed optimization."
+      - "RUN: prepare_case_sets.py validate-request succeeds for the recorded request and its SHA matches HANDOFF; authorization, scope, mode and stopping policy match the original request."
+      - "RUN: workflow_state.py verify succeeds for $WORK_DIR/perf-optimize/run/workflow-state.json; HANDOFF records the same status and reason. The Skill's completion contract is satisfied before reporting optimization complete."
+      - >-
+        RUN: final functional/performance evidence covers the frozen inventories and matches the delivered
+        source/build/loaded-binary identities under the Skill's acceptance and reuse gates; rerun only missing or invalidated coverage.
+        For each frozen positive TTK suite, the verifier runs the installed blackbox-tester Skill's
+        `parse_result.py <actual result CSV> --expect-total <frozen suite data-row count>` on its raw results
+        and requires exit 0 with total>0, pass==total and fail==skip==0.
+        HANDOFF records per-case final performance against the frozen targets, the report and any unresolved requirements.
+      - "Frozen inputs are unchanged, integration stayed within the authorized source scope, and $WORK_DIR/.workflow/status.json was not edited. A skip leaves no request, run, profiling or source changes."
+    out_of_scope:
+      - "Do not change public interfaces, operator semantics, frozen cases, golden, precision criteria or the user's target to obtain a pass."
+      - "Do not duplicate the performance Skill's stages, stopping policy, gates or state. Write only under $WORK_DIR/perf-optimize/ and the source paths authorized for verified integration; shared plugin sources and global configuration remain read-only."
+    max_retries: 0
+    on_exhaust: exit
