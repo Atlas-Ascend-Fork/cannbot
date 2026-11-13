@@ -49,6 +49,9 @@ stages:
         container:
           image: swr.cn-north-4.myhuaweicloud.com/ci_cann/ubuntu20.04.05_x86:k8s_v1.1006
       JOB_pre:
+        permissions:
+          repository: read
+          id-token: write
         name: Test_PreBuild
         uses: cann/.gitcode/.gitcode/workflows/pre_action.yml@master
     pre:
@@ -58,6 +61,9 @@ stages:
     name: CodeCheck
     jobs:
       JOB_changelog:
+        permissions:
+          repository: read
+          id-token: write
         name: Changelog_fragment
         if: "${{ atomgit.event.pull_request.number > 0 }}"
         steps:
@@ -68,13 +74,20 @@ stages:
               ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
               allow-unsafe-pr-checkout: true
           -
+            name: oidc_auth
+            uses: huaweicloud-oidc-auth
+            with:
+              audience: ${{ secrets.audience }}
+              agency_urn: ${{ secrets.agency_urn }}
+              provider_urn: ${{ secrets.provider_urn }}
+              region: cn-north-4
+              duration: 3600
+          -
             name: download
             uses: obs-download
             with:
               endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
               bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
               key: |
                 ${{ env.obs_path }}/pr_filelist.txt
                 ${{ env.obs_path }}/pr_filelist_mod.txt
@@ -112,6 +125,9 @@ stages:
         container:
           image: swr.cn-north-4.myhuaweicloud.com/ci_cann/ubuntu20.04.05_x86:k8s_v1.1006
       JOB_codecheck:
+        permissions:
+          repository: read
+          id-token: write
         name: CodeCheck
         uses: cann/.gitcode/.gitcode/workflows/codecheck_action.yml@master
         with:
@@ -127,6 +143,9 @@ stages:
       # Bandit / Semgrep / 内容审查（advisory），等价于 cannbot-skills 的 JOB_static_vet
       # （详见 cannbot-skills-rdv/docs/pr-vet-aggregate.md）
       JOB_static_vet:
+        permissions:
+          repository: read
+          id-token: write
         name: Static_Vet
         steps:
           - name: check_static_vet_script
@@ -148,6 +167,15 @@ stages:
                 --gitcode-repo cann/cannbot \
                 --timeout 1800
           # 完整 md 报告上传 OBS（`always()`：门禁未通过也上传；`continue-on-error`：上传异常不染红）
+          -
+            name: oidc_auth
+            uses: huaweicloud-oidc-auth
+            with:
+              audience: ${{ secrets.audience }}
+              agency_urn: ${{ secrets.agency_urn }}
+              provider_urn: ${{ secrets.provider_urn }}
+              region: cn-north-4
+              duration: 3600
           - name: upload_static_vet_report
             if: ${{ always() }}
             continue-on-error: true
@@ -155,8 +183,6 @@ stages:
             with:
               endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
               bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
               artifact-path: "${{ env.ci_report_dir }}/static-vet/*.md"
               object-prefix: ${{ env.obs_path }}/
         runs-on:
