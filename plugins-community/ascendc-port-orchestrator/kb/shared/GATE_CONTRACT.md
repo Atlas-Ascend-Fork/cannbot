@@ -239,7 +239,7 @@ worker to fix in same spawn or escalate to `@aog-fused-optimizer` if architectur
 
 The orchestrator's finalize → done gate REJECTS workspaces missing any of:
 
-1. **`run_pass_b.py`** at workspace root — canonical filename for the
+1. **`pass_b_runner.py`** at workspace root — canonical filename for the
    independent Pass-B verifier. Phase O5 post-verify runner looks for
    this exact name. If Pass B is feasible (reference runnable, edge
    dataset usable), write a small wrapper script that loads
