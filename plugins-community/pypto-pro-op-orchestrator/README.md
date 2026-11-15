@@ -63,7 +63,7 @@ bash init.sh project opencode /path/to/your-workspace
 
 两种方式都是 project-scope 安装（init.sh 的 `project` 子命令即项目级），需要网络：
 安装时克隆 [cannbot-skills](https://gitcode.com/cann/cannbot-skills)，并软链
-`pypto-pro-kernel` 和 `pypto-pro-op-standard` 到客户端的 Skill 目录。
+`pypto-pro-kernel` 到客户端的 Skill 目录。
 主 agent 提示词装配进项目根 `AGENTS.md`（Claude 客户端为 `CLAUDE.md`）。
 最短操作步骤见 [QUICKSTART.md](QUICKSTART.md)。
 
