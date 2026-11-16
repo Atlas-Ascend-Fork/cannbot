@@ -28,6 +28,9 @@ Rules:
     must exist. Anchor *validity* inside the target file is not checked.
   - Links inside fenced code blocks and inline code spans are ignored.
   - Root-relative links (/...) resolve against the scan root.
+  - Markdown files under test-data paths (EXCLUDE_PATH_PARTS, by default any
+    'fixtures' directory) are skipped: they are synthetic lint inputs whose
+    relative links deliberately do not resolve on disk.
 
 Exit code: 0 when no broken links are found, 1 otherwise.
 """
