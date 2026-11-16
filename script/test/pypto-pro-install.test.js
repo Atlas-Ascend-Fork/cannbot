@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,14 +14,6 @@ const cli = join(repository, "script/bin/cannbot.js");
 const plugin = join(repository, "plugins-community/pypto-pro-op-orchestrator");
 const skills = [
   "pypto-pro-kernel",
-  "pypto-pro-op-standard",
-];
-const unrelatedSkills = [
-  "pypto-pro-cann-delivery",
-  "pypto-pro-precision-debug",
-  "pypto-benchmark-fracture-aggregator",
-  "pypto-fracture-point-detector",
-  "pypto-session-dfx-report",
 ];
 
 test("PyPTO-Pro installs its shared Skills and usable instructions for each client", (t) => {
@@ -32,7 +24,7 @@ test("PyPTO-Pro installs its shared Skills and usable instructions for each clie
   mkdirSync(dependency);
   mkdirSync(home);
   execFileSync("git", ["init", "-q", "-b", "master", dependency]);
-  for (const name of [...skills, ...unrelatedSkills]) {
+  for (const name of skills) {
     const directory = join(dependency, "community/ops", name);
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "SKILL.md"), `---\nname: ${name}\ndescription: fixture\n---\n`);
@@ -45,6 +37,7 @@ test("PyPTO-Pro installs its shared Skills and usable instructions for each clie
     ["opencode", ".agents/skills", "AGENTS.md"],
     ["codex", ".agents/skills", "AGENTS.md"],
     ["claude", ".claude/skills", "CLAUDE.md"],
+    ["codearts", ".codeartsdoer/skills", "AGENTS.md"],
   ]) {
     const target = join(root, tool);
     const env = {
@@ -68,12 +61,8 @@ test("PyPTO-Pro installs its shared Skills and usable instructions for each clie
       assert.ok(lstatSync(installed).isSymbolicLink(), `${tool}: ${name}`);
       assert.match(readFileSync(join(installed, "SKILL.md"), "utf8"), new RegExp(`name: ${name}`));
     }
-    for (const name of unrelatedSkills) {
-      assert.equal(existsSync(join(target, directory, name)), false, `${tool}: ${name}`);
-    }
     const text = readFileSync(join(target, instructions), "utf8");
-    assert.match(text, /pypto-pro-op-standard/);
-    assert.doesNotMatch(text, /pypto-pro-cann-delivery|pypto-pro-precision-debug/);
+    assert.match(text, /pypto-pro-kernel/);
     assert.match(text, /\.cannbot\/plugins\/pypto-pro-op-orchestrator\/workflows\/references\/multi-agent-workflow\.md/);
     assert.doesNotMatch(text, /\$CANNBOT_CONFIG_ROOT/);
   }

@@ -4,7 +4,7 @@
 
 ## 准备环境
 
-- Git 和 Python 3.10+。
+- Git、Python 3.10+ 和 Node.js 20.11+；运行测试需要 pytest，npm 安装还需要 npm/npx。
 - 可用的昇腾 NPU，以及版本配套的 CANN、驱动、固件、PyTorch 和 `torch_npu`。
 - PyPTO 环境：优先使用 10 月 30 日后的源码编译版本；10 月 30 日前的版本可能存在兼容性问题，影响算子生成和性能。参考[源码仓库](https://gitcode.com/cann/pypto)和[编译安装指南](https://pypto.gitcode.com/install/build_and_install.html)。
 - 已安装并配置好所选客户端。
@@ -22,8 +22,6 @@ cd pypto-workspace
 
 <details>
 <summary>OpenCode</summary>
-
-需要 Node.js 20.11+；npm 方式还需 npm/npx。
 
 **npm 安装**
 
@@ -47,8 +45,6 @@ bash ../cannbot/plugins-community/pypto-pro-op-orchestrator/init.sh \
 <details>
 <summary>Claude Code</summary>
 
-使用 npm 方式需要 Node.js 20.11+ 和 npm/npx。
-
 当前 npm 安装可能有 Skill 加载问题，优先使用源码方式。
 
 **npm 安装**
@@ -60,8 +56,9 @@ npx @cannbot-plugin/cannbot@latest install pypto-pro-op-orchestrator --tool clau
 **源码安装**
 
 ```bash
-git clone --depth 1 https://gitcode.com/cann/pypto-gym.git ../pypto-gym
-bash ../pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrator/init.sh \
+git clone --recurse-submodules --shallow-submodules \
+  https://gitcode.com/cann/cannbot.git ../cannbot
+bash ../cannbot/plugins-community/pypto-pro-op-orchestrator/init.sh \
   project claude "$PWD"
 ```
 
@@ -71,8 +68,6 @@ bash ../pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrator/init
 
 <details>
 <summary>Codex</summary>
-
-需要 Node.js 20.11+；npm 方式还需 npm/npx。
 
 **npm 安装**
 
@@ -94,28 +89,14 @@ bash ../cannbot/plugins-community/pypto-pro-op-orchestrator/init.sh \
 </details>
 
 <details>
-<summary>Cursor</summary>
-
-**源码安装**
-
-```bash
-git clone --depth 1 https://gitcode.com/cann/pypto-gym.git ../pypto-gym
-bash ../pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrator/init.sh \
-  project cursor "$PWD"
-```
-
-**启动**：用 Cursor 打开工作区，进入 Agent 模式。
-
-</details>
-
-<details>
 <summary>CodeArts</summary>
 
 **源码安装**
 
 ```bash
-git clone --depth 1 https://gitcode.com/cann/pypto-gym.git ../pypto-gym
-bash ../pypto-gym/cannbot-skills/plugins-official/pypto-pro-op-orchestrator/init.sh \
+git clone --recurse-submodules --shallow-submodules \
+  https://gitcode.com/cann/cannbot.git ../cannbot
+bash ../cannbot/plugins-community/pypto-pro-op-orchestrator/init.sh \
   project codearts "$PWD"
 ```
 
