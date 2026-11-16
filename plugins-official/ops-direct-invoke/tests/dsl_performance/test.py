@@ -338,7 +338,7 @@ class InventoryTests(unittest.TestCase):
                 sys.executable,
                 str(script),
                 "--template",
-                str(WORKFLOWS / "cannbot-dsl/performance.yaml"),
+                str(WORKFLOWS / "cannbot-dsl/stable/performance.yaml"),
                 "--output",
                 str(output),
             ],

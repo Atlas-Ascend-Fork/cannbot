@@ -1,0 +1,68 @@
+use_when: Flash 精简版本，面向希望缩短 CANNBotDSL 算子开发流程的任务。用户明确指定 Flash，或表达快速开发、快速生成、精简流程、轻量开发等缩短开发流程的意图时选择；仅要求提高算子运行性能不触发，否定或引用上述表述不视为选择。用户明确指定 Stable、完整流程或完整商用交付，或未表达流程偏好时使用同目录 op-dev.yaml；未指定流程名称且快速开发与完整交付要求冲突时，启动前确认。用户明确指定的流程名称优先；同时明确指定两个流程时先确认。
+workflow: op-dev
+max_parallel: 4
+nodes:
+- id: workspace-environment
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/flash/工作区与环境准备.yaml
+  depends_on: []
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 1
+  on_exhaust: exit
+- id: requirements-spec
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/flash/需求与规格.yaml
+  depends_on:
+  - workspace-environment
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
+- id: performance-cases
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/flash/性能用例准备.yaml
+  depends_on:
+  - workspace-environment
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
+- id: blackbox-design
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/flash/黑盒用例设计.yaml
+  depends_on:
+  - requirements-spec
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
+- id: solution-design
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/flash/方案设计.yaml
+  depends_on:
+  - requirements-spec
+  - performance-cases
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
+- id: test-integration
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/flash/Golden与白盒准备及测试集成.yaml
+  depends_on:
+  - blackbox-design
+  - solution-design
+  executor: ops-direct-invoke-architect
+  verifier: ops-direct-invoke-verifier
+  max_retries: 2
+  on_exhaust: exit
+- id: implementation
+  task_type: normal
+  yaml: ../../tasks/cannbot-dsl/flash/实现与自检.yaml
+  depends_on:
+  - test-integration
+  executor: ops-direct-invoke-developer
+  verifier: ops-direct-invoke-verifier
+  max_retries: 6
+  on_exhaust: exit

@@ -203,7 +203,7 @@ def unit_dependencies(work, units, index, native_by_id):
 
 def implementation_fix_node(plugin_root, op, leaves):
     return make_node(
-        plugin_root / "orchestrations/tasks/cannbot-dsl/实现修复.yaml",
+        plugin_root / "orchestrations/tasks/cannbot-dsl/stable/实现修复.yaml",
         op,
         "implementation-fix",
         leaves,
@@ -225,7 +225,7 @@ def final_stage_nodes(plugin_root, op, units):
     nodes.append(implementation_fix_node(plugin_root, op, leaves))
     nodes.append(
         make_node(
-            plugin_root / "orchestrations/tasks/cannbot-dsl/单元集成复验.yaml",
+            plugin_root / "orchestrations/tasks/cannbot-dsl/stable/单元集成复验.yaml",
             op,
             "unit-integration",
             ["implementation-fix"],
@@ -240,7 +240,7 @@ def final_stage_nodes(plugin_root, op, units):
     )
     nodes.append(
         make_node(
-            plugin_root / "orchestrations/tasks/cannbot-dsl/实现检视.yaml",
+            plugin_root / "orchestrations/tasks/cannbot-dsl/stable/实现检视.yaml",
             op,
             "implementation-review",
             ["unit-integration"],
@@ -280,7 +280,7 @@ def build_nodes(work, plugin_root, op, units, native_by_id, case_map):
         deps = unit_dependencies(work, units, index, native_by_id)
         nodes.append(
             make_node(
-                plugin_root / "orchestrations/tasks/cannbot-dsl/单元实现.yaml",
+                plugin_root / "orchestrations/tasks/cannbot-dsl/stable/单元实现.yaml",
                 op,
                 f"implement-{uid}",
                 deps,

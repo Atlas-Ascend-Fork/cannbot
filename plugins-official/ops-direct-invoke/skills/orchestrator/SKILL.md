@@ -79,13 +79,13 @@ python3 "$OPS_DIRECT_INVOKE_ROOT/tools/generate_workflow_guide.py" \
 
 恢复同一轮沿用原引导、完整 YAML、输入和工作目录，不重新选择模板或覆盖文件；新一轮重新生成引导并按当前目标选择。
 
-使用 CANNBotDSL 模板时，按选定 task 核对性能 case、设计路线及精度输入；有用户性能 case 时由设计任务分组建模，无 case 时按其范式路线执行，仅模型路线要求 OpModel 环境。设计和实现职责、同会话建模落稿、测试并行及最终交付规则以模板和任务为准，不另读一份流程总说明。工具固化、恢复与实际 DSL 版本依据见 [运行工具]($OPS_DIRECT_INVOKE_ROOT/skills/custom-skills/doc-templates/ascend/dsl/templates/运行工具.md)。
+使用 CANNBotDSL 模板时，按选定 task 核对性能 case、设计路线及精度输入，有 Case 时按该 task 的建模规则执行，无 Case 时按其范式规则执行；仅模型路线要求 OpModel。路线降级仅在所选 task 明确允许且条件满足时采用，未声明允许时不得自行降级。消费实际 selection.route、降级原因和性能证据范围，保留全部用户 case。设计和实现职责、同会话建模落稿、测试并行及最终交付规则以模板和任务为准，不另读一份流程总说明。工具固化、恢复与实际 DSL 版本依据见 [运行工具]($OPS_DIRECT_INVOKE_ROOT/skills/custom-skills/doc-templates/ascend/dsl/templates/运行工具.md)。
 
 用户提供的性能 case 无论是否接入寻优，均保留原始输入、case ID 与来源，交 performance-cases 标准化进 CSV 并用于设计和正确性覆盖；不能因不寻优而丢弃。是否接入性能优化按需求 Skill 的 R8 在启动前确认：未明确先询问，确认需要后才补目标、case 和预算；已有有效确认直接复用，不因给了 case 自动开启，也不把未答当作不接入。未决时不启动。
 
 只有确认接入且 case、自然语言目标及预算齐备时，按 [性能契约]($OPS_DIRECT_INVOKE_ROOT/skills/custom-skills/doc-templates/ascend/dsl/templates/性能契约.md) 固化 contract/perf-contract.yaml，明确比较对象、范围、方向、汇总方法与采用条件，保留用户原始要求；不自行增加目标、阈值或固定采样次数。启动前使用本插件 tools/check_perf_contract.py --contract <契约路径> --purpose comparison 核对；采用 diagnostics 时另核对对应入口，保存输出及退出码，缺项先解决。未接入时不另索要寻优预算、不安排独立摸底或默认性能采集，也不声明已做性能验收。
 
-将可选 orchestrations/workflows/cannbot-dsl/perf-opt.yaml 以 perf-opt 子图挂入本轮 op-dev，依赖 precision-validation；它替换原 review-fix，documentation 等待 perf-opt 最终放行。交组装器展开并调整依赖，不手改运行 YAML；未启用时保持原图。测量和预算按性能契约及任务执行，不要求设备独占，不终止他人进程，不用旧诊断冒充比较数据。恢复沿用冻结图、输入、工具和证据，不热更新；这些扩展只用于 DSL，不改变 AscendC/Kirin 路由。
+仅选中 Stable 主图时，将其配套 orchestrations/workflows/cannbot-dsl/stable/perf-opt.yaml 以 perf-opt 子图挂入本轮 op-dev，依赖 precision-validation；它替换原 review-fix，documentation 等待 perf-opt 最终放行。其他主图按其配套子图 use_when 声明的节点 ID、依赖和挂载方式接入，不套用 Stable 的节点或替换关系；所选图仍为草稿时不启动。交组装器展开并核对所选图的依赖，不手改运行 YAML；未启用时保持原图。测量和预算按性能契约及任务执行，不要求设备独占，不终止他人进程，不用旧诊断冒充比较数据。恢复沿用冻结图、输入、工具和证据，不热更新；这些扩展只用于 DSL，不改变 AscendC/Kirin 路由。
 
 ## 组装与下发
 
@@ -156,7 +156,7 @@ DSL 性能优化接入按本轮选中模板及其 task 的 use_when 与输入契
 
 主图的 performance 是静态子图；harness 调度专用 perf-coordinator 与独立 verifier。性能编排者只在该任务内部按原 Skill 派发通用阶段代理，外层 PM、developer 和其他节点的权限不变。阶段业务状态使用原 Skill 公开接口，外层状态仍由 harness 管理。恢复保留同一请求、run 和已用预算，不清空内部状态。
 
-性能输入适配与输出契约见 `$OPS_DIRECT_INVOKE_ROOT/orchestrations/tasks/cannbot-dsl/性能优化.yaml`。确定性库存转换使用 `$OPS_DIRECT_INVOKE_ROOT/tools/prepare_dsl_performance.py`；功能全集来自冻结原用例，设备性能集合使用相同 case 的原输入配方。性能结果在 `perf-optimize/run/`，最终交接是 `perf-optimize/HANDOFF.md`；文档与交付使用回集成后的版本及证据，优化前 `review-fix/selected.json` 保留为来源记录。
+性能输入适配与输出契约见 `$OPS_DIRECT_INVOKE_ROOT/orchestrations/tasks/cannbot-dsl/stable/性能优化.yaml`。确定性库存转换使用 `$OPS_DIRECT_INVOKE_ROOT/tools/prepare_dsl_performance.py`；功能全集来自冻结原用例，设备性能集合使用相同 case 的原输入配方。性能结果在 `perf-optimize/run/`，最终交接是 `perf-optimize/HANDOFF.md`；文档与交付使用回集成后的版本及证据，优化前 `review-fix/selected.json` 保留为来源记录。
 
 ## DSL 代码版本管理
 

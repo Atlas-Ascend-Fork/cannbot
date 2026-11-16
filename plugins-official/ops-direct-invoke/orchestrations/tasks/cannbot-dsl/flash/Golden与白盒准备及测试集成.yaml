@@ -1,0 +1,40 @@
+title: Golden、白盒准备与测试集成
+goal:
+- 完成 Golden、白盒暂存、Case 汇合、CPU 可执行性检查和测试源冻结。
+
+approach:
+- 读取当前 spec、DESIGN、已验收 blackbox 与 performance Case；不修改规格、设计或用户性能 Case。
+- 生成独立 Golden 和白盒暂存行，记录参考来源、触发条件和观察判据；不导入生产实现，不运行设备。
+- 在首次 CPU 检查前对齐 DESIGN 的公开调用与固定 runner：输入所在设备、Host 标量和已有预处理 hook 的执行顺序必须一致；优先使用 runner 已有入口，不另造调用链或改变公开契约。真实契约冲突在交给实现前解决。
+- 通过原分组更新入口汇合 blackbox、performance 和 whitebox，保留原 Case ID、分组、输入和来源；只做字段、重复 ID、必要断言和分组完整性检查。
+- 使用固定 casebook/runner 入口检查实际存在的分组，并对适用 Case 做 CPU 可执行性检查。记录当前 casebook、Golden、runner 身份和退出结果；输入、参考和比较器未变时复用已有有效检查；已有失败先据原记录修对应产物，只对变化部分补查。
+- 汇合通过后按现有版本协议冻结实际交给下游的测试源和 Golden，不发布缓存、日志、结果或生产实现；记录文件身份并 checkpoint。checkpoint 后直接读取 code_versions status --node test-integration，核对当前源码 SHA、冻结的 spec/DESIGN 等输入、Golden、runner、比较器、完整 CPU 命令及原始 evidence：同一身份已有 valid 且 exit_code=0 的完整结果时引用原 attempt 和 evidence；同一身份只有完整失败记录时先据此修测试产物，不原样重跑；身份变化、没有完整原始记录，或针对失败完成实际修复后，才用 code_versions verify 运行适用 CPU 检查。若 harness 已提供冻结目录和有效身份，直接复用，不额外创建或切换目录；报告写入 WORK_DIR/test-integration/report.md。
+- 执行者自检按“准备、汇合、可执行性、冻结”四段核对；失败只修对应阶段，不重新生成无关资产。
+
+procedure:
+- '先运行一次 `"$PYTHON" "$OPS_DIRECT_INVOKE_ROOT/tools/flash_review_summary.py" --work-dir "$WORK_DIR" --node test-integration`，集中取得当前文件、Case 分组和已有版本记录；汇总只定位差异，不替代语义裁决。未采用 code_versions 的合法冻结方式直接读取既有 CPU 结果和冻结身份，不为汇总工具另建版本协议。'
+- 核对 spec、DESIGN、blackbox 和 performance 的当前身份；确认 Golden 独立、whitebox 行有触发条件和观察判据。
+- 汇合后核对 Case ID、分组保留、重复项、shape/dtype/断言必填字段及来源；性能 Case 不被改写，合法空组不造占位行。
+- 审查执行者已有的固定 casebook 和适用 CPU 检查结果；通过汇总及 code_versions status 核对当前源码、冻结输入、Golden、runner、比较器、命令、原始 evidence 与环境身份。一致且有效时直接复用，仅在缺失、失效或矛盾时补查受影响部分；失败记录只供诊断，不能登记为通过。
+- 按现有版本协议核验已冻结目录或 harness 已提供的冻结身份，确认测试源完整且不含缓存和结果；复用已有 attempt、checkpoint 和有效证据，不在验收时重复发布或创建 checkpoint。验收成功时用成功证据所属的原 attempt 和 evidence ID 执行 verify --accept，不在新 attempt 中接受旧证据。
+- 验收只检查必要交付：Golden/whitebox 可消费、三组 Case 正确汇合、当前 runner/CPU 结果可追溯、实际交给下游的测试源已冻结。报告格式、额外故障变体、设备结果和未声明的判别实验不构成阻断。
+- 将自检声明与实际检查范围对照，核对影响交付的原始事实；关键数值、精度、覆盖或身份错误仍失败。检查器未支持某种散文写法时，只要求收窄不实声明；声明已修正且必要事实有证据后，不以新增措辞、标点或数字写法继续扩大验收范围。报告修订未改变输入、Golden、runner 或比较器时复用有效执行证据。
+
+acceptance:
+- 'test -s "$WORK_DIR/operators/<op>/test/testcase.csv"'
+- 'test -s "$WORK_DIR/operators/<op>/test/<op>_golden.py"'
+- 'test -s "$WORK_DIR/operators/<op>/test/test_<op>.py"'
+- 'test -s "$WORK_DIR/test-integration/report.md"'
+
+out_of_scope:
+- 不调用目标算子、不运行设备、不生成 Unit/TDD、不修改 spec、DESIGN、用户性能 Case、Golden 比较标准或 harness。
+- 不要求额外故障变体、判别率、性能搜索或重复全量探针。
+- 文件哈希、Case 统计和结果身份使用已有记录与汇总工具，不要求 Agent 手工复算或另交一份证据清单；报告措辞与可定位的引用笔误不触发重跑。
+
+context:
+  execute:
+    skills:
+    - cannbot-dsl-test-generator
+  verify:
+    skills:
+    - cannbot-dsl-test-generator

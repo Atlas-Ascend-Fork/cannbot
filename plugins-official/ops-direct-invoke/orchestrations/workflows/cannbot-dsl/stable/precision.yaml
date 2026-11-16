@@ -5,7 +5,7 @@ max_parallel: 1
 nodes:
 - id: precision-check
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/精度预检.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/精度预检.yaml
   depends_on: []
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
@@ -13,7 +13,7 @@ nodes:
   on_exhaust: exit
 - id: precision-fix
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/精度修复.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/精度修复.yaml
   depends_on:
   - precision-check
   executor: ops-direct-invoke-developer
@@ -22,7 +22,7 @@ nodes:
   on_exhaust: exit
 - id: precision-final
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/精度验证.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/精度验证.yaml
   depends_on:
   - precision-fix
   executor: ops-direct-invoke-developer

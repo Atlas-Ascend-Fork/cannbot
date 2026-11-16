@@ -506,7 +506,8 @@ test('discovered workflow templates reproduce their tasks and phase contexts', (
     readdirSync(join(root, 'orchestrations/workflows'), { recursive: true })
       .filter((name) => name.endsWith('.yaml') && !name.endsWith('.graph-preview.yaml')).sort());
   for (const template of guide) {
-    const output = join(box.root, template.file);
+    // Each template represents a separate run; variants may share child file names.
+    const output = join(box.root, template.file, 'workflow.yaml');
     const path = join(root, 'orchestrations/workflows', template.file);
     const reference = yamlValue(path);
     const result = spawnSync('python3', [join(root, 'tools/assemble_workflow.py'), '--output', output,

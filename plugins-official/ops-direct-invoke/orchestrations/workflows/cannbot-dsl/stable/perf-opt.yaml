@@ -5,7 +5,7 @@ max_parallel: 1
 nodes:
 - id: opt-baseline
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/寻优基线.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/寻优基线.yaml
   depends_on: []
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
@@ -13,7 +13,7 @@ nodes:
   on_exhaust: exit
 - id: opt-iterate
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/联合迭代优化.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/联合迭代优化.yaml
   depends_on:
   - opt-baseline
   executor: ops-direct-invoke-developer
@@ -28,7 +28,7 @@ nodes:
   - opt-iterate
 - id: opt-regression
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/寻优回归.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/寻优回归.yaml
   depends_on:
   - review-fix
   executor: ops-direct-invoke-developer

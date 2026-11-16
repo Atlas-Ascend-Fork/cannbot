@@ -45,6 +45,65 @@ def skill(path, name):
     (path / "SKILL.md").write_text(f"---\nname: {name}\ndescription: fixture\n---\n{name}\n")
 
 
+def _assert_flash_skill_binding(testcase, node, bindings, context):
+    for phase, role in [("execute", "executor"), ("verify", "verifier")]:
+        with testcase.subTest(node=node["id"], phase=phase):
+            entry = {**testcase.entry(phase, node["id"]), "agent": node[role]}
+            result = prepare_phase(entry, testcase.work)
+            visible = Path(result["cwd"]) / ".agents/skills"
+            expected = set(bindings[node["id"]][phase]["skills"])
+            actual = {path.name for path in visible.iterdir()} if visible.exists() else set()
+            testcase.assertEqual(actual, expected)
+            for name in expected:
+                testcase.assertEqual(metadata(visible / name)["name"], name)
+                testcase.assertEqual((visible / name / "SKILL.md").read_bytes(),
+                                     (Path(context["skills"][name]) / "SKILL.md").read_bytes())
+            testcase.assertEqual(Path(result["identity"]).read_bytes(),
+                                 (testcase.source / "agents" / (node[role] + ".md")).read_bytes())
+            templates = Path(result["env"]["DOC_TEMPLATES_DIR"])
+            testcase.assert_linked_resources(
+                templates, testcase.source / "skills/custom-skills/doc-templates/ascend/dsl")
+
+
+
+def _run_flash_front_tasks_bind_skills(testcase):
+    template = testcase.source / "orchestrations/workflows/cannbot-dsl/op-dev-flash.yaml"
+    reference = yaml.safe_load(template.read_text(encoding="utf-8"))
+    front_tasks = {"工作区与环境准备", "需求与规格", "性能用例准备", "方案设计"}
+    external = testcase.root / "external"
+    front_ids = _prepare_flash_external(template, reference, front_tasks, external)
+    testcase.assertEqual(len(front_ids), len(front_tasks))
+    context = testcase.freeze(language="dsl", engineering="cannbot-dsl")
+    workflow = testcase.work / "workflow.yaml"
+    graph = write_template(template, workflow)
+    bindings = validate_graph_context(workflow, testcase.work, context)
+    _bind_flash_graph(testcase, graph, front_ids, bindings, context)
+
+
+def _prepare_flash_external(template, reference, front_tasks, external):
+    front_ids = set()
+    for node in reference["nodes"]:
+        task = template.parent / node["yaml"]
+        content = yaml.safe_load(task.read_text(encoding="utf-8"))
+        if task.stem in front_tasks:
+            front_ids.add(node["id"])
+        _ensure_flash_skills(content, external)
+    return front_ids
+
+
+def _ensure_flash_skills(content, external):
+    for declaration in content["context"].values():
+        for name in declaration["skills"]:
+            if not (external / name / "SKILL.md").exists():
+                skill(external / name, name)
+
+
+def _bind_flash_graph(testcase, graph, front_ids, bindings, context):
+    for node in graph["nodes"]:
+        if node["id"] in front_ids:
+            _assert_flash_skill_binding(testcase, node, bindings, context)
+
+
 class WorkspaceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="direct-invoke-context-")
@@ -180,6 +239,9 @@ class WorkspaceTests(unittest.TestCase):
                 node = graph["nodes"][0]
                 for phase, role in [("execute", "executor"), ("verify", "verifier")]:
                     self.assert_blackbox_phase(node, platform, phase, role)
+
+    def test_flash_front_tasks_bind_skills_from_the_main_template(self):
+        _run_flash_front_tasks_bind_skills(self)
 
     def test_template_supplemental_skills_reach_only_their_declared_phases(self):
         context = self.freeze()

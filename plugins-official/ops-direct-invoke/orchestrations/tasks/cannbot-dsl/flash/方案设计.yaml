@@ -1,0 +1,47 @@
+title: Flash｜性能选型与方案设计
+goal:
+- 形成覆盖规格支持域、可供实现和测试落实的算子设计。
+approach:
+- 直接消费 design/doc/ 下的 spec.yaml、REQUIREMENTS.md、原生环境 YAML、准备段报告和 `operators/<op>/test/testcase.csv`，`<op>` 取 spec.op.name；按需引用用户来源和性能契约。环境沿用已验收 PASS/full，使用中发现影响本阶段的具体冲突时处理其影响。
+- 同一执行会话完成路线选择、必要建模和落稿。先明确计算链、主要成本、真实输入分发、缓冲与同步规则，再展开必要比较。关键规则在 DESIGN.md 保留一个权威定义位置，其余引用该定义；已有模型和硬件事实引用原始依据。
+- '无 active performance 行时使用范式路线。有 Case 时优先使用模型路线；OpModel 不可用或预算内无法形成合格模型方案，且需求没有硬性性能目标、没有明确要求必须建模时，可显式转为范式路线。两种范式情形均写 `design/selection.yaml`，保留 `version: 1`、`route: paradigm`、`groups: []`；reason 说明实际原因、尝试内容和性能证据范围，区分未提供 Case 与建模降级。Case 全部保留，在 DESIGN 中说明适用路径及性能取舍。硬性目标或必须建模要求存在时，必要模型缺口仍阻断。'
+- 范式路线加载 `cannbot-dsl-op-design` 与 `ops-design-paradigms`，沿冻结范式设计。两条路线按实际需要使用 `cannbot-dsl-best-practice`、`npu-arch` 核对关键能力和硬件事实。API 依据优先使用当前安装版本的公开接口、适用文档或授权快照，按实际需要引用官方样例。
+- 模型路线加载 `ops-theoretical-performance-estimation`，按其公开 toolkit 契约及 `$DOC_TEMPLATES_DIR/templates/OpModel接入.md` 使用选定解释器、目标 SKU 和隔离模型目录；落稿由该 toolkit 的设计文档生成工作流主导，承接当前模型与原始证据。按计算结构及资源策略分组，每个 active Case 恰属一组；共同目标、权重及比较口径从已确认要求和有据的设计判断确定。
+- 对全部 Case 做轻量适用性检查，以原 Case 的代表集比较必要候选，范围覆盖影响成本、分发及资源策略的差异。复用身份一致的有效模型结果、静态容量推导和回读，仅为影响选型或明确约束的缺口补算；规模较小时可直接比较。遵守用户预算与授权，保留实际范围、未评价部分和停止原因。
+- 模型赢家须有有效成本、容量与依赖依据及最终归档配置的加载回读。对实际分配、临时量、转换缓冲、对齐和槽复用核算最重实例；适用的静态上界可覆盖多个 Case。已知算法、容量或同步错误在实际交付方案中解决；路线降级后按新方案重新核对受影响依据。
+- '模型路线 selection 沿用 `version: 1`、`route: model_groups`、context 和非空 groups。每组保留唯一 id、非空 case_ids、rationale/applicability/objective/budget 和 winner。winner 包含 candidate、`qualified: true`、config/search_evidence/replay_evidence/qualification_evidence、非空 artifacts/cost_evidence 及 vf_evidence（无 VF 时可空并说明）。context 位于 design/model/，组内引用位于 design/model/<id>/，路径相对 WORK_DIR 且指向真实文件；保留 toolkit 所需模型定义和复现资料。'
+- 输出单文件 `design/doc/DESIGN.md`，明确算法与数值链、完整支持域的分发和默认路径、Host/Kernel 与公开调用及导出关系、数据流、资源生命周期及同步。影响调用的 Host 标量、Tensor 所在设备和必要预处理在此确定，测试集成使用同一契约；例如 shape 依赖的长度来自 CPU 时，明确公开入口和固定 runner 如何提供它。每个用户 Case 可关联到实际适用路径；模型结论限于已评价范围，范式降级如实标注性能未验证范围。单算子交付默认必须是单个实际可执行 kernel：逻辑阶段、循环阶段和 `switch`/条件分支应在同一 kernel 内表达，不得把阶段数直接升级为 kernel 数量。只有用户或规格明确授权多 kernel，且 DESIGN 同时写明 kernel 数量、阶段职责、跨 kernel 数据依赖、同步关系及性能/容量理由时，才可例外。
+- 普通 API 组合、循环写法、地址及事件编号由实现选择。仅编译或设备可确认的组合能力，在设计中写清待验证行为、证据、通过条件和首次消费前的完成时机；当前数值、容量及关键依赖矛盾在交接前解决。
+- 写 `environment/soc-info.yaml`，记录设计所需硬件事实及来源。提交前一次联查 DESIGN、selection、soc-info 和有效原始证据；在 `.workflow/reports/` 的节点记录索引选择及未到期验证安排。恢复先读产物和反馈，只更新实际受影响的定义、引用和失效证据。
+procedure:
+- '先运行一次 `"$PYTHON" "$OPS_DIRECT_INVOKE_ROOT/tools/flash_review_summary.py" --work-dir "$WORK_DIR" --node solution-design`，集中取得文件身份和 Case 分组；汇总只定位差异，不替代语义裁决。直接阅读相关正文与原始依据，不再逐文件查存在性、手算哈希或逐组计数，也不另写报告审计器。'
+- 从冻结规格与实际方案联合核对数值语义、完整支持域、输入分发、容量、同步、关键能力和明确性能要求。优先使用有效静态推导及原始记录，真实语义错误、合法输入无路径、超容或关键依赖矛盾仍判失败。
+- 按 selection.route 验收。模型路线使用 `ops-theoretical-performance-estimation` 内 toolkit 的设计文档生成方法审查，核对 Case 归属、比较范围、合格赢家、成本与容量依据、回读及 DESIGN 承接。范式路线使用 `cannbot-dsl-op-design` 与 `ops-design-paradigms` 的方法审查，核对无 Case 或合法降级的实际原因；有 Case 的降级须确认建模缺口和无硬性性能目标、无必须建模要求，Case 保留且设计说明适用路径和性能证据范围。
+- 核对 soc-info 与目标设备及实际采用的硬件事实一致。普通实现选择未定、未到期设备证据、报告形式、重复表格和可定位的轻微引用问题不单独阻断。必要能力依据不足或真实矛盾按具体影响处理。
+- 只有关键方案语义、资源上界、支持域、数值链或必要性能/结构约束错误，或证据状态失实且影响下游，才判失败；章节、版本号、统计注释和措辞差异记录为建议。
+- 一次收齐独立可检查的问题并写入 `.workflow/reports/`。返工核对反馈、实际修改、关联影响及此前未检查项，复用有效结论；直接审查原始证据，不重复探测、搜索或设备实验。
+- 每次补查先明确尚未解决且影响本节点裁决的具体问题及已有证据为何不足；一次读取相关文件段落。已有依据足够即结束，不为枚举所有可能风险继续搜索 API、样例或新增探针。
+- 按 DESIGN 的权威定义与已有原始证据核对关键公式、索引单位和状态生命周期，允许其他章节引用，不要求重复定义或新造表格。关键语义、合法输入路径、资源上界及必要依赖成立，且未到期编译/设备事项明确负责节点、通过条件、首次消费前完成时机和失败处理时，可交接实现；已知缺陷仍失败，不将普通实现选择或尚未到期的设备证明提前列为完成设计的条件。
+acceptance:
+- 'test -s "$WORK_DIR/design/selection.yaml"'
+- 'test -s "$WORK_DIR/design/doc/DESIGN.md"'
+- 'test -s "$WORK_DIR/environment/soc-info.yaml"'
+out_of_scope:
+- 设计正文仅交付 `design/doc/DESIGN.md` 单文件，不新增 INDEX.md、主题或分支设计文件；两阶段均不因 Skill 的默认多文件模板增加交付件或验收门槛。
+- model_groups 路线不加载 `cannbot-dsl-op-design` 或 `ops-design-paradigms`，不套用其范式选型或重复成本分析；paradigm 路线不要求模型运行时、赢家或搜索证据。
+- 需求、规格、用户 Case、性能契约和原生环境事实由上游提供。本节点在既有授权内形成设计，生产实现和设备验证由下游承担，模型与实验资产保存在本轮工作目录。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-best-practice
+    - cannbot-dsl-op-design
+    - ops-design-paradigms
+    - ops-theoretical-performance-estimation
+    - npu-arch
+  verify:
+    skills:
+    - cannbot-dsl-best-practice
+    - cannbot-dsl-op-design
+    - ops-design-paradigms
+    - ops-theoretical-performance-estimation
+    - npu-arch

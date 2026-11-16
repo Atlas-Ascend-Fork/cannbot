@@ -1,0 +1,24 @@
+title: Flash｜性能 Case 标准化
+goal:
+- 将用户性能场景整理为后续设计与正确性验证可消费的标准用例。
+approach:
+- 直接消费 `design/doc/spec.yaml` 和 REQUIREMENTS.md，按需读取原始场景与附件。加载 `cannbot-dsl-test-generator` 的性能用例准备能力，仅标准化已给场景，保留原 Case ID、来源及实际输入，同 shape 的不同场景分别保留。
+- 使用 Skill 的分组安全更新入口维护 `$WORK_DIR/operators/<op>/test/testcase.csv` 的 performance 行，`<op>` 取 spec.op.name；补齐输入配方、spec 引用及来源，执行性能分组校验并保留命令、版本和结果。原有其他分组由原入口保留。输入配方必须表达 spec 的跨输入关系和每个 case 的 value_range；有界范围不得使用未约束的 normal 配方，除非 runner 明确按范围截断。
+- 未提供性能 Case 时本节点仍执行：通过分组更新入口提交空数组，创建或保留标准 CSV 表头，performance 分组为空且其他分组保留，不生成默认 Case；在节点报告注明“未提供性能 case”。已给 Case 信息不足或与规格冲突时记录具体缺口并终止，不能当作未提供；有 Case 而缺少后续调优预算不阻断本段。性能契约若存在则沿用 Case 对应关系。
+- 在 `.workflow/reports/` 的节点报告引用原始场景及校验结果。生成后用固定 runner 物化全部 performance 行，逐行核对跨输入关系、value_range、shape/dtype/属性和 Case ID；物化结果不满足 spec 时必须修正配方并重跑，保存各命令和退出码。输入和产物未变且证据有效时复用，只修受反馈影响的行。
+- 性能行以用户提供的典型场景为准，不为提升判别力自行改写输入、扩展 ramp/轴/跨度、生成故障对照或搜索“结构性前沿”；这些属于 TDD/白盒或性能调优职责。
+procedure:
+- 核对用户场景与 performance 行对应完整，Case ID、来源、实际输入和规格引用可追溯，分组校验有效且其他分组保留。独立物化全部行，确认 spec 声明的跨输入等式、value_range 和输入类型真实成立；仅结构字段正确但物化后不成立，判失败。未提供 Case 时，确认标准表头、空 performance 分组、其他分组保留及报告说明后正常放行；已提供但输入不足、冲突、遗漏或分组破坏判失败。
+- 复用执行证据，格式、报告篇幅和可定位的轻微引用问题记录修订意见。跨输入关系、value_range、物化结果和命令证据属于必要交付，缺失或不一致才阻断。验收只判断用户 Case 是否完整保留、合法、可物化并可进入统一 runner；不得把 detectable_defects、blind_spots、S1/S2/S3、K 序命中、结构性前沿或故障判别率作为本节点必交付或阻断条件。若已有脚本或报告包含这些分析，只作诊断信息，不改变性能 Case 的验收结论。将结论写入 `.workflow/reports/`，返工只核对修改影响、反馈及此前未检查项。
+acceptance:
+- 'test -s "$WORK_DIR/operators/<op>/test/testcase.csv"'
+out_of_scope:
+- 本段维护用户 performance 场景；其他分组、Golden、生产实现及设备测量由对应节点负责。
+- 缺陷可检测性设计、故障变体、白盒结构观察、TDD 判别力和性能配置搜索不属于本节点；不得因缺少这些分析阻断典型性能 Case 的交付。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-test-generator
+  verify:
+    skills:
+    - cannbot-dsl-test-generator

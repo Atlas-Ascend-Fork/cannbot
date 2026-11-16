@@ -260,6 +260,11 @@ def prepare(config_path, work, language, task, engineering, code_dir, provider=N
         # Only the public entry is selectable by an outer task. Its complete
         # installation is mounted when that task executes the delegated workflow.
         available["ops-perf-optimize-workflow"] = perf_skills["ops-perf-optimize-workflow"]
+        if "ops-theoretical-performance-estimation" in perf_skills:
+            available.setdefault(
+                "ops-theoretical-performance-estimation",
+                perf_skills["ops-theoretical-performance-estimation"],
+            )
         local_available = {name: path.replace(str(final), str(stage), 1)
                            for name, path in available.items()}
         skill_closure([PREFIX + name for name in selected], local_available)

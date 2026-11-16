@@ -1,0 +1,23 @@
+title: 黑盒用例设计
+goal:
+- 基于当前规格准备可观察的黑盒用例及必要路径覆盖，不等待方案或其他并行准备。
+approach:
+- 核对当前运行中的规格及有效精度预检，使用 cannbot-dsl-test-generator 的黑盒模块运行 build_blackbox_cases.py --inventory，列出接口、类型、合法域、边界和异常义务。
+- 选择能观察各义务的输入，允许一个用例覆盖多项义务；不能用固定配方表达的合法域记为待专项设备验证，不缩小支持域。
+- 通过原 update_case_group.py 分组入口更新 `$WORK_DIR/operators/<op>/test/testcase.csv` 的 blackbox 组，`<op>` 取 spec.op.name；锁内重读并保留并发写入的 performance 等其他组；不得整表覆盖。
+- 运行 `"$PYTHON" "$OPS_DIRECT_INVOKE_ROOT/tools/flash_backend_checks.py" cases --casebook "$WORK_DIR/operators/<op>/test/testcase.csv" --sheet blackbox`，在交接前机械检查本组输出 shape/dtype 断言的必填字段；失败时只修对应行，不让必败用例进入集成。
+- 执行原黑盒语义校验并保存命令、退出码、用例与规格来源及 blackbox/coverage.json。恢复时读取现有 CSV 和反馈，只修相关行。
+procedure:
+- 核对上述 Flash casebook 检查输出为 pass；它只证明字段可执行，仍须独立判断规格覆盖和语义。
+- 对照规格核查本组输入、预期、异常和必要路径覆盖，确认组更新保留其他组；专项设备义务须明确交接。
+- 本阶段不要求方案、Golden、Unit、设备结果或编译通过。
+acceptance:
+- 'test -s "$WORK_DIR/operators/<op>/test/testcase.csv"'
+- 'test -s "$WORK_DIR/blackbox/coverage.json"'
+out_of_scope:
+- 不实现算子、不写 Golden、白盒或 TDD，不改规格或运行设备。
+context:
+  execute:
+    skills: [cannbot-dsl-test-generator]
+  verify:
+    skills: [cannbot-dsl-test-generator]

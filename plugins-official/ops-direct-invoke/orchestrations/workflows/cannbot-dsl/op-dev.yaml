@@ -1,12 +1,12 @@
 # CANNBot-DSL 完整算子开发工作流
-use_when: CANNBotDSL 算子开发全流程（需求、规格、设计、TDD 实现、精度验证与交付；性能优化按需挂载）
+use_when: Stable 默认版本，提供完整的 CANNBotDSL 算子开发流程（需求、规格、设计、TDD 实现、精度验证与交付；性能优化按需挂载）。用户明确指定 Stable、完整流程或完整商用交付，或未表达流程偏好时选择；用户明确指定 Flash，或表达快速开发、快速生成、精简流程、轻量开发等缩短开发流程的意图时，转选同目录 op-dev-flash.yaml 并遵守其运行限制。仅要求提高算子运行性能不触发 Flash，否定或引用快速开发表述不视为选择；未指定流程名称且快速开发与完整交付要求冲突时，启动前确认。用户明确指定的流程名称优先；同时明确指定两个流程时先确认。
 workflow: op-dev
 max_parallel: 4
 max_rollbacks: 4
 nodes:
 - id: create-workspace
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/创建工作区.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/创建工作区.yaml
   depends_on: []
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
@@ -14,7 +14,7 @@ nodes:
   on_exhaust: exit
 - id: environment
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/环境就绪.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/环境就绪.yaml
   depends_on:
   - create-workspace
   executor: ops-direct-invoke-developer
@@ -23,7 +23,7 @@ nodes:
   on_exhaust: exit
 - id: requirements
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/需求分析.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/需求分析.yaml
   depends_on:
   - create-workspace
   executor: ops-direct-invoke-architect
@@ -32,7 +32,7 @@ nodes:
   on_exhaust: exit
 - id: spec
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/规格生成.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/规格生成.yaml
   depends_on:
   - requirements
   executor: ops-direct-invoke-architect
@@ -41,7 +41,7 @@ nodes:
   on_exhaust: exit
 - id: performance-cases
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/性能用例准备.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/性能用例准备.yaml
   depends_on:
   - spec
   executor: ops-direct-invoke-architect
@@ -50,7 +50,7 @@ nodes:
   on_exhaust: exit
 - id: blackbox-design
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/黑盒用例设计.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/黑盒用例设计.yaml
   depends_on:
   - spec
   executor: ops-direct-invoke-architect
@@ -59,7 +59,7 @@ nodes:
   on_exhaust: exit
 - id: solution-design
   task_type: subgraph
-  template: design-opt.yaml
+  template: stable/design-opt.yaml
   file: design-opt/workflow.yaml
   depends_on:
   - performance-cases
@@ -67,7 +67,7 @@ nodes:
   - environment
 - id: unit-planning
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/单元任务拆分.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/单元任务拆分.yaml
   depends_on:
   - solution-design
   executor: ops-direct-invoke-architect
@@ -76,7 +76,7 @@ nodes:
   on_exhaust: exit
 - id: test-generator
   task_type: subgraph
-  template: test-generation.yaml
+  template: stable/test-generation.yaml
   file: test-generation/workflow.yaml
   depends_on:
   - performance-cases
@@ -84,7 +84,7 @@ nodes:
   - blackbox-design
 - id: implementation
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/全量实现.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/全量实现.yaml
   depends_on:
   - test-generator
   executor: ops-direct-invoke-developer
@@ -93,7 +93,7 @@ nodes:
   on_exhaust: exit
 - id: precision-validation
   task_type: subgraph
-  template: precision.yaml
+  template: stable/precision.yaml
   file: precision/workflow.yaml
   depends_on:
   - performance-cases
@@ -102,13 +102,13 @@ nodes:
   - test-generator
 - id: review-fix
   task_type: subgraph
-  template: review-fix.yaml
+  template: stable/review-fix.yaml
   file: review-fix/workflow.yaml
   depends_on:
   - precision-validation
 - id: documentation
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/文档生成.yaml
+  yaml: ../../tasks/cannbot-dsl/stable/文档生成.yaml
   depends_on:
   - review-fix
   executor: ops-direct-invoke-developer

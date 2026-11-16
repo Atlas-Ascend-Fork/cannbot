@@ -5,7 +5,7 @@ max_parallel: 3
 nodes:
 - id: golden
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/测试-Golden准备.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/测试-Golden准备.yaml
   depends_on: []
   executor: ops-direct-invoke-architect
   verifier: ops-direct-invoke-verifier
@@ -13,7 +13,7 @@ nodes:
   on_exhaust: exit
 - id: whitebox
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/测试-白盒草拟.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/测试-白盒草拟.yaml
   depends_on: []
   executor: ops-direct-invoke-architect
   verifier: ops-direct-invoke-verifier
@@ -21,7 +21,7 @@ nodes:
   on_exhaust: exit
 - id: tdd
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/测试-TDD草拟.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/测试-TDD草拟.yaml
   depends_on: []
   executor: ops-direct-invoke-architect
   verifier: ops-direct-invoke-verifier
@@ -29,7 +29,7 @@ nodes:
   on_exhaust: exit
 - id: integrate
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/测试-集成.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/测试-集成.yaml
   depends_on:
   - golden
   - whitebox

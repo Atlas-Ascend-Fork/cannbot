@@ -5,7 +5,7 @@ max_parallel: 1
 nodes:
 - id: baseline
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/检视基线.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/检视基线.yaml
   depends_on: []
   executor: ops-direct-invoke-developer
   verifier: ops-direct-invoke-verifier
@@ -13,7 +13,7 @@ nodes:
   on_exhaust: exit
 - id: review
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/代码检视.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/代码检视.yaml
   depends_on:
   - baseline
   executor: ops-direct-invoke-verifier
@@ -22,7 +22,7 @@ nodes:
   on_exhaust: exit
 - id: fix
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/检视修复.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/检视修复.yaml
   depends_on:
   - review
   executor: ops-direct-invoke-developer

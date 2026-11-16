@@ -5,7 +5,7 @@ max_parallel: 1
 nodes:
 - id: design
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/方案设计.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/方案设计.yaml
   depends_on: []
   executor: ops-direct-invoke-architect
   verifier: ops-direct-invoke-verifier

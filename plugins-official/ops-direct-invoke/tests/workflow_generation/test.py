@@ -25,7 +25,42 @@ sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "helpers"))
 from support import HARNESS_SKILL, SCRIPTS, load_yaml, run_tests, task_fixture
 
 
+def _assert_flash_node(testcase, node, declaration, template, contexts, front_tasks, found):
+    task = template.parent / declaration["yaml"]
+    content = load_yaml(task)
+    testcase.assertEqual(node, {
+        **{key: value for key, value in content.items() if key != "context"},
+        **{key: value for key, value in declaration.items() if key != "yaml"},
+    })
+    testcase.assertEqual(contexts[node["id"]], content["context"])
+    if task.stem in front_tasks:
+        found.add(task.stem)
+        testcase.assertTrue(node["approach"])
+        testcase.assertTrue(node["procedure"])
+
+
+
 class WorkflowGenerationTests(unittest.TestCase):
+    def test_flash_main_template_preserves_tasks_and_stage_contexts(self):
+        template = SCRIPTS.parent / "orchestrations/workflows/cannbot-dsl/op-dev-flash.yaml"
+        reference = load_yaml(template)
+        front_tasks = {"工作区与环境准备", "需求与规格", "性能用例准备", "方案设计"}
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "workflow.yaml"
+            result = subprocess.run(
+                [sys.executable, str(SCRIPTS / "assemble_workflow.py"), "--template", str(template),
+                 "--output", str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            graph = load_yaml(output)
+            contexts = load_yaml(Path(str(output) + ".contexts.yaml"))
+            self.assertEqual(graph["max_parallel"], reference["max_parallel"])
+            self.assertEqual(len(graph["nodes"]), len(reference["nodes"]))
+            found = set()
+            for node, declaration in zip(graph["nodes"], reference["nodes"]):
+                with self.subTest(node=node["id"]):
+                    _assert_flash_node(self, node, declaration, template, contexts, front_tasks, found)
+            self.assertEqual(found, front_tasks)
+
     def write_content_task_fixture(self, folder):
         content = {
             key: value

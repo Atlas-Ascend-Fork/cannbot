@@ -50,3 +50,7 @@ opencode
 1. 初始化时选择 Ascend 和 CANNBot-DSL，并提供实际 skills 来源。
 2. 启动前确认是否接入后续性能优化；需要时补齐目标、case 和预算，已有有效答复直接复用。
 3. 默认单节点 op-dev 的代码目录使用本轮 WORK_DIR；采用受管模板时按对应 CODE_DIR 准备上下文。恢复使用原 YAML、快照和状态，不迁移正在运行的目录。
+
+DSL 开发选择 `cannbot-dsl/op-dev.yaml`（Stable）或 `cannbot-dsl/op-dev-flash.yaml`（Flash）。两者均为完整主图；Flash 的前后段任务已接入，运行前须满足所选任务的环境、工具及验证条件。
+
+按需挂载 Flash 的 `flash/perf-opt.yaml` 时，子图节点使用 `performance-optimize`，依赖 `implementation`。

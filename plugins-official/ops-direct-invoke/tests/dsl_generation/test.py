@@ -615,7 +615,7 @@ class UnitSubgraphTests(unittest.TestCase):
         )
         self.assertEqual(set(bindings), {node["id"] for node in graph["nodes"]})
         task = yaml.safe_load(
-            (SCRIPTS.parent / "orchestrations/tasks/cannbot-dsl/单元实现.yaml").read_text(
+            (SCRIPTS.parent / "orchestrations/tasks/cannbot-dsl/stable/单元实现.yaml").read_text(
                 encoding="utf-8"
             )
         )

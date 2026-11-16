@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).absolute().parents[1] / "helpers"))
+import support
 from support import (
     SCRIPTS,
     WORKFLOWS,
@@ -194,7 +195,7 @@ class WorkflowExecutionTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse(marker.exists())
 
-    def test_every_template_assembles_and_runs_through_public_cli(self):
+    def test_templates_assemble_and_public_cli_rejects_unfinished_tasks(self):
         for entry in available_workflows():
             with self.subTest(template=entry["file"]):
                 self.check_template(entry)
@@ -216,7 +217,19 @@ class WorkflowExecutionTests(unittest.TestCase):
                 self.assertNotIn("yaml", node)
                 self.assertNotIn("variables", node)
             before = generated.read_bytes()
-            run_workflow(self, "--yaml", generated, folder / "run")
+            unfinished = any(node.get("task_type") == "normal" and node.get("goal") == []
+                             for node in definition["nodes"])
+            if unfinished:
+                result = subprocess.run([
+                    sys.executable, str(SCRIPTS / "run_workflow.py"), "--yaml", str(generated),
+                    "--work-dir", str(folder / "run"), "--provider", "codex",
+                    "--prompt", "registry UT simulation only", "--harness-skill", str(support.HARNESS_SKILL),
+                    "--foreground", "--dry-run",
+                ], cwd=folder, capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(".goal 必须是非空", result.stderr)
+            else:
+                run_workflow(self, "--yaml", generated, folder / "run")
             self.assertEqual(generated.read_bytes(), before)
             for path, content in sources.items():
                 self.assertEqual(path.read_bytes(), content)

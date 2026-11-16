@@ -14,7 +14,7 @@ max_parallel: 1
 nodes:
 - id: optimize
   task_type: normal
-  yaml: ../../tasks/cannbot-dsl/性能优化.yaml
+  yaml: ../../../tasks/cannbot-dsl/stable/性能优化.yaml
   depends_on: []
   executor: ops-direct-invoke-perf-coordinator
   verifier: ops-direct-invoke-verifier

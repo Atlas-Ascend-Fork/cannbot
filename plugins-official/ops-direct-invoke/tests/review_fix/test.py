@@ -369,7 +369,7 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual(child.read_bytes(), before)
 
     def test_child_uses_standard_assembly_interface(self):
-        child = assemble_template(WORKFLOWS / "cannbot-dsl/review-fix.yaml")
+        child = assemble_template(WORKFLOWS / "cannbot-dsl/stable/review-fix.yaml")
         self.assertNotIn("use_when", child)
         self.assertTrue(
             all("yaml" not in node and node["goal"] for node in child["nodes"])
@@ -396,7 +396,7 @@ class ReviewFixTests(unittest.TestCase):
         }
         children = {
             Path("review-fix/workflow.yaml"): {
-                "nodes": assemble_template(WORKFLOWS / "cannbot-dsl/review-fix.yaml")[
+                "nodes": assemble_template(WORKFLOWS / "cannbot-dsl/stable/review-fix.yaml")[
                     "nodes"
                 ]
             }

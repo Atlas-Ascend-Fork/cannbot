@@ -1,0 +1,28 @@
+title: Flash｜需求与规格
+goal:
+- 根据已确认需求生成可被下游消费的 spec.yaml，并保存最小来源与校验记录。
+approach:
+- 读取用户需求、需求分析和必要附件；只使用当前任务需要的来源，不扫描整个工作区或寻找最新参考仓。
+- 用户或规格已给出的精度策略、阈值、参考计算和舍入语义完整保留；默认策略仅用于未指定标准的输出，不能覆盖显式标准。复杂公式可采用公共 schema 已支持的 textual_only；确无适用 oracle 时标注真实 absent 及原因，参考实现由下游 Golden 完成。
+- 不加载或定位 ops-spec-gen Skill，也不扫描其目录。按本任务最小契约直接生成 spec.yaml，填写接口、输入输出、属性、shape/dtype、公式、支持域、明确边界语义和精度规则；只写有来源或明确推导的约束。
+- REQUIREMENTS.md 只记录来源、交付范围、用户要求、性能目标、取舍和未决项，不重复 spec 字段。
+- 仅在需要时记录 oracle、边界语义和精度标准；工具无法表达的 oracle 交给下游 Golden，不为消除 SKIP 反复调查。
+- 只使用固定入口 `$WORK_DIR/.context/external-skills/ops-spec-gen/scripts/validate_spec.py` 对 `$WORK_DIR/design/doc/spec.yaml` 运行一次非 strict 校验；schema 只核对 `$WORK_DIR/.context/external-skills/ops-spec-gen/schemas/op-spec.json`。禁止 ls/find/grep-R 扫描 ops-spec-gen，禁止读取 registry、examples、templates 或 evaluator 源码。必要精度字段按任务输入直接填写并做覆盖检查。保存命令、退出码、spec 哈希和关键 findings。真实失败或来源冲突才修正。
+- 在 .workflow/reports/ 写简短报告。执行者和验收者共享同一口径，验收只复核产物、关键字段和校验结果。
+procedure:
+- 核对 spec 存在、可解析且包含下游所需语义；REQUIREMENTS 只核对来源和决策记录。
+- 仅确认上述固定 validate_spec.py 入口覆盖当前 spec 且无真实失败，并核对精度字段覆盖输出 dtype。不得因独立评审表、额外对拍、格式差异、合法 SKIP 或未读取 registry/examples 失败。
+- 只有产物缺失、关键语义错误、无依据新增约束、真实校验失败或阻碍下游的未决项才失败；章节、编号、报告长度和措辞差异记录建议。
+- 返工只修受影响字段并重跑受影响校验，不重新开展完整调查。
+acceptance:
+- 'test -s "$WORK_DIR/design/doc/spec.yaml"'
+- 'test -s "$WORK_DIR/design/doc/REQUIREMENTS.md"'
+- 'test -s "$WORK_DIR/.workflow/reports/requirements-spec.md"'
+out_of_scope:
+- 不做方案设计、性能建模、测试用例设计、Golden、实现或设备实验。
+- 执行与验收共享本任务的最小交付边界，不追加逐字段来源表、SPEC_REVIEW、人工确认、独立重试或为消除合法 SKIP 而开发另一份参考实现。真实语义和精度错误仍阻断。
+context:
+  execute:
+    skills: []
+  verify:
+    skills: []

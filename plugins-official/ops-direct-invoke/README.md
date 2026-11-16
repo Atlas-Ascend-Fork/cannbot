@@ -2,6 +2,10 @@
 
 ## 新特性
 
+### 【2026-11-13】Flash 前段任务
+
+- 填充 Flash 主图的工作区与环境、需求与规格、性能 Case 和方案设计任务。产物、验收及显式范式降级契约见 [前段说明](../../note/flash-front-stages/README.md)。
+
 ### 【2026-10-31】
 
 - 新增 [perf-optimize](orchestrations/workflows/ascendc/perf-optimize.yaml) 入口，用于已有 Ascend C 算子的性能优化。
@@ -23,7 +27,7 @@
 
 ### 【2026-10-14】
 
-- DSL 全量精度验证后新增 [review-fix 子图](orchestrations/workflows/cannbot-dsl/review-fix.yaml)：由 Agent 通过统一 code_versions 管理 Git 基线、候选提交与恢复，review_fix 脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并按实际改动及有效结果复用规则完成必要的全量回归；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可在恢复提交全量复验后验收基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
+- DSL 全量精度验证后新增 [review-fix 子图](orchestrations/workflows/cannbot-dsl/stable/review-fix.yaml)：由 Agent 通过统一 code_versions 管理 Git 基线、候选提交与恢复，review_fix 脚本只读核对基线提交及冻结资产，检视一次，通过检视报告与修复报告逐项记录置信度 ≥80 的有效意见，由验收者核对实际改动，并按实际改动及有效结果复用规则完成必要的全量回归；验收未通过时由 harness 按节点预算重试。本轮功能失败先恢复已验证基线；有预算时返回失败重试，最后一轮可在恢复提交全量复验后验收基线托底，并在交付中明确整改未通过。组装中断可安全重试；回归中断由 Agent 保持候选源码不变并补齐验证，不计作完整功能失败。
 - 固定子图随主图组装到本轮目录；性能优化与回集成、文档和交付统一使用修复后通过的版本或恢复的基线。安装、启动与恢复命令不变。
 
 ### 【2026-10-13】
@@ -253,3 +257,7 @@ ops-direct-invoke/
 ## DSL 定制流程
 
 默认 DSL 流程保留同会话建模与单文件设计、单节点逐 Unit TDD、Golden/白盒/TDD 三路并行及独立测试集成。关闭后续实测调优仍保留面向性能的初始设计目标；启动前按需求能力确认是否接入后续优化。精度、设计与测试交接沿用冻结契约，恢复保留原快照和原生重试。
+
+DSL 开发提供两个独立主图：[Stable](orchestrations/workflows/cannbot-dsl/op-dev.yaml) 与 [Flash](orchestrations/workflows/cannbot-dsl/op-dev-flash.yaml)。子图及任务分别按 `stable/`、`flash/` 组织。
+
+Flash 包含工作区与环境、需求与规格、性能 case、黑盒、方案、Golden 与白盒、测试集成、实现与自检；可选性能子图包含冻结对照和探索选优。实际运行仍须满足任务声明的环境、工具及验证条件。

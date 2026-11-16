@@ -1,0 +1,26 @@
+title: Flash｜工作区与环境准备
+goal:
+- 准备可供后续节点复用的工作目录、DSL 编译环境和目标设备依据。
+approach:
+- 使用 harness 已创建的 `$WORK_DIR`，按需创建 environment/ 和 .workflow/reports/；需求节点自行创建 design/doc/。保留既有产物及 harness 状态，目录已存在时直接复用。
+- 读取 `$WORK_DIR/环境信息.md` 和已确认的激活方式、Python/CANN、目标设备及修改权限。在该环境中使用选定 Python 的绝对路径；仅在原授权内补齐实际缺口。
+- 加载 `cannbot-dsl-env-check`，以 `$WORK_DIR` 为 --output-dir 执行原生探测。已有证据对应当前解释器、DSL/CANN、激活配置及设备映射且仍有效时直接复用；身份变化、证据缺失或已知环境变化时补探测。保留原生 YAML、命令及日志，确认 PASS/full 和 SELECTED，逻辑设备与授权目标一致。full 表示编译能力及 NPU 可用，设备精度和性能由后续测试给出。
+- 为后续实现准备只读 DSL 参考：优先复用 `$WORK_DIR/cannbot-dsl` 中已有的有效快照，或任务明确指定的可用只读参考；本轮目标路径不存在且无可复用参考时，执行 `git clone --depth 1 https://gitcode.com/cann/cannbot-dsl.git "$WORK_DIR/cannbot-dsl"`。记录实际参考路径、来源、提交版本及拉取结果；已有目录不得清空、覆盖、pull 或切换版本。目标路径存在但无效时保留现场并报告；拉取失败保留错误和退出码，向后续节点说明参考缺失，不把它当成 DSL 环境探测失败。参考代码只用于 API 用法和结构，不替代实际环境探测。
+- 在 `$WORK_DIR/.workflow/reports/` 写含节点 ID 的简明执行记录，只引用原生环境证据、选定环境和必要参考。返工复用同一解释器、DSL/CANN、激活配置、设备映射下的有效记录，仅更新缺失或失效部分。
+procedure:
+- 核对工作目录可用，依据原生 YAML 和日志确认 DSL 导入、翻译、编译及 NPU 运行环境通过，`final_status.status` 和 `final_status.compile_gate` 均为 PASS，`final_status.execution_mode` 为 full，`selection.selection_status` 为 SELECTED，目标芯片及逻辑设备符合已确认输入。失败、无法解析或必要能力证据缺失时阻断。
+- 仅核对关键身份字段、原生 YAML 结构、命令退出码和设备选择与用户确认一致；直接复用同身份有效探测，不重新扫描参考仓、重复编译或重复执行设备探针。参考路径、版本注释、报告形式和非关键引用笔误记录为建议；实际能力或用户明确环境约束未满足时失败。
+- 将结论及具体缺口写入 `.workflow/reports/` 的节点验收报告；恢复时复核反馈、变化影响和此前未检查项。
+acceptance:
+- 'test -d "$WORK_DIR" && test -w "$WORK_DIR" && test -d "$WORK_DIR/.workflow"'
+- 'test -s "$WORK_DIR/environment/environment.yaml"'
+- 'test -s "$WORK_DIR/environment/env_selected_soc.yaml"'
+out_of_scope:
+- 环境和设备选择沿用用户授权；保留原生探测结构及 harness 状态。需求、规格、设计和设备测试由对应节点完成。
+context:
+  execute:
+    skills:
+    - cannbot-dsl-env-check
+  verify:
+    skills:
+    - cannbot-dsl-env-check
