@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -9,84 +8,120 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 
-"""Shared config and helpers for flash_attention block-level and tile-level designs."""
 
-from collections import namedtuple
 from dataclasses import dataclass
 
-import tilelang
-import tilelang.language as T
-
-KernelConfig = namedtuple("KernelConfig", [
-    "block_m", "block_n", "prelaunch", "ring_slots",
-    "dtype", "accum_dtype", "shape", "block_num", "kv_loops",
-])
-
-pass_configs = {
-    tilelang.PassConfigKey.TL_ASCEND_MEMORY_PLANNING: True,
-    tilelang.PassConfigKey.TL_ASCEND_AUTO_SYNC: True,
-}
+MAX_CORES = 20
+MAX_DIM = 512
 
 
-@dataclass
-class ProdWorkspace:
-    acc_s_ub: ...
-    acc_s_half: ...
-    workspace_2: ...
-    workspace_meta: ...
-    m_i_prev: ...
-    sumexp_i_ub: ...
-    cid: ...
-    vid: ...
-    block_m: ...
-    slot_prod: ...
+@dataclass(frozen=True)
+class FlashAttentionConfig:
+    batch: int
+    heads: int
+    q_seq_len: int
+    kv_seq_len: int
+    dim: int
+    dtype: str = "float16"
+    causal: bool = False
 
 
-def _kernel_setup(batch, seq_len, heads, dim):
-    """Return common block/tile sizing and scheduling parameters."""
-    block_m, block_n = 64, 64
-    prelaunch = 2
-    ring_slots = prelaunch + 1
-    dtype = "float16"
-    accum_dtype = "float"
-    shape = [batch, heads, seq_len, dim]
-    block_num = seq_len // block_m * heads * batch
-    kv_loops = T.ceildiv(seq_len, block_n)
-    return KernelConfig(block_m, block_n, prelaunch, ring_slots,
-                        dtype, accum_dtype, shape, block_num, kv_loops)
+@dataclass(frozen=True)
+class FlashAttentionPlan:
+    config: FlashAttentionConfig
+
+    def __post_init__(self):
+        if self.config.dim > MAX_DIM:
+            raise ValueError(f"head dim {self.config.dim} exceeds MAX_DIM={MAX_DIM}")
+        if self.config.causal and self.config.q_seq_len > self.config.kv_seq_len:
+            raise ValueError("causal requires q_seq_len <= kv_seq_len")
+
+    @property
+    def dim_align(self):
+        c0 = 32 // (4 if self.config.dtype == "float32" else 2)
+        aligned = ((self.config.dim + c0 - 1) // c0) * c0
+        return ((self.config.dim + 127) // 128) * 128 if aligned > 128 else aligned
+
+    @property
+    def block_m(self):
+        if self.config.dtype == "float32":
+            return 64 if self.dim_align <= 128 else 32
+        return 128 if self.dim_align <= 128 else 64
+
+    @property
+    def block_n(self):
+        return 128
+
+    @property
+    def cube_k(self):
+        return min(self.dim_align, 256)
+
+    @property
+    def prelaunch(self):
+        return 2
+
+    @property
+    def ring_slots(self):
+        return self.prelaunch + 1
+
+    @property
+    def q_blocks(self):
+        return (self.config.q_seq_len + self.block_m - 1) // self.block_m
+
+    @property
+    def block_num(self):
+        return self.q_blocks * self.config.heads * self.config.batch
+
+    @property
+    def used_core_num(self):
+        return MAX_CORES
+
+    @property
+    def tasks_per_core(self):
+        return (self.block_num + self.used_core_num - 1) // self.used_core_num
+
+    @property
+    def kv_loops(self):
+        return (self.config.kv_seq_len + self.block_n - 1) // self.block_n
+
+    @property
+    def d_chunks(self):
+        return (self.dim_align + 255) // 256
+
+    @property
+    def diff_s(self):
+        return self.config.kv_seq_len - self.config.q_seq_len
+
+    @property
+    def tail_valid(self):
+        return self.config.kv_seq_len % self.block_n
+
+    @property
+    def use_brcb(self):
+        return self.dim_align <= 128
+
+    @property
+    def q_shape(self):
+        c = self.config
+        return [c.batch, c.heads, c.q_seq_len, c.dim]
+
+    @property
+    def kv_shape(self):
+        c = self.config
+        return [c.batch, c.heads, c.kv_seq_len, c.dim]
+
+    @property
+    def score_shape(self):
+        return [self.block_num, self.ring_slots, self.block_m, self.block_n]
+
+    @property
+    def partial_shape(self):
+        return [self.block_num, self.ring_slots, self.block_m, self.dim_align]
 
 
-def _kernel_indices(cid, seq_len, block_m, heads, batch):
-    """Decompose a linear kernel instance index into (bx, by, bz)."""
-    bx = cid % (seq_len // block_m)
-    by = cid // (seq_len // block_m) % heads
-    bz = cid // (seq_len // block_m) // heads % batch
-    return bx, by, bz
-
-
-def _store_prod_workspace(ws):
-    """Store producer workspace data: copy acc_s to workspace_2 and metadata to workspace_meta."""
-    T.copy(ws.acc_s_ub, ws.acc_s_half)
-    T.copy(
-        ws.acc_s_half,
-        ws.workspace_2[
-            ws.cid,
-            ws.slot_prod,
-            ws.vid * ws.block_m // 2:ws.vid * ws.block_m // 2 + ws.block_m // 2,
-            :,
-        ],
-    )
-    for h_i in range(ws.block_m // 2):
-        ws.workspace_meta[
-            ws.cid,
-            ws.slot_prod,
-            ws.vid * ws.block_m // 2 + h_i,
-            0,
-        ] = ws.m_i_prev[h_i]
-        ws.workspace_meta[
-            ws.cid,
-            ws.slot_prod,
-            ws.vid * ws.block_m // 2 + h_i,
-            1,
-        ] = ws.sumexp_i_ub[h_i]
-    T.set_cross_flag("MTE3", 1)
+@dataclass(frozen=True)
+class TaskIndex:
+    task_idx: object
+    bx: object
+    by: object
+    bz: object

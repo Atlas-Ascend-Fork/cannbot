@@ -11,29 +11,39 @@
 
 import ctypes
 import os
+import sysconfig
 from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch_npu
+import torch_npu as torch_npu
 
 os.environ.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
 
+# Shared runtime-shape AscendC implementation derived from the TileLang design.
 _KERNEL_BUILD = Path(__file__).resolve().parent / "kernel" / "build"
-_so_path = _KERNEL_BUILD / "flash_attention_ext.cpython-311-x86_64-linux-gnu.so"
-if _so_path.is_file():
-    ctypes.CDLL(str(_so_path), mode=ctypes.RTLD_GLOBAL)
+_ext_suffix = sysconfig.get_config_var("EXT_SUFFIX") or ".so"
+_so_path = _KERNEL_BUILD / f"flash_attention_gen_ext{_ext_suffix}"
 
 
 class ModelNew(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        if not _so_path.is_file():
+            raise FileNotFoundError(
+                f"Build the AscendC kernel first: bash kernel/build.sh ({_so_path})"
+            )
+        ctypes.CDLL(str(_so_path), mode=ctypes.RTLD_GLOBAL)
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+    def forward(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, is_causal: bool = False
+    ):
         if q.dtype == torch.float16:
-            return torch.ops.npu.flash_attention_fp16(q, k, v)
+            return torch.ops.npu.flash_attention_gen_fp16(q, k, v, is_causal)
         elif q.dtype == torch.bfloat16:
-            return torch.ops.npu.flash_attention_bf16(q, k, v)
+            return torch.ops.npu.flash_attention_gen_bf16(q, k, v, is_causal)
+        elif q.dtype == torch.float32:
+            return torch.ops.npu.flash_attention_gen_fp32(q, k, v, is_causal)
         else:
             raise ValueError(f"Unsupported dtype: {q.dtype}")
 

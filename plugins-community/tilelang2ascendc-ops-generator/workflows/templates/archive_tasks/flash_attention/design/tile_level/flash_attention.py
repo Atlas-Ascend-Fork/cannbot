@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -9,397 +8,488 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 
-from collections import namedtuple
+
 from dataclasses import dataclass
 
 import tilelang
-from tilelang import DataType, language as T
+from tilelang import language as T
 from tilelang.intrinsics import make_zn_layout
 from tvm.tir import BufferRegion
 from tvm.ir import Range
+from tvm.script.ir_builder import IRBuilder
 
-
-@dataclass
-class FlashAttentionConfig:
-    """Configuration encapsulating FlashAttention kernel shapes and data type."""
-    batch: int
-    heads: int
-    q_seq_len: int
-    kv_seq_len: int
-    dim: int
-    dtype: str = "float16"
-
-
-# Container for the four workspace tensors to keep T.prim_func signature lean.
-FAWorkspaces = namedtuple("FAWorkspaces", ["ws_s", "ws_p", "ws_o", "ws_meta"])
-
-
-# ---------------------------------------------------------------------------
-#  Parameter-group containers — encapsulate correlated arguments so that
-#  tile-level helper signatures stay ≤ 5 (G.FNM.03 compliance).
-# ---------------------------------------------------------------------------
-
-@dataclass
-class TileLoopContext:
-    """Loop iteration context identifying the current tile position."""
-    bx: int
-    by: int
-    bz: int
-    task_idx: int
-    vid: int
-    t: int  # KV-loop iteration (t for producer stages, now_k for consumer stages)
-
-
-TileShapeInfo = namedtuple("TileShapeInfo", [
-    "block_m", "block_n", "dim", "cube_k", "qk_k_loops", "ring_slots",
-    "kv_seq_len_padded", "kv_loops", "q_seq_len", "heads",
-    "sm_scale", "tail_valid", "prelaunch",
-])
-
-C1Bufs = namedtuple("C1Bufs", ["q_l1", "k_l1", "lhs_l0", "rhs_l0", "acc_s_l0c"])
-C2Bufs = namedtuple("C2Bufs", ["acc_s_l1", "lhs_l0", "rhs_l0", "acc_o_l0c", "v_l1"])
-V1Bufs = namedtuple("V1Bufs", ["acc_s_ub", "acc_s_ub_", "m_i", "m_i_prev",
-                                "sumexp_i_ub", "acc_s_half", "mask_col"])
-V1Wss = namedtuple("V1Wss", ["ws_s", "ws_p", "ws_meta"])
-V2Bufs = namedtuple("V2Bufs", ["acc_o", "sumexp", "acc_o_ub", "alpha_ub", "sumexp_meta_ub"])
-OutBufs = namedtuple("OutBufs", ["acc_o", "sumexp", "acc_o_half"])
-
-
-@dataclass
-class TaskContext:
-    """Per-task context identifying the tile being processed."""
-    bx: int
-    by: int
-    bz: int
-    task_idx: int
-    vid: int
-
-
-TaskBufs = namedtuple("TaskBufs", [
-    "c1", "c2", "v1", "v1_ws", "v2", "out",
-    "ws1", "ws2", "ws3", "ws_meta",
-])
-
-TileBufs = namedtuple("TileBufs", [
-    "q_l1", "k_l1", "v_l1", "acc_s_l1",
-    "lhs_l0", "rhs_l0", "acc_s_l0c", "acc_o_l0c",
-    "acc_o", "sumexp", "m_i",
-    "acc_s_ub", "m_i_prev", "acc_s_ub_", "sumexp_i_ub",
-    "acc_s_half", "acc_o_ub", "acc_o_half",
-    "alpha_ub", "sumexp_meta_ub", "mask_col",
-])
-
+from design.flash_attention_common import (
+    MAX_DIM as MAX_DIM,
+    FlashAttentionConfig as FlashAttentionConfig,
+    FlashAttentionPlan,
+    TaskIndex,
+)
 
 pass_configs = {
     tilelang.PassConfigKey.TL_ASCEND_MEMORY_PLANNING: True,
-    tilelang.PassConfigKey.TL_ASCEND_AUTO_SYNC: True,
+    tilelang.PassConfigKey.TL_ASCEND_AUTO_SYNC: False,
 }
+SIG_S_READY = 0
+SIG_P_READY = 1
+SIG_O_READY = 2
 
 
-# ---------------------------------------------------------------------------
-#  Tile-level helpers — each performs one well-defined sub-step of the
-#  FlashAttention pipeline.  They are called from inside the T.prim_func
-#  so that all T.* / T.tile.* calls are traced correctly.
-# ---------------------------------------------------------------------------
-
-def _init_acc_state(acc_o, sumexp, m_i):
-    """Initialize running accumulator, sumexp, and max to starting values."""
-    T.tile.fill(acc_o, 0.0)
-    T.tile.fill(sumexp, 0.0)
-    T.tile.fill(m_i, -2 ** 30)
-
-
-def _c1_load_k_compute_s(ctx: TileLoopContext, shape: TileShapeInfo,
-                        bufs: C1Bufs, workspace_1):
-    """C1: Load K tile from GM and compute S = Q @ K^T, store to workspace."""
-    slot_prod = ctx.t % shape.ring_slots
-    with T.Scope("C"):
-        T.copy(k[ctx.bz, ctx.by, ctx.t * shape.block_n:
-                 (ctx.t + 1) * shape.block_n, :], bufs.k_l1)
-        for kk in T.serial(shape.qk_k_loops):
-            T.copy(bufs.q_l1[0, kk * shape.cube_k], bufs.lhs_l0)
-            T.copy(bufs.k_l1[0, kk * shape.cube_k], bufs.rhs_l0, transpose=True)
-            T.mma(bufs.lhs_l0, bufs.rhs_l0, bufs.acc_s_l0c, init=(kk == 0))
-        T.copy(bufs.acc_s_l0c, workspace_1[ctx.task_idx, slot_prod, :, :])
-        T.set_cross_flag("FIX", 0)
+@dataclass(frozen=True)
+class GlobalBuffers:
+    q: object
+    k: object
+    v: object
+    output: object
+    workspace_s: object
+    workspace_p: object
+    workspace_o: object
+    sm_scale: object
 
 
-def _v1_softmax_update(ctx: TileLoopContext, shape: TileShapeInfo,
-                        bufs: V1Bufs, wss: V1Wss):
-    """V1: Load S, apply scale/mask/softmax, store P and merge metadata."""
-    slot_prod = ctx.t % shape.ring_slots
-    h_start = ctx.vid * shape.block_m // 2
-    h_slice = slice(h_start, h_start + shape.block_m // 2)
-
-    with T.Scope("v"):
-        T.tile.fill(bufs.acc_s_ub, 0.0)
-        T.copy(bufs.m_i, bufs.m_i_prev)
-        T.wait_cross_flag(0)
-        T.copy(wss.ws_s[ctx.task_idx, slot_prod, h_slice, :], bufs.acc_s_ub_)
-        T.tile.add(bufs.acc_s_ub, bufs.acc_s_ub, bufs.acc_s_ub_)
-        T.tile.mul(bufs.acc_s_ub, bufs.acc_s_ub, shape.sm_scale)
-
-        # mask columns beyond kv_seq_len in the tail KV tile
-        if shape.tail_valid != 0 and ctx.t == shape.kv_loops - 1:
-            T.tile.fill(bufs.mask_col, T.float32(-2 ** 30))
-            T.tile.fill(
-                BufferRegion(bufs.mask_col, [Range(0, shape.tail_valid)]),
-                T.float32(0.0),
-            )
-            for h_i in range(shape.block_m // 2):
-                T.tile.add(bufs.acc_s_ub[h_i, :], bufs.acc_s_ub[h_i, :],
-                           bufs.mask_col)
-
-        T.reduce_max(bufs.acc_s_ub, bufs.m_i, dim=-1)
-        T.tile.max(bufs.m_i, bufs.m_i, bufs.m_i_prev)
-        T.tile.sub(bufs.m_i_prev, bufs.m_i_prev, bufs.m_i)
-        T.tile.exp(bufs.m_i_prev, bufs.m_i_prev)
-        for h_i in range(shape.block_m // 2):
-            T.tile.sub(bufs.acc_s_ub[h_i, :], bufs.acc_s_ub[h_i, :],
-                       bufs.m_i[h_i])
-        T.tile.exp(bufs.acc_s_ub, bufs.acc_s_ub)
-        T.reduce_sum(bufs.acc_s_ub, bufs.sumexp_i_ub, dim=-1)
-
-        T.copy(bufs.acc_s_ub, bufs.acc_s_half)
-        T.copy(bufs.acc_s_half, wss.ws_p[ctx.task_idx, slot_prod, h_slice, :])
-        for h_i in range(shape.block_m // 2):
-            row = h_start + h_i
-            wss.ws_meta[ctx.task_idx, slot_prod, row, 0] = bufs.m_i_prev[h_i]
-            wss.ws_meta[ctx.task_idx, slot_prod, row, 1] = bufs.sumexp_i_ub[h_i]
-        T.set_cross_flag("MTE3", 1)
+@dataclass(frozen=True)
+class CubeBuffers:
+    q_l1: object
+    k_l1: object
+    v_l1: object
+    acc_s_l1: object
+    lhs_l0: object
+    rhs_l0: object
+    p_l0: object
+    v_l0: object
+    acc_s_l0c: object
+    acc_o_l0c: object
 
 
-def _c2_compute_pv(ctx: TileLoopContext, shape: TileShapeInfo,
-                    bufs: C2Bufs, workspace_2, workspace_3):
-    slot_cons = ctx.t % shape.ring_slots
-    with T.Scope("C"):
-        T.wait_cross_flag(1)
-        T.copy(workspace_2[ctx.task_idx, slot_cons, :, :], bufs.acc_s_l1)
+@dataclass(frozen=True)
+class VectorBuffers:
+    acc_o: object
+    acc_o_ub: object
+    acc_o_half: object
+    sumexp: object
+    m_i: object
+    alpha_ring: object
+    sumexp_i_ring: object
+    acc_s_ub: object
+    acc_s_half: object
+    m_i_2d: object
+    brcb_tmp: object
+    mask_col: object
+    col_idx: object
+    bound_vec: object
+    bound_2d: object
+    causal_cmp: object
+
+
+@dataclass(frozen=True)
+class LocalBuffers:
+    c: object
+    v: object
+
+
+def _alloc(allocator, name, shape, dtype="float"):
+    return IRBuilder.name(name, allocator(shape, dtype))
+
+
+def _allocate_cube(p):
+    q_l1 = _alloc(T.alloc_L1, "q_l1", [p.block_m, p.dim_align], p.config.dtype)
+    k_l1 = _alloc(T.alloc_L1, "k_l1", [2, p.block_n, p.dim_align], p.config.dtype)
+    v_l1 = _alloc(T.alloc_L1, "v_l1", [p.block_n, p.dim_align], p.config.dtype)
+    acc_s_l1 = _alloc(T.alloc_L1, "acc_s_l1", [p.block_m, p.block_n], p.config.dtype)
+    T.annotate_layout(
+        {
+            q_l1: make_zn_layout(q_l1),
+            k_l1: make_zn_layout(k_l1),
+            v_l1: make_zn_layout(v_l1),
+            acc_s_l1: make_zn_layout(acc_s_l1),
+        }
+    )
+    lhs_l0 = _alloc(T.alloc_L0A, "lhs_l0", [p.block_m, p.cube_k], p.config.dtype)
+    rhs_l0 = _alloc(T.alloc_L0B, "rhs_l0", [p.cube_k, p.block_n], p.config.dtype)
+    p_l0 = _alloc(T.alloc_L0A, "p_l0", [p.block_m, p.block_n], p.config.dtype)
+    v_l0 = _alloc(T.alloc_L0B, "v_l0", [p.block_n, p.cube_k], p.config.dtype)
+    acc_s_l0c = _alloc(T.alloc_L0C, "acc_s_l0c", [p.block_m, p.block_n])
+    acc_o_l0c = _alloc(T.alloc_L0C, "acc_o_l0c", [p.block_m, p.cube_k])
+    return CubeBuffers(
+        q_l1, k_l1, v_l1, acc_s_l1, lhs_l0, rhs_l0, p_l0, v_l0, acc_s_l0c, acc_o_l0c
+    )
+
+
+def _allocate_vector(p):
+    acc_o = _alloc(T.alloc_ub, "acc_o", [p.block_m // 2, p.dim_align])
+    acc_o_ub = _alloc(T.alloc_ub, "acc_o_ub", [p.block_m // 2, p.dim_align])
+    acc_o_half = _alloc(
+        T.alloc_ub, "acc_o_half", [p.block_m // 2, p.dim_align], p.config.dtype
+    )
+    sumexp = _alloc(T.alloc_ub, "sumexp", [p.block_m // 2, 1])
+    m_i = _alloc(T.alloc_ub, "m_i", [p.block_m // 2, 1])
+    alpha_ring = _alloc(T.alloc_ub, "alpha_ring", [p.ring_slots, p.block_m // 2, 1])
+    sumexp_i_ring = _alloc(
+        T.alloc_ub, "sumexp_i_ring", [p.ring_slots, p.block_m // 2, 1]
+    )
+    acc_s_ub = _alloc(T.alloc_ub, "acc_s_ub", [p.block_m // 2, p.block_n])
+    acc_s_half = _alloc(
+        T.alloc_ub, "acc_s_half", [p.block_m // 2, p.block_n], p.config.dtype
+    )
+    m_i_2d = _alloc(T.alloc_ub, "m_i_2d", [p.block_m // 2, p.block_n])
+    brcb_tmp = _alloc(T.alloc_ub, "brcb_tmp", [p.block_m // 2 * 8 if p.use_brcb else 8])
+    mask_col = _alloc(T.alloc_ub, "mask_col", [p.block_n])
+    col_idx = _alloc(T.alloc_ub, "col_idx", [p.block_n])
+    bound_vec = _alloc(T.alloc_ub, "bound_vec", [p.block_m // 2])
+    bound_2d = _alloc(T.alloc_ub, "bound_2d", [p.block_m // 2, p.block_n])
+    causal_cmp = _alloc(T.alloc_ub, "causal_cmp", [p.block_m // 2, p.block_n], "uint8")
+    return VectorBuffers(
+        acc_o,
+        acc_o_ub,
+        acc_o_half,
+        sumexp,
+        m_i,
+        alpha_ring,
+        sumexp_i_ring,
+        acc_s_ub,
+        acc_s_half,
+        m_i_2d,
+        brcb_tmp,
+        mask_col,
+        col_idx,
+        bound_vec,
+        bound_2d,
+        causal_cmp,
+    )
+
+
+@T.macro(hygienic=False)
+def cube_begin_task(p, b, gm, task):
+    slice_lower_0 = task.bx * p.block_m
+    slice_upper_1 = (task.bx + 1) * p.block_m
+    slice_upper_2 = p.config.dim
+    T.copy(
+        gm.q[task.bz, task.by, slice_lower_0:slice_upper_1, 0:slice_upper_2], b.c.q_l1
+    )
+    T.set_flag("mte1", "mte2", 0)
+    T.set_flag("mte1", "mte2", 1)
+    T.wait_flag("mte1", "mte2", 0)
+    slice_upper_0 = p.block_n
+    slice_upper_1 = p.config.dim
+    T.copy(gm.k[task.bz, task.by, 0:slice_upper_0, 0:slice_upper_1], b.c.k_l1[0, :, :])
+    T.set_flag("mte2", "mte1", 0)
+
+
+@T.macro(hygienic=False)
+def vec_begin_task(b):
+    T.tile.fill(b.v.acc_o[0, :], 0.0)
+    T.tile.fill(b.v.sumexp[0, :], 0.0)
+    T.tile.fill(b.v.m_i, -(2**30))
+
+
+@T.macro(hygienic=False)
+def cube_qk(p, b, gm, task, t, slot_prod):
+    if t + 1 < p.kv_loops:
+        T.wait_flag("mte1", "mte2", (t + 1) % 2)
+        slice_lower_0 = (t + 1) * p.block_n
+        slice_upper_1 = (t + 2) * p.block_n
+        slice_upper_2 = p.config.dim
         T.copy(
-            v[ctx.bz, ctx.by,
-              ctx.t * shape.block_n: (ctx.t + 1) * shape.block_n, :],
-            bufs.v_l1,
+            gm.k[task.bz, task.by, slice_lower_0:slice_upper_1, 0:slice_upper_2],
+            b.c.k_l1[(t + 1) % 2, :, :],
         )
-        for dd in T.serial(shape.qk_k_loops):
-            T.copy(bufs.acc_s_l1, bufs.lhs_l0)
-            T.copy(bufs.v_l1[0, dd * shape.cube_k], bufs.rhs_l0)
-            T.mma(bufs.lhs_l0, bufs.rhs_l0, bufs.acc_o_l0c, init=True)
-            T.copy(
-                bufs.acc_o_l0c,
-                workspace_3[
-                    ctx.task_idx, slot_cons, :,
-                    dd * shape.cube_k: (dd + 1) * shape.cube_k,
-                ],
+        T.set_flag("mte2", "mte1", (t + 1) % 2)
+    T.wait_flag("mte2", "mte1", t % 2)
+    for cc in T.serial(p.d_chunks):
+        T.set_flag("m", "mte1", 1)
+        T.wait_flag("m", "mte1", 1)
+        T.copy(b.c.q_l1[0, cc * p.cube_k], b.c.lhs_l0)
+        T.copy(b.c.k_l1[t % 2, 0, cc * p.cube_k], b.c.rhs_l0, transpose=True)
+        T.set_flag("mte1", "m", 0)
+        T.wait_flag("mte1", "m", 0)
+        T.set_flag("fix", "m", 1)
+        T.wait_flag("fix", "m", 1)
+        T.mma(b.c.lhs_l0, b.c.rhs_l0, b.c.acc_s_l0c, init=cc == 0)
+    T.set_flag("m", "fix", 0)
+    T.wait_flag("m", "fix", 0)
+    T.copy(b.c.acc_s_l0c, gm.workspace_s[task.task_idx, slot_prod, :, :])
+    T.set_flag("mte1", "mte2", t % 2)
+    T.set_flag("m", "mte1", 3)
+    T.set_flag("fix", "m", 3)
+    T.set_cross_flag("FIX", SIG_S_READY)
+
+
+@T.macro(hygienic=False)
+def vec_apply_mask(p, b, task, vid, t):
+    h_start = vid * (p.block_m // 2)
+    if p.tail_valid != 0:
+        if t == p.kv_loops - 1:
+            T.tile.fill(b.v.mask_col, T.float32(-(2**30)))
+            T.tile.fill(
+                BufferRegion(b.v.mask_col, [Range(0, p.tail_valid)]), T.float32(0.0)
             )
-        T.set_cross_flag("FIX", 2)
-
-
-def _v2_merge_output(ctx: TileLoopContext, shape: TileShapeInfo,
-                      bufs: V2Bufs, workspace_3, workspace_meta):
-    """V2: Rescale previous accumulator and merge new O_tmp."""
-    slot_cons = ctx.t % shape.ring_slots
-    h_start = ctx.vid * shape.block_m // 2
-    h_slice = slice(h_start, h_start + shape.block_m // 2)
-
-    with T.Scope("v"):
-        T.wait_cross_flag(2)
-        for h_i in range(shape.block_m // 2):
-            row = h_start + h_i
-            bufs.alpha_ub[h_i] = workspace_meta[
-                ctx.task_idx, slot_cons, row, 0]
-            bufs.sumexp_meta_ub[h_i] = workspace_meta[
-                ctx.task_idx, slot_cons, row, 1]
-        T.copy(workspace_3[ctx.task_idx, slot_cons, h_slice, :], bufs.acc_o_ub)
-        for h_i in range(shape.block_m // 2):
-            T.tile.mul(bufs.acc_o[h_i, :], bufs.acc_o[h_i, :],
-                       bufs.alpha_ub[h_i])
-        T.tile.add(bufs.acc_o, bufs.acc_o, bufs.acc_o_ub)
-        T.tile.mul(bufs.sumexp, bufs.sumexp, bufs.alpha_ub)
-        T.tile.add(bufs.sumexp, bufs.sumexp, bufs.sumexp_meta_ub)
-
-
-def _finalize_output(ctx: TileLoopContext, shape: TileShapeInfo,
-                      bufs: OutBufs, output):
-    """Normalize accumulator by sumexp and write the final output half-tile."""
-    with T.Scope("v"):
-        for h_i in range(shape.block_m // 2):
-            T.tile.div(bufs.acc_o[h_i, :], bufs.acc_o[h_i, :],
-                       bufs.sumexp[h_i])
-        T.copy(bufs.acc_o, bufs.acc_o_half)
-        row_start = ctx.bx * shape.block_m + ctx.vid * shape.block_m // 2
-        if row_start < shape.q_seq_len:
-            T.copy(
-                bufs.acc_o_half,
-                output[ctx.bz, ctx.by,
-                       row_start: row_start + shape.block_m // 2, :],
+            for h_i in range(p.block_m // 2):
+                T.tile.add(b.v.acc_s_ub[h_i, :], b.v.acc_s_ub[h_i, :], b.v.mask_col)
+    if p.config.causal:
+        if (t + 1) * p.block_n - 1 > task.bx * p.block_m + p.diff_s:
+            T.tile.createvecindex(b.v.col_idx, T.cast(t * p.block_n, "float32"))
+            T.tile.createvecindex(
+                b.v.bound_vec,
+                T.cast(task.bx * p.block_m + h_start + p.diff_s, "float32"),
+            )
+            T.tile.broadcast(b.v.m_i_2d, b.v.col_idx, axis=0)
+            T.tile.broadcast(b.v.bound_2d, b.v.bound_vec, axis=1)
+            T.tile.compare(b.v.causal_cmp, b.v.m_i_2d, b.v.bound_2d, "LE")
+            T.tile.select(
+                b.v.acc_s_ub,
+                b.v.causal_cmp,
+                b.v.acc_s_ub,
+                T.float32(-(2**30)),
+                "VSEL_TENSOR_SCALAR_MODE",
             )
 
 
-def _allocate_tile_buffers(shape: TileShapeInfo, dtype: str, accum_dtype: str):
-    """Allocate and return all on-chip buffers for one core."""
-    q_l1 = T.alloc_L1([shape.block_m, shape.dim], dtype)
-    k_l1 = T.alloc_L1([shape.block_n, shape.dim], dtype)
-    v_l1 = T.alloc_L1([shape.block_n, shape.dim], dtype)
-    acc_s_l1 = T.alloc_L1([shape.block_m, shape.block_n], dtype)
-    T.annotate_layout({
-        q_l1: make_zn_layout(q_l1),
-        k_l1: make_zn_layout(k_l1),
-        v_l1: make_zn_layout(v_l1),
-        acc_s_l1: make_zn_layout(acc_s_l1),
-    })
+@T.macro(hygienic=False)
+def vec_softmax(p, b, gm, task, vid, t, slot_prod):
+    T.wait_cross_flag(SIG_S_READY)
+    h_start = vid * (p.block_m // 2)
+    T.set_flag("v", "mte2", 1)
+    T.wait_flag("v", "mte2", 1)
+    T.copy(b.v.m_i, b.v.alpha_ring[slot_prod, :, :])
+    slice_upper_0 = h_start + p.block_m // 2
+    T.copy(
+        gm.workspace_s[task.task_idx, slot_prod, h_start:slice_upper_0, :], b.v.acc_s_ub
+    )
+    T.set_flag("mte2", "v", 0)
+    T.wait_flag("mte2", "v", 0)
+    T.tile.mul(b.v.acc_s_ub, b.v.acc_s_ub, gm.sm_scale)
+    vec_apply_mask(p, b, task, vid, t)
+    T.reduce_max(b.v.acc_s_ub, b.v.m_i, dim=-1)
+    T.tile.max(b.v.m_i, b.v.m_i, b.v.alpha_ring[slot_prod, :, :])
+    T.tile.sub(
+        b.v.alpha_ring[slot_prod, :, :], b.v.alpha_ring[slot_prod, :, :], b.v.m_i
+    )
+    T.tile.exp(b.v.alpha_ring[slot_prod, :, :], b.v.alpha_ring[slot_prod, :, :])
+    if p.use_brcb:
+        T.tile.row_expand_sub_experiment(
+            BufferRegion(b.v.acc_s_ub, [Range(0, p.block_m // 2), Range(0, 64)]),
+            BufferRegion(b.v.acc_s_ub, [Range(0, p.block_m // 2), Range(0, 64)]),
+            b.v.m_i,
+            b.v.brcb_tmp,
+        )
+        T.tile.row_expand_sub_experiment(
+            BufferRegion(b.v.acc_s_ub, [Range(0, p.block_m // 2), Range(64, 128)]),
+            BufferRegion(b.v.acc_s_ub, [Range(0, p.block_m // 2), Range(64, 128)]),
+            b.v.m_i,
+            b.v.brcb_tmp,
+        )
+    else:
+        T.tile.broadcast(b.v.m_i_2d, b.v.m_i)
+        T.tile.sub(b.v.acc_s_ub, b.v.acc_s_ub, b.v.m_i_2d)
+    T.tile.exp(b.v.acc_s_ub, b.v.acc_s_ub)
+    T.reduce_sum(b.v.acc_s_ub, b.v.sumexp_i_ring[slot_prod, :, :], dim=-1)
+    T.set_flag("mte3", "v", 1)
+    T.wait_flag("mte3", "v", 1)
+    T.copy(b.v.acc_s_ub, b.v.acc_s_half)
+    T.set_flag("v", "mte3", 0)
+    T.wait_flag("v", "mte3", 0)
+    slice_upper_0 = h_start + p.block_m // 2
+    T.copy(
+        b.v.acc_s_half,
+        gm.workspace_p[task.task_idx, slot_prod, h_start:slice_upper_0, :],
+    )
+    T.set_cross_flag("MTE3", SIG_P_READY)
 
-    lhs_l0 = T.alloc_L0A([shape.block_m, shape.cube_k], dtype)
-    rhs_l0 = T.alloc_L0B([shape.cube_k, shape.block_n], dtype)
-    acc_s_l0c = T.alloc_L0C([shape.block_m, shape.block_n], accum_dtype)
-    acc_o_l0c = T.alloc_L0C([shape.block_m, shape.block_n], accum_dtype)
 
-    acc_o = T.alloc_ub([shape.block_m // 2, shape.dim], accum_dtype)
-    sumexp = T.alloc_ub([shape.block_m // 2], accum_dtype)
-    m_i = T.alloc_ub([shape.block_m // 2], accum_dtype)
+@T.macro(hygienic=False)
+def cube_pv(p, b, gm, task, now_k, slot_cons):
+    T.wait_cross_flag(SIG_P_READY)
+    T.set_flag("mte1", "mte2", 3)
+    T.wait_flag("mte1", "mte2", 3)
+    T.copy(gm.workspace_p[task.task_idx, slot_cons, :, :], b.c.acc_s_l1)
+    slice_lower_0 = now_k * p.block_n
+    slice_upper_1 = (now_k + 1) * p.block_n
+    slice_upper_2 = p.config.dim
+    T.copy(
+        gm.v[task.bz, task.by, slice_lower_0:slice_upper_1, 0:slice_upper_2], b.c.v_l1
+    )
+    T.set_flag("mte2", "mte1", 2)
+    T.wait_flag("mte2", "mte1", 2)
+    T.set_flag("m", "mte1", 1)
+    T.wait_flag("m", "mte1", 1)
+    T.copy(b.c.acc_s_l1, b.c.p_l0)
+    for cc in T.serial(p.d_chunks):
+        T.set_flag("m", "mte1", 1)
+        T.wait_flag("m", "mte1", 1)
+        T.copy(b.c.v_l1[0, cc * p.cube_k], b.c.v_l0)
+        T.set_flag("mte1", "m", 0)
+        T.wait_flag("mte1", "m", 0)
+        T.set_flag("fix", "m", 1)
+        T.wait_flag("fix", "m", 1)
+        T.mma(b.c.p_l0, b.c.v_l0, b.c.acc_o_l0c, init=True)
+        T.set_flag("m", "fix", 0)
+        T.wait_flag("m", "fix", 0)
+        slice_lower_0 = cc * p.cube_k
+        slice_upper_1 = (cc + 1) * p.cube_k
+        T.copy(
+            b.c.acc_o_l0c,
+            gm.workspace_o[task.task_idx, slot_cons, :, slice_lower_0:slice_upper_1],
+        )
+    T.set_flag("m", "mte1", 5)
+    T.set_flag("fix", "m", 4)
+    T.set_flag("mte1", "mte2", 4)
+    T.set_cross_flag("FIX", SIG_O_READY)
 
-    acc_s_ub = T.alloc_ub([shape.block_m // 2, shape.block_n], accum_dtype)
-    m_i_prev = T.alloc_ub([shape.block_m // 2], accum_dtype)
-    acc_s_ub_ = T.alloc_ub([shape.block_m // 2, shape.block_n], accum_dtype)
-    sumexp_i_ub = T.alloc_ub([shape.block_m // 2], accum_dtype)
-    acc_s_half = T.alloc_ub([shape.block_m // 2, shape.block_n], dtype)
-    acc_o_ub = T.alloc_ub([shape.block_m // 2, shape.dim], accum_dtype)
-    acc_o_half = T.alloc_ub([shape.block_m // 2, shape.dim], dtype)
-    alpha_ub = T.alloc_ub([shape.block_m // 2], accum_dtype)
-    sumexp_meta_ub = T.alloc_ub([shape.block_m // 2], accum_dtype)
-    mask_col = T.alloc_ub([shape.block_n], accum_dtype)
 
-    return TileBufs(
-        q_l1, k_l1, v_l1, acc_s_l1,
-        lhs_l0, rhs_l0, acc_s_l0c, acc_o_l0c,
-        acc_o, sumexp, m_i,
-        acc_s_ub, m_i_prev, acc_s_ub_, sumexp_i_ub,
-        acc_s_half, acc_o_ub, acc_o_half,
-        alpha_ub, sumexp_meta_ub, mask_col,
+@T.macro(hygienic=False)
+def vec_merge_output(p, b, gm, task, vid, now_k, slot_cons):
+    T.wait_cross_flag(SIG_O_READY)
+    h_start = vid * (p.block_m // 2)
+    T.set_flag("v", "mte2", 1)
+    T.wait_flag("v", "mte2", 1)
+    slice_upper_0 = h_start + p.block_m // 2
+    T.copy(
+        gm.workspace_o[task.task_idx, slot_cons, h_start:slice_upper_0, :], b.v.acc_o_ub
+    )
+    T.set_flag("mte2", "v", 0)
+    T.wait_flag("mte2", "v", 0)
+    if now_k == 0:
+        T.copy(b.v.acc_o_ub, b.v.acc_o)
+        T.copy(b.v.sumexp_i_ring[slot_cons, :, :], b.v.sumexp)
+    elif p.dim_align == 128:
+        T.tile.broadcast(b.v.m_i_2d, b.v.alpha_ring[slot_cons, :, :])
+        T.tile.mul(b.v.acc_o, b.v.acc_o, b.v.m_i_2d)
+        T.tile.add(b.v.acc_o, b.v.acc_o, b.v.acc_o_ub)
+        T.tile.mul(b.v.sumexp, b.v.sumexp, b.v.alpha_ring[slot_cons, :, :])
+        T.tile.add(b.v.sumexp, b.v.sumexp, b.v.sumexp_i_ring[slot_cons, :, :])
+    else:
+        for h_i in range(p.block_m // 2):
+            T.tile.mul(
+                b.v.acc_o[h_i, :], b.v.acc_o[h_i, :], b.v.alpha_ring[slot_cons, h_i, 0]
+            )
+        T.tile.add(b.v.acc_o, b.v.acc_o, b.v.acc_o_ub)
+        T.tile.mul(b.v.sumexp, b.v.sumexp, b.v.alpha_ring[slot_cons, :, :])
+        T.tile.add(b.v.sumexp, b.v.sumexp, b.v.sumexp_i_ring[slot_cons, :, :])
+
+
+@T.macro(hygienic=False)
+def cube_drain_step(p, t):
+    if t < p.kv_loops:
+        T.wait_flag("m", "mte1", 3)
+        T.wait_flag("fix", "m", 3)
+    if p.prelaunch <= t:
+        now_k = t - p.prelaunch
+        if now_k < p.kv_loops:
+            T.wait_flag("m", "mte1", 5)
+            T.wait_flag("fix", "m", 4)
+            T.wait_flag("mte1", "mte2", 4)
+
+
+@T.macro(hygienic=False)
+def cube_finish_task():
+    T.wait_flag("mte1", "mte2", 0)
+    T.wait_flag("mte1", "mte2", 1)
+
+
+@T.macro(hygienic=False)
+def vec_store_output(p, b, gm, task, vid):
+    for h_i in range(p.block_m // 2):
+        T.tile.div(b.v.acc_o[h_i, :], b.v.acc_o[h_i, :], b.v.sumexp[h_i, 0])
+    T.copy(b.v.acc_o, b.v.acc_o_half)
+    T.set_flag("v", "mte3", 0)
+    T.wait_flag("v", "mte3", 0)
+    row_start = task.bx * p.block_m + vid * (p.block_m // 2)
+    slice_upper_0 = p.config.dim
+    slice_upper_1 = row_start + p.block_m // 2
+    slice_upper_2 = p.config.dim
+    T.copy(
+        b.v.acc_o_half[:, 0:slice_upper_0],
+        gm.output[task.bz, task.by, row_start:slice_upper_1, 0:slice_upper_2],
     )
 
 
-def _process_task(tctx: TaskContext, shape: TileShapeInfo,
-                  bufs: TaskBufs, output):
-    """Process one (batch, head, q-block) tile through the full FA pipeline.
-
-    Preloads Q into L1, runs the ring-pipelined C/V stages, and writes the
-    normalized output half-tile.
-    """
+@T.macro(hygienic=False)
+def produce(p, b, gm, task, vid, t):
+    slot_prod = t % p.ring_slots
     with T.Scope("C"):
-        T.copy(q[tctx.bz, tctx.by,
-                 tctx.bx * shape.block_m: (tctx.bx + 1) * shape.block_m, :],
-               bufs.c1.q_l1)
-    with T.Scope("v"):
-        _init_acc_state(bufs.v2.acc_o, bufs.v2.sumexp, bufs.v1.m_i)
-
-    for t in T.serial(shape.kv_loops + shape.prelaunch):
-        if t < shape.kv_loops:
-            ctx = TileLoopContext(tctx.bx, tctx.by, tctx.bz,
-                                  tctx.task_idx, tctx.vid, t)
-            _c1_load_k_compute_s(ctx, shape, bufs.c1, bufs.ws1)
-            _v1_softmax_update(ctx, shape, bufs.v1, bufs.v1_ws)
-        if t >= shape.prelaunch:
-            now_k = t - shape.prelaunch
-            ctx = TileLoopContext(tctx.bx, tctx.by, tctx.bz,
-                                  tctx.task_idx, tctx.vid, now_k)
-            _c2_compute_pv(ctx, shape, bufs.c2, bufs.ws2, bufs.ws3)
-            _v2_merge_output(ctx, shape, bufs.v2, bufs.ws3, bufs.ws_meta)
-
-    ctx = TileLoopContext(tctx.bx, tctx.by, tctx.bz,
-                          tctx.task_idx, tctx.vid, 0)
-    _finalize_output(ctx, shape, bufs.out, output)
+        cube_qk(p, b, gm, task, t, slot_prod)
+    with T.Scope("V"):
+        vec_softmax(p, b, gm, task, vid, t, slot_prod)
 
 
-# ---------------------------------------------------------------------------
-#  JIT-compiled entry point
-# ---------------------------------------------------------------------------
+@T.macro(hygienic=False)
+def consume(p, b, gm, task, vid, t):
+    now_k = t - p.prelaunch
+    slot_cons = now_k % p.ring_slots
+    with T.Scope("C"):
+        cube_pv(p, b, gm, task, now_k, slot_cons)
+    with T.Scope("V"):
+        vec_merge_output(p, b, gm, task, vid, now_k, slot_cons)
 
 
-@tilelang.jit(out_idx=[3], workspace_idx=[4], pass_configs=pass_configs)
+@T.macro(hygienic=False)
+def pipeline(p, b, gm, task, vid):
+    for t in T.serial(p.kv_loops + p.prelaunch):
+        if t < p.kv_loops:
+            produce(p, b, gm, task, vid, t)
+        if t >= p.prelaunch:
+            consume(p, b, gm, task, vid, t)
+        with T.Scope("C"):
+            cube_drain_step(p, t)
+
+
+@T.macro(hygienic=False)
+def run_task(p, b, gm, task, vid):
+    with T.Scope("C"):
+        cube_begin_task(p, b, gm, task)
+    with T.Scope("V"):
+        vec_begin_task(b)
+    pipeline(p, b, gm, task, vid)
+    with T.Scope("C"):
+        cube_finish_task()
+    with T.Scope("V"):
+        vec_store_output(p, b, gm, task, vid)
+
+
+@T.macro(hygienic=False)
+def run_tasks(p, b, gm, cid, vid):
+    for local_idx in T.serial(p.tasks_per_core):
+        task_idx = cid * p.tasks_per_core + local_idx
+        if task_idx < p.block_num:
+            run_task(
+                p,
+                b,
+                gm,
+                TaskIndex(
+                    task_idx,
+                    task_idx % p.q_blocks,
+                    task_idx // p.q_blocks % p.config.heads,
+                    task_idx // p.q_blocks // p.config.heads % p.config.batch,
+                ),
+                vid,
+            )
+
+
+@tilelang.jit(
+    out_idx=[3], workspace_idx=[4, 5, 6], pass_configs=pass_configs, target="ascendc"
+)
 def flash_attention_fwd(cfg: FlashAttentionConfig):
-    batch = cfg.batch
-    heads = cfg.heads
-    q_seq_len = cfg.q_seq_len
-    kv_seq_len = cfg.kv_seq_len
-    dim = cfg.dim
-    dtype = cfg.dtype
-
-    block_m, block_n = 64, 64
-    cube_k = 64
-    num_physical_cores = 20
-    prelaunch = 2
-    ring_slots = prelaunch + 1
-
-    accum_dtype = "float"
-
-    sm_scale = (1.0 / dim) ** 0.5
-
-    # Pad kv_seq_len to block_n alignment for tensor shapes
-    kv_seq_len_padded = ((kv_seq_len + block_n - 1) // block_n) * block_n
-
-    q_shape = [batch, heads, q_seq_len, dim]
-    kv_shape = [batch, heads, kv_seq_len_padded, dim]
-    out_shape = [batch, heads, q_seq_len, dim]
-
-    q_blocks = T.ceildiv(q_seq_len, block_m)
-    block_num = q_blocks * heads * batch
-    used_core_num = min(num_physical_cores, block_num)
-    tasks_per_core = T.ceildiv(block_num, used_core_num)
-    kv_loops = T.ceildiv(kv_seq_len, block_n)
-    qk_k_loops = T.ceildiv(dim, cube_k)
-
-    if dim % cube_k != 0:
-        raise ValueError(f"dim ({dim}) must be divisible by cube_k ({cube_k})")
-    if block_num <= 0:
-        raise ValueError(f"block_num ({block_num}) must be > 0")
-
-    tail_valid = kv_seq_len % block_n
-
-    # Bundle shape/tiling parameters into a single container so that
-    # tile-level helpers receive at most 5 arguments (G.FNM.03).
-    shape_info = TileShapeInfo(
-        block_m, block_n, dim, cube_k, qk_k_loops, ring_slots,
-        kv_seq_len_padded, kv_loops, q_seq_len, heads,
-        sm_scale, tail_valid, prelaunch,
-    )
+    p = FlashAttentionPlan(cfg)
 
     @T.prim_func
     def main(
-        q: T.Tensor(q_shape, dtype),
-        k: T.Tensor(kv_shape, dtype),
-        v: T.Tensor(kv_shape, dtype),
-        output: T.Tensor(out_shape, dtype),
-        workspaces: FAWorkspaces,
+        q: T.Tensor(p.q_shape, p.config.dtype),
+        k: T.Tensor(p.kv_shape, p.config.dtype),
+        v: T.Tensor(p.kv_shape, p.config.dtype),
+        output: T.Tensor(p.q_shape, p.config.dtype),
+        workspace_s: T.Tensor(p.score_shape, "float"),
+        workspace_p: T.Tensor(p.score_shape, p.config.dtype),
+        workspace_o: T.Tensor(p.partial_shape, "float"),
+        sm_scale: T.float32,
     ):
-        workspace_1 = workspaces.ws_s
-        workspace_2 = workspaces.ws_p
-        workspace_3 = workspaces.ws_o
-        workspace_meta = workspaces.ws_meta
-
-        with T.Kernel(used_core_num, is_npu=True) as (cid, vid):
-            tb = _allocate_tile_buffers(shape_info, dtype, accum_dtype)
-
-            bufs = TaskBufs(
-                C1Bufs(tb.q_l1, tb.k_l1, tb.lhs_l0, tb.rhs_l0, tb.acc_s_l0c),
-                C2Bufs(tb.acc_s_l1, tb.lhs_l0, tb.rhs_l0, tb.acc_o_l0c,
-                       tb.v_l1),
-                V1Bufs(tb.acc_s_ub, tb.acc_s_ub_, tb.m_i, tb.m_i_prev,
-                       tb.sumexp_i_ub, tb.acc_s_half, tb.mask_col),
-                V1Wss(workspace_1, workspace_2, workspace_meta),
-                V2Bufs(tb.acc_o, tb.sumexp, tb.acc_o_ub, tb.alpha_ub,
-                       tb.sumexp_meta_ub),
-                OutBufs(tb.acc_o, tb.sumexp, tb.acc_o_half),
-                workspace_1, workspace_2, workspace_3, workspace_meta,
+        with T.Kernel(p.used_core_num, is_npu=True) as (cid, vid):
+            run_tasks(
+                p,
+                LocalBuffers(_allocate_cube(p), _allocate_vector(p)),
+                GlobalBuffers(
+                    q, k, v, output, workspace_s, workspace_p, workspace_o, sm_scale
+                ),
+                cid,
+                vid,
             )
-
-            for local_idx in T.serial(tasks_per_core):
-                task_idx = cid * tasks_per_core + local_idx
-                if task_idx >= block_num:
-                    continue
-                bx = task_idx % q_blocks
-                by = task_idx // q_blocks % heads
-                bz = task_idx // q_blocks // heads % batch
-                _process_task(TaskContext(bx, by, bz, task_idx, vid),
-                              shape_info, bufs, output)
 
     return main
