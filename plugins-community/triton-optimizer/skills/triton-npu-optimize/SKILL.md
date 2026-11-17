@@ -110,8 +110,6 @@ The base escalation order is `pattern triage -> profiling diagnosis`.
 - Use `triton-npu-profile-operator` and
   `triton-npu-analyze-round-performance` when benchmark behavior needs deeper
   diagnosis.
-- If the `triton-npu-retrieve-patterns` skill is available, it may be used
-  for pattern routing; read that skill's SKILL.md for usage.
 - Keep profiler evidence under `opt-round-N/profile/` and write
   `opt-round-N/perf-analysis.md` when that analysis flow is used.
 - Use the current language knowledge skill's pattern and symptom contract when

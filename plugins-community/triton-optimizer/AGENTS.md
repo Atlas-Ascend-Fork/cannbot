@@ -45,7 +45,6 @@ skills:
 | `triton-npu-analyze-ir` | IR 归因分析 |
 | `triton-npu-analyze-compiler-source` | 编译器源码层面的升级分析 |
 | `triton-npu-optimize-knowledge` | 优化路由层（`references/symptom-contract.json` symptom 契约 + `references/pattern_index.md` stage 索引；pattern 卡片内容在 cannbot-knowledge 仓） |
-| `triton-npu-retrieve-patterns` | pattern 路由检索 |
 | `triton-npu-repair-guide` | Triton 编译、JIT、launch、kernel 结构问题修复 |
 | `triton-npu-op-coding-guide` | Triton Ascend NPU 算子编码指导 |
 | `triton-npu-cann-ext-api-patterns` | CANN 扩展 API pattern 参考 |

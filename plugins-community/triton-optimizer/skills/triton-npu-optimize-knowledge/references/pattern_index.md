@@ -2,8 +2,6 @@
 
 Use this generated stage tree as the execution-navigation view for pattern triage.
 
-Pattern card content is served read-only from the cannbot-knowledge repository (provisioned at `.cannbot/dependencies/triton-optimizer/cannbot-knowledge/`); each entry's Source names its KB card path. Card names here use the contract's kebab-case IDs; KB files use the snake_case equivalent.
-
 Scan stages in order: structural -> kernel -> refinement -> autotune. Within a stage, inspect High patterns before Normal patterns when their applicability domain matches.
 
 Stage order overrides priority: a later-stage High pattern never precedes an earlier-stage Normal pattern. Stage describes change granularity and recommended scan order, not implementation difficulty or guaranteed speedup.
@@ -12,105 +10,186 @@ Stage order overrides priority: a later-stage High pattern never precedes an ear
 
 ### High
 
-#### `classic-matmul`
+#### `dot-matmul-rewrite`
 
 - Priority: high
-- Trigger: the kernel computes an `M x N` output tile with a regular reduction over `K`
-- Summary: Rewrite a manual matmul or K-reduction hot loop into a regular tiled `tl.dot`-based matmul so the kernel structure matches what Ascend Triton lowers well.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/classic_matmul.md`
+- Use When: The kernel computes an `M x N` output tile through a regular reduction over `K` — semantically `sum_k A[..., k] * B[..., k]` — but the current implementation is a manual loop rather than a tiled `tl.dot` matmul, and profiling or IR suggests the hot loop spends too much effort on scalar address generation or repeated reduction structure.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/dot_matmul_rewrite.md`
 
-#### `engine-aware-grid-wave-scheduling`
-
-- Priority: high
-- Trigger: A multidimensional grid contains programs with different recurrence lengths, memory locality, or Cube/Vector work.
-- Summary: Map logical work already contained in one device launch into program order, a compact live-task domain, physical waves, persistent stride loops, or a bounded serialized axis. Keep work and tile math fixed for the first comparison, and retain a mapping only when its scheduling, decoder, compiler-allocation, or DMA-concurrency effect is separately measured.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/engine_aware_grid_wave_scheduling.md`
-
-#### `fusion-placement-and-materialization`
+#### `engine-aware-grid-scheduling`
 
 - Priority: high
-- Trigger: A measured public call contains multiple Triton kernels, framework operations, allocations, copies, casts, or materialized intermediates.
-- Summary: Combine operations when they can share computation or avoid writing an intermediate tensor. Keep separate kernels when that permits a faster schedule. Distinguish computational fusion from launch coalescing and compiler-internal fusion, and choose the boundary from legality, schedule compatibility, and measured total-operation behavior—not from kernel count or compiler precedent alone.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/fusion_placement_and_materialization.md`
+- Use When: The program-to-core mapping of a single launch looks wasteful. If a host loop calls the kernel once per segment, apply `host-launch-coalescing` first.
+
+  One or more of these situations holds:
+
+  - **Heterogeneous programs**: programs differ in loop length, memory region, or Cube/Vector mix, so which programs share a batch matters.
+  - **Padded-grid no-ops**: a rectangular grid padded to the maximum submits many programs that only decode metadata and return early, because their tiles fall outside ragged segment lengths.
+  - **Batch-boundary count**: the logical program count sits close to a program-batch boundary or leaves the last batch mostly idle.
+  - **Thin programs**: per-program setup dominates, or a small independent grid axis could move inside the program.
+
+  Profile or IR confirms the mapping matters: latency shifts when one program batch finishes and the next starts, or a Vector-heavy and a Cube-heavy kernel respond oppositely to the same axis order.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/engine_aware_grid_scheduling.md`
+
+#### `gather-then-dense-compute`
+
+- Priority: high
+- Use When: Your kernel's hot loop resolves data-dependent row indices and loads scattered rows before a regular dot or reduction:
+
+  ```python
+  for k in range(num_steps):                 # every iteration re-gathers
+      row_ptr = base + idx[k] * stride       # data-dependent pointer
+      vals = tl.load(row_ptr + offs)         # one random row per lane
+      acc = tl.dot(vals, w, acc)             # dense math on gathered rows
+  ```
+
+  Profiling shows the gather dominating the path: many small indirect row loads that the compiler cannot turn into block transfers. The selected rows are a small share of the source (topK rows, not the whole source), so gathering them once into one contiguous buffer is cheap to stream. And the indices are spread out — if many lanes hit the same address, even the densify pass would serialize on those hot spots.
+
+  The rewrite gathers the selected rows once into a contiguous buffer, so the dense compute then runs on contiguous loads at full rate instead of scattered row loads.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/gather_then_dense_compute.md`
 
 #### `grid-flatten-and-ub-buffering`
 
 - Priority: high
-- Trigger: The logical grid is much larger than the physical AICore or VectorCore count.
-- Summary: Flatten logical work items onto physical cores and batch small row-wise memory transfers into wider UB stores to reduce launch overhead and improve per-core work density.
+- Use When: The launched grid is much larger than the physical AICore or VectorCore count, so many tiny programs each handle only one or a few small rows. Work is partitioned by batch or sequence buckets with visible load imbalance, or a batch/head grid axis leaves each program too thin to cover its own launch and setup. Gather-like code whose destination rows are continuous but still stored one row at a time, and gradient-accumulation code that repeatedly loads consecutive source rows one at a time, have the same shape:
+
+  ```python
+  pid = tl.program_id(0)               # grid >> physical core count
+  x = tl.load(src + pid * ROW + offs)  # each program moves one small row
+  tl.store(dst + pid * ROW + offs, x)
+  ```
+
+  Flattening the grid onto the physical cores turns thousands of tiny programs into one strided loop per core, and batching the row-wise transfers into wider UB stores cuts per-program setup and transaction count.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/grid_flatten_and_ub_buffering.md`
 
 #### `host-launch-coalescing`
 
 - Priority: high
-- Trigger: A host loop launches the same kernel once per batch item, head, bucket, or ragged segment.
-- Summary: Replace repeated Python or wrapper launches of the same small kernel across independent logical segments with one device grid whose programs decode segment identity. The mechanism is fewer host/kernel launches and a larger submitted work set, paid for by device metadata loads, identity decode, and control.
+- Use When: A Python or wrapper loop launches the same small kernel once per batch item, head, sequence bucket, or ragged segment. A typical example:
+
+  ```python
+  for segment in range(num_segments):
+      kernel[(grid_for_segment,)](x + offsets[segment], out + offsets[segment])
+  ```
+
+  This is worth merging when each launch is so short that host dispatch and kernel-launch overhead is a visible share of total latency. It is possible when the segments are independent: their outputs can go to disjoint regions of one launch's output, and their per-segment metadata (lengths, offsets, strides) can be passed to the device as arrays.
+
+  The merged form replaces the loop with one device launch whose programs decode their own segment identity, removing the repeated dispatch and launch overhead.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/host_launch_coalescing.md`
 
-#### `indirect-access-densification`
+#### `int8-dot-int32-accumulator`
 
 - Priority: high
-- Trigger: The hot loop computes `dense(op(gathered_rows))`: each program resolves per-element or per-tile indices and issues random-row loads before a regular dot/reduction.
-- Summary: When a kernel's hot path feeds indirect/random-row loads into regular dense arithmetic, split the work into two phases: one streaming pass that materializes the referenced rows into a contiguous buffer (with any dtype conversion folded in), then a dense tiled compute (classic-matmul) over that buffer. Adding a materialization round trip can beat indirect loads when the index distribution has spread.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/indirect_access_densification.md`
+- Use When: Your operator is an int8×int8 quantized GEMM with dequant scales applied after the integer reduction. The current kernel widens the int8 operands to fp16 or fp32 before `tl.dot` and accumulates in fp32. A typical example:
 
-#### `native-int8-dot-int32-acc-default`
+  ```python
+  a = a_tile.to(tl.float16)   # int8 operands widened before the dot
+  acc += tl.dot(a, b)         # acc is fp32
+  ```
+
+  With int8 inputs, every product and partial sum is computed without rounding, and you can prove the int32 accumulator cannot overflow for the largest supported K and value bounds.
+
+  The native int8 dot with an int32 accumulator runs the faster integer MMAD path with half the operand footprint of the fp16-widened form.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/int8_dot_int32_accumulator.md`
+
+#### `kernel-fusion-and-value-placement`
 
 - Priority: high
-- Trigger: The operator contracts `int8 x int8 -> (dequantized) fp16/bf16` semantics (npu_quant_matmul family): `relu`-free plain GEMM with dequant scales applied after the integer reduction.
-- Summary: In an int8-by-int8 quantized GEMM (per-channel scale, optional bias / pertoken / offset), make the native int8 `tl.dot` with an **int32 accumulator** the default structure for every exact tile, and respond to UB overflow at wide tiles by **demoting the tile geometry** (e.g. 128x128 -> 64x128 with a doubled grid) instead of reverting the operand path to fp16-widened dot. The int32-to-fp32 conversion happens once in the epilogue.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/native_int8_dot_int32_acc_default.md`
+- Use When: An ordered computation path runs as several kernels or framework operations, within one operator call or across cooperating wrappers. One or more of these shapes is present:
 
-#### `repeated-reference-dedup-exact-compensation`
+  - **Large intermediate round trip**: one launch writes a large intermediate tensor to memory and the next launch reads it back.
+  - **Sibling or fan-out launches**: several launches reload the same inputs.
+  - **Repeated dominant work**: multiple launches repeat the same dominant matmul, reduction, or expensive elementwise chain over the same tiles.
+  - **Glue operations**: framework copies, casts, or allocations sit between otherwise related computations.
+
+  A producer also constructs a data-dependent permutation or compacted destination map that a later consumer inverts, or rereads, to recover source rows. The producer already has both coordinates in registers, valid destinations have exclusive ownership, and a supported output or metadata channel can carry the derived map to the consumer.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/kernel_fusion_and_value_placement.md`
+
+#### `repeated-gather-compute-once`
 
 - Priority: high
-- Trigger: A buffer of indices/pointers selects elements with replacement, and the duplicate rate is measurable and material (e.g. expected duplicates >= 2x per selected element).
-- Summary: When an index/pointer buffer selects the same underlying element multiple times and the downstream semantics are multiset (each occurrence counts), compute each distinct element once and restore the multiplicities with an exact algebraic compensation instead of recomputing redundant work.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/repeated_reference_dedup_exact_compensation.md`
+- Use When: An index or pointer buffer selects elements with replacement: the same element is gathered several times, and downstream arithmetic counts each occurrence.
+
+  ```python
+  rows = index_row[i, :]            # values repeat, e.g. [3, 0, 3, 3, 1]
+  vals = gathered[rows]             # loads len(index_row) elements
+  out  = reduce(f(vals))            # every occurrence contributes
+  ```
+
+  Profiling shows loads and FLOPs tracking the index buffer length while the distinct element set is much smaller — each selected element referenced 2x or more on average. The downstream computation must accept an exact count-weight compensation per distinct element (softmax-family, linear sums, moments).
+
+  Dedup to the distinct elements, compute each once, and restore the multiplicities exactly — count weights for sums, a `log(count)` shift for softmax.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/repeated_gather_compute_once.md`
 
 ### Normal
-
-#### `a5-force-simt-only-discrete-access`
-
-- Priority: normal
-- Trigger: Target hardware is confirmed as A5 by user statement, profile metadata, runtime/compile logs, runtime device query, or environment/CANN target settings.
-- Summary: Launch discrete-access-ub-staging Triton kernels on A5 with `force_simt_only=True`, then retune `num_warps` and grid decomposition. This profile-gated launch-mode experiment targets kernels whose hot path is primarily scalar/index-driven memory access.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/a5_force_simt_only_discrete_access.md`
 
 #### `common-input-projection-packing`
 
 - Priority: normal
-- Trigger: Two or more dense projections consume the same input rows, use the same reduction extent and compatible operand/accumulator dtypes, and differ mainly in their output-channel ranges.
-- Summary: Group compatible sibling affine projections that consume the same input as either one wider contraction or co-scheduled contractions that reuse each loaded input tile. Both forms share input traversal and launch setup while preserving independent parameter values, output semantics, and downstream ownership.
+- Use When: Several linear projections consume the same input and reduce over the same dimension (K), differing mainly in their output channels — a generic shape, with Q/K/V-style siblings as the canonical instance:
+
+  ```python
+  Q = x @ W_q        # separate kernels, each re-reading the same x
+  K = x @ W_k
+  V = x @ W_v
+  ```
+
+  The same shape appears wherever sibling projections share one input — gated FFN gate/up pairs, Mamba `in_proj` branches, multi-head prediction heads — not only in attention. Profiling shows the sibling kernels repeating the same input loads, contraction-loop setup, and launch overhead. The parameters are immutable or cacheable long enough that packing them (transposition, concatenation) can be amortized outside the measured hot path, the outputs can stay disjoint (stride-aware views of one packed result or separate stores without cross-program communication), and the combined width still admits a legal, efficient tile/grid plan on the target.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/common_input_projection_packing.md`
 
-#### `cross-program-recompute-materialization`
+#### `compute-once-share-via-gm`
 
 - Priority: normal
-- Trigger: An expensive producer is invariant across a consumer-only program or tile axis, so distinct consumer programs repeat the same logical work.
-- Summary: Compute an expensive value once at a supported kernel boundary, write it to GM, and let consumer programs load it instead of recomputing it. This trades an extra GM write/read, allocation, and synchronization for deleted computation.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/cross_program_recompute_materialization.md`
+- Use When: Several consumer programs (or launches) each recompute the same expensive value because it does not depend on the axis that distinguishes them — for example every program in a grid recomputes an input-wide statistics table that is identical for all of them — and profiling confirms the repeated computation is material, not just visible in source.
+
+  The trade pays off only when reuse is high and the shared value is small: one GM write plus the consumer reads must cost less than the repeated production. A safe handoff for the shared value must exist — typically a separate kernel launch or an existing output slot. The baseline must be compute-bound, with enough MTE/GM headroom to absorb the added write/read traffic. Rule out cheaper alternatives first — deleting the duplicate work, LICM, algebraic simplification, or on-chip sharing through changed ownership (see the adoption order below).
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/compute_once_share_via_gm.md`
 
 #### `dense-substitution-fine-grained-sparse-attention`
 
 - Priority: normal
-- Trigger: Sparsity is per-position and effectively random, given as `indices[b, h, s, topK]` with no block structure. Start by testing a selected fraction such as `topK / S_kv >= 1/8`, then remeasure the crossover across `S_q`, `D`, dtype, and loader form; do not treat `topK * 8 >= S_kv` as a portable dispatch rule.
-- Summary: When an attention operator selects KV positions by per-row arbitrary indices (topK sparseIndices, DSA/MLA style) and the selected fraction `topK / S_kv` is not tiny, replace gather-based sparse compute with a dense pass over the full `S_kv` plus a scattered boolean mask. Dense runs entirely on contiguous loads feeding `tl.dot` at cube rate. A gather whose rows are masked or non-contiguous can incur many small indirect row loads or an extra workspace GM round trip. A mask-free, row-contiguous gather can avoid much of that cost, so measure that in-place fix before paying the dense FLOP multiplier.
+- Use When: An attention operator selects KV positions by per-row arbitrary indices (`indices[b, h, s, topK]`, no block structure), and profiling shows the sparse path dominated by gather traffic — many small random-row loads, or a separate gather pass that writes the selected K/V rows to memory and reads them back. The idea: when the selected fraction is not tiny, computing densely over the full `S_kv` at full cube rate plus a boolean mask can beat fewer but random reads. Start testing around `topK / S_kv >= 1/8`, then remeasure the crossover across `S_q`, `D`, dtype, and loader form; `topK * 8 >= S_kv` is not a portable dispatch rule.
+
+  Two gates before substituting. First, the cheap loader repair has been tried and rejected: if rewriting the gather so each key row loads as one contiguous chunk without a data-dependent mask turns it into block transfers, fix the load form and stop there. Second, the dense-mask form must be legal: the `[B, H_kv, S_q, S_kv]` bool/int8 mask fits memory and can be built by one scatter kernel, and per-row indices are unique (a boolean mask cannot count a duplicated index twice).
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/dense_substitution_fine_grained_sparse_attention.md`
+
+#### `force-simt-only-discrete-access-950`
+
+- Priority: normal
+- Use When: The Triton kernel runs on confirmed Ascend 950 hardware, and its hot path is discrete, index-driven memory access — gather/scatter-style loads, index arrays, or per-lane pointer arithmetic — with almost no arithmetic on the loaded values:
+
+  ```python
+  offs = row[:, None] * stride + idx[None, :]
+  vals = tl.load(base + offs, mask=mask)
+  ```
+
+  Profiling shows `aiv_scalar_ratio` clearly above both `aiv_vec_ratio` and `cube_utilization` for this kernel's row in `op_summary_*.csv`. The generic flat-index-decode-to-layout-tiling repair has been ruled out or already tried, so the remaining scalar load is architectural rather than a fixable indexing structure.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/force_simt_only_discrete_access_950.md`
 
 #### `invariant-preprocessing-cache`
 
 - Priority: normal
-- Trigger: Repeated calls consume the same weight, lookup table, layout descriptor, or other read-only source and rebuild the same padded, packed, transposed, quantized, or indexed representation.
-- Summary: Reuse pure preprocessing results across public operator invocations under explicit contracts for cache identity, invalidation, ownership, bounded storage, and cold-versus-warm cost.
+- Use When: The operator is called many times with an input that does not change across calls — e.g. a weight, a lookup table, or a layout descriptor — and every call rebuilds the same padded, packed, transposed, quantized, or indexed version of it before launching the kernel. A typical example:
+
+  ```python
+  def forward(x, weight):
+      packed = quantize(weight.t().contiguous())  # rebuilt on every call
+      return kernel(x, packed)
+  ```
+
+  Profiling shows the preprocessing launches, allocations, or copies taking a visible share of per-call latency. The prepared value must be a pure function of the source and fixed transform options — never depending on runtime inputs, random state, or output storage — and the caller contract must give a way to tell when the source has changed. The same source must repeat often enough that cache hits pay for the misses.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/invariant_preprocessing_cache.md`
 
-#### `shape-regime-specialized-dispatch`
+#### `shape-specialized-dispatch`
 
 - Priority: normal
-- Trigger: Per-shape review shows stable benefit in one regime and regression in another.
-- Summary: Use a small host-side shape discriminator to select a specialized kernel for a proven shape regime while retaining a generic fallback for all other inputs. Dispatch selects an implementation for one invocation; it does not change test-case execution order.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/shape_regime_specialized_dispatch.md`
+- Use When: You have a specialized rewrite that wins — on speed or on accuracy — only inside a proven shape range, while the generic kernel stays correct and competitive outside it. One of two situations:
+
+  - **Performance split**: the same kernel wins consistently on one shape range and regresses on another, and profile, IR, or divisibility evidence explains why (tails, masks, padding, occupancy, tile fit).
+  - **Numerics split**: an algebraic or precision rewrite that is exact in real-number arithmetic passes the accuracy contract only in a stable dtype and shape range, because reduction or rounding order changes.
+
+  In both, the boundary follows a causal property (divisibility, tile fit, contraction cost, occupancy, or a validated numerical transition) — not the observed benchmark case list — and is cheap to check before launch.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/shape_specialized_dispatch.md`
 
 ## 2. Kernel: Algorithm, Dataflow, And Storage
 
@@ -119,221 +198,433 @@ Stage order overrides priority: a later-stage High pattern never precedes an ear
 #### `algebraic-optimization`
 
 - Priority: high
-- Trigger: The hot path repeats full traversal/reduction work or executes a linear contraction chain whose current parenthesization materializes a disproportionately large intermediate.
-- Summary: Apply mathematical identities and semantics-preserving rewrites to reduce redundant memory passes, full data scans, contraction work, intermediates, or live ranges before micro-tuning loads. Covers floating-point identities, matrix-chain evaluation trees, operator-defined equivalences, and algebraic merge rules.
+- Use When: The kernel's result is mathematically correct, but a semantics-preserving rewrite of the math could produce the same result with less work: repeated full passes over the same data that one fused pass could serve (e.g. computing mean and variance in two traversals), pairwise or broadcast expressions that factor into row/column terms (e.g. `exp(g_i - g_j)`), a contraction chain whose parenthesization materializes an oversized intermediate, or a loop-carried rescale dependency that a reformulation can break. Apply these rewrites before micro-tuning tile sizes, pipelines, or autotune grids.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/algebraic_optimization.md`
 
-#### `ascend-redundant-loop-work-deletion`
+#### `arithmetic-intensity-balancing`
 
 - Priority: high
-- Trigger: A tiled loop visits a padded, maximum, or otherwise larger extent than useful work requires.
-- Summary: Replace a full-range tiled loop plus an inner usefulness guard with a loop bounded by the proven useful extent. If the remaining useful tiles contain a fully valid region, a separate mask-free loop is a second, higher-risk candidate whose profitability depends on tile size, recurrence-body complexity, and Ascend lowering.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/ascend_redundant_loop_work_deletion.md`
+- Use When: The hot loop is a `tl.dot`-style contraction or reduction over tiles loaded from GM, where each loaded operand tile is reused many times within the iteration (so arithmetic intensity grows with tile size), block sizes, heads-per-program, or grid mapping are still free parameters, and a profile or quick estimate shows per-tile compute and per-tile transfer within the same order of magnitude, so tile choice can actually move which resource is the bottleneck.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/arithmetic_intensity_balancing.md`
 
-#### `attention-work-deletion`
-
-- Priority: high
-- Trigger: A measured Attention call either materializes internal score or probability tensors between QK, masking or softmax, and value aggregation, or already runs an online recurrence over key tiles.
-- Summary: Delete Attention work at two independent levels: after structural grouping is selected, replace an internal materialized score-to-softmax-to-value chain with a tile-owned online recurrence; in any online recurrence, prune invisible key tiles and semantic-mask work.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/attention_work_deletion.md`
-
-#### `axis-split-partial-state-combine`
+#### `attention-online-softmax-fusion`
 
 - Priority: high
-- Trigger: A reduction-shaped kernel (dot over K, softmax, top-K, sum) has grid = f(non-reduction dims) that cannot fill the device even after tile resizing.
-- Summary: When a reduction kernel's parallelism is capped by its non-reduction grid (the launch cannot fill the cores), split the REDUCTION axis across programs. Each program emits a partial reduction state (accumulator plus auxiliary state such as max/denominator/count), and a light combine kernel merges partial states according to the reduction algebra.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/axis_split_partial_state_combine.md`
+- Use When: One attention operator invocation runs as several separate kernels — a QK matmul, a softmax, and a value-aggregation (PV) matmul visible as distinct launches in the profile — and the score or probability tensors passed between them exist only to connect the stages. Fusing the stages into one kernel must be legal and worthwhile (that decision belongs to `kernel-fusion-and-value-placement`); this card supplies the attention-specific online-recurrence construction.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/attention_online_softmax_fusion.md`
 
-#### `ragged-padded-grid-whole-tile-elision`
+#### `attention-visibility-mask-specialization`
 
 - Priority: high
-- Trigger: A launch uses global padded or maximum extents for one or more axes while individual segments have smaller runtime extents.
-- Summary: Return before tile-local work when authoritative segment metadata proves that an entire program tile lies outside the segment's valid rectangle. Keep the ordinary masked body for partial edge tiles. Treat entry elision and compact live-task submission as separate experiments.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/ragged_padded_grid_whole_tile_elision.md`
+- Use When: An attention kernel already runs an online recurrence over key tiles, but loops over the full (padded or maximum) key length and rebuilds the visibility mask on every iteration:
+
+  ```python
+  for n0 in range(0, seq_len, BLOCK_N):   # every key tile, visible or not
+      scores = tl.dot(q, tl.trans(load_k(n0)))
+      scores = tl.where(visibility_mask(), scores, -inf)  # mask rebuilt every iteration
+  ```
+
+  Visibility policies (causal, window, prefix, ragged) have regular geometric structure, so tiles can be classified whole instead of masked element-wise: tiles entirely inside the visible region need no mask, tiles entirely outside can be skipped outright, and only tiles crossing the frontier keep the mask. The loop then runs only over the visible key tiles instead of the whole key sequence.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/attention_visibility_mask_specialization.md`
+
+#### `ragged-tile-early-return`
+
+- Priority: high
+- Use When: The kernel processes ragged data: a batch of variable-length segments, such as the sequences in a varlen LLM batch. It launches a padded rectangular grid sized to the longest segment, so each segment spans multiple program tiles while its true length is smaller and known only at runtime. Tiles that fall completely outside their segment's valid rectangle still execute the tile body before a final all-false mask discards every lane:
+
+  ```python
+  offs = row_begin + tl.arange(0, BLOCK_ROWS)
+  mask = offs < local_rows              # per-lane mask only, no whole-tile guard
+  x = tl.load(ptr + offs, mask=mask)    # runs even when row_begin >= local_rows
+  ```
+
+  The per-segment lengths (metadata such as `cu_seqlens`) are available before tile data is accessed, so they can prove a whole tile invalid. Profiling shows kernel time tracking the padded grid area rather than the sum of live per-segment tiles.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/ragged_tile_early_return.md`
+
+#### `reduction-axis-split-combine`
+
+- Priority: high
+- Use When: A reduction kernel (sum, softmax, top-K, dot over K) sizes its grid from the non-reduction dimensions only and cannot fill the device even after tile resizing: for example a per-row reduction over `[4, 1M]` launches 4 programs on a 32-core device, each looping over the long reduction axis while the other 28 cores idle.
+
+  Two preconditions: the reduction admits cheap associative partial states — an fp32 partial sum, online-softmax state (accumulator, running max, running sum), or counts — that a light combine pass can merge, and each program after the split still has enough work that the partial-state write and combine cost pays off.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/reduction_axis_split_combine.md`
+
+#### `redundant-loop-work-deletion`
+
+- Priority: high
+- Use When: A tiled loop iterates over a padded or maximum extent while the useful work is shorter, so useless trailing iterations still pay loop control, loads, recurrence, or pipeline work even though a guard suppresses their arithmetic:
+
+  ```python
+  for tile_start in range(0, total_extent, BLOCK):  # full/padded range
+      if tile_start < useful_extent:                # guard only skips the work
+          ...  # loads, compute, recurrence updates
+  ```
+
+  Runtime metadata or a loop-invariant predicate proves that the trailing tiles are all inactive. A partially valid final tile can retain its exact boundary predicate.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/redundant_loop_work_deletion.md`
 
 ### Normal
-
-#### `a5-simt-sliding-window-tuning`
-
-- Priority: normal
-- Trigger: Kernel matches the pattern signature above.
-- Summary: Tuning methodology for kernels that map **each output point** to a **fixed-size input window** over an **affine N-D layout** (e.g. NCDHW/NCHW), then **reduce** (sum, max, etc.) under **A5 `force_simt_only=True`**. Teaches how to **derive** dispatch, inner paths, and launch params from **structural features** — not from a specific op name. Pool-style ops are one common instance; the same signals apply to any op matching the pattern signature below.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/a5_simt_sliding_window_tuning.md`
-
-#### `accumulator-layout-alignment`
-
-- Priority: normal
-- Trigger: `tl.store` writes a transposed logical tensor and profiling or code inspection suggests the write degraded into scalar element stores.
-- Summary: Align accumulator shapes with output memory layout to avoid store-time transposes that degrade into scalar element writes on Ascend NPU.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/accumulator_layout_alignment.md`
 
 #### `amortized-neutral-padding-layout`
 
 - Priority: normal
-- Trigger: One irregular logical tensor feeds several consumer tiles that repeatedly pay boundary masks, short transfers, pointer clamping, or fill/select work.
-- Summary: Introduce an internal tensor with tile-aligned physical extents and consumer-specific neutral values when one padding/preparation cost is amortized across repeated consumers. Keep logical extents as separate metadata so padding changes storage and lowering, not public semantics.
+- Use When: One internal tensor's true length along a tiled axis is not tile-divisible (e.g. 100 valid elements while tiles are 128), and several consumer kernels or tiles read it repeatedly, with each consumer rebuilding the same boundary handling — tail masks, pointer clamping, short transfers, or fill/select work — on every read. The repeated boundary work outweighs a one-time preparation pass, every consumer has a neutral value that makes padded lanes harmless to its algebra (zero for dot/sum, the lower identity for max, the upper for min), and padding to a tile-aligned physical extent unlocks a materially better dot, reduction, vector-transfer, or block-pointer lowering on the target.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/amortized_neutral_padding_layout.md`
 
 #### `attention-intermediate-vector-work-reduction`
 
 - Priority: normal
-- Trigger: A first Cube operation such as QK produces a tile consumed by Vector scale, mask, normalization, or recurrence work before a second Cube operation such as PV can start.
-- Summary: Shorten the serialized Cube producer -> Vector transformation -> Cube consumer path in a mixed attention kernel by removing, sharing, or reshaping intermediate Vector work between the two Cube operations. Treat every rewrite as a measured candidate because fewer source operations do not guarantee a shorter lowered path.
+- Use When: In a mixed attention kernel, a first Cube operation such as QK produces a tile that Vector scale, mask, normalization, or recurrence work must transform before a second Cube operation such as PV can start, and profiling shows the downstream Cube operation actually waiting on this intervening Vector phase — for example Vector-dominated engine ratios with an idle Cube — rather than the Vector work being hidden by overlap or dwarfed by transfer time. Code or IR shows duplicated or unnecessarily sequential Vector expressions whose result directly gates the downstream Cube consumer.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/attention_intermediate_vector_work_reduction.md`
 
-#### `block-pointer-dimensionality`
+#### `block-pointer-tiles`
 
 - Priority: normal
-- Trigger: Source semantics and physical strides define a rectangular tile with predictable offsets and contiguous or regularly strided axes.
-- Summary: Use `tl.make_block_ptr` as a compiler-facing representation candidate when source semantics define a regular multidimensional tile but IR suggests that manual pointer expressions lower into unexpectedly scalarized, fragmented, strided, or transpose-heavy memory operations. Treat the rewrite as a heuristic experiment: confirm that it improves emitted transfer shape or address generation, then retain it only when correctness and benchmark evidence support it.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/block_pointer_dimensionality.md`
+- Use When: Your kernel accesses a logically regular rectangular tile — predictable offsets, contiguous or regularly strided axes — but expresses it as per-lane pointer arithmetic, and IR or profiling shows the access lowered into fragmented, scalarized, or non-coalesced transfers:
 
-#### `coupled-tile-legality-ablation`
+  ```python
+  rows = m0 + tl.arange(0, BLOCK_M)[:, None]
+  cols = n0 + tl.arange(0, BLOCK_N)[None, :]
+  tile = tl.load(x + rows * stride_m + cols * stride_n, mask=...)   # tile load
+  # or the same arithmetic on the store side:
+  tl.store(out + rows * stride_m + cols * stride_n, acc, mask=...)
+  # or a load followed by an explicit transpose for a dot operand:
+  k_t = tl.trans(tl.load(k_ptrs, mask=k_mask))
+  ```
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/block_pointer_tiles.md`
+
+#### `cv-intermediate-tile-orientation`
 
 - Priority: normal
-- Trigger: A larger tile would reduce repeated loop work, but the compiler rejects it during UB planning or lowering.
-- Summary: When a valuable large tile fails UB planning, inspect the extra temporaries created by calculations on the large tile. Move an equivalent invariant calculation to a smaller input tile when that can reduce the size or lifetime of temporary values; use a paired compile and correctness experiment to determine whether this unlocks the large tile.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/coupled_tile_legality_ablation.md`
+- Use When: In a mixed Cube/Vector kernel (attention-style), a Cube dot produces a tile that Vector work transforms row by row (softmax-like scale/mask/exp) before a later Cube dot consumes it, and the producer dot emits the transpose of the Vector-natural orientation:
 
-#### `cube-vector-intermediate-tile-orientation`
+  ```python
+  qkT = tl.dot(k, q.T)               # [64, 256]: scan axis (queries) is trailing
+  pT = tl.exp2(qkT - lse[None, :])   # Vector walks the long trailing axis
+  ```
 
-- Priority: normal
-- Trigger: A mixed Cube/Vector kernel materializes a rectangular Cube-produced tile that Vector transforms before a later Cube consumer.
-- Summary: Choose the orientation of Cube-produced rectangular intermediates that cross L0C-to-GM so Vector consumes a regular row-major tile along the fused scan axis, deferring any remaining transpose to the consumer Cube dots. The two orientations hold the same values; only fixpipe layout and Vector access order change.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/cube_vector_intermediate_tile_orientation.md`
+  The same values are available in the Vector-natural orientation (`tl.dot(q, k.T)` → `[256, 64]`), and profiling or IR attributes cost to the Cube-to-Vector transfer (fixpipe) or to Vector walking the transposed tile.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/cv_intermediate_tile_orientation.md`
 
 #### `discrete-access-ub-staging`
 
 - Priority: normal
-- Trigger: The central bottleneck is discrete memory access that semantically looks like `out = x[idx]`.
-- Summary: Stage a contiguous range into the Unified Buffer first, then use on-chip indexing (`tl.gather` or equivalent) to select target values, rather than loading directly from global memory through discrete indices. For fixed-channel AoS layouts, apply the same principle with channel-first SoA buffers to enable contiguous loads.
+- Use When: The kernel's central bottleneck is discrete memory access that semantically looks like `out = x[idx]`: index-driven global loads dominate the hot path, and the gather source array is small or medium enough that staging a contiguous range into the on-chip buffer and selecting locally is more plausible than direct scattered reads.
+
+  A second form: the hot loop reads fixed fields from interleaved records, e.g. coordinates stored as `[N, 3]` in memory order `x0 y0 z0 x1 y1 z1 ...`, so reading one field means stride-3 access. The input is reused enough that a one-time transpose to channel-first order (`x0 x1 ... y0 y1 ...`) on the wrapper side pays for itself.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/discrete_access_ub_staging.md`
-
-#### `effective-extent-tiling`
-
-- Priority: normal
-- Trigger: A **`BLOCK_*`** tile is much larger than the **valid extent** protected by a mask, so the kernel does visibly more padded lane work than useful work.
-- Summary: Choose tile widths from the live logical extent on each axis instead of a legacy maximum or blanket power-of-two rule, so masked lanes do not dominate loop trip counts, transfer work, or vector-path work.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/effective_extent_tiling.md`
-
-#### `exponential-base-convention-ablation`
-
-- Priority: normal
-- Trigger: Profile or IR evidence shows the special-function and associated scale/conversion chain on the measured critical path.
-- Summary: Ablate complete natural-base (`exp`/`log`) and base-2 (`exp2`/`log2`) implementations of exponential normalization as coherent conventions. Keep scaling, recurrence formulas, saved state, backward reconstruction, and all fast and boundary paths in the same convention.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/exponential_base_convention_ablation.md`
 
 #### `gqa-kv-shared-row-batching`
 
 - Priority: normal
-- Trigger: Attention inputs are already split-head (`[B, S, N_q, D]` and `[B, S_kv, N_kv, D]`), `N_q % N_kv == 0`, group size `G = N_q / N_kv > 1`.
-- Summary: Batch independent query-row computations that share one KV head into the same program so each read-only K or V tile is loaded once while every row retains independent scores, normalization state, accumulator, and output ownership. In attention this can be decode row folding or a small query-head group inside separately materialized QK/PV stages.
+- Use When: Your operator is GQA/MQA attention: `N_q` query heads share `N_kv` KV heads with group size `G = N_q / N_kv > 1` (Q is `[B, S, N_q, D]`, K/V are `[B, S_kv, N_kv, D]`), and the kernel runs one program per query head (or per query position and query head). The `G` sibling programs in a KV-head group iterate the same `S_kv` range over the same K/V offsets, so each shared K/V tile is loaded `G` times. A typical shape:
+
+  ```python
+  head_kv = (pid % N_q) // G    # G sibling programs share this KV head
+  k = tl.load(K + head_kv * skh + kv_offs[:, None] * sks + d_offs[None, :])
+  ```
+
+  Profile shows the re-reads are material: decode cases are HBM/L2-bound on K/V with traffic near `G` times the logical cache size, or a Vector-dominated profile shows `G` redundant consumer programs.
+
+  Two forms apply, depending on the kernel's current structure:
+
+  - **Decode fold**: decode or other small-`S` shapes, where query positions and the head group are small enough to fold into one online-softmax row tile that still fits.
+  - **Separate-stage grouping**: QK, normalization, and PV are already separate stages, so a bounded head group can share a K or V tile inside the contraction stages without duplicating normalization state.
+
+  Applying this pattern cuts shared K/V loads from `G` per KV head to one, at the cost of extra live accumulators and masks.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/gqa_kv_shared_row_batching.md`
 
 #### `implicit-transpose-elimination`
 
 - Priority: normal
-- Trigger: You implement GEMM / Linear-like kernels where one operand is stored as `[N, K]` but the math needs `[K, N]` (e.g. `y = x @ w.T`).
-- Summary: Eliminate implicit transpose-style access on Ascend NPU by ensuring operands are in the physical layout the kernel needs, avoiding compiler-injected layout transforms.
+- Use When: One of these situations — in all of them the physical layout does not match the access orientation, so the kernel pays a hidden transpose cost:
+
+  - **Operand stored transposed**: a GEMM/Linear-like kernel where one operand is stored as `[N, K]` but the math needs `[K, N]` (e.g. `y = x @ w.T`), and the kernel emulates it with stride-swapped pointer math or `acc += tl.dot(a, tl.trans(tl.load(b_ptrs)).to(tl.float16))`.
+  - **Transpose paid on the wrong side**: `A @ B` allows the logical transpose on either operand, and one operand's orientation is free (a block-pointer load) while the other is already on-chip (produced by an earlier operation) — but the current code transposes the loaded tile, paying a real conversion.
+  - **Hot read perpendicular to storage**: a gate-like tensor is stored as `[B, T, HV]` (T contiguous) but the hot loop reads a time chunk for a fixed batch/head lane — every read strides across the contiguous axis, i.e. an implicit transpose per access.
+
+  Profiling shows high scalar/control time or large `WAIT_FLAG_DEVI` time around the matmul path.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/implicit_transpose_elimination.md`
 
-#### `layout-materialization-elision`
+#### `intermediate-layout-copy-deletion`
 
 - Priority: normal
-- Trigger: The current implementation creates an intermediate tensor with `permute(...).contiguous()`, `transpose(...).contiguous()`, `movedim(...).contiguous()`, `clone()`, `copy_()`, or a Triton helper that exists only to produce a different physical layout.
-- Summary: Avoid allocating and filling a temporary tensor only to change layout, such as after `permute`, `transpose`, or `movedim`, when the next step immediately consumes it. Have the producer write the needed layout directly or have the consumer use explicit strides, offsets, or block-pointer metadata.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/layout_materialization_elision.md`
+- Use When: The current code creates an intermediate tensor purely to change the physical layout, and the next step immediately copies it into the final output or hands it to exactly one consumer. A typical example:
+
+  ```python
+  tmp = x.permute(0, 2, 1).contiguous()      # or transpose/movedim/clone/copy_
+  out.copy_(tmp.reshape(out_shape))          # second full-size pass, layout only
+  ```
+
+  The layout change must be expressible as pure address math — axis reordering, singleton-axis insertion/removal, or another affine mapping that explicit strides, tile offsets, or `tl.make_block_ptr` can describe — and the target layout must be known at dispatch time. Profiling can confirm the extra pass is a material share of the call.
+
+  The rewrite has the producer write the needed layout directly (or the consumer read via strides), deleting the intermediate entirely — roughly one full read plus one full write of it.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/intermediate_layout_copy_deletion.md`
+
+#### `intermediate-ub-overflow`
+
+- Priority: normal
+- Use When: A kernel keeps several full-sized tensors live at once, typically in an accumulator-style update over a whole tile:
+
+  ```python
+  result = acc * alpha[:, None] + update  # acc, alpha, update, result all live
+  ```
+
+  The compiler reports that the live values do not fit in UB, or the kernel compiles only after shrinking the tile below the size the algorithm needs. The pressure comes from the intermediate values of the computation, not from any single input or output alone.
+
+  Processing the tile in slices keeps only one slice's intermediates live at a time, so the same computation fits UB.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/intermediate_ub_overflow.md`
+
+#### `l2-stripe-capacity-tile-widening`
+
+- Priority: normal
+- Use When: A tiled `tl.dot` GEMM or batched matmul reaches near-peak throughput on moderate sizes but collapses sharply once one operand's long axis (say N) grows past a threshold — a large-factor cliff, not a gradual slope. The tiling code is a standard 2-D GEMM grid whose `BLOCK_M` and `BLOCK_N` were tuned on small shapes and never revisited for the large-size regime:
+
+  ```python
+  # tuned on small shapes; N now huge
+  grid = (triton.cdiv(M, BLOCK_M) * triton.cdiv(N, BLOCK_N) * BATCH,)
+  ```
+
+  The re-read accounting explains the cliff: each M-side panel is re-read `N / BLOCK_N` times and each N-side panel `M / BLOCK_M` times, so the slice of the N-side operand that one program batch touches per pass grows with N until it is comparable to or larger than L2.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/l2_stripe_capacity_tile_widening.md`
+
+#### `large-tile-fit-enabling`
+
+- Priority: normal
+- Use When: A larger tile would reduce repeated loop work, but the compiler rejects it during UB planning / buffer allocation, and the source-level tensor sizes do not explain the failure. The hot loop performs an elementwise scale, cast, or mask on the large dot/reduction result:
+
+  ```python
+  qk = tl.dot(q, k)          # large [BLOCK_M, BLOCK_N] fp32 tile
+  qk = qk * sm_scale         # a second large-tile operation lives here
+  ```
+
+  The loop-invariant operation can be moved onto a smaller input instead (e.g. pre-scale `q` once before the loop), which may reduce peak live UB enough for the large tile to compile. This is a compiler-resource hypothesis: moving the operation is not claimed to always reduce UB or improve performance. When it works, the rejected large tile compiles and its loop-work savings unlock.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/large_tile_fit_enabling.md`
 
 #### `logical-layout-tiling`
 
 - Priority: normal
-- Trigger: The kernel is mostly data movement, not dense arithmetic or reduction.
-- Summary: Replace scalar-heavy 1D linear-index traversal with layout-aware multidimensional tiles when the logical operation is an affine data movement.
+- Use When: The kernel is mostly affine data movement — a copy, transpose, reshape, pad, crop, or slice — not dense arithmetic or a reduction. It is launched over a flat `n_elements` or `out.numel()` range, and each lane rebuilds its logical coordinates with division and remainder chains before computing load or store offsets:
+
+  ```python
+  offs = pid * BLOCK + tl.arange(0, BLOCK)
+  c0 = offs // s0
+  r0 = offs % s0
+  c1 = r0 // s1
+  ```
+
+  The output-to-input mapping is affine: coordinates map through strides, axis reorder, fixed offsets, or padding bounds, with no data-dependent indirection. At least one logical dimension is contiguous or low-stride, so it can become a tile axis. Profiling shows high scalar and control overhead for what should be a cheap copy.
+
+  Tiling to the logical layout removes the per-lane div/mod decoding, leaving base-plus-stride addressing.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/logical_layout_tiling.md`
 
 #### `loop-invariant-hoisting`
 
 - Priority: normal
-- Trigger: The kernel has a hot inner loop (often a K loop in GEMM-like kernels).
-- Summary: Apply **Loop-Invariant Code Motion (LICM)** to Triton kernels: move computations that do **not** depend on the loop induction variable out of the loop, so each iteration performs only the minimal work that truly varies.
+- Use When: A hot tiled loop rebuilds addresses, masks, or window bounds, or reloads stable input tiles, without dependence on its induction variable. Profiling or IR shows that this repeated transfer, scalar, or control work is a large share of the loop's cost.
+
+  A second case is a reduction that produces only a few values per row or block. A following step computes a scale or a reciprocal from those values, or converts them to another dtype, and broadcasts the result over a much larger element tile. The lowered code recomputes that small step inside the element loop even though its inputs do not change there.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/loop_invariant_hoisting.md`
+
+#### `normalization-base-convention-ablation`
+
+- Priority: normal
+- Use When: The kernel normalizes with exponentials over a recurrence with saved state — online softmax, log-sum-exp, or similar — and profile or IR shows the exponential instructions plus the base-conversion multiply chain on the critical path. A typical example — `exp2` fed by scores carrying a `log2(e)` factor:
+
+  ```python
+  scores_2 = scores * scale * LOG2_E   # literal near 1.442695
+  p = tl.exp2(scores_2 - m_new[:, None])
+  ```
+
+  The logarithm base must be a purely internal choice: nothing outside the kernel reads the saved normalization state expecting a particular base, and you must be able to find and switch every path that touches it — forward, backward, and the saved state. If you can only see one local `exp2` call and cannot account for the rest, do not apply this pattern yet.
+
+  Switching the whole convention removes the base-conversion chain from the critical path and runs the normalization on the cheaper exponential path.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/normalization_base_convention_ablation.md`
 
 #### `packed-key-argmax-single-reduction`
 
 - Priority: normal
-- Trigger: The hot loop extracts (extremum, first-index) **over a whole tile**: `tl.max` / `tl.argmax` / `tl.min(tl.where(v == mv, pos, N))` on an [M, N] or [K, N] tile, per tile or per extraction round.
-- Summary: Any reduction that must emit an **extremum together with the position of its first occurrence** (argmax/argmin, top-k extraction rounds, cummin/cummax-style scans, pooling-with-indices) normally costs two reductions per extraction — one for the value, one for the index — or a slow tuple reduce. Instead, encode value and position into a **single order-preserving integer key** so that one `tl.max` yields both: the monotonic value bits occupy the high field, the inverted position occupies the low field, so key order equals value order and ties resolve to the smallest index for free, matching torch semantics.
+- Use When: The kernel reduces a whole tile and must return both an extremum value and the position of its first occurrence — argmax/argmin, top-k extraction rounds, or pooling-with-indices. The current implementation pays two reductions per extraction: one for the value and one for the index.
+
+  ```python
+  best_val = tl.max(work, axis=1)
+  best_idx = tl.argmax(work, axis=1)   # second full reduction over the same tile
+  ```
+
+  The argmax/top-k extraction reduces a whole tile at once — or one round per top-k step. Ties must resolve to the first occurrence, matching `torch.argmax` / `torch.topk` semantics.
+
+  Packing value and position into one integer key fuses the value and index reductions into a single `tl.max`, removing a full pass over the tile.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/packed_key_argmax_single_reduction.md`
 
-#### `padded-row-col-copy`
+#### `pad-copy-row-col-tiling`
 
 - Priority: normal
-- Trigger: The operator is **constant pad**, **slice + pad**, or another **per-axis bounds** elementwise map (not gather).
-- Summary: Rewrite flat 1D copy kernels over `numel(out)` into row–column tiled form to reduce scalar overhead from per-element coordinate reconstruction on the last dimension.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/padded_row_col_copy.md`
+- Use When: The kernel is a constant-pad, slice-then-pad, or similar elementwise copy. It indexes the output as one flat range over `numel(out)` and rebuilds every coordinate with div/mod arithmetic on each iteration. A typical example:
+
+  ```python
+  offsets = pid * BLOCK + tl.arange(0, BLOCK)
+  d_last = offsets % out_dim_last          # repeated // and % recover coordinates
+  rows = offsets // out_dim_last
+  valid = (d_last >= pad_left) & (d_last < pad_left + in_dim_last) & (rows < out_rows)
+  ```
+
+  Profiling shows scalar or masked-load/compare cost out of proportion to copy bandwidth, concentrated at the last-dimension pad boundaries.
+
+  The rewrite tiles the kernel as rows × columns: div/mod runs once per row lane instead of once per element, and the merged `valid` mask splits into `row_mask & col_mask`.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/pad_copy_row_col_tiling.md`
 
 #### `program-multiple-rows`
 
 - Priority: normal
-- Trigger: The kernel is **naturally row-wise**: each output row depends mainly on one row of input (e.g. row-wise LogSumExp, row norms, row softmax statistics).
-- Summary: Amortize per-program fixed costs and improve vector-friendly batching for **row-reduction or row-wise fused kernels** by mapping **multiple rows** to one Triton `program_id` via `BLOCK_M > 1`, instead of one row per program.
+- Use When: The kernel computes each output row mainly from one input row (row-wise LogSumExp, row norms, row softmax statistics). One Triton program currently handles exactly one row, and the inner loop only tiles the row length `N`:
+
+  ```python
+  pid = tl.program_id(0)           # one program per row
+  row_ptr = x_ptr + pid * stride   # narrow (1, BLOCK_N) tiles
+  ```
+
+  Profiling or timeline views show many tiny programs relative to the row count `B`, high scalar/control overhead, or under-filled vector work per program. The pattern also applies when `N` fits a single tile (`BLOCK_N = next_power_of_2(N)`, no `N` loop); judge by the actual tile footprint and target measurements, not by `N` alone.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/program_multiple_rows.md`
 
-#### `shift-2d-mask-to-1d-index-stream`
+#### `result-tile-layout-alignment`
 
 - Priority: normal
-- Trigger: A shift relation is structurally "take previous element" or "take previous position in chunk", including cross-chunk lane-0 handling.
-- Summary: When a hot shift or predecessor path is expressed as a 2D mask-and-reduce construction, rewrite it to a direct 1D index stream (`base + arange - 1`) with only boundary masking. This removes unnecessary 2D intermediates and keeps the shift path closer to one-dimensional vector loads and elementwise math on Ascend NPU; do not stop at replacing the reduce with an on-chip `tl.gather` if the final lane formula can be simplified further.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/shift_2d_mask_to_1d_index_stream.md`
+- Use When: A kernel computes a result tile (typically a `tl.dot` or reduction accumulator) and stores it out, but the tile's axis order is the transpose of the output's contiguous memory layout — for example the tile is `(N, M)` while the output is a row-major `(M, N)` tensor. The store address therefore strides across memory instead of advancing contiguously, and profiling or IR inspection shows the store degraded into per-element scalar writes. The pattern applies when the tile's axis order is a free choice of the kernel — as it is for an accumulator — so you can carry the tile in the output's axis order from the start (swapping the reduction axis and mask broadcast directions accordingly) instead of paying a store-time transpose.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/result_tile_layout_alignment.md`
 
-#### `simt-clip-window-closed-reduction`
-
-- Priority: normal
-- Trigger: **SIMT active** (`force_simt_only=True` or documented SIMT round).
-- Summary: **Inner-loop structural repair** for **fixed-window reductions** over **affine layouts** on **SIMT paths**: compute each output window's **clipped input bounds once**, use a **closed-form window volume** as normalizer (e.g. mean divisor), and iterate **absolute coordinates inside the clip** instead of scanning the full `KERNEL_*` cube with per-tap validity masks and runtime counting.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/simt_clip_window_closed_reduction.md`
-
-#### `slice-coalesce`
+#### `scattered-transfer-batching`
 
 - Priority: normal
-- Trigger: Scatter or gather style data movement dominates, and batching work in UB could replace many random global accesses with fewer contiguous transfers.
-- Summary: When indexed movement is dominated by small scattered transfers, use `extract_slice` or `insert_slice` to batch the side that can become contiguous. This can reduce global-memory transactions, but the final read/write direction still determines whether the transfer is actually coalesced.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/slice_coalesce.md`
+- Use When: A kernel rearranges rows through an index array, and each index drives its own small scattered global load or store. These small scattered transfers are a large share of the kernel's global-memory cost. One or more of these situations apply:
 
-#### `slice-intermediate`
+  - **One side can become contiguous**: the reads, or the writes, could be made contiguous by staging a block of rows in UB.
+  - **Source and output axes differ**: adjacent source rows lie along one logical axis while adjacent output rows lie along another, so handling one output row at a time leaves both sides scattered. A small tile spanning those axes fits in UB.
+  - **The destination map is complete**: a producer already builds a complete destination map, and a later consumer rereads it to recover source rows before it can own contiguous output tiles. The producer has both coordinates at its existing store, so the inverse is derivable there.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/scattered_transfer_batching.md`
 
-- Priority: normal
-- Trigger: Intermediate tensors, rather than just inputs or outputs, are the main source of UB pressure.
-- Summary: When the kernel computation creates intermediate tensors that, combined with inputs and outputs, would exceed the Unified Buffer (UB) capacity (in attention mechanisms, batch normalization, etc), divide computation into several steps, and use `extract_slice` and `insert_slice` to read/write into UB.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/slice_intermediate.md`
-
-#### `sliding-window-inner-w-slab-gather`
+#### `shift-mask-reduce-to-load`
 
 - Priority: normal
-- Trigger: The kernel is a **fixed `KERNEL_W` window reduction** (mean, max, etc., **values only**) along **W** on a **contiguous** NCHW (or 5D) tensor, with **`kw`** in a **`tl.constexpr`** loop and **`BLOCK_OW`** output columns per program.
-- Summary: For **fixed-window reductions** along the **innermost contiguous spatial dimension** (NCHW-style: often **W**), load one **slab** of length **`W_SLAB_LEN = STRIDE_W * (BLOCK_OW - 1) + KERNEL_W`** at **`w_abs_min = ow_pid * BLOCK_OW * STRIDE_W - PAD_W`**, then **`tl.gather(slab, STRIDE_W * arange(BLOCK_OW) + kw)`** per **`kw`** instead of many **`start_w + kw`** masked loads. Higher rank differs only in outer loops over remaining spatial axes. **Adoption gate:** hot path must show **`W_SLAB_LEN` load + gather**.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/sliding_window_inner_w_slab_gather.md`
+- Use When: The kernel shifts every lane one position (`out[i] = x[i-1]`), with lane 0 handled specially. The code builds this shift with a 2D mask-and-reduce instead of a direct shifted load:
 
-#### `stencil-resize-gm-to-ub-staging`
+  ```python
+  shift_mask = offs_i == (offs_j + 1)
+  shifted = tl.sum(tl.where(shift_mask, x[None, :], 0.0), axis=1)
+  ```
+
+  The mask-reduce builds an N×N boolean matrix to fetch each element's left neighbor — O(N²) work for what is one shifted load.
+
+  IR shows `tt.broadcast` / `tt.reduce` work that serves only the shift path, and profiling shows overhead concentrated there.
+
+  A 1D predecessor load replaces the quadratic mask-and-reduce with one shifted load.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/shift_mask_reduce_to_load.md`
+
+#### `simt-window-divisor-formula`
 
 - Priority: normal
-- Trigger: Kernel is memory-bound; input read count scales with `(output pixels × stencil footprint)`.
-- Summary: For 2D sampling kernels (resize, gather-stencil, pooling-like windows) whose hot path reads **multiple overlapping input samples per output point**, the core memory strategy is: **stage one contiguous input slab from global memory (GM) into on-chip buffer (UB) per program**, flatten it, then serve stencil reads via **UB-resident gather** and vector math. Secondary wins — often larger than tuning gather itself — are **eliminating UB internal densify copies**, **aligning slab row stride with gather indexing at allocation time**, **tightening slab bounds to the true input window**, and **enlarging the output tile to cut program count**. Prefer **2D output tiling** `(BLOCK_H, BLOCK_W)` over flattening the output plane onto a single 1D program axis.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/stencil_resize_gm_to_ub_staging.md`
+- Use When: A pooling-style kernel — fixed K_D×K_H×K_W window per output, regular strides — running in SIMT launch mode divides each output by the number of valid window elements: near the borders the window is clipped and the divisor shrinks (avg-pool with `count_include_pad=False`). The inner loops scan the full window and build that divisor by counting valid elements one by one at runtime:
+
+  ```python
+  for kw in range(KERNEL_W):
+      w = start_w + kw
+      valid_w = (w >= 0) & (w < in_w)
+      mask = valid_d & valid_h & valid_w
+      acc += tl.load(x_ptr + off, mask=mask, other=0.0)
+      count += tl.where(mask, 1, 0)   # divisor accumulated per window element
+  ```
+
+  The rewrite computes each output's clipped window bounds once, derives the divisor from a closed-form formula, and iterates only inside the clipped region — no per-element masks, no runtime counting.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/simt_window_divisor_formula.md`
+
+#### `simt-window-reduction-tuning`
+
+- Priority: normal
+- Use When: Your kernel reduces a fixed-size input window for each output point, as in pooling-style ops over NCDHW/NCHW layouts. The window position is an affine function of the output coordinate, the kernel size is fixed at compile time, and the inner loop does discrete per-window-element loads rather than dense vector math. A typical example:
+
+  ```python
+  start = out_coord * STRIDE - PAD        # affine output→input map
+  for tap in tl.static_range(KERNEL_D * KERNEL_H * KERNEL_W):
+      acc += tl.load(x_ptr + base + start + tap, mask=in_bounds)
+  ```
+
+  The kernel runs on Ascend 950 with `force_simt_only=True`, so this scalar, index-heavy access is the intended lowering. This card is a tuning methodology rather than a single rewrite: it applies when you must choose dispatch, inner paths, and launch parameters across many shapes.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/simt_window_reduction_tuning.md`
 
 #### `strided-layout-reduction`
 
 - Priority: normal
-- Trigger: The operator reduces exactly one logical axis.
-- Summary: Avoid implementing a non-last-dimension single-axis reduction by first doing `movedim(...).contiguous()` or an equivalent layout materialization. For contiguous row-major input, compute `[outer, reduce, inner]` from the original shape and reduce directly from the original layout with a strided/tiled kernel.
+- Use When: The operator reduces one non-last axis of a contiguous row-major tensor, such as `torch.sum(x, dim=1)` on `[B, M, N]`. The current implementation first writes a transposed copy to memory so the reduction can run on the last axis:
+
+  ```python
+  x = x.movedim(dim, -1).contiguous()   # or transpose/permute(...).contiguous()
+  out = sum_lastdim_kernel(x.reshape(-1, x.shape[-1]))
+  ```
+
+  Profiling shows a `Transpose`, `Memcpy`, `DataCopy`, or `Contiguous` step before the reduction kernel. The copy takes time comparable to or larger than the reduction kernel itself. The suffix after the reduced axis is long enough that loads along `inner` stay reasonably coalesced.
+
+  Reducing along the strided axis directly skips the transposed copy, so the kernel pays only for the reduction itself.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/strided_layout_reduction.md`
 
-#### `tiling`
+#### `tile-footprint-fitting`
 
 - Priority: normal
-- Trigger: Block sizes, live intermediates, or multi-tensor loads risk UB overflow or poor locality.
-- Summary: Reduce per-program working-set size through hierarchical or sub-block tiling, keeping live data within UB capacity.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/tiling.md`
+- Use When: A kernel processes its data in one large flat block and keeps several tensor tiles or intermediates live at the same time, so the per-program working set approaches or exceeds UB capacity:
+
+  ```python
+  offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)  # one large flat block
+  a = tl.load(x + offsets, mask=mask)
+  b = tl.load(y + offsets, mask=mask)
+  c = tl.load(z + offsets, mask=mask)                    # several tiles live at once
+  result = compute(a, b, c)                              # UB overflow risk here
+  ```
+
+  The compiler-reported UB allocation or a runtime failure confirms the overflow. Growing `BLOCK_SIZE` makes the failure or the pressure worse. The kernel's overall structure is otherwise reasonable — the problem is per-program memory footprint, not the need for a different kernel shape.
+
+  Splitting the block into sub-blocks processed in sequence keeps only one sub-block live at a time, so the tile fits UB.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/tile_footprint_fitting.md`
+
+#### `valid-length-tiling`
+
+- Priority: normal
+- Use When: A kernel rounds the tile width up to a fixed bucket — typically a power of two or a hard-coded upper limit — while a mask protects a much smaller valid length:
+
+  ```python
+  BLOCK_H = next_power_of_2(width)   # e.g. 128 lanes for 80 valid
+  offs = tl.arange(0, BLOCK_H)
+  x = tl.load(ptr + offs, mask=offs < width)
+  ```
+
+  Most lanes in each block then do padded work rather than useful work. Profiling shows LD/ST, scalar-loop, or transfer cost tracking the full tile width instead of the valid lane count. The oversized axis is a copy-like or indexed/masked access path that does not participate in `tl.dot`, cube alignment, or reduction-tree structure. The host already knows the shape and could choose a smaller tile or a different launch branch. Sizing the tile to the live valid length removes the padded-lane work instead of paying it on every iteration.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/live_length_tiling.md`
+
+#### `window-2d-ub-staging`
+
+- Priority: normal
+- Use When: Your kernel samples a 2D input with overlapping windows — resize, gather-window, or pooling-like — so each output point reads several input samples, and the hot loop issues one dynamic-index global load per sample:
+
+  ```python
+  for tap in range(K):
+      acc += w[tap] * tl.load(gm_ptr + row_off[tap] * in_w + col_off[tap])
+  ```
+
+  The rewrite stages one rectangular input block into UB per program and serves all window reads from it on-chip, turning many scattered global loads into one contiguous copy.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/window_2d_ub_staging.md`
+
+#### `window-slab-gather`
+
+- Priority: normal
+- Use When: The kernel computes a fixed-window reduction (mean, max, or similar) along the innermost contiguous dimension of an NCHW-style tensor — pooling is the canonical case. Each program owns a block of adjacent output columns and loops over the window positions with one masked global load per step:
+
+  ```python
+  for kw in range(KERNEL_W):  # one narrow masked load per window position
+      v = tl.load(x_ptr + base + (start_w + kw) * stride_w, mask=ow_mask, other=0.0)
+      acc += v
+  ```
+
+  Adjacent output windows overlap, so the same input columns are reloaded from global memory once per window position. Because the input columns are regularly strided, one contiguous input range covers every window the program owns.
+
+  The rewrite loads that whole range once and gathers each window position from it on-chip, so overlapping columns are loaded once instead of `KERNEL_W` times.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/window_slab_gather.md`
 
 ## 3. Refinement: Lowering, Boundaries, And Ablations
 
@@ -342,108 +633,182 @@ Stage order overrides priority: a later-stage High pattern never precedes an ear
 #### `mask-only-affine-addressing`
 
 - Priority: high
-- Trigger: A pointer expression wraps otherwise affine offsets in `tl.minimum` / `tl.maximum` against `M - 1`, `N - 1`, or `K - 1` while the same `tl.load` or `tl.store` already carries a boundary `mask`, so the clamp protects nothing the predicate does not.
-- Summary: Delete per-lane index clamps from pointer expressions whose load or store already carries a boundary mask, keeping raw affine offsets in the address and letting the predicate do the protecting. A clamp such as `tl.minimum(offs, N - 1)` makes the address data-dependent, so the compiler can no longer prove the tile is a contiguous slice and lowers it to an indirect/gather load whose cost scales with lane count instead of bytes moved. The rewrite is bit-exact and unconditional: valid lanes keep identical addresses, and `mask=0` lanes are never dereferenced.
+- Use When: A load or store clamps regular offsets with `tl.minimum` / `tl.maximum` against a dimension bound (`M - 1`, `N - 1`, `K - 1`), even though the same `tl.load` or `tl.store` already carries a boundary mask — the clamp protects nothing the mask does not. A typical example:
+
+  ```python
+  offs_c = tl.minimum(offs, N - 1)             # clamped index
+  tile = tl.load(ptr + offs_c, mask=offs < N)  # mask already guards it
+  ```
+
+  The clamp is often recomputed inside a reduction loop on every iteration even though only the last iteration can be partial.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/mask_only_affine_addressing.md`
 
 #### `scalar-latency-trap-removal`
 
 - Priority: high
-- Trigger: Runtime values that are shape constants are passed as normal arguments instead of `tl.constexpr`.
-- Summary: Remove scalarizing constructs that block vector hardware utilization on Ascend NPU, including unnecessary scalar control flow, loop-carried pointer recurrences, modulo addressing, narrow masks, and int64 arithmetic on vector paths.
+- Use When: Profiling shows high scalar/control overhead — a high `aiv_scalar_ratio`, or vector time that the arithmetic in the source cannot explain — and IR shows vector operations lowered as scalar loops. The hot path then contains scalarizing constructs such as: shape constants passed as runtime args instead of `tl.constexpr`, loop-carried pointer updates (`ptr += BLOCK_K`), modulo (`%`) tail guards, a `tl.where` selecting one special lane, `int64` index math that fits `int32`, `tl.cumsum`/`tl.associative_scan` scalar fallbacks, or boundary masks an earlier `boundary_check` already covers.
+
+  Typical examples — the loop-carried pointer update and the modulo boundary guard:
+
+  ```python
+  for k in tl.range(0, K, BLOCK_K):
+      ptr += BLOCK_K                          # loop-carried address dependency
+      offs = (k + tl.arange(0, BLOCK)) % N    # modulo boundary guard
+  ```
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/scalar_latency_trap_removal.md`
 
 ### Normal
 
-#### `ascend-cv-compile-option-ablation`
+#### `compile-hint-adding`
 
 - Priority: normal
-- Trigger: The target is Ascend A5 and the Triton kernel uses `enable_dynamic_cv_pipeline`, mixed Cube/Vector work, or generated `ssbuffer` regions.
-- Summary: The Ascend A5 Triton compilation path exposes controls that change Cube/Vector pipelining, HFusion vectorization, multi-buffer depth, and UB block planning. Treat these A5-only controls as version-qualified, independently ablatable scheduling transformations whose benefit depends on generated dataflow and on-chip resource pressure, rather than as universally beneficial performance flags.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/ascend_cv_compile_option_ablation.md`
+- Use When: The kernel structure is settled, but the generated code still carries defensive masks, padding, or narrow transfers for accesses you can prove are aligned or contiguous: for example the compiler pads a `tl.dot` operand on all sides even though only K needs it (M and N are already aligned), or keeps a load/store narrow and masked even though the pointer range is provably contiguous. Communicating the proven fact through a compiler hint lets the lowering drop that defensive code.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/compile_hint_adding.md`
 
-#### `compile-hint`
+#### `cv-compile-option-ablation-950`
 
 - Priority: normal
-- Trigger: The hot kernel is already structurally good, but lowering still appears conservative.
-- Summary: Use compiler hints to communicate layout facts the compiler cannot safely infer from pointer math alone.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/compile_hint.md`
+- Use When: The target is Ascend 950, the kernel mixes Cube and Vector work — typically a repeated Cube→Vector→Cube or load/compute/store chain, as in attention-style kernels — and profiling suggests the two engines are waiting on each other: pipeline stalls, cross-core wait, or buffer-reuse pressure. The kernel's source-level structure is already settled, so the remaining headroom is in how the compiler pipelines and buffers the dataflow. Kernels on this compile path either set the `enable_dynamic_cv_pipeline` compile option or show `ssbuffer` regions in the generated IR.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/cv_compile_option_ablation_950.md`
 
 #### `diagonal-block-traversal`
 
 - Priority: normal
-- Trigger: Large tiled matrix-style work shows poor locality or bank-conflict-like behavior even though the basic tiling is already reasonable.
-- Summary: This pattern changes which program owns each output tile within one existing launch. It may improve cache locality when neighboring programs repeatedly touch the same regions, but the cause and benefit are target-dependent; compare it with the existing traversal and do not treat it as a host launch-count change.
+- Use When: A large tiled matrix-style kernel is tiled reasonably, but profiling shows poor cache locality: the programs running concurrently on the cores (a program batch) touch many distinct operand regions at once, so L2 reuse is lost. The grid spans many blocks along both M and N, so traversal order is a real lever. Reordering which program computes which tile lets programs that read the same data run at the same time, so shared data is fetched from memory once per program batch instead of many times.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/diagonal_block_traversal.md`
 
 #### `dot-operand-precision-ablation`
 
 - Priority: normal
-- Trigger: A `tl.dot` or equivalent Cube operation consumes matched FP32 operands or explicitly upcasts lower-precision source values before the dot.
-- Summary: Ablate matched lower-precision `tl.dot` operands independently from accumulator, recurrence or epilogue, and output precision. Treat the lower-precision path as a measured, contract-gated candidate with a validated fallback, never as a default rewrite.
+- Use When: Your kernel feeds a `tl.dot` (or equivalent Cube operation) with matched FP32 operands, either because the operands are stored as FP32 or because lower-precision source tiles are upcast only to feed the dot:
+
+  ```python
+  left_dot = left.to(tl.float32)   # source tile is fp16/bf16
+  right_dot = right.to(tl.float32)
+  acc = tl.dot(left_dot, right_dot, acc=acc_fp32)
+  ```
+
+  The target supports a higher-throughput matched lower-precision operand pair with a higher-precision accumulator. The operator's accuracy contract permits a controlled operand-rounding experiment, and representative correctness cases are available. Tile geometry, grid, logical work, and surrounding arithmetic can stay fixed, so operand precision is independently attributable.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/dot_operand_precision_ablation.md`
+
+#### `dual-vector-core-parallel`
+
+- Priority: normal
+- Use When: Two or more vector-side computations — type conversions, elementwise operations, or scaling steps — run one after another on the hot path and do not depend on each other's results. While each one runs, the second vector core of the AICore sits idle. This part of the kernel is limited by vector compute, not by memory movement.
+
+  ```python
+  scaled_a = a.to(tl.float16) * a_s   # depends only on a
+  scaled_b = b.to(tl.float16) * b_s   # depends only on b
+  acc = tl.dot(scaled_a, scaled_b, acc)
+  ```
+
+  Issuing the independent computations together lets both vector cores work at once, up to halving the region's time.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/dual_vector_core_parallel.md`
 
 #### `exact-tile-no-boundary-fast-path`
 
 - Priority: normal
-- Trigger: A dominant benchmark shape is exactly tile-divisible, such as `M % BLOCK_M == 0` and `N % BLOCK_N == 0`.
-- Summary: Split exact-tile hot paths from generic masked kernels when dispatch-time shape guards can prove there are no tail tiles, so Ascend lowering can avoid boundary-only masks, padding values, block-pointer `boundary_check`, and related control branches.
+- Use When: The kernel's dominant shapes are exactly divisible by the tile sizes — Python dispatch can prove it before launch with a cheap guard such as `M % BLOCK_M == 0 and N % BLOCK_N == 0` — yet the generated code or profiling still shows boundary checks, masks, or padding on that exact-tile hot path. A typical example — a mask that guards only block edges:
+
+  ```python
+  offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+  mask = offs_m < M            # boundary-only: always true when M % BLOCK_M == 0
+  x = tl.load(ptr + offs_m, mask=mask, other=0.0)
+  ```
+
+  The same idea — do boundary work only where a boundary can actually exist — applies to three related situations:
+
+  - **Dispatch-proven case**: the host can prove before launch that this call needs no boundary handling (e.g. a short attention call whose sequence fits one tile), so dispatch picks a specialized mask-free kernel while the generic one stays as fallback.
+  - **Pre-padded input**: an upstream stage already padded the input to a tile-aligned physical length (the logical length is kept separately), so loads need no boundary mask at all.
+  - **Tail-only loop**: only the final iteration of a contraction or recurrence loop can be partial, but a generic loop rebuilds the tail mask on every iteration — run the full iterations mask-free and peel out the tail.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/exact_tile_no_boundary_fast_path.md`
 
-#### `fp16-hilo-compensated-mma`
+#### `hilo-split-matmul`
 
 - Priority: normal
-- Trigger: A structural reduction rewrite (split-K/axis split, densify, head batching, online-softmax regrouping) changed the summation order, and the correctness gate now fails MERE/matched_ratio while max-abs error is only about 1 ulp. The reference computes softmax/PV in fp32, but the optimized kernel wants to stay on fp16/bf16 Cube dots. Naive bf16/fp16 probability quantization can pass an old vendor golden yet fail the pure-fp32 reference after regrouping.
-- Summary: Approximate fp32 operands with rounded fp16 high and residual parts, then combine two or three native fp16 `tl.dot`s into an fp32 accumulator. This can keep a larger tile on the fp16 MMA path, but the residual is rounded and the result is valid only for a tested value range and accuracy contract.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/fp16_hilo_compensated_mma.md`
+- Use When: One of two situations:
+
+  - **fp32 dot hotspot**: a contraction that must keep fp32 accuracy is the hotspot, and it runs one fp32 `tl.dot` (`acc = tl.dot(p, v, acc)`) whose fp32 operands take so much UB that the tile is capped well below the size the fp16 path could use.
+  - **Post-rewrite accuracy gap**: a structural rewrite (split-K, axis split, head batching, online-softmax regrouping) changed the summation order, and the accuracy gate now fails by about 1 ulp — the reference computes in fp32, but the kernel needs to stay on the fast fp16/bf16 dot path and naive low-precision rounding no longer passes.
+
+  In both, typically only one operand needs the split because the other is already exactly representable in fp16/bf16.
+
+  The split replaces one fp32 dot with two or three fp16 dots, so it pays only when the larger fp16 tile or the accuracy repair outweighs the extra dots.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/hilo_split_matmul.md`
+
+#### `independent-load-placement`
+
+- Priority: normal
+- Use When: Your hot kernel issues several loads that do not depend on each other, and their source order could change without changing any address, mask, or value. The typical shape is a dominant tile load sitting next to small scale, weight, bias, or metadata loads:
+
+  ```python
+  x = tl.load(x_ptr + x_offsets)          # dominant tile load
+  scale = tl.load(scale_ptr + s_offsets)  # small parameter loads
+  weight = tl.load(weight_ptr + w_offsets)
+  ```
+
+  The profile shows memory latency, transfer coordination, or on-chip buffer pressure contributing materially to kernel latency. You can inspect the generated IR or device code and benchmark each placement candidate.
+- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/independent_load_placement.md`
 
 #### `merge-adjacent-stores`
 
 - Priority: normal
-- Trigger: Multiple stores target adjacent addresses but are emitted as separate small `tl.store` operations.
-- Summary: Combine separate small `tl.store` operations into one wider store when the destination addresses form a continuous interval, so the NPU emits a single vector-friendly DMA write instead of multiple tiny transactions.
+- Use When: A copy-heavy or store-heavy kernel writes its output through several small `tl.store` operations whose destination addresses sit next to each other — typically one store per loop iteration, or a few stores to adjacent sub-ranges of one output block:
+
+  ```python
+  for i in range(K):
+      tl.store(out + base + i * SUB, vals_i)  # K small adjacent stores
+  ```
+
+  Merging is safe when the written addresses form one continuous interval and the per-element masks agree, and worthwhile when profiling or code inspection shows the many small stores — not loads or compute — limiting throughput.
+
+  The rewrite merges them into one wide store: many small DMA transactions become one vector-friendly write.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/merge_adjacent_stores.md`
 
 #### `overlap-tail-load-mask-free`
 
 - Priority: normal
-- Trigger: Idempotent row/segment reductions where `BLOCK < extent <= 2 * BLOCK` and `extent % BLOCK != 0`, so the straightforward kernel masks its final tile. For larger extents, keep all full middle tiles and overlap only the final partial tile.
-- Summary: When a **row- or segment-wise idempotent reduction** (max, min, argmax, argmin, any, all) has `BLOCK < extent <= 2 * BLOCK` with `extent % BLOCK != 0`, cover it with two **unmasked** loads — a main tile `[0, BLOCK)` and an overlapping tail tile `[extent-BLOCK, extent)` — instead of one masked tail tile. For larger extents, keep the full middle tiles and overlap only the final partial tile. Overlapped elements participate twice, which is harmless because idempotent reductions tolerate duplicates and position-aware tie-breaking (`smaller pos wins`) preserves the true first occurrence. This removes the masked-load lowering (conditional whole-tile fill plus copy on Ascend) from the hot path.
+- Use When: A row- or segment-wise idempotent reduction (max, min, argmax, argmin, any, all) runs on rows whose length is not a multiple of `BLOCK`, so the final tile is masked. A typical example:
+
+  ```python
+  cols = tl.arange(0, BLOCK)
+  vals = tl.load(row_ptr + cols, mask=cols < n, other=float("-inf"))  # final tile
+  row_max = tl.max(vals, axis=0)
+  ```
+
+  IR shows the masked tail load lowered to a conditional whole-tile fill plus copy on the hot path. For argmax/argmin, ties are already resolved by position (the smaller position wins), so visiting an element twice cannot change the result.
+
+  The rewrite covers the tail with two overlapping unmasked tiles — `[0, BLOCK)` and `[length-BLOCK, length)` — so the masked load disappears from the hot path.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/overlap_tail_load_mask_free.md`
-
-#### `parallel`
-
-- Priority: normal
-- Trigger: Two independent vector-side computations happen in sequence and can be split across vector cores.
-- Summary: Use `tl.parallel` to run tasks in the two vector cores of an aicore at the same time.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/parallel.md`
-
-#### `reorder-load`
-
-- Priority: normal
-- Trigger: A hot kernel has multiple semantically independent loads whose placement can change without changing addresses, masks, or values.
-- Summary: Test alternative source placements for independent loads as compiler scheduling hypotheses. Emitted transfer order and coordination, together with measured latency, decide whether a candidate helps.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/reorder_load.md`
-
-#### `schedule-coupled-tile-transplant`
-
-- Priority: normal
-- Trigger: A vendor library, compiler-generated kernel, or another proven implementation exposes a promising tile for the same logical contraction or reduction.
-- Summary: A tile size from an optimized reference is only one candidate. Treat it as part of a set of coupled schedule components: transfer its reduction width, buffering, traversal, physical mapping, accumulator split, and epilogue as separate experiments; an M/N/K tuple alone is not a portable tuning rule.
-- Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/schedule_coupled_tile_transplant.md`
 
 #### `software-pipeline`
 
 - Priority: normal
-- Trigger: A hot tiled loop has independent next-tile transfer and enough work that overlap may matter.
-- Summary: Inspect compiler-generated buffering and transfer-compute coordination in regular tiled loops. Treat manual carry or textual prefetch as a scheduling ablation, and retain it only when generated scheduling evidence and benchmarks attribute a real improvement.
+- Use When: A hot regular tiled loop loads independent tiles and computes on them in load-then-compute order:
+
+  ```python
+  for _ in range(num_k_tiles):
+      a = tl.load(a_ptr)
+      acc = tl.dot(a, b, acc)
+      a_ptr = tl.advance(a_ptr, (0, BLOCK_K))
+  ```
+
+  Profiling shows engine idle time or Task Wait around the loop, or generated IR lacks clear transfer-compute coordination. Each iteration has enough work that overlapping the next tile's transfer with current-tile compute could pay off. Compiler-reported usable UB leaves room for the extra buffers and live values an overlapped schedule needs.
+
+  Pipelining the loop — prefetching the next tile while computing the current one — hides the transfer latency behind compute.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/software_pipeline.md`
 
 #### `vec-cmp`
 
 - Priority: normal
-- Trigger: Explicit `i64` or `i32` comparisons appear on the hot path outside the compiler's normal fast load/store mask cases.
-- Summary: Rewrite explicit integer compare-heavy logic into a form that is more vector-friendly on Ascend NPU, especially when scalarized compares are blocking fast masking or selection.
+- Use When: Your kernel computes an explicit `i64` or `i32` comparison into a named boolean value, and that boolean feeds `tl.where`, a conditional assignment, or a precomputed `mask=` variable on the hot path:
+
+  ```python
+  mask = offsets < n_elements              # i64 compare, computed explicitly
+  x = tl.load(x_ptr + offsets, mask=mask)  # or: tl.where(mask, a, b)
+  ```
+
+  The generated IR shows this integer compare lowered to scalar work. The compare is not written inline as the `mask=` argument of a `tl.load` or `tl.store`, where the compiler already applies its fast path.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/vec_cmp.md`
 
 ## 4. Autotune: Final Parameter Search
@@ -455,6 +820,5 @@ Run bounded parameter search only after the earlier stages have been scanned and
 #### `autotune`
 
 - Priority: high
-- Trigger: The kernel structure already looks semantically correct, and the likely headroom is in `BLOCK_*` selection, split shape, or Ascend-specific compile options such as `multibuffer`.
-- Summary: Use Triton-Ascend autotune as the default way to search split sizes, tile sizes, and selected compile options when the kernel structure is already reasonable and the main open question is parameter choice.
+- Use When: The kernel is correct and its structure is settled (earlier-stage rewrites applied or ruled out), and the remaining headroom is in parameter choice: exposed compile-time tile sizes, split shape, buffering, or supported launch options. For an established SIMT row-reduction path, that headroom can also lie in row-batch size and SIMT worker count while the feature-side computation and the reduction body stay fixed. The kernel may expose those choices as `tl.constexpr` parameters, or keep them fixed behind a persistent launch geometry that already covers every row.
 - Source: cannbot-knowledge `knowledge/ops/triton/optimizations/patterns/autotune.md`

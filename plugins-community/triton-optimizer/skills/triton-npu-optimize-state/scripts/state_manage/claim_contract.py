@@ -30,7 +30,7 @@ OPTIMIZE_KNOWLEDGE_PATTERN_INFIXES = (
 # Pattern cards now live in the cannbot-knowledge repository (provisioned at
 # .cannbot/dependencies/<plugin>/cannbot-knowledge/), served read-only.
 _KB_PATTERN_PATH_RE = re.compile(
-    r"/cannbot-knowledge/knowledge/ops/[^/]+/optimizations/(?:patterns|operator_optimization)/[^/]+\.md$"
+    r"/cannbot-knowledge/knowledge/ops/[^/]+/optimizations/(?:patterns|operator_optimization|techniques)/[^/]+\.md$"
 )
 
 CLAIM_RESPONSE_REQUIRED = (
@@ -41,7 +41,8 @@ CLAIM_RESPONSE_REQUIRED = (
     "exact optimize pattern markdown file that guided this edit, from the "
     "cannbot-knowledge library "
     "(`*/cannbot-knowledge/knowledge/ops/<language>/optimizations/patterns/<name>.md` or "
-    "`*/cannbot-knowledge/knowledge/ops/<language>/optimizations/operator_optimization/<name>.md`). "
+    "`*/cannbot-knowledge/knowledge/ops/<language>/optimizations/operator_optimization/<name>.md` or "
+    "`*/cannbot-knowledge/knowledge/ops/<language>/optimizations/techniques/<name>.md`). "
     "Every path is validated to exist in the provisioned cannbot-knowledge clone. "
     "Optionally "
     "list diagnosis or symptom files that also shaped the edit; those extras do "

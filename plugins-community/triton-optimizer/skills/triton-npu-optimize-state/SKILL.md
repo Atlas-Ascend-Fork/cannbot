@@ -124,7 +124,7 @@ python3 scripts/cli.py claim-edit --target opt-round-1/opt_kernel.py \
 
 - `--source pattern` requires at least one `--pattern-path` naming a concrete
   cannbot-knowledge pattern card (`*/cannbot-knowledge/knowledge/ops/<language>/optimizations/patterns/<name>.md`
-  or `.../operator_optimization/<name>.md`); repeat
+  or `.../operator_optimization/<name>.md` or `.../techniques/<name>.md`); repeat
   `--pattern-path` to declare every pattern that guided the edit. `--source
   self-directed` takes no pattern arguments. `--reason`
   is always required.
@@ -135,12 +135,13 @@ python3 scripts/cli.py claim-edit --target opt-round-1/opt_kernel.py \
 
 - Use this only after `start-round` returns `deep_analysis_required`; it is the sole transition from `deep_analysis` to an editable active round.
 - Requires `--round-dir`, `--profile-manifest`, and `--ir-manifest`. It does not accept a case ID or a phase override.
-- Requires at least one `--symptom` from the knowledge skill's symptom vocabulary, with at most five IDs (list them with `python3 <retrieval-skill>/scripts/retrieve_patterns.py list` and inspect one with `info <id>`, using the `triton-npu-retrieve-patterns` skill). Use `--symptom unknown` alone when the evidence does not match the current list. When the knowledge skill ships no symptom contract, `--symptom unknown` is the only accepted value and pattern recommendations stay empty.
+- Requires at least one `--symptom` from the knowledge skill's symptom vocabulary, with at most five IDs (read the staged knowledge skill's `references/symptom-contract.json`). Use `--symptom unknown` alone when the evidence does not match the current list. When the knowledge skill ships no symptom contract, `--symptom unknown` is the only accepted value and pattern recommendations stay empty.
 - The profile manifest must be inside `opt-round-N/profile/`; the IR manifest must be inside one allocated archive below `opt-round-N/ir/`.
 - Both manifests must use the same explicit case ID, the unchanged round-candidate SHA-256, and the canonical benchmark SHA-256. The command rejects a mismatch without advancing state.
 - Run the normal profile command with `--case-id <id>`. Run `capture_ir.py --ir-dir opt-round-N/ir --case-id <id> ...`, then pass the printed archive child's `capture-manifest.json` path here.
 - On success, the command opens `round_active`. A normal deep round may then follow its recorded strategy. A `plateau_review` round must first complete the full-scope review and use `set-current-round-state` to record `structural_change` or evidence-backed `focused_tuning`; the edit hook keeps the operator read-only until then.
 - The accepted symptom list is stored in the round's deep-analysis state. If `HELIX_OPTIMIZE_RECOMMEND_PATTERNS` is enabled with a true value (`1`, `true`, `yes`, or `on`), the result also includes up to three matching patterns with their summary and full `use_when` conditions. Returned patterns are recorded in workflow state and are not recommended again during resume of the same optimize workspace. The default is disabled.
+- Automatic recommendations locate the staged knowledge skill by `references/symptom-contract.json`; card content is read from the provisioned cannbot-knowledge checkout. No bundled `references/patterns/` directory is required. Recommendation matching runs internally; discovery, card-reading, or matching failures silently return no recommendations, preserving the original submission behavior. Successful retrieval with no matches is also silent.
 
 #### Common `set-current-round-state` Examples
 

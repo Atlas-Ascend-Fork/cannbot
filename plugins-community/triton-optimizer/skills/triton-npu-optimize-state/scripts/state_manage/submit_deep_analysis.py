@@ -29,10 +29,18 @@ from state_manage.state_machine import (
     require_rounds_dict,
     write_state,
 )
-from state_manage import retrieval_bridge
+from state_manage import pattern_recommendations
 
 RECOMMENDATIONS_ENV = "HELIX_OPTIMIZE_RECOMMEND_PATTERNS"
-BACKEND_SKILL_DIRS = (".codex", ".claude", ".agents", ".opencode", ".pi", ".openhands", ".trae")
+BACKEND_SKILL_DIRS = (
+    ".codex",
+    ".claude",
+    ".agents",
+    ".opencode",
+    ".pi",
+    ".openhands",
+    ".trae",
+)
 
 
 def _workflow_language(state_path: Path) -> str:
@@ -55,13 +63,11 @@ def knowledge_dir(state_path: Path) -> Path:
     workspace = state_path.parent.parent
     for backend in BACKEND_SKILL_DIRS:
         candidate = workspace / backend / "skills" / skill_name
-        if (candidate / "references" / "patterns").is_dir():
+        if (candidate / "references" / "symptom-contract.json").is_file():
             return candidate
-    repository_root = Path(__file__).resolve().parents[5]
-    fallback = repository_root / "skills" / _workflow_language(state_path) / skill_name
-    if (fallback / "references" / "patterns").is_dir():
-        return fallback
-    raise ValueError(f"staged {skill_name} skill is unavailable")
+    raise ValueError(
+        f"staged {skill_name}/references/symptom-contract.json is unavailable"
+    )
 
 
 def _recommendations_enabled() -> bool:
@@ -81,37 +87,23 @@ def _recorded_recommendations(
     ]
 
 
-def _skill_recommendations(
+def _pattern_recommendations(
     state_path: Path,
     symptoms: list[str],
     history: dict[str, object],
-    operator_path: Path,
-    round_path: Path,
 ) -> list[dict[str, object]]:
-    """Run the pattern-retrieval skill; any problem yields no recommendations.
-
-    Mechanism-blind: one uniform invocation carries every input the skill
-    may need (symptoms, history, operator source, round analysis, contract,
-    pattern cards). The submission contract is primary: a missing skill or a
-    retrieval failure never fails submit-deep-analysis and adds nothing to
-    its output.
-    """
-    workspace = state_path.parent.parent.resolve()
-    skill_dir = retrieval_bridge.find_staged_retrieval_skill(workspace)
-    if skill_dir is None:
-        return []
+    """Run internal matching; optional failures never block submission."""
     try:
         knowledge = knowledge_dir(state_path)
-        payload = retrieval_bridge.run_retrieval(
-            skill_dir,
+        return pattern_recommendations.recommend(
+            workspace=state_path.parent.parent,
+            language=_workflow_language(state_path),
+            contract_path=knowledge / "references" / "symptom-contract.json",
             symptoms=symptoms,
             exclude=sorted(history),
-            code=operator_path,
-            analysis=round_path / "perf-analysis.md",
-            contract=knowledge / "references" / "symptom-contract.json",
         )
-        return retrieval_bridge.map_results(payload)
-    except ValueError:
+    except Exception:
+        # Keep the failure isolation previously provided by the retrieval subprocess.
         return []
 
 
@@ -145,13 +137,21 @@ def _workflow_failure_guideline(message: str) -> str:
             "This round is not waiting for deep analysis. Use `start-round` to open a "
             "deep-analysis round before submitting profile and IR manifests."
         )
-    if "manifest" in message or "profiler output" in message or "IR artifact" in message:
+    if (
+        "manifest" in message
+        or "profiler output" in message
+        or "IR artifact" in message
+    ):
         return (
             "Deep-analysis artifacts are incomplete or do not match this round. Run "
             "`profile-bench` and `capture-ir` for the same candidate and case, then "
             "retry `submit-deep-analysis` with both manifests."
         )
-    if "candidate" in message or "benchmark identity" in message or "case_id" in message:
+    if (
+        "candidate" in message
+        or "benchmark identity" in message
+        or "case_id" in message
+    ):
         return (
             "The submitted analysis does not match the active round candidate or benchmark. "
             "Repeat profiling and IR capture for the current candidate and selected case, "
@@ -178,43 +178,67 @@ def submit_deep_analysis(
 ) -> dict[str, object]:
     payload = load_state(state_path)
     round_entry = _require_deep_analysis_round_entry(payload, round_dir)
-    # Symptom validity is owned by the retrieval skill: its script validates
-    # the IDs when recommendations run and reports problems through the
-    # submit output, so the submission itself stays thin.
+    # Internal matching validates IDs when recommendations run; optional
+    # matching failures do not block submission or rewrite historical symptoms.
     normalized_symptoms = [item.strip() for item in symptoms]
-    deep_entry, round_path, operator_path, operator_hash = _resolve_deep_analysis_candidate(
-        state_path, round_entry, round_dir
+    deep_entry, round_path, operator_path, operator_hash = (
+        _resolve_deep_analysis_candidate(state_path, round_entry, round_dir)
     )
     profile, ir = _validated_deep_manifest_pair(
-        state_path, round_path=round_path, operator_path=operator_path,
-        operator_hash=operator_hash, profile_manifest=profile_manifest, ir_manifest=ir_manifest,
+        state_path,
+        round_path=round_path,
+        operator_path=operator_path,
+        operator_hash=operator_hash,
+        profile_manifest=profile_manifest,
+        ir_manifest=ir_manifest,
     )
     profile_case_id = str(profile["case_id"])
     recommendation_history, recommendations = _gather_pattern_recommendations(
-        state_path, payload, normalized_symptoms, round_path, operator_path
+        state_path, payload, normalized_symptoms, round_path
     )
     profile_record, ir_record = _record_deep_analysis_evidence(
-        state_path, round_dir, profile_manifest=profile_manifest, ir_manifest=ir_manifest,
-        profile=profile, ir=ir, operator_path=operator_path,
+        state_path,
+        round_dir,
+        profile_manifest=profile_manifest,
+        ir_manifest=ir_manifest,
+        profile=profile,
+        ir=ir,
+        operator_path=operator_path,
     )
     _finalize_deep_analysis(
-        state_path, payload, round_entry, deep_entry, round_path=round_path,
-        symptoms=normalized_symptoms, recommendations=recommendations,
-        recommendation_history=recommendation_history, profile=profile, ir=ir,
-        profile_record=profile_record, ir_record=ir_record, case_id=profile_case_id,
+        state_path,
+        payload,
+        round_entry,
+        deep_entry,
+        round_path=round_path,
+        symptoms=normalized_symptoms,
+        recommendations=recommendations,
+        recommendation_history=recommendation_history,
+        profile=profile,
+        ir=ir,
+        profile_record=profile_record,
+        ir_record=ir_record,
+        case_id=profile_case_id,
     )
     return _deep_analysis_result(
-        round_entry, round_dir=round_dir, case_id=profile_case_id,
-        symptoms=normalized_symptoms, recommendations=recommendations,
+        round_entry,
+        round_dir=round_dir,
+        case_id=profile_case_id,
+        symptoms=normalized_symptoms,
+        recommendations=recommendations,
     )
 
 
-def _require_deep_analysis_round_entry(payload: dict[str, object], round_dir: str) -> dict[str, object]:
+def _require_deep_analysis_round_entry(
+    payload: dict[str, object], round_dir: str
+) -> dict[str, object]:
     if payload.get("phase") != PHASE_DEEP_ANALYSIS:
         raise ValueError("submit-deep-analysis requires workflow phase deep_analysis")
     round_number = parse_round_number(round_dir)
     if payload.get("current_round") != round_number:
-        raise ValueError("submit-deep-analysis round does not match current workflow round")
+        raise ValueError(
+            "submit-deep-analysis round does not match current workflow round"
+        )
     rounds = require_rounds_dict(payload)
     round_entry_obj = rounds.get(str(round_number))
     if not isinstance(round_entry_obj, dict):
@@ -287,7 +311,6 @@ def _gather_pattern_recommendations(
     payload: dict[str, object],
     normalized_symptoms: list[str],
     round_path: Path,
-    operator_path: Path,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     """Return the recommendation history and this submission's recommendations."""
     recommendation_history_obj = payload.get("pattern_recommendations", {})
@@ -298,12 +321,10 @@ def _gather_pattern_recommendations(
         round_path.parent, recommendation_history, exclude_round=round_path
     )
     if _recommendations_enabled():
-        recommendations = _skill_recommendations(
+        recommendations = _pattern_recommendations(
             state_path,
             normalized_symptoms,
             recommendation_history,
-            operator_path,
-            round_path,
         )
     else:
         recommendations = []
@@ -350,8 +371,12 @@ def _record_deep_analysis_evidence(
             },
         ],
     )
-    profile_record = next(record for record in records if record["artifact_kind"] == "profile_manifest")
-    ir_record = next(record for record in records if record["artifact_kind"] == "ir_manifest")
+    profile_record = next(
+        record for record in records if record["artifact_kind"] == "profile_manifest"
+    )
+    ir_record = next(
+        record for record in records if record["artifact_kind"] == "ir_manifest"
+    )
     return profile_record, ir_record
 
 
@@ -373,13 +398,18 @@ def _finalize_deep_analysis(
 ) -> None:
     """Record the submission, advance workflow state, and persist the durable record."""
     deep_entry["profile_evidence"] = [
-        {"record_id": profile_record["record_id"], "artifact_dir": str(profile["artifact_dir"])}
+        {
+            "record_id": profile_record["record_id"],
+            "artifact_dir": str(profile["artifact_dir"]),
+        }
     ]
     deep_entry["ir_evidence"] = [
         {"record_id": ir_record["record_id"], "artifact_dir": str(ir["artifact_dir"])}
     ]
     deep_entry["selected_case_id"] = case_id
-    recorded = _recorded_recommendations(recommendations) if _recommendations_enabled() else []
+    recorded = (
+        _recorded_recommendations(recommendations) if _recommendations_enabled() else []
+    )
     deep_entry["symptoms"] = symptoms
     deep_entry["recommendations"] = recorded
     durable_record = {
@@ -398,7 +428,9 @@ def _finalize_deep_analysis(
             encoding="utf-8",
         )
     except OSError as exc:
-        raise ValueError(f"deep-analysis durable record could not be written: {exc}") from exc
+        raise ValueError(
+            f"deep-analysis durable record could not be written: {exc}"
+        ) from exc
     payload["pattern_recommendations"] = recommendation_history
     round_entry["deep_analysis"] = deep_entry
     round_entry["status"] = "active"
@@ -417,7 +449,8 @@ def _deep_analysis_result(
     strategy_state = round_entry.get("strategy_state")
     scope_review_required = (
         isinstance(strategy_state, dict)
-        and cast(dict[str, object], strategy_state).get("round_strategy") == "plateau_review"
+        and cast(dict[str, object], strategy_state).get("round_strategy")
+        == "plateau_review"
     )
     return {
         "status": "active",
@@ -425,7 +458,9 @@ def _deep_analysis_result(
         "case_id": case_id,
         "scope_review_required": scope_review_required,
         "symptoms": symptoms,
-        "pattern_recommendations": recommendations if _recommendations_enabled() else [],
+        "pattern_recommendations": recommendations
+        if _recommendations_enabled()
+        else [],
     }
 
 
@@ -512,6 +547,33 @@ def _validate_ir_capture_layout(data: dict[str, object], artifact_dir: Path) -> 
                 )
 
 
+def _read_deep_manifest(manifest_path: Path, expected_kind: str) -> dict[str, object]:
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid {expected_kind} manifest: {manifest_path}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"{expected_kind} manifest must be a JSON object")
+    data = cast(dict[str, object], raw)
+    required = (
+        "case_id",
+        "operator_file",
+        "operator_sha256",
+        "bench_file",
+        "bench_sha256",
+        "artifact_dir",
+    )
+    if any(
+        not isinstance(data.get(key), str) or not str(data[key]) for key in required
+    ):
+        raise ValueError(
+            f"{expected_kind} manifest is missing required identity fields"
+        )
+    if not isinstance(data.get("remote"), bool):
+        raise ValueError(f"{expected_kind} manifest remote must be a boolean")
+    return data
+
+
 def _validate_deep_manifest(
     manifest_path: Path,
     *,
@@ -522,37 +584,41 @@ def _validate_deep_manifest(
     bench_file: Path,
     bench_sha256: str,
 ) -> dict[str, object]:
-    try:
-        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"invalid {expected_kind} manifest: {manifest_path}") from exc
-    if not isinstance(raw, dict):
-        raise ValueError(f"{expected_kind} manifest must be a JSON object")
-    data = cast(dict[str, object], raw)
-    required = ("case_id", "operator_file", "operator_sha256", "bench_file", "bench_sha256", "artifact_dir")
-    if any(not isinstance(data.get(key), str) or not str(data[key]) for key in required):
-        raise ValueError(f"{expected_kind} manifest is missing required identity fields")
-    if not isinstance(data.get("remote"), bool):
-        raise ValueError(f"{expected_kind} manifest remote must be a boolean")
+    data = _read_deep_manifest(manifest_path, expected_kind)
     artifact_dir = Path(str(data["artifact_dir"])).expanduser().resolve()
     try:
         artifact_dir.relative_to(artifact_root.resolve())
     except ValueError as exc:
-        raise ValueError(f"{expected_kind} artifact is outside the current round") from exc
+        raise ValueError(
+            f"{expected_kind} artifact is outside the current round"
+        ) from exc
     if artifact_dir != manifest_path.resolve().parent:
-        raise ValueError(f"{expected_kind} manifest artifact_dir does not match its parent")
+        raise ValueError(
+            f"{expected_kind} manifest artifact_dir does not match its parent"
+        )
     if not artifact_dir.is_dir():
         raise ValueError(f"{expected_kind} artifact directory does not exist")
-    if expected_kind == "profile" and not any(artifact_dir.glob("mindstudio_profiler_output/op_statistic_*.csv")):
+    if expected_kind == "profile" and not any(
+        artifact_dir.glob("mindstudio_profiler_output/op_statistic_*.csv")
+    ):
         raise ValueError("profile artifact is missing profiler output")
     if expected_kind == "ir":
         _validate_ir_capture_layout(data, artifact_dir)
     if Path(str(data["operator_file"])).resolve() != operator_path:
-        raise ValueError(f"{expected_kind} manifest operator_file does not match the round candidate")
+        raise ValueError(
+            f"{expected_kind} manifest operator_file does not match the round candidate"
+        )
     if data["operator_sha256"] != operator_sha256:
-        raise ValueError(f"{expected_kind} manifest operator hash does not match the round candidate")
-    if Path(str(data["bench_file"])).resolve() != bench_file or data["bench_sha256"] != bench_sha256:
-        raise ValueError(f"{expected_kind} manifest benchmark identity does not match the canonical benchmark")
+        raise ValueError(
+            f"{expected_kind} manifest operator hash does not match the round candidate"
+        )
+    if (
+        Path(str(data["bench_file"])).resolve() != bench_file
+        or data["bench_sha256"] != bench_sha256
+    ):
+        raise ValueError(
+            f"{expected_kind} manifest benchmark identity does not match the canonical benchmark"
+        )
     return {
         "case_id": str(data["case_id"]),
         "artifact_dir": str(artifact_dir),

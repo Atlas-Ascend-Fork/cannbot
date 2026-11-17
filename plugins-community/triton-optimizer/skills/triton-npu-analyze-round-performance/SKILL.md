@@ -47,7 +47,7 @@ When compiler source analysis is enabled by the launch prompt or workspace guida
 Read [references/triton-npu-profiling-analysis.md](references/triton-npu-profiling-analysis.md) when the round needs deeper interpretation of `op_summary`, `task_time`, `api_statistic`, or `msprof` JSON signals.
 Read [references/triton-npu-optimization-guidance.md](references/triton-npu-optimization-guidance.md) when you need help turning profiling symptoms and IR findings into concrete potential optimization points.
 Read [references/triton-npu-architecture-notes.md](references/triton-npu-architecture-notes.md) when the likely optimization point depends on chip differences such as A3 versus A5 buffer sizes, layout behavior, or cube/vector data handoff.
-Use the `{language}-npu-optimize-knowledge` skill when structured profile or IR evidence is available and you need language-specific symptom routing before returning to detailed pattern references. Run the `triton-npu-retrieve-patterns` skill's `scripts/retrieve_patterns.py` (`list`, `info <id>`, `patterns <id>`); read the knowledge skill's `references/symptom-contract.json` only when no retrieval skill is available.
+Use the `{language}-npu-optimize-knowledge` skill when structured profile or IR evidence is available and you need language-specific symptom routing before returning to detailed pattern references. Read the knowledge skill's `references/symptom-contract.json` for symptom IDs, evidence hints, non-matches, and candidate patterns.
 When the optimize target is `operator` and the evidence points to Torch NPU or framework-op behavior, also use the staged `torch-npu-optimize-knowledge` skill and start from its `references/pattern_index.md` for operator-level pattern routing.
 
 Read the references in this order:

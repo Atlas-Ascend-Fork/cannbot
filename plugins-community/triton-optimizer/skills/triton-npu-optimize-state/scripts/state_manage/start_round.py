@@ -63,10 +63,7 @@ def _build_failure_payload(issue: str, guideline: str) -> dict[str, object]:
 
 
 def _workflow_failure_guideline(message: str) -> str:
-    if (
-        "workflow state is not available" in message
-        or ".helix/state.json" in message
-    ):
+    if "workflow state is not available" in message or ".helix/state.json" in message:
         return (
             "Optimize workflow state is unavailable. Use the staged "
             "`triton-npu-optimize-state` skill's `submit-baseline` subcommand to repair "
@@ -88,7 +85,10 @@ def _workflow_failure_guideline(message: str) -> str:
             "Another round is already active. Finish that round before starting a different "
             "round."
         )
-    if "deep_analysis_required" in message or "workflow phase is deep_analysis" in message:
+    if (
+        "deep_analysis_required" in message
+        or "workflow phase is deep_analysis" in message
+    ):
         return (
             "This round is waiting for deep analysis. Run profile-bench and capture_ir.py for "
             "one explicit case, choose the required symptom IDs, then use "
@@ -143,8 +143,8 @@ def _success_guideline(round_name: str, *, deep_analysis_required: bool) -> str:
     if deep_analysis_required:
         return (
             "Deep analysis is required before editing. Run profile-bench and capture_ir.py for "
-            "one explicit case, choose one to five symptom IDs (`triton-npu-retrieve-patterns` "
-            "`scripts/retrieve_patterns.py list`; when the knowledge skill ships no symptom "
+            "one explicit case, choose one to five symptom IDs from the knowledge skill's "
+            "`references/symptom-contract.json` (when the knowledge skill ships no symptom "
             "contract, submit `--symptom unknown` alone), then use "
             "`triton-npu-optimize-state` `submit-deep-analysis` with both manifest paths and "
             "repeated `--symptom <id>` arguments."
@@ -155,7 +155,9 @@ def _success_guideline(round_name: str, *, deep_analysis_required: bool) -> str:
     )
 
 
-def _success_payload(workflow_result: dict[str, object], *, guideline: str) -> dict[str, object]:
+def _success_payload(
+    workflow_result: dict[str, object], *, guideline: str
+) -> dict[str, object]:
     deep_analysis_required = workflow_result.get("status") == "deep_analysis_required"
     payload: dict[str, object] = {
         "status": "deep_analysis_required" if deep_analysis_required else "pass",
@@ -181,7 +183,9 @@ def main(argv: list[str] | None = None, *, prog_name: str | None = None) -> int:
     if workflow_result is None:
         return 1
     deep_analysis_required = workflow_result.get("status") == "deep_analysis_required"
-    guideline = _success_guideline(round_dir.name, deep_analysis_required=deep_analysis_required)
+    guideline = _success_guideline(
+        round_dir.name, deep_analysis_required=deep_analysis_required
+    )
     print(
         json.dumps(
             _success_payload(workflow_result, guideline=guideline),
