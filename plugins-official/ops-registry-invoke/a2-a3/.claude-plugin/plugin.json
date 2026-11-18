@@ -1,0 +1,20 @@
+{
+  "name": "ops-registry-invoke-a2-a3",
+  "description": "A2/A3（arch 2201，如 Ascend 910B）legacy 算子开发工作流：与 cannbot 现有的 ops-registry-invoke 架构完全隔离的 Skill、agents 与工作流资产。",
+  "version": "1.0.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "CANN-2.0",
+  "agents": [
+    "./agents/ascendc-ops-architect.md",
+    "./agents/ascendc-ops-design-reviewer.md",
+    "./agents/ascendc-ops-designer.md",
+    "./agents/ascendc-ops-developer.md",
+    "./agents/ascendc-ops-spec-reviewer.md",
+    "./agents/ascendc-ops-test-design-reviewer.md",
+    "./agents/ascendc-ops-tester.md"
+  ]
+}

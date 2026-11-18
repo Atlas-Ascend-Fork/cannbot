@@ -1,0 +1,193 @@
+{
+  "sourceRepository": "https://gitcode.com/cann/cannbot-skills.git",
+  "sourceCommit": "fa084f2c583cc4155babbc20b51667a2e8bf0d73",
+  "note": "A2/A3 legacy 组件：只把 cannbot-skills 仓 ops-registry-invoke 目录里会随该目录删除的内容复制进来（workflow/、skills/spec-to-design/、agents/）；ops/* 与 infra/* 的 Skill 不复制，dispatch 阶段按名从 cannbot-skills 安装。",
+  "copiedFromUpstreamPlugin": [
+    {
+      "path": "workflow/",
+      "reason": "legacy ops-registry-invoke-workflow Skill 与 resources（上游该目录将删除）"
+    },
+    {
+      "path": "skills/spec-to-design/",
+      "reason": "legacy 工作流依赖的 Skill（上游该目录将删除）"
+    },
+    {
+      "path": "agents/",
+      "reason": "7 个 ascendc-ops-* agent 定义（上游该目录将删除）"
+    }
+  ],
+  "installedByNpx": {
+    "source": "https://gitcode.com/cann/cannbot-skills.git",
+    "command": "npx --yes skills@latest add https://gitcode.com/cann/cannbot-skills.git --skill <name> ... --agent <agent-id> -y",
+    "skills": [
+      {
+        "name": "ascendc-api-best-practices",
+        "source": "ops/ascendc-api-best-practices",
+        "files": 26,
+        "bytes": 293657
+      },
+      {
+        "name": "ascendc-code-review",
+        "source": "ops/ascendc-code-review",
+        "files": 46,
+        "bytes": 682281
+      },
+      {
+        "name": "ascendc-crash-debug",
+        "source": "ops/ascendc-crash-debug",
+        "files": 8,
+        "bytes": 68171
+      },
+      {
+        "name": "ascendc-direct-invoke-template",
+        "source": "ops/ascendc-direct-invoke-template",
+        "files": 56,
+        "bytes": 184859
+      },
+      {
+        "name": "ascendc-docs-gen",
+        "source": "ops/ascendc-docs-gen",
+        "files": 46,
+        "bytes": 473401
+      },
+      {
+        "name": "ascendc-docs-search",
+        "source": "ops/ascendc-docs-search",
+        "files": 11,
+        "bytes": 75339
+      },
+      {
+        "name": "ascendc-env-check",
+        "source": "ops/ascendc-env-check",
+        "files": 10,
+        "bytes": 82175
+      },
+      {
+        "name": "npu-arch",
+        "source": "ops/npu-arch",
+        "files": 5,
+        "bytes": 69292
+      },
+      {
+        "name": "ascendc-performance-best-practices",
+        "source": "ops/ascendc-performance-best-practices",
+        "files": 345,
+        "bytes": 4412562
+      },
+      {
+        "name": "ascendc-precision-debug",
+        "source": "ops/ascendc-precision-debug",
+        "files": 38,
+        "bytes": 184405
+      },
+      {
+        "name": "ascendc-perf-optimize",
+        "source": "ops/ascendc-perf-optimize",
+        "files": 112,
+        "bytes": 1052476
+      },
+      {
+        "name": "ascendc-regbase-best-practice",
+        "source": "ops/ascendc-regbase-best-practice",
+        "files": 127,
+        "bytes": 1424580
+      },
+      {
+        "name": "ascendc-blaze-best-practice",
+        "source": "ops/ascendc-blaze-best-practice",
+        "files": 83,
+        "bytes": 924306
+      },
+      {
+        "name": "ascendc-blaze-migration",
+        "source": "ops/ascendc-blaze-migration",
+        "files": 11,
+        "bytes": 101809
+      },
+      {
+        "name": "ascendc-registry-invoke-template",
+        "source": "ops/ascendc-registry-invoke-template",
+        "files": 94,
+        "bytes": 417091
+      },
+      {
+        "name": "ascendc-runtime-debug",
+        "source": "ops/ascendc-runtime-debug",
+        "files": 5,
+        "bytes": 33239
+      },
+      {
+        "name": "ascendc-st-design",
+        "source": "ops/ascendc-st-design",
+        "files": 13,
+        "bytes": 399568
+      },
+      {
+        "name": "ascendc-tiling-design",
+        "source": "ops/ascendc-tiling-design",
+        "files": 53,
+        "bytes": 922110
+      },
+      {
+        "name": "ascendc-ut-develop",
+        "source": "ops/ascendc-ut-develop",
+        "files": 31,
+        "bytes": 133575
+      },
+      {
+        "name": "ascendc-whitebox-design",
+        "source": "ops/ascendc-whitebox-design",
+        "files": 39,
+        "bytes": 416096
+      },
+      {
+        "name": "ops-precision-standard",
+        "source": "ops/ops-precision-standard",
+        "files": 12,
+        "bytes": 45315
+      },
+      {
+        "name": "ops-profiling",
+        "source": "ops/ops-profiling",
+        "files": 58,
+        "bytes": 1092673
+      },
+      {
+        "name": "ops-simulator",
+        "source": "ops/ops-simulator",
+        "files": 13,
+        "bytes": 259133
+      },
+      {
+        "name": "ops-spec-gen",
+        "source": "ops/ops-spec-gen",
+        "files": 71,
+        "bytes": 768221
+      },
+      {
+        "name": "gitcode-toolkit",
+        "source": "infra/gitcode-toolkit",
+        "files": 32,
+        "bytes": 197757
+      },
+      {
+        "name": "gitcode-pr-handler",
+        "source": "infra/gitcode-pr-handler",
+        "files": 1,
+        "bytes": 7409
+      },
+      {
+        "name": "gitcode-issue-gen",
+        "source": "infra/gitcode-issue-gen",
+        "files": 4,
+        "bytes": 20974
+      },
+      {
+        "name": "gitcode-issue-handler",
+        "source": "infra/gitcode-issue-handler",
+        "files": 119,
+        "bytes": 1350398
+      }
+    ]
+  }
+}
