@@ -1280,3 +1280,23 @@ nodes:
       - "Write only under $WORK_DIR/perf-optimize/ plus the Skill's verified integration writes to $WORK_DIR/op; never edit spec/, design/, requirements/, $WORK_DIR/.workflow/status.json or shared plugin sources."
     max_retries: 0
     on_exhaust: exit
+
+  - id: migrate-to-ops-repo
+    task_type: normal
+    executor: general-executor
+    verifier: general-verifier
+    title: Migrate and verify the deliverables
+    goal:
+      - "Select the migration target, complete delivery with the ops-repo-migration skill, and write $WORK_DIR/migration/MIGRATION-REPORT.md."
+    approach:
+      - "Load the ops-repo-migration skill and follow its workflow invocation contract. Inputs: this run's absolute $WORK_DIR, the original request file path $USER_PROMPT, and $WORK_DIR/spec/spec.yaml. For RUN, reuse this run's verified $WORK_DIR/op, CANN/TTK environment, and frozen suites."
+    acceptance:
+      - "$WORK_DIR/.workflow/migrate-decision.json passes the skill's schema and target-selection evidence checks against this run's original request and spec. If the original request is unavailable, the node fails without substituting defaults or a previous decision."
+      - "SKIP: report the decision, reason, and evidence without accessing or modifying the target repository."
+      - "RUN: satisfy all of the skill's completion criteria. The report includes evidence of isolated packaging, regression against the original frozen suites, and actual loading of the new package. Create exactly one local migration commit for the target operator tree. Failed or unverified checks fail the node while preserving the original development artifacts."
+    out_of_scope:
+      - "Write only $WORK_DIR/.workflow/migrate-decision.json and migration artifacts including the target repository's local commit under $WORK_DIR/migration/. Keep the source package, original evidence, and frozen assets read-only; do not push or open an operator PR."
+    depends_on:
+      - performance-optimization
+    max_retries: 1
+    on_exhaust: exit
