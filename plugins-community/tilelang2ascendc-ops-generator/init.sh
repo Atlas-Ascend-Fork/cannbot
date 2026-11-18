@@ -173,15 +173,6 @@ LOCAL_AGENT_ROOT="$PLUGIN_ROOT/agents"
 REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd)"
 SKILLS_VENDOR="$REPO_ROOT/vendor/cannbot-skills"
 SKILL_ROOT_LOCAL="$PLUGIN_ROOT/skills"
-if [ -d "$SKILLS_VENDOR/ops" ]; then
-    SKILL_ROOT_OPS="$SKILLS_VENDOR/ops"
-    SKILL_ROOT_COMMUNITY="$SKILLS_VENDOR/community/ops"
-    SKILL_ROOT_KNOWLEDGE="$SKILLS_VENDOR/plugins-community/cannbot-knowledge/skills"
-else
-    SKILL_ROOT_OPS="$REPO_ROOT/ops"
-    SKILL_ROOT_COMMUNITY="$REPO_ROOT/community/ops"
-    SKILL_ROOT_KNOWLEDGE="$REPO_ROOT/plugins-community/cannbot-knowledge/skills"
-fi
 
 # Parse skill dependencies from AGENTS.md and agents/*.md frontmatter
 if [ -f "$PLUGIN_ROOT/AGENTS.md" ]; then
@@ -400,6 +391,17 @@ if [ ! -d "$SKILLS_VENDOR/ops" ] \
     info "Initializing vendor/cannbot-skills submodule..."
     git -C "$REPO_ROOT" submodule update --init --recursive vendor/cannbot-skills \
         || warn "submodule init failed, falling back to skills repo provisioning"
+fi
+
+# 必须在子模块初始化之后选择路径，否则首次安装会误用仓库根目录的旧布局。
+if [ -d "$SKILLS_VENDOR/ops" ]; then
+    SKILL_ROOT_OPS="$SKILLS_VENDOR/ops"
+    SKILL_ROOT_COMMUNITY="$SKILLS_VENDOR/community/ops"
+    SKILL_ROOT_KNOWLEDGE="$SKILLS_VENDOR/plugins-community/cannbot-knowledge/skills"
+else
+    SKILL_ROOT_OPS="$REPO_ROOT/ops"
+    SKILL_ROOT_COMMUNITY="$REPO_ROOT/community/ops"
+    SKILL_ROOT_KNOWLEDGE="$REPO_ROOT/plugins-community/cannbot-knowledge/skills"
 fi
 
 provision_skills_from_repo
