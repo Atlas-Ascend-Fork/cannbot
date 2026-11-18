@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
+# -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms of the
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 """Validate HCCLBot engine routing and role/state transition decisions."""
 
 from __future__ import annotations
@@ -45,30 +51,21 @@ class Stage:
     pass_results: frozenset[str] = frozenset({"PASS"})
 
 
+# Both engines use the same evidence/ownership sequence; technical rules live in Skills.
 STAGES = {
-    "AICPU": {
+    engine: {
         "ENV_READY": Stage("hccl-architect", "DESIGN_READY"),
         "DESIGN_READY": Stage("hccl-verifier", "BASELINE_READY"),
         "BASELINE_READY": Stage("hccl-developer", "IMPLEMENTED"),
         "IMPLEMENTED": Stage("hccl-reviewer", "REVIEW_PASS"),
         "REVIEW_PASS": Stage("hccl-verifier", "TEST_PASS"),
         "TEST_PASS": Stage("hcclbot", "COMPLETE"),
-    },
-    "CCU": {
-        "ENV_READY": Stage("hccl-architect", "DESIGN_READY"),
-        "DESIGN_READY": Stage("hccl-developer", "IMPLEMENTED"),
-        "IMPLEMENTED": Stage("hccl-verifier", "VERIFIED"),
-        "VERIFIED": Stage(
-            "hccl-reviewer",
-            "REVIEW_PASS",
-            frozenset({"PASS", "PASS_WITH_NOTES"}),
-        ),
-        "REVIEW_PASS": Stage("hcclbot", "COMPLETE"),
-    },
+    }
+    for engine in ENGINES
 }
 
 RECOVERY_CHAINS = {
-    "AICPU": {
+    engine: {
         "REDESIGN": {("hccl-architect",)},
         "REPAIR": {
             ("hccl-developer", "hccl-reviewer"),
@@ -77,32 +74,18 @@ RECOVERY_CHAINS = {
             ("hccl-reviewer", "hccl-verifier"),
             ("hccl-verifier",),
         },
-    },
-    "CCU": {
-        "REDESIGN": {("hccl-architect",)},
-        "REPAIR": {
-            ("hccl-developer", "hccl-verifier"),
-            ("hccl-verifier",),
-            ("hccl-developer", "hccl-verifier", "hccl-reviewer"),
-            ("hccl-verifier", "hccl-reviewer"),
-            ("hccl-reviewer",),
-        },
-    },
+    }
+    for engine in ENGINES
 }
 
 RECOVERY_ACTOR_STATES = {
-    "AICPU": {
+    engine: {
         "hccl-architect": "ENV_READY",
         "hccl-developer": "IMPLEMENTED",
         "hccl-reviewer": "IMPLEMENTED",
         "hccl-verifier": "REVIEW_PASS",
-    },
-    "CCU": {
-        "hccl-architect": "ENV_READY",
-        "hccl-developer": "IMPLEMENTED",
-        "hccl-verifier": "IMPLEMENTED",
-        "hccl-reviewer": "VERIFIED",
-    },
+    }
+    for engine in ENGINES
 }
 
 
@@ -130,12 +113,13 @@ class PolicyContext:
 
 def _detect_engine_markers(normalized: str) -> tuple[bool, bool, bool, bool]:
     has_aicpu = "aicpu" in normalized or "ai_cpu" in normalized
+    ccu_markers = ("ccusched", "ccums", "ccu_sched", "ccu_ms", "ccu_kernel", "ccu::")
     has_ccu = bool(
         re.search(
             rf"(?<![{ASCII_IDENTIFIER_CHAR}])ccu(?![{ASCII_IDENTIFIER_CHAR}])",
             normalized,
         )
-        or any(marker in normalized for marker in ("ccusched", "ccums", "ccu_sched", "ccu_ms", "ccu_kernel", "ccu::"))
+        or any(marker in normalized for marker in ccu_markers)
     )
     has_aiv = bool(
         re.search(
@@ -153,7 +137,9 @@ def _detect_engine_markers(normalized: str) -> tuple[bool, bool, bool, bool]:
 
 def route_requirement(requirement: str) -> Decision:
     """Route only from explicit engine markers defined by the Plugin contract."""
-    has_aicpu, has_ccu, has_aiv, has_hostdpu = _detect_engine_markers(requirement.casefold())
+    has_aicpu, has_ccu, has_aiv, has_hostdpu = _detect_engine_markers(
+        requirement.casefold()
+    )
 
     if sum((has_aicpu, has_ccu, has_aiv, has_hostdpu)) > 1:
         return Decision(
@@ -173,11 +159,11 @@ def route_requirement(requirement: str) -> Decision:
         )
     if has_ccu:
         return Decision(
-            False,
-            None,
-            "BLOCK",
-            "CCU_OUT_OF_SCOPE",
-            pending_action="BLOCKED",
+            True,
+            "CCU",
+            "ROUTE",
+            "EXPLICIT_CCU_MARKER",
+            workflow="ccu-multi-agent-workflow.md",
         )
     reason = "EXPLICIT_AICPU_MARKER" if has_aicpu else "DEFAULT_STANDARD_OP_TO_AICPU"
     return Decision(
@@ -218,9 +204,21 @@ def transition(ctx: PolicyContext, actor: str, result: str) -> Decision:
     if result == "BLOCKED":
         return _blocked(ctx, "AGENT_BLOCKED")
 
-    if ctx.engine == "AICPU":
-        return _aicpu_failure(ctx, result)
-    return _ccu_failure(ctx, result)
+    return _stage_failure(ctx, result)
+
+
+def _redesign(ctx: PolicyContext) -> Decision:
+    return Decision(
+        True,
+        ctx.engine,
+        "REDESIGN",
+        "DEVELOPER_FOUND_DESIGN_ISSUE",
+        current_state=ctx.state,
+        next_state="ENV_READY",
+        next_roles=("hccl-architect",),
+        repair_round=ctx.repair_round,
+        pending_action="REDESIGN",
+    )
 
 
 def _recovery_failure(
@@ -229,37 +227,23 @@ def _recovery_failure(
     if actor == "hccl-architect" and result == "DESIGN_ISSUE":
         return _retry_design(ctx)
     if actor == "hccl-developer" and result == "DESIGN_ISSUE":
-        return Decision(
-            True,
-            ctx.engine,
-            "REDESIGN",
-            "DEVELOPER_FOUND_DESIGN_ISSUE",
-            current_state=ctx.state,
-            next_state="ENV_READY",
-            next_roles=("hccl-architect",),
-            repair_round=ctx.repair_round,
-            pending_action="REDESIGN",
-        )
+        return _redesign(ctx)
     if actor == "hccl-reviewer" and result in {"REVIEW_FAIL", "FAIL"}:
-        if ctx.engine == "AICPU":
-            roles = ("hccl-developer", "hccl-reviewer")
-            if "hccl-verifier" in pending_roles[1:]:
-                roles += ("hccl-verifier",)
-        else:
-            roles = ("hccl-developer", "hccl-verifier", "hccl-reviewer")
-        return _repair(ctx, "REVIEW_FAILED_DURING_RECOVERY", roles, next_state="IMPLEMENTED")
+        roles = ("hccl-developer", "hccl-reviewer")
+        if "hccl-verifier" in pending_roles[1:]:
+            roles += ("hccl-verifier",)
+        return _repair(
+            ctx, "REVIEW_FAILED_DURING_RECOVERY", roles, next_state="IMPLEMENTED"
+        )
     if actor == "hccl-verifier" and result in {"TEST_FAIL", "FAIL"}:
         if ctx.failure_class is None:
             return _invalid(ctx, "FAILURE_CLASS_REQUIRED")
         if ctx.failure_class == "ENVIRONMENT":
             return _blocked(ctx, "TEST_ENVIRONMENT_BLOCKED")
-        if ctx.engine == "AICPU":
-            roles = ("hccl-developer", "hccl-reviewer", "hccl-verifier")
-        else:
-            roles = ("hccl-developer", "hccl-verifier")
-            if "hccl-reviewer" in pending_roles[1:]:
-                roles += ("hccl-reviewer",)
-        return _repair(ctx, "TEST_SOURCE_FAILED_DURING_RECOVERY", roles, next_state="IMPLEMENTED")
+        roles = ("hccl-developer", "hccl-reviewer", "hccl-verifier")
+        return _repair(
+            ctx, "TEST_SOURCE_FAILED_DURING_RECOVERY", roles, next_state="IMPLEMENTED"
+        )
     return _invalid(ctx, "RESULT_NOT_ALLOWED_FOR_RECOVERY_ROLE")
 
 
@@ -286,10 +270,7 @@ def recovery(
     if result == "BLOCKED":
         return _blocked(ctx, "AGENT_BLOCKED")
 
-    pass_results = {"PASS"}
-    if ctx.engine == "CCU" and actor == "hccl-reviewer":
-        pass_results.add("PASS_WITH_NOTES")
-    if result in pass_results:
+    if result == "PASS":
         remaining = tuple(pending_roles[1:])
         next_state = _recovery_output_state(ctx.engine, actor)
         return Decision(
@@ -312,28 +293,18 @@ def _recovery_output_state(engine: str, actor: str) -> str:
         "hccl-architect": "DESIGN_READY",
         "hccl-developer": "IMPLEMENTED",
         "hccl-reviewer": "REVIEW_PASS",
-        "hccl-verifier": "TEST_PASS" if engine == "AICPU" else "VERIFIED",
+        "hccl-verifier": "TEST_PASS",
     }
     return states.get(actor, "")
 
 
-def _aicpu_failure(ctx: PolicyContext, result: str) -> Decision:
+def _stage_failure(ctx: PolicyContext, result: str) -> Decision:
     if ctx.state == "ENV_READY" and result == "DESIGN_ISSUE":
         return _retry_design(ctx)
     if ctx.state == "DESIGN_READY" and result == "FAIL":
         return _blocked(ctx, "BASELINE_FAILED")
     if ctx.state == "BASELINE_READY" and result == "DESIGN_ISSUE":
-        return Decision(
-            True,
-            "AICPU",
-            "REDESIGN",
-            "DEVELOPER_FOUND_DESIGN_ISSUE",
-            current_state=ctx.state,
-            next_state="ENV_READY",
-            next_roles=("hccl-architect",),
-            repair_round=ctx.repair_round,
-            pending_action="REDESIGN",
-        )
+        return _redesign(ctx)
     if ctx.state == "IMPLEMENTED" and result == "REVIEW_FAIL":
         return _repair(
             ctx,
@@ -352,42 +323,6 @@ def _aicpu_failure(ctx: PolicyContext, result: str) -> Decision:
                 ("hccl-developer", "hccl-reviewer", "hccl-verifier"),
                 next_state="IMPLEMENTED",
             )
-    return _invalid(ctx, "RESULT_NOT_ALLOWED_FOR_STAGE")
-
-
-def _ccu_failure(ctx: PolicyContext, result: str) -> Decision:
-    if ctx.state == "ENV_READY" and result == "DESIGN_ISSUE":
-        return _retry_design(ctx)
-    if ctx.state == "DESIGN_READY" and result == "DESIGN_ISSUE":
-        return Decision(
-            True,
-            "CCU",
-            "REDESIGN",
-            "DEVELOPER_FOUND_DESIGN_ISSUE",
-            current_state=ctx.state,
-            next_state="ENV_READY",
-            next_roles=("hccl-architect",),
-            repair_round=ctx.repair_round,
-            pending_action="REDESIGN",
-        )
-    if ctx.state == "IMPLEMENTED" and result in {"FAIL", "TEST_FAIL"}:
-        if ctx.failure_class is None:
-            return _invalid(ctx, "FAILURE_CLASS_REQUIRED")
-        if ctx.failure_class == "ENVIRONMENT":
-            return _blocked(ctx, "TEST_ENVIRONMENT_BLOCKED")
-        if ctx.failure_class == "SOURCE":
-            return _repair(
-                ctx,
-                "TEST_SOURCE_FAILED",
-                ("hccl-developer", "hccl-verifier"),
-            )
-    if ctx.state == "VERIFIED" and result in {"FAIL", "REVIEW_FAIL"}:
-        return _repair(
-            ctx,
-            "REVIEW_FAILED",
-            ("hccl-developer", "hccl-verifier", "hccl-reviewer"),
-            next_state="IMPLEMENTED",
-        )
     return _invalid(ctx, "RESULT_NOT_ALLOWED_FOR_STAGE")
 
 
@@ -453,14 +388,21 @@ def _invalid(ctx: PolicyContext, reason: str) -> Decision:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate HCCLBot routing and transition policy.")
+    parser = argparse.ArgumentParser(
+        description="Validate HCCLBot routing and transition policy."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    route = subparsers.add_parser("route", help="route an HCCL requirement to AICPU or block unsupported engines")
+    route = subparsers.add_parser(
+        "route",
+        help="route an HCCL requirement to AICPU/CCU or block unsupported engines",
+    )
     route.add_argument("--requirement", required=True)
     route.add_argument("--json", action="store_true")
 
-    step = subparsers.add_parser("transition", help="validate a completed workflow stage")
+    step = subparsers.add_parser(
+        "transition", help="validate a completed workflow stage"
+    )
     step.add_argument("--engine", required=True, choices=ENGINES)
     step.add_argument("--state", required=True)
     step.add_argument("--actor", required=True, choices=ACTORS)
@@ -469,10 +411,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     step.add_argument("--failure-class", choices=FAILURE_CLASSES)
     step.add_argument("--json", action="store_true")
 
-    resume = subparsers.add_parser("recovery", help="validate one role in a recovery chain")
+    resume = subparsers.add_parser(
+        "recovery", help="validate one role in a recovery chain"
+    )
     resume.add_argument("--engine", required=True, choices=ENGINES)
     resume.add_argument("--state", required=True)
-    resume.add_argument("--pending-action", required=True, choices=("REPAIR", "REDESIGN"))
+    resume.add_argument(
+        "--pending-action", required=True, choices=("REPAIR", "REDESIGN")
+    )
     resume.add_argument("--pending-roles", required=True, nargs="+", choices=ACTORS)
     resume.add_argument("--actor", required=True, choices=ACTORS)
     resume.add_argument("--result", required=True, choices=RESULTS)
@@ -487,11 +433,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "route":
         decision = route_requirement(args.requirement)
     elif args.command == "transition":
-        ctx = PolicyContext(args.engine, args.state, args.repair_round, args.failure_class)
+        ctx = PolicyContext(
+            args.engine, args.state, args.repair_round, args.failure_class
+        )
         decision = transition(ctx, args.actor, args.result)
     else:
-        ctx = PolicyContext(args.engine, args.state, args.repair_round, args.failure_class)
-        decision = recovery(ctx, args.pending_action, args.pending_roles, args.actor, args.result)
+        ctx = PolicyContext(
+            args.engine, args.state, args.repair_round, args.failure_class
+        )
+        decision = recovery(
+            ctx, args.pending_action, args.pending_roles, args.actor, args.result
+        )
     payload = asdict(decision)
     if args.json:
         logging.info(json.dumps(payload, ensure_ascii=False, indent=2))

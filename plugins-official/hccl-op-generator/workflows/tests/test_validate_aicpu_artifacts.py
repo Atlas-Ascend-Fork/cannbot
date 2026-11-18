@@ -816,6 +816,17 @@ class ArtifactGateTests(unittest.TestCase):
         validator = self.validate(fixture, "COMPLETE")
         self.assertIn("PLACEHOLDER", self.codes(validator))
 
+    def test_original_request_keeps_literal_algorithm_dsl_but_metadata_rejects_placeholders(self) -> None:
+        fixture = TaskFixture(self.root)
+        path = fixture.task_dir / "task-index.json"
+        data = json.loads(path.read_text())
+        data["requirement"] = 'Use HCCL_ALGO=allgather:sole{ring}; preserve the original request'
+        path.write_text(json.dumps(data))
+        self.assertEqual([], self.validate(fixture, "COMPLETE").problems)
+        data["source_branch"] = "{branch}"
+        path.write_text(json.dumps(data))
+        self.assertIn("PLACEHOLDER", self.codes(self.validate(fixture, "COMPLETE")))
+
     def test_verifier_call_can_record_allowlisted_external_evidence(self) -> None:
         fixture = TaskFixture(self.root)
         external_log = fixture.external_evidence_root / "candidate" / "build.log"

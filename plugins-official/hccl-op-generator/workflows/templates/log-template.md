@@ -21,6 +21,10 @@ updated_at: "{ISO-8601 时间}"
 
 > 本文件只记录 Developer 的源码/CMake 修改和开发期静态证据。基线、候选全量构建、安装与 Checker 由 Verifier 报告，不能在这里补写 PASS。
 
+`static_failure_count` 表示本次返回时仍未解决的静态检查失败数；PASS 时必须为 0。轮内发现并已修复的问题写入正文过程记录，不计入该字段，不抹去历史失败证据。
+
+CCU身份字段：`input_source_identity`为实现前HCCL单串，`output_source_identity`为实现后HCCL单串；输出身份与登记后的task-index.source_identity逐字符一致。HCOMM依赖另在正文记录，不拼接进头字段。
+
 ## Round {round}
 
 ### 1. 输入绑定

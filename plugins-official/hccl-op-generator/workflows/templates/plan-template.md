@@ -13,7 +13,7 @@ created_at: "{ISO-8601 时间}"
 
 # {算子类型} {算法名称} 实施计划
 
-> 本计划分配产物和依赖，不复制 Skill 技术步骤。AICPU 状态流转以 `aicpu-multi-agent-workflow.md` 为准；CCU 以兼容工作流为准。
+> 本计划分配产物和依赖，不复制 Skill 技术步骤。AICPU 状态流转以 `aicpu-multi-agent-workflow.md` 为准；CCU 以 `ccu-multi-agent-workflow.md` 为准。
 
 ## 1. 工作流绑定
 
@@ -37,7 +37,7 @@ created_at: "{ISO-8601 时间}"
 |---:|---|---|---|---|---|
 | | | | | | |
 
-AICPU 必须保留 Architect、Verifier 基线、Developer、Reviewer、Verifier 候选五次角色调用；HCCLBot 是状态 owner，不代替角色工作。CCU 按原兼容顺序填写。
+AICPU/CCU 必须保留 Architect、Verifier 基线、Developer、Reviewer、Verifier 候选五次角色调用；HCCLBot 是状态 owner，不代替角色工作。
 
 ## 4. 检查计划
 

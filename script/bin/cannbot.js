@@ -295,6 +295,7 @@ function rewritePluginReferences(markdown, assets, skillRewrites) {
   }
   if (!assets) return rewritten;
   return rewritten
+    .replaceAll("../workflows/", "workflows/")
     .replaceAll("workflows/", `${assets.relativeRoot}/workflows/`)
     .replace(/\]\((?:\.\/)?agents\/([^\s)]+\.md(?:#[^\s)]*)?)\)/g,
       (_, agent) => `](${assets.relativeRoot}/agents/${agent})`);

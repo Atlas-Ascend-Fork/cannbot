@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
+sys.dont_write_bytecode = True
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -352,7 +352,11 @@ class ArtifactSummary:
 
 
 class Validator:
-    def __init__(self, task_dir: Path):
+    def __init__(self, task_dir: Path, engine: str = "AICPU"):
+        self.engine = engine
+        self.artifacts = ARTIFACTS
+        self.task_owners = TASK_OWNERS
+        self.call_requirements = CALL_REQUIREMENTS
         self.task_dir = task_dir.resolve()
         self.problems: list[Problem] = []
         self.index: dict[str, Any] = {}
@@ -435,6 +439,23 @@ class Validator:
             return set()
         return set(PLACEHOLDER_RE.findall(text))
 
+    def rebind_graph(self):
+        """Reports and engine-specific attachments used by read-only auditing."""
+        return self.artifacts, DEPENDENCIES
+
+    def rebind_header(self, name, path):
+        return self._parse_frontmatter(path, path.read_text(encoding="utf-8"))
+
+    def resolve_task_path(self, relative, code):
+        """Resolve an evidence path using the same boundary checks as state gates."""
+        return self._safe_task_path(relative, code)
+
+    def file_sha256(self, path):
+        return self._sha256(path)
+
+    def parse_frontmatter(self, path, text):
+        return self._parse_frontmatter(path, text)
+
     def error(self, code: str, path: str | Path, message: str) -> None:
         self.problems.append(Problem(code, str(path), message))
 
@@ -462,7 +483,19 @@ class Validator:
         for key in ("dataflow_specs", "calls", "invalidated_artifacts"):
             if not isinstance(data.get(key), list):
                 self.error("INDEX_LIST", path, f"{key} must be an array")
-        placeholders = PLACEHOLDER_RE.findall(text)
+        # JSON object braces are not template placeholders (including compact JSON).
+        # The original user request is free text and may contain real HCCL_ALGO DSL braces.
+        # Template-owned metadata still rejects every unresolved placeholder.
+        pending = [value for key, value in data.items() if key != "requirement"]
+        placeholders = []
+        while pending:
+            value = pending.pop()
+            if isinstance(value, dict):
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+            elif isinstance(value, str):
+                placeholders.extend(PLACEHOLDER_RE.findall(value))
         if placeholders:
             self.error(
                 "PLACEHOLDER",
@@ -473,7 +506,7 @@ class Validator:
     def validate_actor(self, actor: str, changed: list[str]) -> None:
         if not self.index:
             self.load_index()
-        if actor not in TASK_OWNERS:
+        if actor not in self.task_owners:
             self.error("ACTOR", actor, "unknown actor")
             return
         if not changed:
@@ -607,7 +640,7 @@ class Validator:
             resolved = path.resolve(strict=False)
             if self._is_within(resolved, self.task_dir):
                 rel = resolved.relative_to(self.task_dir).as_posix()
-                allowed = rel in TASK_OWNERS[actor]
+                allowed = rel in self.task_owners[actor]
                 if (
                     actor == "hccl-architect"
                     and rel.startswith("dataflow/")
@@ -640,7 +673,7 @@ class Validator:
     def _validate_artifact(self, name: str, require_ready: bool) -> None:
         if name in self.headers:
             return
-        spec = ARTIFACTS[name]
+        spec = self.artifacts[name]
         path = self.task_dir / spec.path
         try:
             text = path.read_text(encoding="utf-8")
@@ -691,15 +724,15 @@ class Validator:
         self, name: str, header: dict[str, Any], path: Path
     ) -> None:
         common = ("schema_version", "artifact", "engine", "task_id")
-        for key in common + ARTIFACTS[name].required_fields:
+        for key in common + self.artifacts[name].required_fields:
             if key not in header:
                 self.error("ARTIFACT_FIELD", path, f"missing frontmatter field: {key}")
         if header.get("schema_version") != 1:
             self.error("ARTIFACT_SCHEMA", path, "schema_version must be 1")
         if header.get("artifact") != name:
             self.error("ARTIFACT_TYPE", path, f"artifact must be {name}")
-        if header.get("engine") != "AICPU":
-            self.error("ARTIFACT_ENGINE", path, "engine must be AICPU")
+        if header.get("engine") != self.engine:
+            self.error("ARTIFACT_ENGINE", path, f"engine must be {self.engine}")
         if header.get("task_id") != self.index.get("task_id"):
             self.error("TASK_ID", path, "task_id does not match task-index.json")
 
@@ -745,7 +778,7 @@ class Validator:
         valid_calls = self._validate_call_entries(calls, source_repo)
 
         target_position = STATES.index(target_state)
-        for state, (role, outputs) in CALL_REQUIREMENTS.items():
+        for state, (role, outputs) in self.call_requirements.items():
             if STATES.index(state) > target_position:
                 continue
             matching = [
@@ -802,14 +835,14 @@ class Validator:
             if self.headers["DEVELOPMENT_LOG"].get("output_source_identity") != current:
                 self.error(
                     "CURRENT_IDENTITY",
-                    ARTIFACTS["DEVELOPMENT_LOG"].path,
+                    self.artifacts["DEVELOPMENT_LOG"].path,
                     "output identity is not current",
                 )
         if "REVIEW" in required and "REVIEW" in self.headers:
             if self.headers["REVIEW"].get("source_identity") != current:
                 self.error(
                     "CURRENT_IDENTITY",
-                    ARTIFACTS["REVIEW"].path,
+                    self.artifacts["REVIEW"].path,
                     "review identity is not current",
                 )
         if "TEST_REPORT" in required and "TEST_REPORT" in self.headers:
@@ -820,7 +853,7 @@ class Validator:
             ):
                 self.error(
                     "CURRENT_IDENTITY",
-                    ARTIFACTS["TEST_REPORT"].path,
+                    self.artifacts["TEST_REPORT"].path,
                     "test/review identity is not current",
                 )
 
@@ -859,7 +892,8 @@ class Validator:
     def _validate_estimate_metadata(
         self, data: dict[str, Any], header: dict[str, Any], evidence: Path
     ) -> None:
-        if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        version = data.get("schema_version")
+        if not isinstance(version, int) or isinstance(version, bool) or version != 1:
             self.error("ESTIMATE_SCHEMA", evidence, "schema_version must be 1")
         if data.get("status") != "SUCCESS":
             self.error("ESTIMATE_STATUS", evidence, "evidence status must be SUCCESS")
@@ -916,7 +950,7 @@ class Validator:
         exits = data.get("exit_codes")
         for key in ("start", "mock_comm", "mpirun", "estimate"):
             actual = exits.get(key) if isinstance(exits, dict) else None
-            if type(actual) is not int or actual != 0:
+            if not isinstance(actual, int) or isinstance(actual, bool) or actual != 0:
                 self.error("ESTIMATE_EXIT", evidence, f"{key} exit code must be 0")
 
     def _validate_estimate_files(self, data: dict[str, Any], evidence: Path) -> None:
@@ -1093,9 +1127,9 @@ class Validator:
             if artifact not in required or artifact not in self.headers:
                 continue
             header = self.headers[artifact]
-            path = self.task_dir / ARTIFACTS[artifact].path
+            path = self.task_dir / self.artifacts[artifact].path
             for field, dependency in fields.items():
-                dep_path = self.task_dir / ARTIFACTS[dependency].path
+                dep_path = self.task_dir / self.artifacts[dependency].path
                 if not dep_path.is_file():
                     continue
                 expected = self._sha256(dep_path)
@@ -1103,7 +1137,7 @@ class Validator:
                     self.error(
                         "DEPENDENCY_HASH",
                         path,
-                        f"{field} does not match current {ARTIFACTS[dependency].path}",
+                        f"{field} does not match current {self.artifacts[dependency].path}",
                     )
 
     def _validate_external_roots(self, data: dict[str, Any], path: Path) -> None:
@@ -1170,19 +1204,19 @@ class Validator:
         if header.get("latest_owner") != expected_owner:
             self.error(
                 "HANDOFF_OWNER",
-                ARTIFACTS["HANDOFF_LOG"].path,
+                self.artifacts["HANDOFF_LOG"].path,
                 f"latest_owner must be {expected_owner}",
             )
         if header.get("latest_status") != "PASS":
             self.error(
                 "HANDOFF_STATUS",
-                ARTIFACTS["HANDOFF_LOG"].path,
+                self.artifacts["HANDOFF_LOG"].path,
                 "latest_status must be PASS",
             )
         if header.get("latest_source_identity") != self.index.get("source_identity"):
             self.error(
                 "HANDOFF_IDENTITY",
-                ARTIFACTS["HANDOFF_LOG"].path,
+                self.artifacts["HANDOFF_LOG"].path,
                 "latest source identity is not current",
             )
 
@@ -1202,7 +1236,7 @@ class Validator:
                 "INDEX_ARTIFACT", path, f"task-index artifacts.{name} is missing"
             )
             return
-        expected_path = ARTIFACTS[name].path
+        expected_path = self.artifacts[name].path
         if entry.get("path") != expected_path:
             self.error("INDEX_PATH", path, f"indexed path must be {expected_path}")
         if entry.get("owner") != summary.owner:
@@ -1230,8 +1264,8 @@ class Validator:
     def _validate_index_enums(self, data: dict[str, Any], path: Path) -> None:
         if data.get("schema_version") != 1:
             self.error("INDEX_SCHEMA", path, "schema_version must be 1")
-        if data.get("engine") != "AICPU":
-            self.error("INDEX_ENGINE", path, "engine must be AICPU")
+        if data.get("engine") != self.engine:
+            self.error("INDEX_ENGINE", path, f"engine must be {self.engine}")
         if data.get("current_state") not in STATES:
             self.error(
                 "INDEX_STATE",
@@ -1253,7 +1287,7 @@ class Validator:
             )
         pending_roles = data.get("pending_roles")
         if not isinstance(pending_roles, list) or not all(
-            role in TASK_OWNERS and role != "hcclbot" for role in pending_roles
+            role in self.task_owners and role != "hcclbot" for role in pending_roles
         ):
             self.error(
                 "INDEX_PENDING_ROLES",
@@ -1299,16 +1333,7 @@ class Validator:
             if key not in data:
                 self.error("INDEX_FIELD", path, f"missing field: {key}")
         self._validate_index_enums(data, path)
-        for key in (
-            "task_id",
-            "requirement",
-            "source_branch",
-            "source_identity",
-            "created_at",
-            "updated_at",
-        ):
-            if not self._nonempty(data.get(key)):
-                self.error("INDEX_VALUE", path, f"{key} must be a non-empty string")
+        self._validate_index_strings(data, path)
         head = data.get("source_head")
         if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{7,64}", head):
             self.error(
@@ -1324,13 +1349,31 @@ class Validator:
         elif not Path(repo).is_dir():
             self.error("INDEX_REPO", path, f"source_repo is not a directory: {repo}")
 
+    def _validate_index_strings(self, data, path):
+        for key in (
+            "task_id",
+            "requirement",
+            "source_branch",
+            "source_identity",
+            "created_at",
+            "updated_at",
+        ):
+            value = data.get(key)
+            valid = (
+                isinstance(value, str) and bool(value.strip())
+                if key == "requirement"
+                else self._nonempty(value)
+            )
+            if not valid:
+                self.error("INDEX_VALUE", path, f"{key} must be a non-empty string")
+
     def _validate_invalidation(self) -> None:
         artifacts = self.index.get("artifacts")
         invalidated = self.index.get("invalidated_artifacts")
         if not isinstance(artifacts, dict) or not isinstance(invalidated, list):
             return
         for name in ("REVIEW", "TEST_REPORT"):
-            path = self.task_dir / ARTIFACTS[name].path
+            path = self.task_dir / self.artifacts[name].path
             if not path.is_file():
                 continue
             text = path.read_text(encoding="utf-8")
@@ -1341,7 +1384,7 @@ class Validator:
                 "source_identity"
             )
             for field, dependency in DEPENDENCIES.get(name, {}).items():
-                dep_path = self.task_dir / ARTIFACTS[dependency].path
+                dep_path = self.task_dir / self.artifacts[dependency].path
                 if dep_path.is_file() and header.get(field) != self._sha256(dep_path):
                     stale = True
             if not stale:
@@ -1356,7 +1399,7 @@ class Validator:
             matched = any(
                 isinstance(item, dict)
                 and item.get("artifact") == name
-                and item.get("path") == ARTIFACTS[name].path
+                and item.get("path") == self.artifacts[name].path
                 and self._nonempty(item.get("reason"))
                 for item in invalidated
             )
@@ -1410,10 +1453,10 @@ class Validator:
     ) -> str | None:
         self._validate_call_fields(call, label, seen_ids)
         role = call.get("role")
-        if role not in TASK_OWNERS or role == "hcclbot":
+        if role not in self.task_owners or role == "hcclbot":
             self.error("CALL_ROLE", label, f"invalid Agent role: {role!r}")
         call_state = call.get("target_state")
-        if call_state not in CALL_REQUIREMENTS:
+        if call_state not in self.call_requirements:
             self.error(
                 "CALL_STATE", label, f"invalid Agent target_state: {call_state!r}"
             )
@@ -1440,7 +1483,7 @@ class Validator:
             self.error(
                 "CALL_OUTPUT", label, "outputs must be a non-empty array of paths"
             )
-        elif role in TASK_OWNERS:
+        elif role in self.task_owners:
             self._validate_actor_paths(role, outputs, source_repo)
         return call_state if isinstance(call_state, str) else None
 
@@ -1466,6 +1509,176 @@ class Validator:
             seen_ids.add(call_id)
 
 
+def emit_text(value):
+    """Keep CLI output prefix-free and independent of configured root handlers."""
+    logger = logging.Logger("hcclbot.cli", level=logging.INFO)
+    logger.manager = logging.Manager(logger)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.info("%s", value)
+
+
+def emit_json(value, indent=None):
+    emit_text(json.dumps(value, ensure_ascii=False, indent=indent))
+
+
+def affected_levels(roots, dependencies):
+    affected = set(roots)
+    while True:
+        descendants = {
+            name
+            for name, fields in dependencies.items()
+            if affected.intersection(fields.values())
+        }
+        expanded = affected | descendants
+        if expanded == affected:
+            break
+        affected = expanded
+    pending = set(affected)
+    levels: dict[str, int] = {}
+    while pending:
+        ready = {
+            name
+            for name in pending
+            if not pending.intersection(dependencies.get(name, {}).values())
+        }
+        if not ready:
+            raise ValueError("dependency cycle in artifact definitions")
+        for name in sorted(ready):
+            parents = affected.intersection(dependencies.get(name, {}).values())
+            levels[name] = max((levels[parent] + 1 for parent in parents), default=0)
+        pending -= ready
+    return affected, levels
+
+
+def rebind_report(validator: Validator, changed: list[str]) -> dict[str, Any]:
+    """Plan the descendant closure; owners must revalidate before rebinding."""
+    artifacts, dependencies = validator.rebind_graph()
+    aliases = {spec.path: name for name, spec in artifacts.items()}
+    roots = {aliases.get(name, name) for name in changed}
+    unknown = roots - artifacts.keys()
+    if unknown:
+        raise ValueError(f"unknown artifacts: {sorted(unknown)}")
+    for name in roots:
+        path = validator.resolve_task_path(artifacts[name].path, "REBIND_PATH")
+        if path is None or not path.is_file():
+            raise ValueError(f"changed artifact is missing or outside task_dir: {name}")
+    affected, levels = affected_levels(roots, dependencies)
+    work = []
+    for name in sorted(affected, key=lambda item: (levels[item], item)):
+        fields = {
+            field: dep
+            for field, dep in dependencies.get(name, {}).items()
+            if dep in affected
+        }
+        if not fields:
+            continue
+        spec = artifacts[name]
+        path = validator.resolve_task_path(spec.path, "REBIND_PATH")
+        if path is None:
+            continue
+        work.append(
+            {
+                "order": levels[name],
+                "artifact": name,
+                "file": spec.path,
+                "owner_role": spec.owner,
+                "fields": fields,
+                "depends_on": sorted(set(fields.values())),
+                "exists": path.is_file(),
+                "action": "OWNER_REVALIDATE_THEN_REBIND"
+                if path.is_file()
+                else "CREATE_AT_OWNING_STAGE",
+            }
+        )
+    return {
+        "changed_artifacts": sorted(roots),
+        "work": work,
+        "scope": "read-only work order; does not change evidence, validity, status or calls",
+        "binding_rule": (
+            "hash dependencies at execution time AFTER earlier owners finish; "
+            "do not freeze intermediate hashes from this plan"
+        ),
+    }
+
+
+def verify_rebind(validator: Validator) -> list[dict[str, Any]]:
+    """Audit current frontmatter bindings, without conferring a workflow PASS."""
+    stale = []
+    artifacts, dependencies = validator.rebind_graph()
+    for name, fields in dependencies.items():
+        path = validator.resolve_task_path(artifacts[name].path, "REBIND_PATH")
+        if path is None or not path.is_file():
+            continue
+        header = validator.rebind_header(name, path)
+        if header is None:
+            continue
+        for field, dependency in fields.items():
+            dep_path = validator.resolve_task_path(
+                artifacts[dependency].path, "REBIND_PATH"
+            )
+            if dep_path is None or not dep_path.is_file():
+                validator.error(
+                    "REBIND_DEPENDENCY_MISSING", path, f"missing {dependency}"
+                )
+                continue
+            actual = validator.file_sha256(dep_path)
+            if header.get(field) != actual:
+                stale.append(
+                    {
+                        "artifact": name,
+                        "file": artifacts[name].path,
+                        "owner_role": artifacts[name].owner,
+                        "field": field,
+                        "dependency": dependency,
+                        "bound_sha256": header.get(field),
+                        "current_sha256": actual,
+                    }
+                )
+    return stale
+
+
+def add_rebind_arguments(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--rebind-report",
+        nargs="+",
+        metavar="ARTIFACT",
+        help="read-only descendant work order for changed artifact names or filenames",
+    )
+    group.add_argument(
+        "--verify-rebind",
+        action="store_true",
+        help="audit existing dependency bindings; no files are modified",
+    )
+
+
+def handle_rebind_cli(args: argparse.Namespace, validator: Validator) -> int | None:
+    if args.rebind_report is None and not args.verify_rebind:
+        return None
+    validator.load_index()
+    payload: dict[str, Any] = {"engine": validator.engine, "read_only": True}
+    if not validator.problems:
+        try:
+            if args.rebind_report is not None:
+                payload.update(rebind_report(validator, args.rebind_report))
+            else:
+                payload.update(
+                    stale_bindings=verify_rebind(validator),
+                    scope=(
+                        "dependency fields only; still update the index/invalidation records "
+                        "and run the target-state gate"
+                    ),
+                )
+        except (OSError, ValueError) as exc:
+            validator.error("REBIND_REPORT", validator.task_dir, str(exc))
+    payload["errors"] = [problem.__dict__ for problem in validator.problems]
+    payload["ok"] = not payload["errors"] and not payload.get("stale_bindings")
+    emit_json(payload, indent=2)
+    return 0 if payload["ok"] else 1
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Validate AICPU task artifacts before HCCLBot advances state.",
@@ -1488,8 +1701,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="changed paths; absolute or relative to task-index source_repo",
     )
     parser.add_argument("--json", action="store_true", help="emit a JSON result")
+    add_rebind_arguments(parser)
     args = parser.parse_args(argv)
-    if args.target_state is None and args.actor is None:
+    reporting = args.rebind_report is not None or args.verify_rebind
+    if reporting and any((args.target_state, args.actor, args.changed)):
+        parser.error("rebind reporting cannot be combined with a state/actor gate")
+    if not any((args.target_state, args.actor, reporting)):
         parser.error("at least one of --target-state or --actor is required")
     if args.changed and args.actor is None:
         parser.error("--changed requires --actor")
@@ -1497,8 +1714,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     args = parse_args(argv or sys.argv[1:])
     validator = Validator(args.task_dir)
+    report_status = handle_rebind_cli(args, validator)
+    if report_status is not None:
+        return report_status
     if args.target_state:
         validator.validate_state(args.target_state)
     if args.actor:
@@ -1511,7 +1732,7 @@ def main(argv: list[str] | None = None) -> int:
         "errors": [problem.__dict__ for problem in validator.problems],
     }
     if args.json:
-        logging.info(json.dumps(result, ensure_ascii=False, indent=2))
+        emit_json(result, indent=2)
     elif validator.problems:
         for problem in validator.problems:
             logging.error(f"[{problem.code}] {problem.path}: {problem.message}")

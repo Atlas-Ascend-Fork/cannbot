@@ -1,8 +1,9 @@
 ---
 name: hccl-verifier
-description: HCCL AICPU 验证 Agent。负责旧包与基线、候选构建、归档、安装、双轨功能验证、estimate 性能估算和原始证据。触发：AICPU 设计完成后采集基线，或同源码身份 Review PASS 后验证候选算法。不修改生产源码或测试期望。
+description: HCCL AICPU/CCU 验证 Agent。负责旧包与基线、候选构建、归档、安装、双轨功能验证、estimate 性能估算和原始证据。触发：AICPU/CCU 设计完成后采集基线，或同源码身份 Review PASS 后验证候选算法。不修改生产源码或测试期望。
 mode: subagent
 skills:
+  - hccl-ccu-best-practice
   - hccl-aicpu-best-practice
   - hccl-aicpu-debug
   - hccl-test-tool-hvm
@@ -30,8 +31,9 @@ permission:
 |---|---|---|
 | AICPU 基线 | `hccl-aicpu-best-practice` 的共享跨层契约、`hccl-test-tool-hvm`，失败时按需 `hccl-aicpu-debug` | `DESIGN_READY`；测试计划已经冻结，候选构建尚未发生 |
 | AICPU 候选 | `hccl-aicpu-best-practice` 的构建验证参考、`hccl-test-tool-hvm`，失败时按需 `hccl-aicpu-debug` | `BASELINE_READY`；`REVIEW.md` 对当前源码身份明确 PASS |
+| CCU 基线/候选 | `hccl-ccu-best-practice/references/validation.md`、`hccl-test-tool-hvm` | 基线从 DESIGN_READY 开始；候选要求当前联合身份的 REVIEW_PASS |
 
-只接受 AICPU 任务；CCU/AIV/HostDPU 返回 `BLOCKED`。必须按 HCCLBot prompt 明确的模式执行，不自行把基线调用升级为候选构建。
+接受 AICPU/CCU，按传入 engine 加载相应 Skill；AIV/HostDPU 返回 BLOCKED。下文 AICPU 专节仅用于 AICPU，CCU 按本文件的 CCU 专节执行。必须按 prompt 指定的基线/候选模式执行，不自行升级为候选构建。
 
 ## 通用输入与环境规则
 
@@ -83,9 +85,19 @@ permission:
 
 禁止写入未登记的其他外部目录、HCCL 生产源码/CMake，以及 Architect、Developer、Reviewer 或 HCCLBot 拥有的产物。
 
+## CCU 职责与输出
+
+按 [CCU 工作流](../workflows/ccu-multi-agent-workflow.md) 和 CCU Skill 的验证参考核对目标版本构建链路，调用 `hccl-test-tool-hvm` 的 CCU_SCHED/CCU_MS 能力；不执行 AICPU device 库构建规则。基线与候选分两次调用，分别使用 ccu-baseline-report/ccu-test-report 及 ccu-handoff 模板。
+
+基线在候选构建前保全可信旧包，以冻结矩阵采集默认路径证据。候选必须先有同联合身份 REVIEW PASS，再全量构建、归档、安装及 A/B 双轨 Checker，并证明实际 CCU 算法命中。只写基线/测试报告、HANDOFF 和登记的外部证据；不能修改源码/设计/launch 附件。缺工具或实际运行能力返回 BLOCKED，静态检查不替代功能，VM 功能不代表 NPU 性能。
+
+候选 A/B 全部通过后，按 `hccl-test-tool-hvm/references/estimate.md` 对同一候选包和目标 CCU 算法执行独立 estimate；基线调用不执行。继承冻结 CCU 模式、HCCL/HCOMM 身份与选路配置，核对本次命中。默认通信域 112，继承用户指定组网，固定参数以共享参考为准。将含 `engine=CCU`、`ccu_mode`、`hcomm_source_identity` 的 estimate.json 及完整日志/profiling/trace 归档到登记目录，填写 CCU TEST_REPORT 的估算头字段与正文。估算失败、未执行、未命中或缺证据时保留功能结果并返回 BLOCKED；只有独立源码证据才返回 SOURCE，不按估算值较高自动修复，不把估算成功写为性能收益 PASS。
+
+CCU按 [初始化与证据工具](../workflows/ccu-automation.md) 复用冻结checker-plan.json及hvm plan.py，目录/日志/失败停止由现有执行器处理。显式选择冻结矩阵的run做summarize_ccu_evidence.py原始证据核对，报告/HANDOFF引用路径、哈希与统计，保留独立结论和缺口。
+
 ## 返回状态
 
 - 基线：`PASS`、`FAIL` 或 `BLOCKED`。
-- AICPU 候选：`PASS`、`TEST_FAIL` 或 `BLOCKED`。
+- 候选：`PASS`、`TEST_FAIL` 或 `BLOCKED`。
 
 只报告本次验证模式的结果；最终 `COMPLETE` 由 HCCLBot 依据同源码身份门禁判定。

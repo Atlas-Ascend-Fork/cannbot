@@ -10,7 +10,7 @@
 | Architect、Developer、Verifier、Reviewer 的职责和权限 | `agents/hccl-*.md` |
 | AICPU 状态机和失败回退 | 本文件 |
 | Agent 调用参数 | [aicpu-task-prompts.md](aicpu-task-prompts.md) |
-| CCU 能力状态 | 暂不对外支持；`workflow_policy.py route` 返回 `CCU_OUT_OF_SCOPE` |
+| CCU 能力状态 | 使用独立 [CCU 工作流](ccu-multi-agent-workflow.md)，技术能力由 `hccl-ccu-best-practice` 提供 |
 
 HCCLBot 只编排和维护任务状态，不代替任何 Agent 设计、修改生产代码、检视或执行共享验证。
 
@@ -168,6 +168,26 @@ python3 "$HCCL_AICPU_WORKFLOW_DIR/scripts/validate_aicpu_artifacts.py" \
 | 仅报告排版变化，且内容哈希与源码身份不变 | 不自动失效 | HCCLBot 记录变更原因 |
 
 旧报告必须保留原身份，不得覆盖成新版本 PASS。HCCLBot 在 `task-index.json` 中记录当前有效报告及被取代报告。
+
+### 4.1 修订后的依赖工作单
+
+需求/设计/计划或报告修订后，HCCLBot先生成只读的后代闭包工作单：
+
+```bash
+python3 "$HCCL_AICPU_WORKFLOW_DIR/scripts/validate_aicpu_artifacts.py" \
+  --task-dir "$TASK_DIR" --rebind-report TASK_SPEC TEST_PLAN --json
+```
+
+工具按实际 DEPENDENCIES 拓扑输出 artifact/file/owner_role/fields/order，包括二阶依赖：TEST_PLAN变化先影响BASELINE_REPORT，BASELINE自身重新生成后又影响LOG/REVIEW，最后影响TEST_REPORT。工作单即使某个中间节点也在被改列表中，仍会列出它对上游的必要绑定。
+
+按order调用产物owner评估影响并重新验证/生成报告，保留原始证据、失败和身份历史；未变化且可复用的证据需要owner说明依据。**禁止HCCLBot自动改Agent报告、只改哈希制造PASS，或据工作单恢复valid状态。** 每层完成后，以当时依赖文件的实际字节重新取哈希，不能缓存工作单生成时的旧中间节点哈希。尚未产生的报告由其正常阶段生成，不为重绑定伪造早期PASS。
+
+```bash
+python3 "$HCCL_AICPU_WORKFLOW_DIR/scripts/validate_aicpu_artifacts.py" \
+  --task-dir "$TASK_DIR" --verify-rebind --json
+```
+
+该审计只读检查现有报告的依赖字段，非零时列出残留过期绑定。依赖字段一致后，HCCLBot仍须更新索引、调用与失效记录，执行对应target-state门禁；审计成功不等于阶段PASS。已完成任务的历史勘误保留原完成链，不能为同步文档知识而回头机械重绑定。
 
 ## 5. 角色权限边界
 

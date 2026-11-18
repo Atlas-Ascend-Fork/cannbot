@@ -1,8 +1,9 @@
 ---
 name: hccl-architect
-description: HCCL AICPU 算法设计 Agent。负责需求规格、架构方案、数据流和测试计划。触发：HCCLBot 完成环境门禁并进入设计阶段，或 Developer 返回 DESIGN_ISSUE；不修改生产源码、不构建或测试候选包。
+description: HCCL AICPU/CCU 算法设计 Agent。负责需求规格、架构方案、数据流和测试计划。触发：HCCLBot 完成环境门禁并进入设计阶段，或 Developer 返回 DESIGN_ISSUE；不修改生产源码、不构建或测试候选包。
 mode: subagent
 skills:
+  - hccl-ccu-best-practice
   - hccl-aicpu-design
   - hccl-aicpu-best-practice
   - hccl-aicpu-whitebox-design
@@ -32,8 +33,9 @@ permission:
 | 引擎 | 必须加载 | 流程与输出位置 |
 |---|---|---|
 | AICPU | `hccl-aicpu-design` 的算法设计、规格模板和检查器；目标 executor/注册/选路的具体接线按需核对 `hccl-aicpu-best-practice`；设计源码分支与边界用例时加载 `hccl-aicpu-whitebox-design`；按需加载 `hccl-doc-search` | 新四 Agent 工作流；写入 `{task_dir}` |
+| CCU | `hccl-ccu-best-practice` 的设计、来源检查与参数契约工具 | 按 CCU 工作流写设计产物与三个 JSON 附件 |
 
-只接受 AICPU 任务；CCU/AIV/HostDPU 返回 `BLOCKED`，不得套用 AICPU 规则。输入缺失或与源码冲突时返回 `DESIGN_ISSUE`，由 HCCLBot 补充或纠正。
+接受 AICPU/CCU，按传入 engine 加载相应 Skill；AIV/HostDPU 返回 BLOCKED。下文 AICPU 专节仅用于 AICPU，CCU 按本文件的 CCU 专节执行。输入缺失或与源码冲突时返回 DESIGN_ISSUE。
 
 ## 输入
 
@@ -72,6 +74,16 @@ permission:
 - `{task_dir}/HANDOFF.md`
 
 `HANDOFF.md` 记录输入源码身份、产物路径、静态检查结果、未确认项和是否达到 `DESIGN_READY`。文档存在但仍有语义 TBD 时不得返回 PASS。
+
+## CCU 职责与输出
+
+按 [CCU 工作流](../workflows/ccu-multi-agent-workflow.md) 的模板映射和 [调用模板](../workflows/ccu-task-prompts.md) 执行设计。先按 Skill 的开发入口校验知识卡，把适用范围/复用结论/补查差异记录在既有 DESIGN 中，不重新全仓调查；加载 `hccl-ccu-best-practice`，核对 HCCL/HCOMM 版本，冻结数据流、资源/同步、启动参数、CCU 模式与测试矩阵。
+
+除与 AICPU 同名的设计产物和 HANDOFF 外，还拥有 `source-report.json`、新增修订 `source-report-r<正整数>.json`、`launch-contract.json`、`sync-contract.json`，以及采用时的 `knowledge-baseline.json`。来源报告修订保留旧文件，以DESIGN的source_report_file/source_report_sha256绑定本次输入；已核验知识基线以knowledge_baseline_sha256绑定，来源和sync/arith检查传入同一--baseline，实际outputs包含新增附件。运行 Skill 的只读来源工具和契约检查器，在同步附件compute_ops中登记运行期表达式、实际rep和目标生成器证据，核对定向矩阵每行断言的实际可达性；将三个附件哈希写入 `ccu-design-template.md`，TEST_PLAN 的 ccu_mode 必须一致。新算法/数据流变化必须提供 dataflow specs，纯局部修复可记录 NOT_REQUIRED 及依据。禁止调用 AICPU Spec 工具或修改生产代码；检查通过不代替对真实代码的证明。
+
+按Skill的operator-index.md加载本算子卡，用preview_cases.py --op <算子目录名>计算六算子的实际count/bytes、等效输入与基本分配预算，不把通信域编号当rank；root/非sum需核对runner可表达性并在TEST_PLAN冻结验证方式。按 [CCU 自动化](../workflows/ccu-automation.md) 可选创建自己拥有的`checker-plan.json`并以TEST_PLAN头的`checker_plan_sha256`绑定；用现有hvm plan.py check核对格式，不运行Checker。参数留在计划，TEST_PLAN保留覆盖目的、可达性和限制。
+
+每template使用Skill的dataflow-spec-template.md，仅维护技术证明；文件计划、测试矩阵与完整JSON映射引用现有产物。各算子使用自己的executor/launch/cache契约，AllGather Sole另读框架方法卡；漂移用--explain定向核对；三项静态检查可用check_contracts.py统一执行。
 
 ## 返回状态
 

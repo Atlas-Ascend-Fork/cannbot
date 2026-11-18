@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
+# -----------------------------------------------------------------------------------------------------------
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
-# This program is free software; you can redistribute it and/or modify it under the terms of the
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
 """Behavior tests for HCCLBot engine routing and workflow recovery policy."""
 
 from __future__ import annotations
@@ -34,7 +40,7 @@ class RoutingBehaviorTests(unittest.TestCase):
                 self.assertFalse(decision.ok)
                 self.assertEqual("AIV_OUT_OF_SCOPE", decision.reason)
 
-    def test_all_ccu_markers_are_blocked_until_supported(self) -> None:
+    def test_all_ccu_markers_route_to_ccu(self) -> None:
         requirements = (
             "新增 CCU Broadcast",
             "请用CCU开发AllReduce算子",
@@ -47,10 +53,10 @@ class RoutingBehaviorTests(unittest.TestCase):
         for requirement in requirements:
             with self.subTest(requirement=requirement):
                 decision = POLICY.route_requirement(requirement)
-                self.assertFalse(decision.ok)
-                self.assertIsNone(decision.engine)
-                self.assertEqual("BLOCK", decision.action)
-                self.assertEqual("CCU_OUT_OF_SCOPE", decision.reason)
+                self.assertTrue(decision.ok)
+                self.assertEqual("CCU", decision.engine)
+                self.assertEqual("ROUTE", decision.action)
+                self.assertEqual("ccu-multi-agent-workflow.md", decision.workflow)
 
     def test_conflicting_engine_markers_require_clarification(self) -> None:
         decision = POLICY.route_requirement("同时实现 AICPU 和 CCU 算法")
@@ -66,12 +72,15 @@ class RoutingBehaviorTests(unittest.TestCase):
         self.assertEqual("EXPLICIT_AICPU_MARKER", decision.reason)
 
     def test_hostdpu_is_not_silently_routed_to_aicpu(self) -> None:
-        for requirement in ("新增 HostDPU AllReduce", "请用HOST DPU实现AllGather", "修改 DPU 模板"):
+        for requirement in (
+            "新增 HostDPU AllReduce",
+            "请用HOST DPU实现AllGather",
+            "修改 DPU 模板",
+        ):
             with self.subTest(requirement=requirement):
                 decision = POLICY.route_requirement(requirement)
                 self.assertFalse(decision.ok)
                 self.assertEqual("HOSTDPU_OUT_OF_SCOPE", decision.reason)
-
 
     def test_standard_op_without_engine_defaults_to_aicpu(self) -> None:
         decision = POLICY.route_requirement("为 AllGather 新增 Ring 标准通信算法")
@@ -82,13 +91,17 @@ class RoutingBehaviorTests(unittest.TestCase):
 
 class AicpuTransitionBehaviorTests(unittest.TestCase):
     def test_baseline_failure_blocks_candidate_build(self) -> None:
-        decision = POLICY.transition(Ctx("AICPU", "DESIGN_READY"), "hccl-verifier", "FAIL")
+        decision = POLICY.transition(
+            Ctx("AICPU", "DESIGN_READY"), "hccl-verifier", "FAIL"
+        )
         self.assertTrue(decision.ok)
         self.assertEqual("BLOCK", decision.action)
         self.assertEqual("BASELINE_FAILED", decision.reason)
         self.assertEqual((), decision.next_roles)
 
-    def test_design_issue_retries_architect_without_consuming_repair_round(self) -> None:
+    def test_design_issue_retries_architect_without_consuming_repair_round(
+        self,
+    ) -> None:
         decision = POLICY.transition(
             Ctx("AICPU", "ENV_READY", 2), "hccl-architect", "DESIGN_ISSUE"
         )
@@ -135,7 +148,9 @@ class AicpuTransitionBehaviorTests(unittest.TestCase):
                 self.assertEqual((next_role,) if next_role else (), decision.next_roles)
 
     def test_result_from_wrong_stage_is_rejected(self) -> None:
-        decision = POLICY.transition(Ctx("AICPU", "ENV_READY"), "hccl-architect", "REVIEW_FAIL")
+        decision = POLICY.transition(
+            Ctx("AICPU", "ENV_READY"), "hccl-architect", "REVIEW_FAIL"
+        )
         self.assertFalse(decision.ok)
         self.assertEqual("RESULT_NOT_ALLOWED_FOR_STAGE", decision.reason)
 
@@ -199,7 +214,6 @@ class AicpuTransitionBehaviorTests(unittest.TestCase):
         self.assertFalse(decision.ok)
         self.assertEqual("TERMINAL_STATE", decision.reason)
 
-
     def test_test_failure_without_classification_is_rejected(self) -> None:
         decision = POLICY.transition(
             Ctx("AICPU", "REVIEW_PASS"), "hccl-verifier", "TEST_FAIL"
@@ -208,67 +222,92 @@ class AicpuTransitionBehaviorTests(unittest.TestCase):
         self.assertEqual("FAILURE_CLASS_REQUIRED", decision.reason)
 
 
-class CcuCompatibilityBehaviorTests(unittest.TestCase):
-    def test_archived_ccu_prompts_use_canonical_machine_statuses(self) -> None:
-        prompt = (WORKFLOW_DIR / "task-prompts.md").read_text(encoding="utf-8")
-        self.assertIn("CCU 专属 Skill 已移除", prompt)
-        self.assertNotIn("返回 design_issue", prompt)
-        self.assertNotIn("PASS WITH NOTES", prompt)
-        self.assertIn("TEST_FAIL", prompt)
-        self.assertIn("failure_class=SOURCE", prompt)
-        self.assertIn("PASS_WITH_NOTES", prompt)
-
-    def test_ccu_environment_failure_blocks_source_repair(self) -> None:
-        decision = POLICY.transition(
-            Ctx("CCU", "IMPLEMENTED", failure_class="ENVIRONMENT"),
-            "hccl-verifier",
-            "FAIL",
-        )
-        self.assertEqual("BLOCK", decision.action)
-        self.assertEqual((), decision.next_roles)
-
-
-    def test_ccu_happy_path_keeps_legacy_order(self) -> None:
+class CcuWorkflowBehaviorTests(unittest.TestCase):
+    def test_happy_path_requires_baseline_review_and_tests(self):
         cases = (
-            ("ENV_READY", "hccl-architect", "PASS", "DESIGN_READY"),
-            ("DESIGN_READY", "hccl-developer", "PASS", "IMPLEMENTED"),
-            ("IMPLEMENTED", "hccl-verifier", "PASS", "VERIFIED"),
-            ("VERIFIED", "hccl-reviewer", "PASS_WITH_NOTES", "REVIEW_PASS"),
-            ("REVIEW_PASS", "hcclbot", "PASS", "COMPLETE"),
+            ("ENV_READY", "hccl-architect", "DESIGN_READY"),
+            ("DESIGN_READY", "hccl-verifier", "BASELINE_READY"),
+            ("BASELINE_READY", "hccl-developer", "IMPLEMENTED"),
+            ("IMPLEMENTED", "hccl-reviewer", "REVIEW_PASS"),
+            ("REVIEW_PASS", "hccl-verifier", "TEST_PASS"),
+            ("TEST_PASS", "hcclbot", "COMPLETE"),
         )
-        for state, actor, result, next_state in cases:
+        for state, actor, next_state in cases:
             with self.subTest(state=state):
-                decision = POLICY.transition(Ctx("CCU", state), actor, result)
+                decision = POLICY.transition(Ctx("CCU", state), actor, "PASS")
                 self.assertTrue(decision.ok)
-                self.assertEqual("ADVANCE", decision.action)
                 self.assertEqual(next_state, decision.next_state)
+                self.assertEqual("CCU", decision.engine)
 
-    def test_ccu_review_failure_repeats_full_quality_chain(self) -> None:
+    def test_developer_cannot_skip_baseline(self):
         decision = POLICY.transition(
-            Ctx("CCU", "VERIFIED", 1), "hccl-reviewer", "FAIL"
+            Ctx("CCU", "DESIGN_READY"), "hccl-developer", "PASS"
         )
-        self.assertEqual("REPAIR", decision.action)
-        self.assertEqual(
-            ("hccl-developer", "hccl-verifier", "hccl-reviewer"),
-            decision.next_roles,
-        )
-        self.assertEqual("IMPLEMENTED", decision.next_state)
+        self.assertFalse(decision.ok)
 
-    def test_ccu_source_test_failure_rechecks_verifier(self) -> None:
+    def test_legacy_verified_and_pass_with_notes_are_rejected(self):
+        for state, result in (("VERIFIED", "PASS"), ("IMPLEMENTED", "PASS_WITH_NOTES")):
+            self.assertFalse(
+                POLICY.transition(Ctx("CCU", state), "hccl-reviewer", result).ok
+            )
+
+    def test_baseline_failure_blocks(self):
         decision = POLICY.transition(
-            Ctx("CCU", "IMPLEMENTED", failure_class="SOURCE"),
+            Ctx("CCU", "DESIGN_READY"), "hccl-verifier", "FAIL"
+        )
+        self.assertEqual("BASELINE_FAILED", decision.reason)
+        self.assertEqual("BLOCK", decision.action)
+
+    def test_test_failures_preserve_classification(self):
+        for classification, action in (
+            (None, "REJECT"),
+            ("ENVIRONMENT", "BLOCK"),
+            ("SOURCE", "REPAIR"),
+        ):
+            decision = POLICY.transition(
+                Ctx("CCU", "REVIEW_PASS", failure_class=classification),
+                "hccl-verifier",
+                "TEST_FAIL",
+            )
+            self.assertEqual(action, decision.action)
+            if action == "REPAIR":
+                self.assertEqual(
+                    ("hccl-developer", "hccl-reviewer", "hccl-verifier"),
+                    decision.next_roles,
+                )
+
+    def test_repair_chain_runs_review_before_verifier(self):
+        decision = POLICY.transition(
+            Ctx("CCU", "REVIEW_PASS", failure_class="SOURCE"),
             "hccl-verifier",
             "TEST_FAIL",
         )
-        self.assertEqual("REPAIR", decision.action)
-        self.assertEqual(("hccl-developer", "hccl-verifier"), decision.next_roles)
+        for actor, output in (
+            ("hccl-developer", "IMPLEMENTED"),
+            ("hccl-reviewer", "REVIEW_PASS"),
+            ("hccl-verifier", "TEST_PASS"),
+        ):
+            decision = POLICY.recovery(
+                Ctx("CCU", decision.next_state, decision.repair_round),
+                decision.pending_action,
+                list(decision.next_roles),
+                actor,
+                "PASS",
+            )
+            self.assertTrue(decision.ok)
+            self.assertEqual(output, decision.next_state)
+        self.assertEqual("RECOVERY_COMPLETE", decision.action)
 
-    def test_ccu_verifier_design_issue_is_not_a_valid_legacy_result(self) -> None:
-        decision = POLICY.transition(
-            Ctx("CCU", "IMPLEMENTED"), "hccl-verifier", "DESIGN_ISSUE"
+    def test_review_repair_limit_and_redesign(self):
+        failed = POLICY.transition(
+            Ctx("CCU", "IMPLEMENTED", 3), "hccl-reviewer", "REVIEW_FAIL"
         )
-        self.assertFalse(decision.ok)
-        self.assertEqual("RESULT_NOT_ALLOWED_FOR_STAGE", decision.reason)
+        self.assertEqual("REPAIR_LIMIT_REACHED", failed.reason)
+        design = POLICY.transition(
+            Ctx("CCU", "BASELINE_READY"), "hccl-developer", "DESIGN_ISSUE"
+        )
+        self.assertEqual("CCU", design.engine)
+        self.assertEqual("REDESIGN", design.action)
 
 
 class RecoveryChainBehaviorTests(unittest.TestCase):
@@ -296,7 +335,6 @@ class RecoveryChainBehaviorTests(unittest.TestCase):
         )
         self.assertEqual("BLOCK", blocked.action)
         self.assertEqual("REPAIR_LIMIT_REACHED", blocked.reason)
-
 
     def test_recovery_role_cannot_skip_the_pending_head(self) -> None:
         decision = POLICY.recovery(
@@ -401,7 +439,9 @@ class WorkflowPolicyCliTests(unittest.TestCase):
     def test_ambiguous_route_has_nonzero_exit_and_json_reason(self) -> None:
         result = self.run_cli("route", "--requirement", "AICPU 与 CCU 混合")
         self.assertEqual(1, result.returncode)
-        self.assertEqual("CONFLICTING_ENGINE_MARKERS", json.loads(result.stdout)["reason"])
+        self.assertEqual(
+            "CONFLICTING_ENGINE_MARKERS", json.loads(result.stdout)["reason"]
+        )
 
     def test_business_block_is_valid_policy_decision(self) -> None:
         result = self.run_cli(
@@ -445,29 +485,20 @@ class WorkflowPolicyCliTests(unittest.TestCase):
 
 class WorkflowDocumentationContractTests(unittest.TestCase):
     def test_aicpu_workflow_wires_transition_and_recovery(self) -> None:
-        text = (WORKFLOW_DIR / "aicpu-multi-agent-workflow.md").read_text(encoding="utf-8")
-        self.assertIn("workflow_policy.py\" transition", text)
-        self.assertIn("workflow_policy.py\" recovery", text)
+        text = (WORKFLOW_DIR / "aicpu-multi-agent-workflow.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('workflow_policy.py" transition', text)
+        self.assertIn('workflow_policy.py" recovery', text)
         for field in ("repair_round", "pending_action", "pending_roles"):
             self.assertIn(field, text)
-
-    def test_archived_ccu_workflow_is_not_routable(self) -> None:
-        text = (WORKFLOW_DIR / "task-prompts.md").read_text(encoding="utf-8")
-        self.assertIn("目前不对外支持", text)
-        self.assertEqual("CCU_OUT_OF_SCOPE", POLICY.route_requirement("新增 CCU 算法").reason)
-        state_block = text.split("```text", 1)[1].split("```", 1)[0]
-        expected = ("Architect", "Developer", "Verifier", "Reviewer", "HCCLBot")
-        positions = [state_block.index(role) for role in expected]
-        self.assertEqual(sorted(positions), positions)
-        self.assertIn("workflow_policy.py transition --engine CCU", text)
-        self.assertIn("workflow_policy.py recovery --engine CCU", text)
-
 
     def test_hcclbot_routes_through_executable_policy(self) -> None:
         text = (PLUGIN_ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("workflows/scripts/workflow_policy.py", text)
         self.assertIn("`route`", text)
         self.assertIn("AIV_OUT_OF_SCOPE", POLICY.route_requirement("AIV op").reason)
+
 
 if __name__ == "__main__":
     unittest.main()

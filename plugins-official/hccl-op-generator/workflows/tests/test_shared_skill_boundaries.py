@@ -10,8 +10,7 @@ import unittest
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-COMMUNICATION = REPO_ROOT / "communication"
+from skill_sources import COMMUNICATION
 
 
 def read_skill(name: str) -> str:
@@ -22,7 +21,7 @@ class SharedSkillBoundaryTests(unittest.TestCase):
     def test_environment_check_returns_evidence_not_plugin_state(self) -> None:
         text = read_skill("hccl-env-check")
         self.assertIn("status: READY|NOT_READY", text)
-        self.assertIn("不写任务状态文件", text)
+        self.assertIn("不修改被检查环境", text)
         self.assertNotIn("environment.md", text)
         self.assertNotIn("禁止进入 Step", text)
 

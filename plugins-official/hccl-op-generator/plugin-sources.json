@@ -7,6 +7,7 @@
     "communication/hccl-aicpu-debug",
     "communication/hccl-aicpu-whitebox-design",
     "communication/hccl-aicpu-perf-optimize",
+    "communication/hccl-ccu-best-practice",
     "communication/hccl-env-check",
     "communication/hccl-env-setup",
     "communication/hccl-test-tool-hvm"

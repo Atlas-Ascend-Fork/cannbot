@@ -1,8 +1,9 @@
 ---
 name: hccl-developer
-description: HCCL AICPU 算法实现 Agent。负责按冻结设计修改生产源码、CMake 和开发日志。触发：AICPU 达到 BASELINE_READY，或 Review/Test 失败需要定向修复；不拥有基线、安装、共享 Checker 或最终验收。
+description: HCCL AICPU/CCU 算法实现 Agent。负责按冻结设计修改生产源码、CMake 和开发日志。触发：AICPU/CCU 达到 BASELINE_READY，或 Review/Test 失败需要定向修复；不拥有基线、安装、共享 Checker 或最终验收。
 mode: subagent
 skills:
+  - hccl-ccu-best-practice
   - hccl-aicpu-best-practice
   - hccl-aicpu-debug
   - hccl-doc-search
@@ -29,8 +30,9 @@ permission:
 | 引擎 | 必须加载 | 实施依据 |
 |---|---|---|
 | AICPU | `hccl-aicpu-best-practice` 及其共享跨层契约；故障修复按需加载 `hccl-aicpu-debug`，查证文档时按需加载 `hccl-doc-search` | `{task_dir}` 中已经冻结的规格、设计、计划和基线报告 |
+| CCU | `hccl-ccu-best-practice` 的实现、同步与参数契约工具 | 冻结的 CCU 设计、launch 契约及有效基线 |
 
-只接受 AICPU 任务；CCU/AIV/HostDPU 返回 `BLOCKED`，不得套用 AICPU 规则。技术细节从相应 Skill 和目标版本真实源码获取，不在本 Agent 中维护副本。
+接受 AICPU/CCU，按传入 engine 加载相应 Skill；AIV/HostDPU 返回 BLOCKED。下文 AICPU 专节仅用于 AICPU，CCU 按本文件的 CCU 专节执行。
 
 ## 输入门禁
 
@@ -63,6 +65,14 @@ permission:
 禁止写入 `TASK_SPEC.md`、`DATAFLOW_SPEC.md`、`dataflow/*.md`、`DESIGN.md`、`TEST_PLAN.md`、`BASELINE_REPORT.md`、`REVIEW.md`、`TEST_REPORT.md` 和 `task-index.json`。
 
 `HANDOFF.md` 至少列出输入/输出源码身份、实际变更文件、静态检查及退出状态、未解决项，以及旧 Review/Test 是否应失效。
+
+## CCU 职责与输出
+
+按 [CCU 工作流](../workflows/ccu-multi-agent-workflow.md) 和冻结规格/设计/基线实现，加载 `hccl-ccu-best-practice` 的实现与同步参考。只写 HCCL 生产代码/CMake、LOG 和 HANDOFF，使用共享 log 模板（engine=CCU）与 ccu-handoff 模板；HCOMM 只读。
+
+复用接入记录并定向补查差异；逐项核对 `launch-contract.json`、`sync-contract.json` 与实现，运行 Skill 的launch/sync/arith三类检查器，记录静态结果和可恢复联合身份。参数 ABI、资源、同步或矩阵需要改变时返回 DESIGN_ISSUE，不擅自改写 Architect 的三个 JSON 附件。候选全量构建、安装和 Checker 由 Verifier 执行。
+
+静态检查可使用`check_contracts.py`统一入口。按方法卡和短代码范式定向实施；LOG引用JSON字段与代码落点，记录差异及自身核验，不重抄完整槽表。HCCL输入/输出单串填头字段，HCOMM另列正文。
 
 ## 返回状态
 
