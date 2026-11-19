@@ -1,5 +1,5 @@
-use_when: Flash 可选性能优化子图：冻结对照后探索选优；候选及最终选定版本必须精度全通过。挂载到 op-dev-flash.yaml 时使用 performance-optimize
-  节点，依赖 implementation。
+use_when: Flash 工作流的可选性能优化子图：用户确认接入性能优化且存在 active performance 用例时，在 implementation 验收后调用
+  ops-perf-optimize-workflow 完成优化、回集成与全量验证。挂载到 op-dev-flash.yaml 时使用 performance-optimize 节点，依赖 implementation。
 workflow: flash-performance-optimize
 max_parallel: 1
 nodes:
@@ -7,7 +7,7 @@ nodes:
   task_type: normal
   yaml: ../../../tasks/cannbot-dsl/flash/性能优化.yaml
   depends_on: []
-  executor: ops-direct-invoke-developer
+  executor: ops-direct-invoke-perf-coordinator
   verifier: ops-direct-invoke-verifier
   max_retries: 2
   on_exhaust: exit

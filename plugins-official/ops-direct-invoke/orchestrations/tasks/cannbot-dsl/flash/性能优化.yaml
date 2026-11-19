@@ -1,29 +1,24 @@
 title: 性能优化
 goal:
-- 在单个性能节点内冻结对照、按授权预算探索并选择最终正确实现，保留完整比较与验收证据。
+- 在CANNBOT-DSL的Flash 工作流中,完成CANNBOT-DSL算子的性能优化任务。或完成指定CANNBOT-DSL算子的性能优化任务
 approach:
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，以 `optimize` 查询版本状态并取得真实 CODE_DIR；核对 implementation 的原始通过记录、已验收版本、测试、原用户性能场景、目标、比较协议、采用条件及预算来源；缺测量场景或必要预算时明确阻断，不造默认用例。
-- 运行固定 runner 前将 `CANNBOTDSL_CASE_CACHE_DIR` 设为 `$WORK_DIR/case-cache/performance-optimize`，缓存放在代码仓外；`--input` 显式枚举所需设计和全部测试源，不包含结果和缓存。
-- Flash 本节点覆盖版本协议参考文档中的旧性能写集：允许与 implementation 相同的明确生产源码路径及必要的 `scripts/performance` 采集脚本，begin 的 `--allow` 逐项列出，不放大至 operators 目录；测试、Golden 和设计保持冻结。
-- 不可改写地冻结原控制的源码、测试、提交和协议；interleaved 尚无候选时只冻结对照并等待配对，不伪造控制样本。
-- 登记假设、候选身份及父版本、有限尝试、停止条件和预算，预留最终回归；失败、超时、编译失败和复评均按原合同计账，不换名清零。
-- 每轮启动候选探索前，先在 `opt/candidates.yaml` 登记新候选、在 `opt/iteration.yaml` 将新轮次记为 planned，运行 `"$PYTHON" "$OPS_DIRECT_INVOKE_ROOT/tools/flash_backend_checks.py" budget --contract "$WORK_DIR/contract/perf-contract.yaml" --next-rounds 1`；脚本自动读取现有两份台账，恢复已开始轮次时改用 `--next-rounds 0`。检查通过后才标记 started 并探索；失败、重试和中断不清零。该机器检查只约束候选和轮次；没有已确认模型评价上限时不启动多阶段 OpModel 搜索，改用有限候选的直接证据与实测。
-- 在真实 CODE_DIR 串行生成并 checkpoint 候选；诊断子集可提前淘汰错误，但正式计时和排名前必须通过当前版本完整功能集合。
-- 使用冻结协议及已有真实测量能力采样，保留顺序和所有样本；正确性 runner 不是计时器。缺少正式测量能力报告 BLOCKED_ENV，不造旁路。
-- 按停止条件选候选或获授权保留原控制，恢复或回写真实代码仓并记录当前 HEAD 和加载路径；最终版本须有完整当前正确性、必要构建加载及设计符合证据。
-- 在 `$WORK_DIR/opt/report.md` 保存原控制、预算账目、候选、决定、停止原因、目标结果及局限；通过 code_versions verify 归档最终完整正确性结果，由验收者独立核对并按原协议登记证据。硬目标未达不能宣称完成。
+- 从 $USER_PROMPT、$WORK_DIR/design/doc/ 下的 spec.yaml、REQUIREMENTS.md、DESIGN.md、$WORK_DIR/environment/ 下的 environment.yaml、env_selected_soc.yaml、soc-info.yaml 及已验收上游交付件接入算子代码及版本、Golden及测试入口、编译构建工程、blackbox/whitebox/performance 全量用例与判定标准、环境、性能目标及修改授权。
+- 性能目标分两种处理：用户已给出时逐项沿用其目标、适用 case 与判定口径，不改写、不放宽、不补造阈值；未给出时不得自行假定或套用默认目标，将缺口报告给 PM，由需求对齐阶段按集中问卷补齐，未获用户明确答复前保持阻塞、不启动优化。
+- 首次输出目录为 $WORK_DIR/性能优化/；续跑时接入任务 prompt 指定的已有请求、恢复点及获准续写的运行目录。
+- 必须加载 `ops-perf-optimize-workflow` Skill，按其中的要求执行。
+- 将最终实现、性能结果、Flash 工作流全量用例验证记录及恢复入口的路径汇总至 $WORK_DIR/性能优化交接.md。
 procedure:
-- 读取 `$OPS_DIRECT_INVOKE_ROOT/docs/code-versions.md`，以 `optimize` 执行 code_versions status，取得并使用返回的真实 CODE_DIR；执行检查时同样将 `CANNBOTDSL_CASE_CACHE_DIR` 设为 `$WORK_DIR/case-cache/performance-optimize`，核对冻结输入不含结果和缓存。核验全部必要证据成功后按协议执行 verify --accept 登记本轮成功证据。
-- 按 Flash 本节点写集核对 begin 的 `--allow`：仅 implementation 的明确生产源码路径及必要 `scripts/performance` 采集脚本，测试、Golden 和设计不得改动；本节点写集覆盖版本协议参考文档的旧性能写集。
-- 核对 budget 命令的累计候选与已启动轮次来自当前台账，仍满足原契约上限；同一轮不得因新反馈追加未预登记的模型搜索阶段。
-- 检查原控制不变、预算与失败账目、同口径比较、最终选择和三类证据；内部基线没有单独验收，须由本节点验收。
+- 读取需求、环境及性能优化交接，核对采用的性能目标与用户答复一致：已给出时逐项对应，未给出时须有问卷答复依据；按 blackbox、whitebox、performance 全量用例及判定标准核对最终版本的逐例原始结果，确认全部执行通过；流程未完成、用例跳过、结果失败、目标缺失或证据不足时不通过。
+- 读取 $WORK_DIR/.workflow/sessions/ 下本节点 execute 阶段的 session 存档（文件名以本节点任务 ID 开头，形如 <task_id>.execute.<时间戳>.jsonl；子图节点在同名子目录），在验收报告中记录实际读取的存档文件名与时间，并核对执行者声明与实际执行过程一致。
+- 将结论、证据路径及上述 session 记录写入 $WORK_DIR/性能优化验收报告.md，并执行 test -s "$WORK_DIR/性能优化验收报告.md"。
 acceptance:
-- 'test -s "$CODE_DIR/operators/<op>/<op>.py"'
-- 'test -s "$WORK_DIR/opt/report.md"'
+- 'test -s "$WORK_DIR/性能优化交接.md"'
 out_of_scope:
-- 不改控制、冻结测试或阈值，不增预算、切换设备或重开流程，不生成额外性能子节点及独立回归、检视或文档节点。
+- 未经授权修改 Flash 工作流的规格、设计、Golden、runner、测试用例、判定标准或写出约定范围。
 context:
   execute:
-    skills: [cannbot-dsl-best-practice, cannbot-dsl-test-generator, ops-theoretical-performance-estimation]
+    skills:
+    - ops-perf-optimize-workflow
   verify:
-    skills: [cannbot-dsl-best-practice, cannbot-dsl-test-generator, ops-theoretical-performance-estimation]
+    skills:
+    - ops-direct-invoke-doc-templates
