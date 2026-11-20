@@ -405,7 +405,7 @@ def test_small_regression_routes_and_inconclusive_cannot_pass_full_gate(tmp_path
     assert no_proof["decision"] == "confirmation_required"
 
 
-def test_state_records_raw_proof_dependencies_and_invalidates_changed_input(tmp_path):
+def test_state_records_raw_proof_dependencies_and_invalidates_changed_input(tmp_path, monkeypatch):
     f = fixture(tmp_path)
     summary = dump(tmp_path / "summary.json", confirmed(f))
     args = SimpleNamespace(performance_summary=summary, cumulative_performance_summary=summary,
@@ -415,6 +415,10 @@ def test_state_records_raw_proof_dependencies_and_invalidates_changed_input(tmp_
     record = {"performance": references,
               "artifacts": [artifact_identity(p) for p in paths],
               "status": "complete", "completed_at": "2026-10-13"}
+
+    def no_recompute(*args, **kwargs):
+        pytest.fail("report rendering must reuse the verified summary")
+    monkeypatch.setattr("summarize_performance_effects.verify_proof", no_recompute)
     assert recorded_performance(record)[0]["schema_version"] == 3
     report = "\n".join(performance_report({"stages": {"final.performance": record}}))
     assert "paired_confidence" in report and "confidence_effect_v1" in report and "配对估计" in report
@@ -465,6 +469,7 @@ def test_large_change_can_finish_from_ten_original_samples_without_repeated_roun
     assert case["classification"] == "effective_improvement"
     assert case["classification_basis"] == "canonical10_independent_confidence"
     assert "paired_estimate_us" not in case["statistical_evidence"]
+
     m = manifest(f)
     mdata = json.loads(m.read_text())
     mdata["configuration"]["precision_diagnosis_policy"] = "persistent"
@@ -484,12 +489,77 @@ def test_large_change_can_finish_from_ten_original_samples_without_repeated_roun
         check_phase_artifacts("integration", [str(report), str(raw_records)], m)
 
 
-def test_small_change_canonical_ci_cannot_replace_balanced_paired_confirmation(tmp_path):
-    f = fixture(tmp_path, [-.7])
+def test_native_execution_identity_reuses_source_build_and_load_validation(tmp_path):
+    from test_execution_identity import record
+    from performance_effect_evidence import _read_identities
+
+    _, document, loaded = record(tmp_path)
+    expected = {"execution_identity": receipt(document), "variant": "baseline"}
+    identity_path = dump(tmp_path / "perf-identity.json", expected)
+    plan = {"soc": "Ascend910_93", "effect_case_id": "t1", "expected_identity": receipt(identity_path)}
+    dependencies = {}
+    compiled, identities = _read_identities(plan, {"identity": expected}, tmp_path, dependencies)
+    assert compiled is None
+    assert identities["baseline"]["execution_identity"] == receipt(document)
+    assert str(loaded) in dependencies
+    loaded.write_bytes(b"different runtime")
+    with pytest.raises(ValueError, match="artifact identity changed"):
+        _read_identities(plan, {"identity": expected}, tmp_path, {})
+
+
+def test_git_source_identity_uses_existing_freeze_algorithm(tmp_path):
+    import subprocess
+    from prepare_case_sets import code_identity
+    from performance_effect_evidence import _walk_source_tree
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    source = tmp_path / "kernel.cpp"
+    source.write_text("original source")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=Test", "-c",
+                    "user.email=test@example.com", "commit", "-qm", "baseline"], check=True)
+    frozen = code_identity(tmp_path)
+    assert frozen["identity_method"] == "git-tree-v1"
+    _walk_source_tree(frozen, {})
+    source.write_text("different source")
+    with pytest.raises(ValueError, match="source tree identity changed"):
+        _walk_source_tree(frozen, {})
+
+
+@pytest.mark.parametrize("invoked,retained", [(False, False), (True, True), (True, False), (False, True)])
+def test_prime_precision_follows_actual_target_preparation(tmp_path, invoked, retained):
+    from performance_effect_evidence import _check_precision
+
+    f = fixture(tmp_path, [-5])
+    plan = json.loads(f.plan.read_text())
+    collection = json.loads(f.collection.read_text())
+    execution = json.loads((tmp_path / "execution.json").read_text())
+    if not invoked:
+        for run in execution["case_runs"]:
+            run["preparation_kernel_sequence"] = []
+    precision_path = tmp_path / "evidence/precision-results.json"
+    precision = json.loads(precision_path.read_text())
+    if not retained:
+        precision["prime_checks"] = []
+        dump(precision_path, precision)
+    args = (plan, collection, collection["case_ids"], precision_path.parent, {}, execution)
+    if invoked == retained:
+        _check_precision(*args)
+    else:
+        with pytest.raises(ValueError, match="prime original precision coverage"):
+            _check_precision(*args)
+
+
+@pytest.mark.parametrize("delta,classification", [
+    (-.7, "effective_improvement"), (.7, "effective_regression"), (0, "inconclusive"),
+])
+def test_small_canonical_changes_follow_their_confidence_interval(tmp_path, delta, classification):
+    f = fixture(tmp_path, [delta])
     p = canonical_proof(f)
     s = summarize(f.baseline, f.candidate, policy_id="confidence_effect_v1", evidence_paths=[p])
-    assert s["cases"][0]["classification"] == "inconclusive"
-    assert s["cases"][0]["classification_basis"] == "small_change_requires_paired_confirmation"
+    assert s["cases"][0]["classification"] == classification
+    suffix = "_interval_crosses_zero" if classification == "inconclusive" else "_confidence"
+    assert s["cases"][0]["classification_basis"] == "canonical10_independent" + suffix
 
 
 def test_missing_output_receipt_is_rejected_when_building_new_proof(tmp_path):

@@ -1,6 +1,6 @@
 ---
 name: ascendc-performance-review
-description: AscendC 算子代码静态检视，发现性能坏味道。不运行代码，按检查点索引（PRC 系列）逐项排查：架构宏门控误关快路、平台参数写死、double buffer/搬运合并/核间均衡/UB 切分等访存问题、RegBase/VF/SIMT/标量与头开销等。适用于性能优化前的代码审查、为瓶颈分析提供静态佐证。不适用于性能采集与验收（走 ops-profiling）。
+description: AscendC 算子代码静态检视，发现性能坏味道。不运行代码，按检查点索引（PRC 系列）逐项排查：架构宏门控误关快路、平台参数写死、double buffer/搬运合并/核间均衡/UB 切分等访存问题、RegBase/VF/SIMT/标量与头开销等。适用于性能优化前的代码审查、为瓶颈分析提供静态佐证。不适用于性能采集与验收（走 ops-profiling-report）。
 ---
 
 # AscendC 性能静态检视

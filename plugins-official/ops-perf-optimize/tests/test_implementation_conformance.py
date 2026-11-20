@@ -88,6 +88,42 @@ def test_exact_complete_result_passes(tmp_path: Path) -> None:
     assert not report["conformance_failures"]
 
 
+@pytest.mark.parametrize("identifier", [
+    "l1-slots-and-single-M-dispatch",
+    "whole-K1-ND2NZ-batches",
+    "K0-subviews-and-MMAD-order",
+])
+def test_feature_id_spelling_preserves_exact_evidence_binding(tmp_path, identifier):
+    candidate = make_candidate(tmp_path)
+    value, result = contract(), complete_result()
+    previous = value["required_features"][0]["id"]
+    value["required_features"][0]["id"] = identifier
+    feature = result["features"].pop(previous)
+    result["features"][identifier] = feature
+    malformed, report = CONFORMANCE.validate_result(value, result, candidate)
+    assert not malformed and report["decision"] == "pass"
+    assert report["required_features"][0] == identifier
+
+    result["features"][identifier.lower()] = result["features"].pop(identifier)
+    malformed, report = CONFORMANCE.validate_result(value, result, candidate)
+    assert malformed and report["decision"] == "fail"
+
+
+@pytest.mark.parametrize("identifier", [None, "", "  ", 123])
+def test_feature_ids_require_nonempty_strings(identifier):
+    value = contract()
+    value["required_features"][0]["id"] = identifier
+    with pytest.raises(CONFORMANCE.ContractError, match="non-empty string"):
+        CONFORMANCE.required_feature_ids(value)
+
+
+def test_duplicate_feature_ids_are_rejected():
+    value = contract()
+    value["required_features"][1]["id"] = value["required_features"][0]["id"]
+    with pytest.raises(CONFORMANCE.ContractError, match="duplicate required feature"):
+        CONFORMANCE.required_feature_ids(value)
+
+
 def test_partial_implementation_cannot_be_called_complete(tmp_path: Path) -> None:
     candidate = make_candidate(tmp_path)
     result = complete_result()

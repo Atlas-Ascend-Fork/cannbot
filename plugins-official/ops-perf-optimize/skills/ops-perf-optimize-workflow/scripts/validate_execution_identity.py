@@ -55,16 +55,20 @@ def validate_source(manifest: dict[str, Any], run_root: Path | None = None) -> d
     frozen = manifest.get("inputs", {}).get("code")
     if not isinstance(frozen, dict) or not frozen.get("path") or not frozen.get("sha256"):
         raise ValueError("run manifest has no frozen code identity")
-    current = code_identity(Path(frozen["path"]))
+    current = code_identity(Path(frozen["path"]), recorded=frozen)
     if current["sha256"] != frozen["sha256"]:
         # Integration writeback legitimately rewrites the original project after the
         # baseline freeze. The frozen content is preserved by the run's canonical
         # snapshot (five-stage layout); accept it only on an exact frozen-SHA match.
-        snapshot = run_root / "preparation" / "original_snapshot" if run_root else None
-        if snapshot is not None and snapshot.is_dir():
-            snapshot_identity = code_identity(snapshot)
-            if snapshot_identity["sha256"] == frozen["sha256"]:
-                return frozen
+        if run_root is not None:
+            # New four-stage layout keeps the archive under baseline/; older
+            # five-stage runs keep it under preparation/ (read-only legacy path).
+            for snapshot in (
+                run_root / "baseline" / "original_snapshot",
+                run_root / "preparation" / "original_snapshot",
+            ):
+                if snapshot.is_dir() and code_identity(snapshot)["sha256"] == frozen["sha256"]:
+                    return frozen
         raise ValueError("frozen source identity changed")
     return frozen
 
@@ -89,9 +93,12 @@ def _effective_source_identity(item: dict[str, Any], run_root: Path | None) -> d
     if actual["sha256"] == item["sha256"]:
         return actual
     if run_root is not None:
-        candidate = run_root / "preparation" / "original_snapshot" / recorded_path.name
-        if candidate.is_file() and sha256_file(candidate) == item["sha256"]:
-            return file_identity(candidate)
+        for candidate in (
+            run_root / "baseline" / "original_snapshot" / recorded_path.name,
+            run_root / "preparation" / "original_snapshot" / recorded_path.name,
+        ):
+            if candidate.is_file() and sha256_file(candidate) == item["sha256"]:
+                return file_identity(candidate)
     raise ValueError(f"runtime source artifact identity changed: {actual['path']}")
 
 
@@ -133,11 +140,85 @@ def validate_runtime_evidence(
 
 
 def _run_root(identity_path: Path) -> Path | None:
-    """Nearest ancestor directory holding the run manifest (five-stage run root)."""
+    """Nearest ancestor directory holding the run manifest (run root)."""
     for ancestor in identity_path.resolve().parents:
         if (ancestor / "run-manifest.json").is_file():
             return ancestor
     return None
+
+
+def _baseline_anchor(run_root: Path | None) -> dict[str, str] | None:
+    """The frozen baseline commit recorded by baseline finalize (four-stage git flow).
+
+    Under the default (b) dirty policy the manifest's source-tree hash covers the
+    user worktree (HEAD + uncommitted changes) while the measured baseline is the
+    committed state; the execution-identity chain therefore anchors on the
+    immutable baseline commit, and the directory hash stays a user-worktree
+    reference.
+    """
+    if run_root is None:
+        return None
+    payload = None
+    for name in ("baseline.json", "baseline-finalize.json"):
+        path = run_root / "baseline" / name
+        if path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            break
+    if payload is None:
+        return None
+    commit, tree = payload.get("baseline_commit"), payload.get("baseline_tree_sha")
+    if isinstance(commit, str) and isinstance(tree, str):
+        return {"kind": "git-baseline", "commit": commit, "tree_sha": tree}
+    return None
+
+
+def _anchor_worktree_check(run_root: Path, anchor: dict[str, str]) -> None:
+    """The build source (run worktree) must equal the frozen baseline tree.
+
+    Both conditions matter: HEAD must sit on the frozen baseline commit AND the
+    working tree must be clean — uncommitted edits would make the actually
+    compiled source differ from the recorded tree while HEAD stays identical.
+    """
+    import subprocess as _sp
+
+    from git_tree import GitError, tree_sha
+
+    worktree = run_root / "worktree"
+    if not worktree.is_dir():
+        return
+    status = _sp.run(
+        ("git", "-C", str(worktree), "status", "--porcelain"),
+        capture_output=True, text=True,
+    )
+    if status.returncode != 0:
+        raise ValueError(f"cannot inspect the run worktree status: {status.stderr.strip()}")
+    if status.stdout.strip():
+        raise ValueError(
+            "run worktree has uncommitted changes: the measured source differs "
+            "from HEAD; commit or discard them before recording baseline identity"
+        )
+    try:
+        actual = tree_sha(worktree, "HEAD")
+    except GitError as error:
+        raise ValueError(f"cannot resolve the run worktree tree: {error}") from error
+    if actual != anchor["tree_sha"]:
+        raise ValueError(
+            "worktree tree differs from the frozen baseline commit: the measured "
+            "source is not the frozen baseline (build on the baseline checkout, "
+            "not on a drifted or user worktree)"
+        )
+
+
+def _anchor_resolves(anchor: dict[str, str], manifest: dict[str, Any]) -> bool:
+    """The baseline commit must still resolve to the recorded tree in the repo."""
+    from git_tree import GitError, run_git
+
+    repo = Path(manifest["inputs"]["code"]["path"])
+    try:
+        actual = run_git(repo, "rev-parse", f'{anchor["commit"]}^{{tree}}').strip()
+    except (GitError, OSError):
+        return False
+    return actual == anchor["tree_sha"]
 
 
 def validate_document(
@@ -147,8 +228,20 @@ def validate_document(
 ) -> dict[str, Any]:
     if document.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(f"unsupported execution identity schema: {document.get('schema_version')}")
-    source = validate_source(manifest, run_root)
-    if document.get("source") != source:
+    anchor = document.get("source_anchor")
+    if isinstance(anchor, dict) and anchor.get("kind") == "git-baseline":
+        if not _anchor_resolves(anchor, manifest):
+            raise ValueError(
+                "execution identity baseline anchor does not resolve to the recorded "
+                "tree; the frozen baseline commit is missing or rewritten"
+            )
+    if anchor is not None:
+        # With a git-baseline anchor the immutable commit is the identity source;
+        # a drifted user worktree (directory hash) does not invalidate the chain.
+        source = manifest["inputs"]["code"]
+    else:
+        source = validate_source(manifest, run_root)
+    if document.get("source") != source and anchor is None:
         raise ValueError("execution identity source does not match the run manifest")
 
     targets = document.get("targets")
@@ -228,7 +321,16 @@ def dependency_paths(document: dict[str, Any]) -> list[str]:
 def record(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = args.manifest.resolve()
     manifest = load_manifest(manifest_path)
-    source = validate_source(manifest)
+    anchor = _baseline_anchor(_run_root(args.out))
+    if anchor:
+        # With a git-baseline anchor the immutable baseline commit is the
+        # identity source; a drifted user worktree (e.g. cleaned per the frozen
+        # dirty policy) does not invalidate the chain. The build source itself
+        # is checked against the frozen baseline tree below.
+        source = manifest["inputs"]["code"]
+        _anchor_worktree_check(_run_root(args.out), anchor)
+    else:
+        source = validate_source(manifest)
     expected_socs = set(manifest["configuration"]["target_socs"])
     if args.target_soc not in expected_socs:
         raise ValueError(f"target SoC is not frozen in the run manifest: {args.target_soc}")
@@ -264,6 +366,8 @@ def record(args: argparse.Namespace) -> dict[str, Any]:
     )
     if document.get("schema_version") != SCHEMA_VERSION or document.get("source") != source:
         raise ValueError("existing execution identity belongs to another source or schema")
+    if anchor:
+        document["source_anchor"] = anchor
     targets = [item for item in document.get("targets", []) if item.get("target_soc") != args.target_soc]
     targets.append(target)
     document["targets"] = sorted(targets, key=lambda item: item["target_soc"])

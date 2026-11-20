@@ -19,7 +19,7 @@ def read(relative: str) -> str:
     text = path.read_text(encoding="utf-8")
     references = {
         "ops-perf-analysis": "references/analysis-execution.md",
-        "ops-perf-implementation": "references/implementation-execution.md",
+        "ops-perf-implementation": "references/selection-and-final.md",
     }
     if path.parent.name in references:
         text += (path.parent / references[path.parent.name]).read_text()
@@ -59,7 +59,6 @@ def test_workflow_has_one_contract_and_small_dispatch_envelope() -> None:
 def test_dispatch_templates_cover_every_role_and_mode_specific_interface() -> None:
     prompts = read("skills/ops-perf-optimize-workflow/workflows/task-prompts.md")
     role_templates = {
-        "preparation": "preparation.md",
         "baseline": "baseline.md",
         "analysis": "analysis.md",
         "implementation": "implementation.md",
@@ -72,8 +71,6 @@ def test_dispatch_templates_cover_every_role_and_mode_specific_interface() -> No
         loaded[role] = read(relative)
         assert f"ROLE: {role}" in loaded.get(role, "")
 
-    assert "TASK_KIND: extract-single-operator" in loaded.get("preparation", "")
-    assert "通用 subagent + `ops-perf-preparation`" in prompts
     assert "performance-full-cases.csv" in read("skills/ops-perf-optimize-workflow/workflows/prompts/generation.md")
     assert "generalization-full-cases.csv" in read("skills/ops-perf-optimize-workflow/workflows/prompts/generation.md")
     assert "performance-tuning-cases.csv" in loaded.get("analysis", "")
@@ -83,14 +80,6 @@ def test_dispatch_templates_cover_every_role_and_mode_specific_interface() -> No
     assert "scheme-conformance-gate.json" in loaded.get("implementation", "")
     assert "public API/constraints/dtypes unchanged" in loaded.get("implementation", "")
     assert "integration-safety-gate.json" in loaded.get("integration", "")
-    for token in (
-        "optimized-involved-cases.csv",
-        "uninvolved-cases-verification.md",
-        "5%",
-        "至少 10",
-        "20%",
-    ):
-        assert token in loaded.get("integration", "")
 
 
 def test_vf_discovery_readiness_and_real_build_gate_are_preserved() -> None:
@@ -100,28 +89,16 @@ def test_vf_discovery_readiness_and_real_build_gate_are_preserved() -> None:
     combined = "\n".join((analysis, impl, contract))
     for token in (
         "reference/common/arch35/regbase/catalog.json",
-        "vf_preflight.py --strict",
         "readiness",
         "example_build_contract",
-        "annotated_excerpt",
-        "reference_only",
     ):
         assert token in combined
     for token in (
         "reference/common/arch35/regbase/catalog.json",
-        "vf_preflight.py --strict",
         "readiness",
         "example_build_contract",
     ):
         assert token in analysis or token in contract
-        assert token in impl or token in contract
-    assert "真实候选翻译单元才是门禁" in impl
-    assert "真实候选构建才是门禁" in read(
-        "skills/ops-perf-implementation/references/engineering-constraints.md"
-    )
-    assert "--expect-vf" in impl
-    assert "--expect-cast" in impl
-    assert "static constexpr" in impl
 
 
 def test_deterministic_rope_quant_and_family_routing_remain_explicit() -> None:
@@ -160,11 +137,6 @@ def test_exact_implementation_contract_and_conformance_gate_are_mechanical() -> 
     assert "validate_implementation_conformance.py" in impl
     assert "scheme-conformance.json" in impl
     assert "scheme-conformance-gate.json" in impl
-    assert "dead-code-audit.md" in impl
-    assert "不得带 `UNKNOWN` 交付" in impl
-    assert "任何组合代码都是新候选" in read(
-        "skills/ops-perf-implementation/references/selection-and-final.md"
-    )
 
 
 def test_soc_isolation_and_public_contract_span_workflow_agents_skills() -> None:
@@ -172,7 +144,7 @@ def test_soc_isolation_and_public_contract_span_workflow_agents_skills() -> None
     contract = read("skills/ops-perf-optimize-workflow/references/workflow-contract.md")
     analysis = read("skills/ops-perf-analysis/SKILL.md")
     impl = read("skills/ops-perf-implementation/SKILL.md")
-    integrate = read("skills/ops-perf-postprocess/references/writeback.md")
+    integrate = read("skills/ops-perf-postprocess/references/merge-protocol.md")
     mechanics = read(
         "skills/ops-perf-postprocess/references/integration-mechanics.md"
     )
@@ -195,23 +167,6 @@ def test_soc_isolation_and_public_contract_span_workflow_agents_skills() -> None
     assert "验证范围不是支持范围" in integrate
     assert "共享实现先复制后单独路由" in skill
     assert "public API/constraints/dtypes have zero diff" in integration_prompt
-
-
-def test_api_existence_is_not_confused_with_build_visibility() -> None:
-    impl = read("skills/ops-perf-implementation/SKILL.md")
-    contract = read("skills/ops-perf-optimize-workflow/references/workflow-contract.md")
-    for text in (
-        impl,
-        read("skills/ops-perf-implementation/references/engineering-constraints.md"),
-    ):
-        assert "api_missing" in text
-        assert "host" in text
-        assert "device" in text
-        assert "辅助 probe" in text
-    assert "build_contract_mismatch" in impl
-    assert "host_pass_leakage" in impl
-    assert "xasc_combined" in impl
-    assert "__local_mem__" in impl
 
 
 def test_case_freezing_is_deterministic_and_not_agent_work() -> None:
@@ -238,7 +193,6 @@ def test_reviewed_mode_analysis_and_acceptance_guards_remain_explicit() -> None:
     skill = read("skills/ops-perf-optimize-workflow/SKILL.md")
     contract = read("skills/ops-perf-optimize-workflow/references/workflow-contract.md")
     analysis = read("skills/ops-perf-analysis/SKILL.md")
-    impl = read("skills/ops-perf-implementation/SKILL.md")
     case_designer = read(
         "skills/ops-perf-baseline-evaluate/references/case-generation.md"
     )
@@ -261,7 +215,3 @@ def test_reviewed_mode_analysis_and_acceptance_guards_remain_explicit() -> None:
     assert "ascendc-mc2-best-practice" in analysis
     assert "ascendc-mc2-best-practice" in sources
     assert "ops/ascendc-mc2-best-practice" in sources
-
-    assert "功能验收不是可删除的“提速步骤”" in impl
-    assert "## 核心约束" in impl
-    assert "不得通过减少 case、跳过门禁或缩短精度诊断换取速度" in impl

@@ -401,7 +401,7 @@
     },
     {
       "name": "ops-perf-optimize-skills",
-      "description": "AscendC 算子性能调优共享 Skills（17 项）。覆盖 profiling 采集、性能优化与 Blaze 路由、理论性能估算、精度与同步调试、环境检查、NPU 架构知识与注册算子模板，供 ops-perf-optimize 使用。",
+      "description": "AscendC 算子性能调优共享 Skills（15 项）。覆盖性能优化与 Blaze 路由、理论性能估算、精度与同步调试、环境检查、NPU 架构知识与注册算子模板，供 ops-perf-optimize 使用。",
       "source": {
         "source": "git-subdir",
         "url": "https://gitcode.com/cann/cannbot-skills.git",
@@ -416,8 +416,6 @@
       "category": "skills",
       "skills": [
         "./ops-theoretical-performance-estimation",
-        "./ops-simulator",
-        "./ops-profiling",
         "./ascendc-perf-optimize",
         "./ascendc-performance-best-practices",
         "./ascendc-blaze-best-practice",

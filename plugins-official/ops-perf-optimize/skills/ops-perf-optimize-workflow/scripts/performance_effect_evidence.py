@@ -34,7 +34,7 @@ from functools import wraps
 from itertools import permutations
 from pathlib import Path
 
-POLICIES = {"legacy_jitter_v1": 1, "confidence_effect_v1": 1}
+POLICIES = {"median_v1": 1, "legacy_jitter_v1": 1, "confidence_effect_v1": 1}
 METHODS = {"python_mt19937_percentile_median_v1", "numpy_pcg64_percentile_median_v1"}
 INDEPENDENT_METHOD = "python_mt19937_independent_medians_v1"
 HISTORICAL_CI = (
@@ -94,7 +94,9 @@ def _verified_receipts(function):
             result = function(*args, **kwargs)
             for path, expected in snapshot.items():
                 if _receipt_uncached(path) != expected:
-                    raise ValueError(f"effect dependency changed during verification: {path}")
+                    raise ValueError(
+                        f"effect dependency changed during verification: {path}"
+                    )
             return result
         finally:
             _RECEIPT_SNAPSHOT.reset(token)
@@ -124,10 +126,16 @@ def quantile(values, q):
 
 
 def compute_statistics(differences, method):
-    if method.get("id") not in METHODS or method.get("statistic") != "median" or method.get("quantile") != "linear":
+    if (
+        method.get("id") not in METHODS
+        or method.get("statistic") != "median"
+        or method.get("quantile") != "linear"
+    ):
         raise ValueError("unknown paired statistical method/version")
     if method.get("confidence") != 0.95 or not isinstance(method.get("seed"), int):
-        raise ValueError("paired method requires frozen 95% confidence and integer seed")
+        raise ValueError(
+            "paired method requires frozen 95% confidence and integer seed"
+        )
     draws = method.get("draws")
     if not isinstance(draws, int) or not 1000 <= draws <= 1000000:
         raise ValueError("bootstrap draws must be frozen in [1000,1000000]")
@@ -136,16 +144,28 @@ def compute_statistics(differences, method):
 
         # Do not replace this with Python random: the historical algorithm is frozen.
         rng = np.random.default_rng(method["seed"])
-        samples = rng.choice(np.asarray(differences), size=(draws, len(differences)), replace=True)
-        low, high = map(float, np.quantile(np.median(samples, axis=1), [0.025, 0.975], method="linear"))
+        samples = rng.choice(
+            np.asarray(differences), size=(draws, len(differences)), replace=True
+        )
+        low, high = map(
+            float,
+            np.quantile(np.median(samples, axis=1), [0.025, 0.975], method="linear"),
+        )
     else:
         rng = random.Random(method["seed"])
-        medians = sorted(statistics.median(rng.choices(differences, k=len(differences))) for _ in range(draws))
+        medians = sorted(
+            statistics.median(rng.choices(differences, k=len(differences)))
+            for _ in range(draws)
+        )
         low, high = quantile(medians, 0.025), quantile(medians, 0.975)
     wins = sum(d < 0 for d in differences)
     losses = sum(d > 0 for d in differences)
     n = wins + losses
-    p = min(1.0, 2 * sum(math.comb(n, k) for k in range(min(wins, losses) + 1)) / 2**n) if n else 1.0
+    p = (
+        min(1.0, 2 * sum(math.comb(n, k) for k in range(min(wins, losses) + 1)) / 2**n)
+        if n
+        else 1.0
+    )
     return {
         "method": method,
         "paired_estimate_us": statistics.median(differences),
@@ -174,17 +194,21 @@ def shared_candidate_rounds(plan):
     baselines = plan.get("baseline_variants")
     candidate = plan.get("candidate_variant")
     if baselines != ["original", "current"] or candidate != "candidate":
-        raise ValueError("shared candidate requires explicit original/current/candidate roles")
+        raise ValueError(
+            "shared candidate requires explicit original/current/candidate roles"
+        )
     rounds = plan.get("round_count")
     if type(rounds) is not int or rounds < 6 or rounds % 6:
-        raise ValueError("shared candidate rounds must contain complete six-permutation blocks")
+        raise ValueError(
+            "shared candidate rounds must contain complete six-permutation blocks"
+        )
     rows = plan.get("cases", [])
     if len(rows) != 3 * rounds or len({r.get("case_id") for r in rows}) != len(rows):
         raise ValueError("shared candidate missing/duplicate execution coverage")
     variants = baselines + [candidate]
     groups = []
     for i in range(rounds):
-        group = rows[3 * i:3 * i + 3]
+        group = rows[3 * i : 3 * i + 3]
         if {r.get("variant") for r in group} != set(variants) or any(
             type(r.get("round")) is not int
             or r["round"] != i
@@ -214,7 +238,10 @@ def _freeze_dependency(dependencies, item):
 def _walk_nested(dependencies, value):
     if isinstance(value, dict):
         if isinstance(value.get("path"), str) and value.get("sha256"):
-            if Path(value["path"]).is_dir() and value.get("identity_method") == "source-tree-v1":
+            if Path(value["path"]).is_dir() and value.get("identity_method") in {
+                "source-tree-v1",
+                "git-tree-v1",
+            }:
                 pass  # Full source tree is independently checked below.
             else:
                 _freeze_dependency(dependencies, value)
@@ -226,21 +253,34 @@ def _walk_nested(dependencies, value):
 
 
 def _check_collection_status(c):
-    if c.get("status") != "complete" or c.get("samples_per_case") != 10 or c.get("warmup_time_included") is not False:
+    if (
+        c.get("status") != "complete"
+        or c.get("samples_per_case") != 10
+        or c.get("warmup_time_included") is not False
+    ):
         raise ValueError("invalid canonical10 collection")
 
 
 def _freeze_collection_files(c, dependencies):
     for key in ("cases_csv", "runner_file", "identity_manifest"):
         if key in c:
-            _freeze_dependency(dependencies, {"path": c[key], "sha256": c.get(key + "_sha256")})
+            _freeze_dependency(
+                dependencies, {"path": c[key], "sha256": c.get(key + "_sha256")}
+            )
 
 
 def _merge_multi_session(c, sessions, execution, dependencies):
     if len(sessions) <= 1:
         return execution
-    executions = [read(_add_dependency(dependencies, entry["execution_manifest"])) for entry in sessions]
-    if any(doc.get("samples_per_case") != 10 or doc.get("warmup") != executions[0].get("warmup") for doc in executions):
+    executions = [
+        read(_add_dependency(dependencies, entry["execution_manifest"]))
+        for entry in sessions
+    ]
+    if any(
+        doc.get("samples_per_case") != 10
+        or doc.get("warmup") != executions[0].get("warmup")
+        for doc in executions
+    ):
         raise ValueError("multi-session canonical protocol is asymmetric")
     if any(
         entry.get("case_ids") != [run["case_id"] for run in doc["case_runs"]]
@@ -261,7 +301,9 @@ def _expected_label(row, label, plan, shared, shared_groups, rows):
         "order": (
             [r["variant"] for r in shared_groups[row["round"]]]
             if shared
-            else "AB" if rows[2 * row["round"]]["variant"] == plan["baseline_variant"] else "BA"
+            else "AB"
+            if rows[2 * row["round"]]["variant"] == plan["baseline_variant"]
+            else "BA"
         ),
         "position": row["position"],
         "variant": row["variant"],
@@ -269,7 +311,9 @@ def _expected_label(row, label, plan, shared, shared_groups, rows):
     }
 
 
-def _check_topology_row(index, row, label, run, round_labels, plan, shared, shared_groups, rows, execution):
+def _check_topology_row(
+    index, row, label, run, round_labels, plan, shared, shared_groups, rows, execution
+):
     if label.get("round_id") not in round_labels:
         round_labels.append(label.get("round_id"))
     expected = _expected_label(row, label, plan, shared, shared_groups, rows)
@@ -287,7 +331,9 @@ def _check_topology_row(index, row, label, run, round_labels, plan, shared, shar
         raise ValueError("paired topology labels differ from effect plan order/input")
 
 
-def _verify_topology(plan, c, rows, execution, shared, shared_groups, effect_plan, paired, dependencies):
+def _verify_topology(
+    plan, c, rows, execution, shared, shared_groups, effect_plan, paired, dependencies
+):
     if paired:
         topology = read(_add_dependency(dependencies, paired["plan"]["path"]))
         _freeze_dependency(dependencies, paired["plan"])
@@ -297,27 +343,47 @@ def _verify_topology(plan, c, rows, execution, shared, shared_groups, effect_pla
             or declaration.get("effect_plan") != effect_plan
             or topology.get("paired_confirmation") != declaration
         ):
-            raise ValueError("paired topology must bind the registered effect_plan receipt")
+            raise ValueError(
+                "paired topology must bind the registered effect_plan receipt"
+            )
         _freeze_dependency(dependencies, declaration["effect_plan"])
         if declaration.get("round_count") != plan.get("round_count") or declaration.get(
             "statistical_method"
         ) != plan.get("statistical_method"):
-            raise ValueError("topology statistical declaration differs from frozen effect plan")
+            raise ValueError(
+                "topology statistical declaration differs from frozen effect plan"
+            )
         if shared and any(
-            declaration.get(k) != plan.get(k) for k in ("kind", "baseline_variants", "candidate_variant")
+            declaration.get(k) != plan.get(k)
+            for k in ("kind", "baseline_variants", "candidate_variant")
         ):
             raise ValueError("shared candidate topology role binding mismatch")
-        _check_topology_labels(plan, rows, execution, shared, shared_groups, paired, topology, dependencies)
+        _check_topology_labels(
+            plan, rows, execution, shared, shared_groups, paired, topology, dependencies
+        )
 
 
-def _check_topology_labels(plan, rows, execution, shared, shared_groups, paired, topology, dependencies):
+def _check_topology_labels(
+    plan, rows, execution, shared, shared_groups, paired, topology, dependencies
+):
     labels = paired.get("case_labels", [])
     runs = topology.get("case_runs", [])
     if len(labels) != len(rows) or len(runs) != len(rows):
         raise ValueError("paired topology/effect plan label coverage mismatch")
     round_labels = []
     for index, (row, label, run) in enumerate(zip(rows, labels, runs)):
-        _check_topology_row(index, row, label, run, round_labels, plan, shared, shared_groups, rows, execution)
+        _check_topology_row(
+            index,
+            row,
+            label,
+            run,
+            round_labels,
+            plan,
+            shared,
+            shared_groups,
+            rows,
+            execution,
+        )
 
 
 def _check_order_and_validation(plan, c, order, validation, execution):
@@ -327,7 +393,9 @@ def _check_order_and_validation(plan, c, order, validation, execution):
         or [run["case_id"] for run in execution["case_runs"]] != order
     ):
         raise ValueError("paired case order/coverage differs from frozen plan")
-    if c.get("case_count_expected") != len(order) or c.get("case_count_collected") != len(order):
+    if c.get("case_count_expected") != len(order) or c.get(
+        "case_count_collected"
+    ) != len(order):
         raise ValueError("paired collection case count mismatch")
     if (
         execution.get("samples_per_case") != 10
@@ -335,14 +403,23 @@ def _check_order_and_validation(plan, c, order, validation, execution):
         or validation.get("case_order", order) != order
     ):
         raise ValueError("canonical10 validation/order mismatch")
-    warmup_keys = ("mode", "logical_op", "implementation", "tensor_bytes", "tensor_allocation")
+    warmup_keys = (
+        "mode",
+        "logical_op",
+        "implementation",
+        "tensor_bytes",
+        "tensor_allocation",
+    )
     if any(
         c.get("warmup", {}).get(k) != execution.get("warmup", {}).get(k)
         or validation.get("warmup", {}).get(k) != c.get("warmup", {}).get(k)
         for k in warmup_keys
     ):
         raise ValueError("asymmetric warmup protocol")
-    if validation.get("warmup_time_included") is not False or validation.get("preparation_time_included") is not False:
+    if (
+        validation.get("warmup_time_included") is not False
+        or validation.get("preparation_time_included") is not False
+    ):
         raise ValueError("warmup/preparation included in timing")
 
 
@@ -356,14 +433,24 @@ def _expected_launches(execution):
             expected.append((run["case_id"], -1, j, "preparation", kernel))
         for sample in range(10):
             for j, kernel in enumerate(warm + target):
-                expected.append((run["case_id"], sample, j, "warmup" if j < len(warm) else "target", kernel))
+                expected.append(
+                    (
+                        run["case_id"],
+                        sample,
+                        j,
+                        "warmup" if j < len(warm) else "target",
+                        kernel,
+                    )
+                )
     names = {entry[-1] for entry in expected}
     return expected, names
 
 
 def _read_launch_rows(dependencies, raw_path, names):
     session_rows = []
-    with _add_dependency(dependencies, raw_path).open(newline="", encoding="utf-8-sig") as stream:
+    with _add_dependency(dependencies, raw_path).open(
+        newline="", encoding="utf-8-sig"
+    ) as stream:
         for line, row in enumerate(csv.DictReader(stream), 2):
             name = _field(row, "Op Name")
             if name in names:
@@ -380,24 +467,44 @@ def _read_launch_rows(dependencies, raw_path, names):
     return session_rows
 
 
-def _map_raw_launches(plan, c, sessions, order, expected, names, dependencies, validation):
+def _map_raw_launches(
+    plan, c, sessions, order, expected, names, dependencies, validation
+):
     raw = []
-    raw_paths = [entry["op_summary"] for entry in sessions] if len(sessions) > 1 else [c["op_summary"]]
+    raw_paths = (
+        [entry["op_summary"] for entry in sessions]
+        if len(sessions) > 1
+        else [c["op_summary"]]
+    )
     for raw_path in raw_paths:
         raw.extend(_read_launch_rows(dependencies, raw_path, names))
-    if len(raw) != len(expected) or [r["kernel"] for r in raw] != [e[-1] for e in expected]:
+    if len(raw) != len(expected) or [r["kernel"] for r in raw] != [
+        e[-1] for e in expected
+    ]:
         raise ValueError("raw ordered launch mapping incomplete or mismatched")
     mapped = []
     samples = {case: [0.0] * 10 for case in order}
     for r, (case, sample, index, role, _) in zip(raw, expected):
         if not math.isfinite(r["duration_us"]) or r["duration_us"] <= 0:
             raise ValueError("invalid raw duration")
-        mapped.append({"case_id": case, "sample_index": sample, "sequence_index": index, "role": role, **r})
+        mapped.append(
+            {
+                "case_id": case,
+                "sample_index": sample,
+                "sequence_index": index,
+                "role": role,
+                **r,
+            }
+        )
         if role == "target":
             samples[case][sample] += r["duration_us"]
     if validation.get("mapped_launches") != mapped or any(
         validation.get(k) != len(mapped)
-        for k in ("expected_relevant_launches", "parsed_relevant_launches", "mapped_relevant_launches")
+        for k in (
+            "expected_relevant_launches",
+            "parsed_relevant_launches",
+            "mapped_relevant_launches",
+        )
     ):
         raise ValueError("validation mapping differs from raw ordered launches")
     if plan.get("expected_relevant_launches") != len(mapped):
@@ -413,20 +520,28 @@ def _check_performance_csv(c, order, samples, dependencies):
     medians = {}
     for row in perf:
         values = samples[row["case_id"]]
-        if json.loads(row["sample_total_us"]) != [round(v, 6) for v in values] or int(row["sample_count"]) != 10:
+        if (
+            json.loads(row["sample_total_us"]) != [round(v, 6) for v in values]
+            or int(row["sample_count"]) != 10
+        ):
             raise ValueError("performance samples differ from original mapped launches")
         median = statistics.median(values)
-        if abs(float(row["total_us"]) - median) > 1e-6 or (max(values) - min(values)) / median > 0.10:
+        if (
+            abs(float(row["total_us"]) - median) > 1e-6
+            or (max(values) - min(values)) / median > 0.10
+        ):
             raise ValueError("canonical10 median/spread gate failed")
         medians[row["case_id"]] = median
     return medians
 
 
 def _check_device(c, plan, root, dependencies):
-    device = read(_add_dependency(dependencies, root / "device.json"))
+    device = c["identity"]
+    if "target_soc" not in device:
+        device = read(_add_dependency(dependencies, root / "device.json"))
     if (
-        device.get("soc") != plan["soc"]
-        or device.get("physical") != plan["physical_device"]
+        device.get("target_soc", device.get("soc")) != plan["soc"]
+        or device.get("device_id", device.get("physical")) != plan["physical_device"]
         or c["identity"].get("device_id") != plan["physical_device"]
     ):
         raise ValueError("paired device/SoC identity mismatch")
@@ -435,7 +550,9 @@ def _check_device(c, plan, root, dependencies):
 def _original_precision_contract(plan):
     return plan.get(
         "original_precision_contract",
-        {"status": "strict_pass", "rtol": 0, "atol": 0} if plan.get("stats", {}).get("ci") == HISTORICAL_CI else None,
+        {"status": "strict_pass", "rtol": 0, "atol": 0}
+        if plan.get("stats", {}).get("ci") == HISTORICAL_CI
+        else None,
     )
 
 
@@ -449,13 +566,17 @@ def _precision_keys_ok(precision, order):
     return len(keys) == len(set(keys)) and set(keys) == covered
 
 
-def _check_precision(plan, c, order, root, dependencies):
+def _check_precision(plan, c, order, root, dependencies, execution):
     precision = read(_add_dependency(dependencies, root / "precision-results.json"))
     checks = precision.get("sample_checks", [])
     precision_contract = _original_precision_contract(plan)
-    if not isinstance(precision_contract, dict) or not all(k in precision_contract for k in ("status", "rtol", "atol")):
+    if not isinstance(precision_contract, dict) or not all(
+        k in precision_contract for k in ("status", "rtol", "atol")
+    ):
         raise ValueError("new effect plan requires original_precision_contract")
-    if precision.get("status") != precision_contract["status"] or not _precision_keys_ok(precision, order):
+    if precision.get("status") != precision_contract[
+        "status"
+    ] or not _precision_keys_ok(precision, order):
         raise ValueError("full original precision coverage failed")
     if any(
         r.get("status") != "PASS"
@@ -464,9 +585,17 @@ def _check_precision(plan, c, order, root, dependencies):
         for r in checks
     ):
         raise ValueError("original precision weakened or failed")
-    if not precision.get("unchanged_input_raw_bytes") or not precision.get("all_retained_outputs_rechecked"):
+    if not precision.get("unchanged_input_raw_bytes") or not precision.get(
+        "all_retained_outputs_rechecked"
+    ):
         raise ValueError("input/output truth evidence missing")
-    _check_prime_precision(plan, precision, order, dependencies)
+    primed = [
+        r["case_id"]
+        for r in execution["case_runs"]
+        if set(r.get("preparation_kernel_sequence", []))
+        & set(r["target_kernel_sequence"])
+    ]
+    _check_prime_precision(plan, precision, primed, dependencies)
     _walk_nested(dependencies, precision)
 
 
@@ -486,15 +615,25 @@ def _check_prime_precision(plan, precision, order, dependencies):
         raise ValueError("declared prime original precision coverage failed")
     for result in precision.get("sample_checks", []) + prime_checks:
         artifact = result.get("artifact")
-        if not isinstance(artifact, dict) or not artifact.get("path") or not artifact.get("sha256"):
-            raise ValueError("original precision requires retained output artifact receipt")
+        if (
+            not isinstance(artifact, dict)
+            or not artifact.get("path")
+            or not artifact.get("sha256")
+        ):
+            raise ValueError(
+                "original precision requires retained output artifact receipt"
+            )
         _freeze_dependency(dependencies, artifact)
 
 
 def _check_frequency(plan, order, root, dependencies):
     for case in order:
         for sample in (0, 9):
-            f = read(_add_dependency(dependencies, root / "frequency" / f"{case}-{sample}.json"))
+            f = read(
+                _add_dependency(
+                    dependencies, root / "frequency" / f"{case}-{sample}.json"
+                )
+            )
             if f.get("case_id") != case or f.get("sample_index") != sample:
                 raise ValueError("active performance frequency gate failed")
             if f.get("rated", 0) <= 0 or f.get("activity") != f.get("rated"):
@@ -502,20 +641,57 @@ def _check_frequency(plan, order, root, dependencies):
 
 
 def _check_inputs(plan, c, root, dependencies):
-    inputs = read(_add_dependency(dependencies, root / "inputs.json"))
     _freeze_dependency(dependencies, plan["snapshot"])
-    if inputs.get("snapshot") != plan["snapshot"] or c["identity"].get("snapshot") != plan["snapshot"]:
+    inputs = c["identity"].get("inputs")
+    if inputs is None:
+        inputs = read(_add_dependency(dependencies, root / "inputs.json")).get(
+            "snapshot"
+        )
+        if c["identity"].get("snapshot") != inputs:
+            raise ValueError("paired immutable input identity mismatch")
+    if inputs != plan["snapshot"]:
         raise ValueError("paired immutable input identity mismatch")
 
 
-def _read_identities(plan, root, dependencies):
-    compile_identity = read(_add_dependency(dependencies, root / "compile-identity.json"))
-    expected_identity = read(_add_dependency(dependencies, plan["expected_identity"]["path"]))
-    _freeze_dependency(dependencies, plan["expected_identity"])
+def _read_identities(plan, c, root, dependencies):
+    expected_identity = read(
+        _freeze_dependency(dependencies, plan["expected_identity"])
+    )
+    if "execution_identity" in expected_identity:
+        from validate_execution_identity import validate_document
+
+        if c["identity"] != expected_identity:
+            raise ValueError(
+                "collection execution identity differs from frozen identity"
+            )
+        document = read(
+            _freeze_dependency(dependencies, expected_identity["execution_identity"])
+        )
+        validate_document(
+            {
+                "inputs": {"code": document["source"]},
+                "configuration": {"target_socs": [plan["soc"]]},
+            },
+            document,
+        )
+        _walk_nested(dependencies, document)
+        variant = expected_identity.get("variant", plan.get("variant"))
+        return None, {
+            variant: {
+                "source": document["source"],
+                "execution_identity": expected_identity["execution_identity"],
+                "kernel_sequence": {"case_id": plan["effect_case_id"]},
+            }
+        }
+    compile_identity = read(
+        _add_dependency(dependencies, root / "compile-identity.json")
+    )
     return compile_identity, expected_identity
 
 
-def _check_shared_runs(plan, rows, compile_identity, expected_identity, c, dependencies):
+def _check_shared_runs(
+    plan, rows, compile_identity, expected_identity, c, dependencies
+):
     variant_names = set(plan["baseline_variants"] + [plan["candidate_variant"]])
     variant_sources = (
         compile_identity.get("variants", {}),
@@ -526,7 +702,9 @@ def _check_shared_runs(plan, rows, compile_identity, expected_identity, c, depen
         raise ValueError("shared candidate normal identity coverage mismatch")
     actual_runs = compile_identity.get("case_runs", [])
     if len(actual_runs) != len(rows):
-        raise ValueError("shared candidate requires actual per-execution identity receipts")
+        raise ValueError(
+            "shared candidate requires actual per-execution identity receipts"
+        )
     for row, actual in zip(rows, actual_runs):
         ref = expected_identity[row["variant"]]
         if (
@@ -536,59 +714,38 @@ def _check_shared_runs(plan, rows, compile_identity, expected_identity, c, depen
         ):
             raise ValueError("shared candidate executed source variant mismatch")
         for kind in ("generated", "built", "live"):
-            if actual.get(kind, {}).get("sha256") != ref["reference_artifacts"][kind]["sha256"]:
-                raise ValueError("shared candidate execution normal/build/live identity mismatch")
+            if (
+                actual.get(kind, {}).get("sha256")
+                != ref["reference_artifacts"][kind]["sha256"]
+            ):
+                raise ValueError(
+                    "shared candidate execution normal/build/live identity mismatch"
+                )
         if not isinstance(actual.get("runtime_evidence"), dict):
             raise ValueError("shared candidate missing actual runtime evidence")
         _walk_nested(dependencies, actual)
 
 
 def _walk_source_tree(source, dependencies):
-    digest, file_names = hashlib.sha256(), []
-    source_root = Path(source["path"])
-    for directory, dirs, names in os.walk(source_root):
-        dirs[:] = sorted(
-            d for d in dirs if d not in {".git", ".pytest_cache", "__pycache__", "build", "dist", "output", "outputs"}
-        )
-        for name in sorted(names):
-            file = Path(directory) / name
-            if file.suffix.lower() not in {
-                ".c",
-                ".cc",
-                ".cpp",
-                ".h",
-                ".hh",
-                ".hpp",
-                ".py",
-                ".sh",
-                ".cmake",
-                ".json",
-                ".yaml",
-                ".yml",
-                ".toml",
-            } and name not in {"CMakeLists.txt", "Makefile"}:
-                continue
-            current = receipt(file)
-            digest.update(file.relative_to(source_root).as_posix().encode())
-            digest.update(b"\0")
-            digest.update(current["sha256"].encode())
-            digest.update(b"\0")
-            file_names.append(current["path"])
+    from prepare_case_sets import code_identity
+
+    current = code_identity(Path(source["path"]), recorded=source)
     if (
-        digest.hexdigest() != source["sha256"]
-        or file_names != [f["path"] for f in source["files"]]
-        or len(file_names) != source["file_count"]
+        current["identity_method"] != source.get("identity_method")
+        or current["sha256"] != source["sha256"]
     ):
         raise ValueError("complete source tree identity changed")
 
 
 def _check_variant_identity(plan, c, variant, v, expected_identity, dependencies):
     ref = expected_identity.get(variant)
-    if not ref or v.get("source") != ref["source"] or c["identity"]["variant_sources"].get(variant) != ref:
+    if (
+        not ref
+        or v.get("source") != ref["source"]
+        or c["identity"]["variant_sources"].get(variant) != ref
+    ):
         raise ValueError("paired source/normal identity mismatch")
     source = ref["source"]
-    if source.get("identity_method") != "source-tree-v1":
-        raise ValueError("unknown source identity method")
     _walk_source_tree(source, dependencies)
     _walk_nested(dependencies, ref)
     _walk_nested(dependencies, v)
@@ -606,7 +763,9 @@ def verify_collection(plan, collection_path, dependencies, effect_plan=None):
     c = read(_add_dependency(dependencies, collection_path))
     _check_collection_status(c)
     sessions = c.get("sessions", [])
-    if not sessions or (plan.get("kind") != "canonical10_independent" and len(sessions) != 1):
+    if not sessions or (
+        plan.get("kind") != "canonical10_independent" and len(sessions) != 1
+    ):
         raise ValueError("paired v1 requires one same-device session")
     _freeze_collection_files(c, dependencies)
     validation = read(_add_dependency(dependencies, c["validation_json"]))
@@ -619,20 +778,34 @@ def verify_collection(plan, collection_path, dependencies, effect_plan=None):
     paired = c.get("paired_confirmation")
     if shared and not paired:
         raise ValueError("shared candidate requires registered collector topology")
-    _verify_topology(plan, c, rows, execution, shared, shared_groups, effect_plan, paired, dependencies)
+    _verify_topology(
+        plan,
+        c,
+        rows,
+        execution,
+        shared,
+        shared_groups,
+        effect_plan,
+        paired,
+        dependencies,
+    )
     _check_order_and_validation(plan, c, order, validation, execution)
     expected, names = _expected_launches(execution)
-    samples = _map_raw_launches(plan, c, sessions, order, expected, names, dependencies, validation)
+    samples = _map_raw_launches(
+        plan, c, sessions, order, expected, names, dependencies, validation
+    )
     medians = _check_performance_csv(c, order, samples, dependencies)
     root = Path(c["performance_csv"]).parent / "evidence"
     _check_device(c, plan, root, dependencies)
-    _check_precision(plan, c, order, root, dependencies)
+    _check_precision(plan, c, order, root, dependencies, execution)
     _check_frequency(plan, order, root, dependencies)
     _check_inputs(plan, c, root, dependencies)
-    compile_identity, expected_identity = _read_identities(plan, root, dependencies)
+    compile_identity, expected_identity = _read_identities(plan, c, root, dependencies)
     if shared:
-        _check_shared_runs(plan, rows, compile_identity, expected_identity, c, dependencies)
-    for variant, v in compile_identity["variants"].items():
+        _check_shared_runs(
+            plan, rows, compile_identity, expected_identity, c, dependencies
+        )
+    for variant, v in (compile_identity or {}).get("variants", {}).items():
         _check_variant_identity(plan, c, variant, v, expected_identity, dependencies)
     _walk_nested(dependencies, c["identity"])
     return medians, expected_identity
@@ -649,7 +822,9 @@ def verify_proof(proof_path, baseline_path, candidate_path):
         raise ValueError("unknown paired proof schema/policy")
     for item in proof["dependencies"]:
         check_receipt(item)
-    if proof.get("baseline") != receipt(baseline_path) or proof.get("candidate") != receipt(candidate_path):
+    if proof.get("baseline") != receipt(baseline_path) or proof.get(
+        "candidate"
+    ) != receipt(candidate_path):
         raise ValueError("proof belongs to a different comparison/baseline")
     result = build_proof(
         Path(proof["plan"]["path"]),
@@ -673,7 +848,9 @@ def _parse_iso(value):
 def _session_chronology_ok(registration, session, deps):
     attempts = session.get("attempts", [])
     if not attempts:
-        raise ValueError("ambiguous registration chronology requires bound capture attempts")
+        raise ValueError(
+            "ambiguous registration chronology requires bound capture attempts"
+        )
     registered = _parse_iso(registration["issued_at"])
     valid = []
     for attempt in attempts:
@@ -682,27 +859,40 @@ def _session_chronology_ok(registration, session, deps):
         deps[item["path"]] = item
         actual = read(item["path"])
         if actual != attempt or registered >= _parse_iso(actual["started_at"]):
-            raise ValueError("registration must strictly precede every actual capture attempt")
+            raise ValueError(
+                "registration must strictly precede every actual capture attempt"
+            )
         for name in ("execution_manifest", "op_summary"):
             value = actual.get(name)
-            if value is not None and not Path(value).resolve().is_relative_to(directory):
+            if value is not None and not Path(value).resolve().is_relative_to(
+                directory
+            ):
                 raise ValueError("capture chronology artifact outside actual attempt")
         if actual.get("data_status") == "valid" and actual.get("returncode") == 0:
             valid.append(actual)
     if len(valid) != 1 or any(
-        Path(session[name]).resolve() != Path(valid[0][name]).resolve() for name in ("execution_manifest", "op_summary")
+        Path(session[name]).resolve() != Path(valid[0][name]).resolve()
+        for name in ("execution_manifest", "op_summary")
     ):
-        raise ValueError("capture chronology not bound to selected successful execution")
+        raise ValueError(
+            "capture chronology not bound to selected successful execution"
+        )
     for name in ("execution_manifest", "op_summary"):
         item = receipt(valid[0][name])
-        if item not in [{"path": f.get("path"), "sha256": f.get("sha256")} for f in valid[0].get("files", [])]:
+        if item not in [
+            {"path": f.get("path"), "sha256": f.get("sha256")}
+            for f in valid[0].get("files", [])
+        ]:
             raise ValueError("capture chronology selected artifact receipt mismatch")
         deps[item["path"]] = item
 
 
 def registration_precedes_capture(registration, collection, deps, *, label="plan"):
     """Resolve only a whole-second collection timestamp ambiguity with bound attempts."""
-    registered, started = _parse_iso(registration["issued_at"]), _parse_iso(collection["started_at"])
+    registered, started = (
+        _parse_iso(registration["issued_at"]),
+        _parse_iso(collection["started_at"]),
+    )
     if registered < started:
         return
     text = collection["started_at"]
@@ -712,7 +902,9 @@ def registration_precedes_capture(registration, collection, deps, *, label="plan
         raise ValueError(f"{label} registration must precede collection")
     sessions = collection.get("sessions", [])
     if not sessions:
-        raise ValueError("ambiguous registration chronology requires bound capture attempts")
+        raise ValueError(
+            "ambiguous registration chronology requires bound capture attempts"
+        )
     for session in sessions:
         _session_chronology_ok(registration, session, deps)
 
@@ -735,7 +927,8 @@ def _registered_plan_check(plan_path, registration, deps):
     """Verify the plan receipt was pre-registered, then resolve registration chronology."""
     frozen_plan = receipt(plan_path)
     if frozen_plan not in [
-        {"path": r.get("path"), "sha256": r.get("sha256")} for r in registration.get("artifacts", [])
+        {"path": r.get("path"), "sha256": r.get("sha256")}
+        for r in registration.get("artifacts", [])
     ]:
         raise ValueError("plan not registered before result")
     return frozen_plan
@@ -781,7 +974,11 @@ def _collect_pairs(plan, rows, baseline_variant, candidate_variant):
     if plan.get("kind") == SHARED_CANDIDATE_KIND:
         groups = shared_candidate_rounds(plan)
         for group in groups:
-            pair = [r for r in group if r["variant"] in (baseline_variant, candidate_variant)]
+            pair = [
+                r
+                for r in group
+                if r["variant"] in (baseline_variant, candidate_variant)
+            ]
             ab += pair[0]["variant"] == baseline_variant
             ba += pair[0]["variant"] == candidate_variant
             pairs.append({r["variant"]: r["case_id"] for r in pair})
@@ -789,8 +986,11 @@ def _collect_pairs(plan, rows, baseline_variant, candidate_variant):
     if len(rows) != 2 * plan["round_count"]:
         raise ValueError("missing or duplicate paired rounds")
     for i in range(plan["round_count"]):
-        pair = rows[2 * i:2 * i + 2]
-        if {r.get("variant") for r in pair} != {baseline_variant, candidate_variant} or any(
+        pair = rows[2 * i : 2 * i + 2]
+        if {r.get("variant") for r in pair} != {
+            baseline_variant,
+            candidate_variant,
+        } or any(
             r.get("round") != i or r.get("position") != j for j, r in enumerate(pair)
         ):
             raise ValueError("paired round order/coverage mismatch")
@@ -811,7 +1011,20 @@ def _proof_dependencies(paths):
 def _adapter_proof(plan, args):
     """Delegate adapter-specific plan kinds to their dedicated proof builders."""
     kind = plan.get("kind")
-    if kind == "msprof_op10_independent_v1":
+    import sys
+
+    report_scripts = (
+        Path(__file__).resolve().parents[2] / "ops-profiling-report/scripts"
+    )
+    sys.path.insert(0, str(report_scripts))
+    from report_contract import supports_comparison
+
+    if supports_comparison(kind):
+        # Registered comparison policy is owned by this workflow.
+        from profile_evidence import build_profile_proof
+
+        build = build_profile_proof
+    elif kind == "msprof_op10_independent_v1":
         from msprof_op_effect_adapter import build_op_proof
 
         build = build_op_proof
@@ -841,12 +1054,22 @@ def build_proof(
     baseline_variant="baseline",
     candidate_variant="candidate",
 ):
-    deps = _proof_dependencies((plan_path, registration_path, collection_path, baseline_path, candidate_path))
+    deps = _proof_dependencies(
+        (plan_path, registration_path, collection_path, baseline_path, candidate_path)
+    )
     plan = read(plan_path)
     delegated = _adapter_proof(
         plan,
-        (plan_path, registration_path, collection_path, baseline_path, candidate_path,
-         case_id, baseline_variant, candidate_variant),
+        (
+            plan_path,
+            registration_path,
+            collection_path,
+            baseline_path,
+            candidate_path,
+            case_id,
+            baseline_variant,
+            candidate_variant,
+        ),
     )
     if delegated is not None:
         return delegated
@@ -855,18 +1078,26 @@ def build_proof(
     frozen_plan = _registered_plan_check(plan_path, registration, deps)
     registration_precedes_capture(registration, c, deps)
     if plan.get("samples_per_case") != 10 or plan.get("round_count", 0) < 6:
-        raise ValueError("paired plan requires canonical10 and at least 6 frozen rounds")
+        raise ValueError(
+            "paired plan requires canonical10 and at least 6 frozen rounds"
+        )
     historical = plan.get("stats", {}).get("ci") == HISTORICAL_CI
-    method = _frozen_method(plan, historical, baseline_variant, candidate_variant, case_id)
+    method = _frozen_method(
+        plan, historical, baseline_variant, candidate_variant, case_id
+    )
     rows = plan["cases"]
     pairs, ab, ba = _collect_pairs(plan, rows, baseline_variant, candidate_variant)
     if abs(ab - ba) > 1:
         raise ValueError("paired order must balance AB and BA")
-    medians, source_identities = verify_collection(plan, collection_path, deps, effect_plan=frozen_plan)
+    medians, source_identities = verify_collection(
+        plan, collection_path, deps, effect_plan=frozen_plan
+    )
     base = [medians[p[baseline_variant]] for p in pairs]
     cand = [medians[p[candidate_variant]] for p in pairs]
     _check_headline_medians(baseline_path, candidate_path, case_id, base, cand)
-    _check_source_case(case_id, source_identities, (baseline_variant, candidate_variant))
+    _check_source_case(
+        case_id, source_identities, (baseline_variant, candidate_variant)
+    )
     stats = compute_statistics([b - a for a, b in zip(base, cand)], method)
     return {
         "schema_version": 1,
@@ -882,7 +1113,9 @@ def build_proof(
         "baseline_variant": baseline_variant,
         "candidate_variant": candidate_variant,
         "target_soc": plan["soc"],
-        "source_identities": {v: source_identities[v] for v in (baseline_variant, candidate_variant)},
+        "source_identities": {
+            v: source_identities[v] for v in (baseline_variant, candidate_variant)
+        },
         "input_identity": plan["snapshot"],
         "statistics": stats,
         "dependencies": sorted(deps.values(), key=lambda r: r["path"]),
@@ -894,8 +1127,13 @@ def _check_headline_medians(baseline_path, candidate_path, case_id, base, cand):
 
     for path, values in ((baseline_path, base), (candidate_path, cand)):
         _, headlines = load_performance(Path(path))
-        if case_id not in headlines or abs(headlines[case_id] - statistics.median(values)) > 1e-6:
-            raise ValueError("headline case/median differs from paired original samples")
+        if (
+            case_id not in headlines
+            or abs(headlines[case_id] - statistics.median(values)) > 1e-6
+        ):
+            raise ValueError(
+                "headline case/median differs from paired original samples"
+            )
 
 
 def _check_canonical_headlines(baseline_path, candidate_path, case_id, base, cand):
@@ -903,15 +1141,19 @@ def _check_canonical_headlines(baseline_path, candidate_path, case_id, base, can
 
     for path, values in ((baseline_path, base), (candidate_path, cand)):
         _, headlines = load_performance(Path(path))
-        if case_id not in headlines or abs(headlines[case_id] - statistics.median(values)) > 1e-6:
+        if (
+            case_id not in headlines
+            or abs(headlines[case_id] - statistics.median(values)) > 1e-6
+        ):
             raise ValueError("canonical headline differs from original samples")
 
 
 def independent_statistics(base, cand, method):
-    """Shared unchanged statistic for application and explicit msprof-op adapters."""
+    """Shared statistic for independently captured report or application samples."""
     rng = random.Random(method["seed"])
     deltas = sorted(
-        statistics.median(rng.choices(cand, k=10)) - statistics.median(rng.choices(base, k=10))
+        statistics.median(rng.choices(cand, k=10))
+        - statistics.median(rng.choices(base, k=10))
         for _ in range(method["draws"])
     )
     return {
@@ -924,20 +1166,35 @@ def independent_statistics(base, cand, method):
     }
 
 
-def _canonical_side(plan, registration, side, variant, binding, collection_path, contexts, deps, case_id):
+def _canonical_side(
+    plan, registration, side, variant, binding, collection_path, contexts, deps, case_id
+):
     """Verify one canonical side's collection and return its ordered ten samples."""
     if side == "baseline_collection" or "sha256" in binding["manifest"]:
         check_receipt(binding["manifest"])
     else:
-        receipt(binding["manifest"]["path"])  # Declared future output path; SHA captured only after collection.
-    if side == "baseline_collection" and receipt(collection_path) != binding["manifest"]:
-        raise ValueError("canonical builder collection differs from frozen baseline collection")
+        receipt(
+            binding["manifest"]["path"]
+        )  # Declared future output path; SHA captured only after collection.
+    if (
+        side == "baseline_collection"
+        and receipt(collection_path) != binding["manifest"]
+    ):
+        raise ValueError(
+            "canonical builder collection differs from frozen baseline collection"
+        )
     c = read(binding["manifest"]["path"])
     contexts.append(
         {
             "warmup": {
                 k: c["warmup"].get(k)
-                for k in ("mode", "logical_op", "implementation", "tensor_bytes", "tensor_allocation")
+                for k in (
+                    "mode",
+                    "logical_op",
+                    "implementation",
+                    "tensor_bytes",
+                    "tensor_allocation",
+                )
             },
             "cann_version": c.get("identity", {}).get("cann_version"),
             "environment": c.get("identity", {}).get("environment"),
@@ -949,11 +1206,14 @@ def _canonical_side(plan, registration, side, variant, binding, collection_path,
     # recollected or cherry-picked; the plan binds its original full order.
     side_plan = {
         **plan,
+        "variant": variant,
         "cases": [{"case_id": c} for c in binding["case_order"]],
         "expected_relevant_launches": binding["expected_relevant_launches"],
         "expected_identity": binding["expected_identity"],
     }
-    medians, identities = verify_collection(side_plan, Path(binding["manifest"]["path"]), deps)
+    medians, identities = verify_collection(
+        side_plan, Path(binding["manifest"]["path"]), deps
+    )
     if binding["case_id"] not in medians or variant not in identities:
         raise ValueError("canonical source/collection case identity mismatch")
     if identities[variant].get("kernel_sequence", {}).get("case_id") != case_id:
@@ -961,7 +1221,9 @@ def _canonical_side(plan, registration, side, variant, binding, collection_path,
     _check_canonical_variant(c, binding, identities, variant)
     sources = identities[variant]
     with Path(c["performance_csv"]).open(newline="") as stream:
-        row = next(r for r in csv.DictReader(stream) if r["case_id"] == binding["case_id"])
+        row = next(
+            r for r in csv.DictReader(stream) if r["case_id"] == binding["case_id"]
+        )
     return json.loads(row["sample_total_us"]), sources
 
 
@@ -973,11 +1235,15 @@ def _check_canonical_variant(c, binding, identities, variant):
     else:
         actual_runs = read(c["execution_manifest"])["case_runs"]
     actual_run = next(r for r in actual_runs if r["case_id"] == binding["case_id"])
-    actual_variant = actual_run.get("variant", actual_run.get("confirmation", {}).get("variant"))
+    actual_variant = actual_run.get(
+        "variant", actual_run.get("confirmation", {}).get("variant")
+    )
     if actual_variant is None and len(identities) == 1:
         actual_variant = next(iter(identities))
     if actual_variant != variant:
-        raise ValueError("canonical case does not identify its actually executed source variant")
+        raise ValueError(
+            "canonical case does not identify its actually executed source variant"
+        )
 
 
 @_verified_receipts
@@ -991,12 +1257,7 @@ def build_canonical_proof(
     baseline_variant,
     candidate_variant,
 ):
-    """Strong canonical10 screening can use independent median confidence.
-
-    This consumes ten original samples per side once, without pairing unrelated
-    launches or requiring repeated rounds for every case. Small screening changes
-    still require the paired method to control order/session noise.
-    """
+    """Compute independent median confidence from ten original samples per side."""
     plan, registration = read(plan_path), read(registration_path)
     if (
         plan.get("effect_case_id") != case_id
@@ -1007,7 +1268,8 @@ def build_canonical_proof(
     method = _canonical_method(plan)
     frozen_plan = receipt(plan_path)
     if frozen_plan not in [
-        {"path": r.get("path"), "sha256": r.get("sha256")} for r in registration.get("artifacts", [])
+        {"path": r.get("path"), "sha256": r.get("sha256")}
+        for r in registration.get("artifacts", [])
     ]:
         raise ValueError("canonical plan not registered before result")
     deps = {}
@@ -1015,9 +1277,20 @@ def build_canonical_proof(
         item = receipt(path)
         deps[item["path"]] = item
     samples, sources, contexts = {}, {}, []
-    for side, variant in (("baseline_collection", baseline_variant), ("candidate_collection", candidate_variant)):
+    for side, variant in (
+        ("baseline_collection", baseline_variant),
+        ("candidate_collection", candidate_variant),
+    ):
         samples[side], sources[variant] = _canonical_side(
-            plan, registration, side, variant, plan[side], collection_path, contexts, deps, case_id
+            plan,
+            registration,
+            side,
+            variant,
+            plan[side],
+            collection_path,
+            contexts,
+            deps,
+            case_id,
         )
     if contexts[0] != contexts[1]:
         raise ValueError("independent canonical protocol/environment is asymmetric")
@@ -1050,7 +1323,10 @@ def _canonical_method(plan):
     method = plan.get("statistical_method", {})
     if method.get("id") != INDEPENDENT_METHOD or method.get("confidence") != 0.95:
         raise ValueError("unknown independent canonical statistical method/version")
-    if method.get("statistic") != "difference_of_medians" or method.get("quantile") != "linear":
+    if (
+        method.get("statistic") != "difference_of_medians"
+        or method.get("quantile") != "linear"
+    ):
         raise ValueError("unknown independent canonical statistical method/version")
     if (
         not isinstance(method.get("seed"), int)
@@ -1069,7 +1345,10 @@ def _collect_source_files(document, dependencies):
         dirs[:] = sorted(d for d in dirs if d not in IGNORED_CODE_DIRS)
         for name in sorted(names):
             file = Path(directory) / name
-            if file.suffix.lower() in CODE_SUFFIXES or name in ("CMakeLists.txt", "Makefile"):
+            if file.suffix.lower() in CODE_SUFFIXES or name in (
+                "CMakeLists.txt",
+                "Makefile",
+            ):
                 item = receipt(file)
                 dependencies[item["path"]] = item
 
@@ -1077,16 +1356,19 @@ def _collect_source_files(document, dependencies):
 @_verified_receipts
 def verify_noop(path, baseline_path, candidate_path):
     """Same receipt is allowed only with identical source, build and loaded identity."""
-    from validate_execution_identity import validate_execution_identity, dependency_paths
-    from prepare_case_sets import CODE_SUFFIXES, IGNORED_CODE_DIRS
 
     receipt(path)
     value = read(path)
-    if value.get("schema_version") == 1 and value.get("kind") == "casewise_byte_identical_noop":
+    if (
+        value.get("schema_version") == 1
+        and value.get("kind") == "casewise_byte_identical_noop"
+    ):
         return verify_casewise_noop(value, baseline_path, candidate_path)
     if value.get("schema_version") != 1 or value.get("kind") != "byte_identical_noop":
         raise ValueError("unknown same-implementation evidence")
-    if value.get("baseline") != receipt(baseline_path) or value.get("candidate") != receipt(candidate_path):
+    if value.get("baseline") != receipt(baseline_path) or value.get(
+        "candidate"
+    ) != receipt(candidate_path):
         raise ValueError("same-implementation proof comparison mismatch")
     base_order, base, cand_order, cand = _noop_timings(baseline_path, candidate_path)
     if base_order != cand_order or base != cand or value.get("case_ids") != base_order:
@@ -1094,7 +1376,9 @@ def verify_noop(path, baseline_path, candidate_path):
     documents, dependencies = _noop_documents(value)
     left, right = documents
     if _execution_signature(left) != _execution_signature(right):
-        raise ValueError("different source/build/runtime implementations cannot use no-op evidence")
+        raise ValueError(
+            "different source/build/runtime implementations cannot use no-op evidence"
+        )
     return {
         "case_ids": base_order,
         "target_socs": [t["target_soc"] for t in left["targets"]],
@@ -1111,7 +1395,10 @@ def _noop_timings(baseline_path, candidate_path):
 
 
 def _noop_documents(value):
-    from validate_execution_identity import validate_execution_identity, dependency_paths
+    from validate_execution_identity import (
+        validate_execution_identity,
+        dependency_paths,
+    )
 
     documents, dependencies = [], {}
     for side in ("baseline_execution", "candidate_execution"):
@@ -1119,7 +1406,9 @@ def _noop_documents(value):
         for key in ("manifest", "identity"):
             item = check_receipt(binding[key])
             dependencies[item["path"]] = item
-        document = validate_execution_identity(Path(binding["manifest"]["path"]), Path(binding["identity"]["path"]))
+        document = validate_execution_identity(
+            Path(binding["manifest"]["path"]), Path(binding["identity"]["path"])
+        )
         documents.append(document)
         for source in dependency_paths(document):
             item = receipt(source)
@@ -1131,11 +1420,13 @@ def _noop_documents(value):
 @_verified_receipts
 def verify_casewise_noop(value, baseline_path, candidate_path):
     """Verify an explicit unchanged subset of one mixed comparison, never timings alone."""
-    from validate_execution_identity import validate_execution_identity, dependency_paths
-    from prepare_case_sets import CODE_SUFFIXES, IGNORED_CODE_DIRS, code_identity
+    from validate_execution_identity import validate_execution_identity
+    from prepare_case_sets import code_identity
     from summarize_performance_effects import load_performance
 
-    if value.get("baseline") != receipt(baseline_path) or value.get("candidate") != receipt(candidate_path):
+    if value.get("baseline") != receipt(baseline_path) or value.get(
+        "candidate"
+    ) != receipt(candidate_path):
         raise ValueError("casewise no-op comparison mismatch")
     base_order, base = load_performance(Path(baseline_path))
     cand_order, cand = load_performance(Path(candidate_path))
@@ -1149,7 +1440,9 @@ def verify_casewise_noop(value, baseline_path, candidate_path):
     ):
         raise ValueError("casewise no-op case subset/order mismatch")
     if any(base[case] != cand[case] for case in identifiers):
-        raise ValueError("casewise same implementation must reuse identical case timings")
+        raise ValueError(
+            "casewise same implementation must reuse identical case timings"
+        )
     with Path(baseline_path).open(newline="") as stream:
         baseline_rows = {row["case_id"]: row for row in csv.DictReader(stream)}
     with Path(candidate_path).open(newline="") as stream:
@@ -1157,7 +1450,10 @@ def verify_casewise_noop(value, baseline_path, candidate_path):
     if any(baseline_rows[case] != candidate_rows[case] for case in identifiers):
         raise ValueError("casewise no-op must reuse the complete original timing rows")
     cases = value.get("cases")
-    if not isinstance(cases, list) or [case.get("case_id") for case in cases] != identifiers:
+    if (
+        not isinstance(cases, list)
+        or [case.get("case_id") for case in cases] != identifiers
+    ):
         raise ValueError("casewise no-op execution coverage mismatch")
     dependencies, target_socs, checked_sources = {}, None, {}
 
@@ -1170,12 +1466,19 @@ def verify_casewise_noop(value, baseline_path, candidate_path):
         sides = []
         for name in ("baseline", "candidate"):
             side_tuple, soc = _casewise_side(
-                case[name], checked, dependencies, checked_sources, target_socs, validate_execution_identity
+                case[name],
+                checked,
+                dependencies,
+                checked_sources,
+                target_socs,
+                validate_execution_identity,
             )
             target_socs = [soc]
             sides.append(side_tuple)
         if sides[0] != sides[1]:
-            raise ValueError("casewise no-op source/generated/build/runtime/arguments/inputs differ")
+            raise ValueError(
+                "casewise no-op source/generated/build/runtime/arguments/inputs differ"
+            )
     for source in checked_sources.values():
         if code_identity(Path(source["path"])) != source:
             raise ValueError("casewise no-op source changed during verification")
@@ -1186,13 +1489,22 @@ def verify_casewise_noop(value, baseline_path, candidate_path):
     }
 
 
-def _casewise_side(side, checked, dependencies, checked_sources, target_socs, validate_execution_identity):
+def _casewise_side(
+    side,
+    checked,
+    dependencies,
+    checked_sources,
+    target_socs,
+    validate_execution_identity,
+):
     from validate_execution_identity import dependency_paths
 
     binding = side["execution"]
     checked(binding["manifest"])
     checked(binding["identity"])
-    document = validate_execution_identity(Path(binding["manifest"]["path"]), Path(binding["identity"]["path"]))
+    document = validate_execution_identity(
+        Path(binding["manifest"]["path"]), Path(binding["identity"]["path"])
+    )
     checked_sources[document["source"]["path"]] = document["source"]
     if len(document["targets"]) != 1:
         raise ValueError("casewise no-op requires one actual SoC per execution pair")
@@ -1206,7 +1518,10 @@ def _casewise_side(side, checked, dependencies, checked_sources, target_socs, va
     generated = _casewise_build_evidence(side, document, target, checked)
     observed = _casewise_runtime_evidence(side, document, target, checked, dependencies)
     inputs = _casewise_input_evidence(side, soc, checked, dependencies)
-    call_specs = {json.dumps({"args": row["args"], "kwargs": row["kwargs"]}, sort_keys=True) for row in observed}
+    call_specs = {
+        json.dumps({"args": row["args"], "kwargs": row["kwargs"]}, sort_keys=True)
+        for row in observed
+    }
     return (
         (
             _execution_signature(document),
@@ -1226,14 +1541,20 @@ def _casewise_source_files(document, checked):
         dirs[:] = sorted(d for d in dirs if d not in IGNORED_CODE_DIRS)
         for filename in sorted(names):
             source_file = Path(directory) / filename
-            if source_file.suffix.lower() in CODE_SUFFIXES or filename in ("CMakeLists.txt", "Makefile"):
+            if source_file.suffix.lower() in CODE_SUFFIXES or filename in (
+                "CMakeLists.txt",
+                "Makefile",
+            ):
                 checked(receipt(source_file))
 
 
 def _casewise_build_evidence(side, document, target, checked):
     checked(side["compile_config"])
     config = read(side["compile_config"]["path"])
-    if config.get("source") != document["source"] or config.get("target_soc") != target["target_soc"]:
+    if (
+        config.get("source") != document["source"]
+        or config.get("target_soc") != target["target_soc"]
+    ):
         raise ValueError("casewise no-op compile configuration source/SoC mismatch")
     generated = side.get("normal_generated")
     if not isinstance(generated, list) or not generated:
@@ -1247,7 +1568,9 @@ def _casewise_build_evidence(side, document, target, checked):
         *[item["sha256"] for item in generated + target["build"]["artifacts"]],
     ]
     if any(digest not in log for digest in hashes):
-        raise ValueError("casewise no-op build log does not bind normal source/config/code/image")
+        raise ValueError(
+            "casewise no-op build log does not bind normal source/config/code/image"
+        )
     return generated
 
 
@@ -1283,12 +1606,16 @@ def _casewise_runtime_evidence(side, document, target, checked, dependencies):
     for row in observed:
         if "observer_method" in row:
             if not _provider_observation_ok(row, side, target["target_soc"]):
-                raise ValueError("casewise no-op actual Provider owner/method binding mismatch")
+                raise ValueError(
+                    "casewise no-op actual Provider owner/method binding mismatch"
+                )
         elif (
             "ProviderCallable" not in str(raw.get("method", ""))
             or str(provider_path) not in raw.get("python_imports", {}).values()
         ):
-            raise ValueError("casewise historical invocation lacks observed Provider import provenance")
+            raise ValueError(
+                "casewise historical invocation lacks observed Provider import provenance"
+            )
     return observed
 
 
@@ -1296,8 +1623,13 @@ def _provider_invocations(side, raw, provider_path):
     actual_case = side.get("actual_case_id")
     if not isinstance(actual_case, str) or not actual_case:
         raise ValueError("casewise no-op requires actual case mapping")
-    observed = [row for row in raw.get("invocations", []) if row.get("case_id") == actual_case]
-    if not observed or any(not row.get("args") or not isinstance(row.get("kwargs"), dict) for row in observed):
+    observed = [
+        row for row in raw.get("invocations", []) if row.get("case_id") == actual_case
+    ]
+    if not observed or any(
+        not row.get("args") or not isinstance(row.get("kwargs"), dict)
+        for row in observed
+    ):
         raise ValueError("casewise no-op lacks actual Provider invocation")
     return observed
 
@@ -1318,7 +1650,9 @@ def _input_digests_ok(inputs):
     if not isinstance(inputs, dict) or not inputs or not any(inputs.values()):
         return False
     for digest in inputs.values():
-        if digest is not None and not (isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)):
+        if digest is not None and not (
+            isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
             return False
     return True
 
@@ -1328,7 +1662,9 @@ def _casewise_input_evidence(side, soc, checked, dependencies):
         checked(side["owner_execution_evidence"])
         owner_rows = read(side["owner_execution_evidence"]["path"]).get("results", [])
         actual_case = side.get("actual_case_id")
-        if not any(_owner_row_matches(row, side, soc, actual_case) for row in owner_rows):
+        if not any(
+            _owner_row_matches(row, side, soc, actual_case) for row in owner_rows
+        ):
             raise ValueError("casewise no-op source owner execution receipt mismatch")
     checked(side["input_evidence"])
     inputs = read(side["input_evidence"]["path"])

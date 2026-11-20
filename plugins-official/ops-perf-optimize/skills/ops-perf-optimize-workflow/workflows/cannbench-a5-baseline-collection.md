@@ -1,3 +1,5 @@
+> 历史 CANN-Bench 采集路径，仅供已有报告恢复。当前唯一新采集入口为 ops-profiling-report；现有多 kernel benchmark 若缺新适配器保持 pending，不执行下述旧 profiler 命令。
+
 # CANN-Bench A5 基线采集与跑分工作流
 
 本文档说明 CANN-Bench 在 **Ascend A5（Ascend950DT_9582）** 上如何采集官方性能基线、如何跑分对比。

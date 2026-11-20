@@ -23,11 +23,12 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "ops-perf-optimize-wo
 
 
 class Run:
-    def __init__(self, root: Path, mode: str = "standard"):
+    def __init__(self, root: Path, mode: str = "standard", policy: str = "legacy_jitter_v1"):
         self.root = root
         self.state = root / "workflow-state.json"
         self.report = root / "性能调优报告.md"
         configuration = {
+            "performance_effect_policy": {"id": policy, "version": 1},
             "precision_diagnosis_policy": "persistent",
             "target_socs": ["Ascend950"],
             "tuning_mode": mode,
@@ -61,7 +62,8 @@ class Run:
     def effects(self, name, baseline, candidate):
         path = self.root / f"{name}.json"
         subprocess.run([
-            sys.executable, str(SCRIPTS / "summarize_performance_effects.py"), "--policy", "legacy_jitter_v1",
+            sys.executable, str(SCRIPTS / "summarize_performance_effects.py"),
+            "--manifest", str(self.root / "run-manifest.json"),
             "--baseline", str(baseline), "--candidate", str(candidate),
             "--out-json", str(path), "--out-csv", str(path.with_suffix(".csv")),
         ], check=True, capture_output=True, text=True)
@@ -85,6 +87,20 @@ def table_row(report: str, first_cell: str) -> list[str]:
     rows = [line for line in report.splitlines() if line.startswith(prefix)]
     assert len(rows) == 1, rows
     return [cell.strip() for cell in rows[0].split("|")[1:-1]]
+
+
+def test_median_policy_flows_through_cli_checkpoint_and_report(tmp_path):
+    run = Run(tmp_path, policy="median_v1")
+    base = run.performance("base", (100, 100, 100))
+    candidate = run.performance("candidate", (200, 10, 100))
+    summary = run.effects("effect", base, candidate)
+    run.complete("integration.performance.Ascend950", (summary, summary), scope="full")
+    run.command("verify")
+    report = run.report.read_text()
+    assert "median_v1" in report and "1.709976x" in report
+    assert "effective_regression" in report and "unchanged" in report
+    candidate.write_text("case_id,total_us\na,900\n")
+    assert run.command("verify", expected=2)["status"] == "invalid"
 
 
 def test_inspect_reads_selected_context_without_history_or_state_writes(tmp_path):

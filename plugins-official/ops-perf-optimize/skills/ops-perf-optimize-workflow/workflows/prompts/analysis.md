@@ -25,36 +25,37 @@ INPUT_ARTIFACTS:
   <generalization: analysis/roundN/generalization-tuning-cases.csv, competitor-performance.csv and current ratio-analysis.json absolute paths>
   <current baseline profiling and validation evidence absolute paths, or collection pending>
   <performance-targets.json and 性能目标.md absolute paths>
+  <previous analysis.md absolute path, or absent>
   <previous selection absolute path, or absent>
   <source-compatibility.md absolute path>
-  <extraction-manifest.json absolute path>
+  <workspace-manifest.json absolute path>
   <schedule policy applicability evidence; baseline/reference schedule and compiler evidence when applicable>
+  <local board-kb brief: ops-perf-analysis/references/kb absolute path, target book INDEX.md and board scope; search this bundled KB first, independent of KB_ROOT>
+  <distill brief: purpose and coverage keywords; absolute KB_ROOT/distill/book, book/method reading rules, claims/obs/demand/guides/probe entries and whether the link is available; target applicability or distill_unavailable reason>
   <knowledge brief: purpose and coverage keywords; absolute Query/CLI entries, KB_ROOT and existing coverage/card index; target applicability or unavailable reason>
   <best-practices brief: purpose and coverage keywords; absolute Skill, target-family/architecture and common capability indexes; target applicability or unavailable reason>
   <optimization-method brief: purpose and coverage keywords; absolute Skill and Tiling/inter-card/inter-core/single-core indexes; applicability or unavailable reason>
-  <theory-modeling brief: absolute ops-theoretical-performance-estimation and ops-opmodel-toolkit Skill/workflow entries; supported platforms, compute structures and unavailable reasons>
+  <theory/OpModel brief: absolute ops-theoretical-performance-estimation and ops-opmodel-toolkit entries; supported platforms, graph/mapping/schedule capabilities, existing results or unavailable reason>
   <AscendC only — MC2 brief: purpose and coverage keywords; absolute Skill, capability declaration and route indexes; target/communication applicability or unavailable reason>
   <AscendC only — static-review brief: purpose and coverage keywords; absolute Skill and checkpoint index; target applicability or unavailable reason>
   <AscendC only — API-docs brief: purpose and coverage keywords; absolute Skill, API/example indexes and target SDK paths; target applicability or unavailable reason>
 OUTPUT_ARTIFACTS:
   <analysis/roundN/analysis.md absolute path>
-  <analysis/roundN/implementation-contract-<scheme_id>.json absolute paths>
-  <analysis/roundN/source-isolation-<scheme_id>.json absolute paths>
+  <analysis/roundN/implementation-contract-<scheme_id>.json absolute path, exactly one>
+  <candidate-frontier-<scheme_id>.json and generation inputs/arguments when search frontier is used>
+  <analysis/roundN/source-isolation-<scheme_id>.json absolute path, exactly one>
   <schedule-contract-<scheme_id>.json and model schedule-check-<scheme_id>.json when policy enabled>
   <analysis/roundN/theory/ model inputs, results and search/trace evidence when performance modeling is run or reused>
-  <analysis/阶段总结.md absolute path>
 ACCEPTANCE:
   <modeling value assessed during scheme search; analysis.md records modeling evidence and limits or reasons for using other evidence per analysis Skill; performance predictions do not gate implementation or replace measured selection>
-  <profiling and artifact identities valid; every frozen tuning case appears exactly once; each case reports MBU/MFU/cost_bound/ceiling_us/headroom/verdict via ops-profiling compute_efficiency (cost model registered or --flops/--bytes; peaks per TARGET_SOCS, not defaults); required per-case analysis evidence complete; proposed schemes respect the verdict (no non-quant reshuffle candidates padded under NEAR-BANDWIDTH-CEILING / NEAR-COMPUTE-CEILING); each case ALSO reports the operator's intrinsic-minimum-cost roofline (weights crossed HBM once + necessary IO + minimal FLOP, excluding current-impl intermediate round-trips and precision-compensation FLOP) alongside the current-impl roofline; when measured > ceiling_intrinsic*1.5 or behind REFERENCE_PERF, the report MUST include >=1 structural/architecture-level direction (fuse-away intermediates / data layout / precision scheme / internal format conversion; public contract & invocation unchanged) as a candidate or an evidence-based infeasibility argument (hard gate under OPTIMIZATION_INTENT=pursue_optimal, else record direction + estimated gain for user decision); zero schemes require explicit convergence_eligible yes/no, evidence for each infeasible direction and bounded next evidence when no; every strategy maps bidirectionally to non-empty required features; target SoCs, public contract, non-target SoCs and uninvolved templates preserved; copy/route plan and complete baseline-bound source isolation scope ready for main-agent review and SHA freeze>
+  <profiling and artifact identities valid; every frozen tuning case appears exactly once; each case reports MBU/MFU/cost_bound/ceiling_us/headroom/verdict via ops-profiling-report compute_efficiency (explicit --flops/--bytes with evidenced costs; --peak-bw in bytes/s and --peak-flops in FLOP/s per TARGET_SOCS; unavailable terms remain null); required per-case analysis evidence complete; proposed schemes respect the verdict (no non-quant reshuffle candidates padded under NEAR-BANDWIDTH-CEILING / NEAR-COMPUTE-CEILING); each case ALSO reports the operator's intrinsic-minimum-cost roofline (weights crossed HBM once + necessary IO + minimal FLOP, excluding current-impl intermediate round-trips and precision-compensation FLOP) alongside the current-impl roofline; when measured > ceiling_intrinsic*1.5 or behind REFERENCE_PERF, the report MUST include >=1 structural/architecture-level direction (fuse-away intermediates / data layout / precision scheme / internal format conversion; public contract & invocation unchanged) as a candidate or an evidence-based infeasibility argument (hard gate under OPTIMIZATION_INTENT=pursue_optimal, else record direction + estimated gain for user decision); zero schemes require explicit convergence_eligible yes/no, evidence for each infeasible direction and bounded next evidence when no; every strategy maps bidirectionally to non-empty required features; target SoCs, public contract, non-target SoCs and uninvolved templates preserved; copy/route plan and complete baseline-bound source isolation scope ready for main-agent review and SHA freeze; adopted distill cards cite [refinery:<id>@<label|unlabeled>] plus absolute path and sha256, distill unavailability is recorded, no write touches KB_ROOT/distill/book>
 CONDITIONAL_SKILLS:
   <skills required by confirmed operator routes, or absent>
 ```
 
-知识库、最佳实践、优化方法和理论建模的概览适用于两条 backend；MC²、静态性能检视和 API 文档检索三项仅在 `BACKEND=ascendc` 时随输入提供，`BACKEND=cannbot_dsl` 删除这三行。适用项可直接附摘要，也可引用已有概览文件的绝对路径；分析 Agent 在搜索、比较方案前浏览全部适用概览。主 Agent 使用已安装 Skill 的说明与索引准备概览，列出代表性覆盖关键词，注明目标平台、语言及已知覆盖；关键词帮助定位资料，不证明任意组合已有覆盖。来源缺失也保留对应适用项并说明原因，不要求为准备概览遍历全文或额外采集。Agent 根据概览和当前证据择优选方案，按需深读或复用已有结论；平台/API/同步与特殊路线检查按实际代码触发，不由资料选择决定。
+内置板卡事实库、`$KB_ROOT/distill/book`、扩展知识库、最佳实践、优化方法和理论建模的概览适用于两条 backend；MC²、静态性能检视和 API 文档检索三项仅在 `BACKEND=ascendc` 时随输入提供，`BACKEND=cannbot_dsl` 删除这三行。适用项可直接附摘要，也可引用已有概览文件的绝对路径；分析 Agent 在选择方案前浏览全部适用概览。内置库及目标册索引从实际加载的 `ops-perf-analysis` 目录解析，作为绝对路径随输入提供，不从 `KB_ROOT` 推导。各项资料来源之间没有固定先后顺序；按该 Skill 「Agent 的参考输入」中对应的检索方法选择并深读，再按缺口补查其他来源。主 Agent 使用已安装 Skill 的说明与索引准备概览，列出代表性覆盖关键词，注明目标平台、语言及已知覆盖；关键词帮助定位资料，不证明任意组合已有覆盖。来源缺失也保留对应适用项并说明原因，不要求为准备概览遍历全文或额外采集。Agent 根据概览和当前证据择优选方案，按需深读或复用已有结论；平台/API/同步与特殊路线检查按实际代码触发，不由资料选择决定。
 
-理论建模的工具选用、证据与交付要求遵循分析 Skill 的[分析执行参考](../../../ops-perf-analysis/references/analysis-execution.md)。
-
-输入中的 standard/generalization 两行是互斥分支，只保留与 manifest 一致的一行。先复用或采集一次当前基线；简单 profile 不足以支撑瓶颈分析时，在采集阶段按 `ops-perf-profile-feature-extractor` 补齐流水图，已有同身份有效图可复用，不能以聚合利用率代替。再只读分析；分析不得重采性能、重选 case 或修改源码。
+输入中的 standard/generalization 两行是互斥分支，只保留与 manifest 一致的一行。先复用或采集一次当前基线；简单 profile 不足以支撑瓶颈分析时，在采集阶段按 `ops-profiling-report` 补齐流水图，已有同身份有效图可复用，不能以聚合利用率代替。再只读分析；分析不得重采性能、重选 case 或修改源码。
 
 启用 `manifest.configuration.search_policy` 时，在 INPUT_ARTIFACTS 传入当前参考身份、上轮 selection 和相关失败/机制证据；ACCEPTANCE 增加 [搜索决策](../../../ops-perf-acceptance-criteria/references/architecture-search.md) 的单方案、父实现、已接受依赖、触发证据与重试条件校验。`inspect.search.next_action=replan` 时，本次先完成架构复盘并交主 Agent 登记，不能直接重试已停滞方向。
 

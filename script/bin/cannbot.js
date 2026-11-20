@@ -63,7 +63,7 @@ const USAGE_GUIDES = Object.freeze({
   Step 1：性能分析与方案生成
 
   对 /path/to/operator/，先只采集性能并分析瓶颈、输出方案，完成后暂停，等我选择再实施。
-  使用 ops-profiling 采集，结合 ascendc-perf-optimize 和 ascendc-performance-best-practices 分析。
+  使用 ops-profiling-report 采集，结合 ascendc-perf-optimize 和 ascendc-performance-best-practices 分析。
   目标 SoC：Ascend950；用例：/path/to/cases.csv；Python：/path/to/venv/bin/python。
   CANN：source /path/to/Ascend/cann/bin/setenv.bash；输出到 /path/to/output/。
 

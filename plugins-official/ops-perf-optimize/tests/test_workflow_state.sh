@@ -43,7 +43,7 @@ import json, sys
 from pathlib import Path
 p = Path(sys.argv[1])
 value = json.loads(p.read_text())
-value.pop("schedule_policy")
+value.pop("schedule_policy", None)
 p.write_text(json.dumps(value))
 PY_LEGACY
 timeout 60s python3 "$PREPARE" freeze --output-dir "$TEST_ROOT/run" --request "$REQUEST" >/dev/null

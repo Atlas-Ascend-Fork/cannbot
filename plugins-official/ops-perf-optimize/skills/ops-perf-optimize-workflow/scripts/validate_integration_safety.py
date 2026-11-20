@@ -25,17 +25,28 @@ from pathlib import Path
 from typing import Any
 
 from cli_output import emit
+from git_tree import (
+    GitTree,
+    TreeSource,
+    as_tree,
+    candidate_ranges,
+    git_diff_name_status,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from validate_implementation_conformance import (  # noqa: E402
     ContractError,
+    IGNORED_DIRS,
     SOURCE_SUFFIXES,
     file_bytes,
     is_public_contract_path,
     relative_files,
     validate_candidate_safety,
 )
-from validate_source_isolation import validate_source_isolation  # noqa: E402
+from validate_source_isolation import (  # noqa: E402
+    validate_source_isolation,
+    validate_source_isolation_git,
+)
 
 
 SCHEMA_VERSION = 2
@@ -90,18 +101,27 @@ def parse_location(location: str, *, require_line: bool) -> tuple[str, int | Non
     return raw_path, line_number
 
 
-def evidence_text(root: Path, location: str, *, require_line: bool) -> str:
+def evidence_text(root: "TreeSource | Path", location: str, *, require_line: bool) -> str:
+    tree = as_tree(root)
     raw_path, line_number = parse_location(location, require_line=require_line)
-    path = (root / raw_path).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as error:
-        raise ContractError(f"evidence escapes source root: {location}") from error
-    if not path.is_file():
+    path = Path(raw_path)
+    if hasattr(tree, "root"):  # directory tree: resolve and enforce containment
+        resolved = (tree.root / path).resolve() if not path.is_absolute() else path.resolve()
+        try:
+            resolved.relative_to(tree.root)
+        except ValueError as error:
+            raise ContractError(f"evidence escapes source root: {location}") from error
+        relative = resolved.relative_to(tree.root).as_posix()
+    else:
+        if path.is_absolute() or ".." in path.parts:
+            raise ContractError(f"evidence escapes source root: {location}")
+        relative = path.as_posix()
+    text = tree.read_text(relative)
+    if text is None:
         raise ContractError(f"evidence file does not exist: {location}")
     if line_number is None:
-        return path.read_text(encoding="utf-8", errors="replace")
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return text
+    lines = text.splitlines()
     if line_number < 1 or line_number > len(lines):
         raise ContractError(f"evidence line is outside file: {location} (lines={len(lines)})")
     start = max(0, line_number - 3)
@@ -154,13 +174,14 @@ def declaration_evidence(
     return result
 
 
-def discover_add_config_socs(root: Path) -> dict[str, list[str]]:
+def discover_add_config_socs(root: "TreeSource | Path") -> dict[str, list[str]]:
     """Discover explicit operator support declarations while ignoring commented examples."""
+    tree = as_tree(root)
     discovered: dict[str, list[str]] = {}
-    for relative, path in relative_files(root).items():
-        if path.suffix.lower() not in SOURCE_SUFFIXES:
+    for relative in tree.entries(IGNORED_DIRS):
+        if Path(relative).suffix.lower() not in SOURCE_SUFFIXES:
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = tree.read_text(relative) or ""
         uncommented = CPP_COMMENT.sub(lambda match: "\n" * match.group(0).count("\n"), text)
         for match in ADD_CONFIG_SOC.finditer(uncommented):
             name = match.group(1).strip()
@@ -170,27 +191,10 @@ def discover_add_config_socs(root: Path) -> dict[str, list[str]]:
     return discovered
 
 
-def changed_candidate_hunks(baseline: Path, candidate: Path, relative: str) -> list[tuple[int, int]]:
-    baseline_path = baseline / relative
-    candidate_path = candidate / relative
-    before = (
-        baseline_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        if baseline_path.is_file()
-        else []
-    )
-    after = (
-        candidate_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        if candidate_path.is_file()
-        else []
-    )
-    hunks: list[tuple[int, int]] = []
-    for tag, _i1, _i2, j1, j2 in difflib.SequenceMatcher(a=before, b=after).get_opcodes():
-        if tag == "equal":
-            continue
-        start = max(1, j1 + 1)
-        end = max(start, j2)
-        hunks.append((start, end))
-    return hunks
+def changed_candidate_hunks(baseline: "TreeSource | Path", candidate: "TreeSource | Path",
+                           relative: str) -> list[tuple[int, int]]:
+    """1-based inclusive candidate-side changed ranges for one shared file."""
+    return candidate_ranges(as_tree(baseline), as_tree(candidate), relative)
 
 
 def location_matches_file(location: str, relative: str) -> tuple[bool, int]:
@@ -199,16 +203,22 @@ def location_matches_file(location: str, relative: str) -> tuple[bool, int]:
     return normalized == Path(relative).as_posix(), int(line)
 
 
-def changed_source_files(baseline: Path, candidate: Path) -> list[str]:
-    baseline_files = relative_files(baseline)
-    candidate_files = relative_files(candidate)
+def changed_source_files(baseline: "TreeSource | Path", candidate: "TreeSource | Path") -> list[str]:
+    """Source-suffixed paths whose content differs between the two trees."""
+    baseline_tree, candidate_tree = as_tree(baseline), as_tree(candidate)
+    before = baseline_tree.entries(IGNORED_DIRS)
+    after = candidate_tree.entries(IGNORED_DIRS)
+    if isinstance(baseline_tree, GitTree) and isinstance(candidate_tree, GitTree):
+        diffed = git_diff_name_status(baseline_tree.repo, baseline_tree.commit, candidate_tree.commit)
+    else:
+        diffed = None
     changed = []
-    for relative in sorted(set(baseline_files) | set(candidate_files)):
+    for relative in sorted(set(before) | set(after)):
         if Path(relative).suffix.lower() not in SOURCE_SUFFIXES:
             continue
-        if file_bytes(baseline_files.get(relative)) == file_bytes(candidate_files.get(relative)):
-            continue
-        changed.append(relative)
+        content_changed = baseline_tree.read_bytes(relative) != candidate_tree.read_bytes(relative)
+        if content_changed or (diffed is not None and relative in diffed):
+            changed.append(relative)
     return changed
 
 
@@ -330,12 +340,13 @@ def _validate_routes(scope: dict, paths: tuple[Path, Path], shared: list[str],
 
 def validate_scope(
     scope: dict[str, Any],
-    baseline: Path,
-    candidate: Path,
+    baseline: "TreeSource | Path",
+    candidate: "TreeSource | Path",
     candidate_safety: dict[str, Any],
     expected_target_socs: list[str] | None = None,
     backend: str = "ascendc",
 ) -> dict[str, Any]:
+    baseline_tree, candidate_tree = as_tree(baseline), as_tree(candidate)
     if scope.get("schema_version") != SCHEMA_VERSION:
         raise ContractError(f"integration scope schema_version must be {SCHEMA_VERSION}")
     target_socs = string_list(scope.get("target_socs"), "target_socs")
@@ -345,25 +356,25 @@ def validate_scope(
     if set(target_socs) != set(verified_socs):
         raise ContractError("verified_socs must exactly match the user-confirmed target_socs")
     external_receipts: list[dict[str, str]] = []
-    supported_socs, supported_keys, discovered = _supported_socs(scope, baseline, backend, external_receipts)
+    supported_socs, supported_keys, discovered = _supported_socs(scope, baseline_tree, backend, external_receipts)
     target_keys = {normalize_soc(soc) for soc in target_socs}
     verified_keys = {normalize_soc(soc) for soc in verified_socs}
     missing_targets = sorted(target_keys - set(supported_keys))
     if missing_targets:
         raise ContractError(f"target SoCs are absent from supported_socs: {missing_targets}")
     unverified = [soc for soc, key in zip(supported_socs, supported_keys) if key not in verified_keys]
-    source_changes = changed_source_files(baseline, candidate)
+    source_changes = changed_source_files(baseline_tree, candidate_tree)
     failures = list(candidate_safety["failures"])
     shared: list[str] = []
     if unverified:
-        markers, tokens = _isolation_style(scope, baseline, backend, external_receipts)
+        markers, tokens = _isolation_style(scope, baseline_tree, backend, external_receipts)
         shared = _shared_changes(source_changes, markers)
-        failures.extend(_validate_routes(scope, (baseline, candidate), shared, tokens))
+        failures.extend(_validate_routes(scope, (baseline_tree, candidate_tree), shared, tokens))
     report = {
         "schema_version": SCHEMA_VERSION,
         "decision": "pass" if not failures else "fail",
-        "baseline": str(baseline),
-        "candidate": str(candidate),
+        "baseline": baseline_tree.label(),
+        "candidate": candidate_tree.label(),
         "target_socs": target_socs,
         "verified_socs": verified_socs,
         "supported_socs": supported_socs,
@@ -386,8 +397,11 @@ def validate_scope(
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--baseline", type=Path, required=True)
-    result.add_argument("--candidate", type=Path, required=True)
+    result.add_argument("--baseline", type=Path, help="directory baseline (legacy mode)")
+    result.add_argument("--candidate", type=Path, help="directory candidate (legacy mode)")
+    result.add_argument("--git-repo", type=Path, help="git repository (git mode)")
+    result.add_argument("--baseline-rev", help="baseline revision (git mode)")
+    result.add_argument("--candidate-rev", help="candidate revision (git mode)")
     result.add_argument("--manifest", type=Path, required=True)
     result.add_argument("--scope", type=Path, required=True)
     result.add_argument("--isolation-scope", type=Path, required=True)
@@ -397,12 +411,24 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = parser().parse_args()
-    baseline = args.baseline.resolve()
-    candidate = args.candidate.resolve()
+    git_mode = args.git_repo is not None
+    dir_mode = args.baseline is not None or args.candidate is not None
+    if git_mode == dir_mode:
+        parser().error("choose either --baseline/--candidate or --git-repo/--baseline-rev/--candidate-rev")
+    if git_mode and (not args.baseline_rev or not args.candidate_rev):
+        parser().error("git mode requires --baseline-rev and --candidate-rev")
+    if dir_mode and (args.baseline is None or args.candidate is None):
+        parser().error("legacy mode requires both --baseline and --candidate")
     try:
+        if git_mode:
+            baseline_tree = GitTree(args.git_repo.resolve(), args.baseline_rev)
+            candidate_tree = GitTree(args.git_repo.resolve(), args.candidate_rev)
+        else:
+            baseline_tree = as_tree(args.baseline.resolve())
+            candidate_tree = as_tree(args.candidate.resolve())
         manifest = load_json(args.manifest.resolve())
         candidate_safety = validate_candidate_safety(
-            baseline, candidate, manifest.get("configuration", {}).get("backend", "ascendc")
+            baseline_tree, candidate_tree, manifest.get("configuration", {}).get("backend", "ascendc")
         )
         expected_target_socs = string_list(
             manifest.get("configuration", {}).get("target_socs"),
@@ -410,22 +436,29 @@ def main() -> int:
         )
         report = validate_scope(
             load_json(args.scope.resolve()),
-            baseline,
-            candidate,
+            baseline_tree,
+            candidate_tree,
             candidate_safety,
             expected_target_socs,
             manifest.get("configuration", {}).get("backend", "ascendc"),
         )
-        isolation = validate_source_isolation(
-            load_json(args.isolation_scope.resolve()), baseline, candidate, expected_target_socs,
-        )
+        if git_mode:
+            isolation = validate_source_isolation_git(
+                load_json(args.isolation_scope.resolve()), args.git_repo.resolve(),
+                args.baseline_rev, args.candidate_rev, expected_target_socs,
+            )
+        else:
+            isolation = validate_source_isolation(
+                load_json(args.isolation_scope.resolve()),
+                Path(baseline_tree.root), Path(candidate_tree.root), expected_target_socs,
+            )
         report["source_isolation"] = isolation
         isolation["scope_path"] = str(args.isolation_scope.resolve())
         isolation["scope_sha256"] = hashlib.sha256(args.isolation_scope.read_bytes()).hexdigest()
         report["failures"].extend(isolation["failures"])
         if isolation["decision"] != "pass":
             report["decision"] = "fail"
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, RuntimeError) as error:
         emit(f"[ERROR] {error}", file=sys.stderr)
         return 2
     atomic_json(args.out.resolve(), report)

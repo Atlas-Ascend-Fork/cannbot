@@ -33,13 +33,6 @@ ANALYSIS_EXEC = (
     ROOT / "skills" / "ops-perf-analysis" / "references" / "analysis-execution.md"
 )
 IMPL = ROOT / "skills" / "ops-perf-implementation" / "SKILL.md"
-IMPL_EXEC = (
-    ROOT
-    / "skills"
-    / "ops-perf-implementation"
-    / "references"
-    / "implementation-execution.md"
-)
 WRAPPER = ROOT / "AGENTS.md"
 
 
@@ -81,24 +74,6 @@ def test_dispatch_envelope_carries_kb_root() -> None:
         in prompts
     )
     assert "按编排契约解析一次后全程复用" in prompts
-    # Every role template mirrors the generic envelope field set, so the main
-    # agent cannot drop KB_ROOT when assembling a stage dispatch.
-    for filename in (
-        "analysis",
-        "baseline",
-        "generation",
-        "implementation",
-        "integration",
-        "preparation",
-    ):
-        assert "KB_ROOT:" in read(
-            ROOT
-            / "skills"
-            / "ops-perf-optimize-workflow"
-            / "workflows"
-            / "prompts"
-            / f"{filename}.md"
-        ), filename
 
 
 def test_contract_defines_bootstrap_order_and_non_blocking_degradation() -> None:
@@ -141,27 +116,8 @@ def test_analysis_records_actually_adopted_kb_cards() -> None:
     assert "知识卡引用" in execution
 
 
-def test_implementation_consumes_scheme_cards_before_coding() -> None:
-    implementation = read(IMPL)
-    assert "`kb_cards`" in implementation
-    assert "`knowledge-query`" in implementation
-    assert "kb_unavailable" in implementation
-    execution = read(IMPL_EXEC)
-    assert "信封 `KB_ROOT` 存在时" in execution
-    assert "编码前先消费所选方案" in execution
-    assert "绝对 `local_path` 阅读全文" in execution
-    assert "`card_sha256`" in execution
-    assert "不拼成 `$KB_ROOT` 下的文件名" in execution
-    assert "复用分析阶段适用的已读证据" in execution
-    # The KB complements but never replaces API verification.
-    assert "知识库 → `ascendc-docs-search` → 本机 SDK" in execution
-    assert "不替代 docs-search 与 SDK 核验" in execution
-    assert "顶层 `kb_cards`" in execution
-    assert "kb_unavailable" in execution
-
-
 def test_runtime_instructions_do_not_use_retired_query_commands_or_fields() -> None:
-    for path in (CONTRACT, ENTRY_SKILL, ANALYSIS, ANALYSIS_EXEC, IMPL, IMPL_EXEC):
+    for path in (CONTRACT, ENTRY_SKILL, ANALYSIS, ANALYSIS_EXEC, IMPL):
         content = read(path)
         for retired in (
             "preflight --task",

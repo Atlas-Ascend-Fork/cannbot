@@ -3,8 +3,6 @@
   "skillInstallMode": "symlink",
   "skills": [
     "ops/ops-theoretical-performance-estimation",
-    "ops/ops-simulator",
-    "ops/ops-profiling",
     "ops/ascendc-perf-optimize",
     "ops/ascendc-performance-best-practices",
     "ops/ascendc-blaze-best-practice",

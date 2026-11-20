@@ -1,26 +1,26 @@
 # 回写机制：新增模板 + 路由（register-invoke / APT）
 
-面向含 DAV_35xx 的 register-invoke（APT 模板）算子工程。目标：把已验证 target kernel 作为**代际隔离的新模板**挂进去，并让 host tiling 只在**已验证 SoC + 优势场景**把 TilingKey 指向它。四处联动：**SoC/架构隔离**、**模板参数声明**、**kernel 入口分派**、**host 路由 + 新 TilingData**。（对应 `writeback.md` Stage B。）
+面向含 DAV_35xx 的 register-invoke（APT 模板）算子工程。目标：把已验证 target kernel 作为**代际隔离的新模板**挂进去，并让 host tiling 只在**目标 NpuArch 族 + 优势场景**把 TilingKey 指向它。四处联动：**SoC/架构隔离**、**模板参数声明**、**kernel 入口分派**、**host 路由 + 新 TilingData**。（即原 writeback Stage B 的模板挂载与接线步骤，与合并方式无关，两种合并条件下均适用。）
 
 ## 0. 先判定是否必须代际隔离
 
-本参考只展开 APT 注册接线。所有工程都先按 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 复制共享实现并冻结最小修改范围；以下 SoC 检查不能替代同代未涉及模板的保护。工作输入已是自定义注册工程，按 `extraction-manifest.json` 回映原工程，不重新转换调用方式。
+本参考只展开 APT 注册接线。所有工程都先按 `$WORKFLOW_ROOT/workflows/references/source-isolation.md` 复制共享实现并冻结最小修改范围；以下 SoC 检查不能替代同代未涉及模板的保护。工作输入已在 worktree，按 `workspace-manifest.json` 映射回原工程目标分支，不重新转换调用方式。
 
 先分别取证，不要混为一谈：
 
 | 集合 | 来源 | 含义 |
 |---|---|---|
-| `TARGET_SOCS` | `run-manifest.json` | 本次完成构建、功能、性能验证的代际 |
+| `TARGET_SOCS` | `run-manifest.json` | 本次实际验证的 SoC，记录其具体型号和所属 NpuArch 族 |
 | `SUPPORTED_SOCS` | 目标工程 build config、`SocVersion`、架构目录、kernel 入口 | 原工程承诺支持的代际 |
 
-比较 `SUPPORTED_SOCS - TARGET_SOCS` 时，目标已验证 A2/A3 之一时，另一型号复用其实现与验证结果，视为已覆盖；仍有未覆盖型号时，目标实现不得覆盖共享路径。先观察同仓其他算子的既有风格，再选择同一种隔离轴：
+按 `NpuArch` 归族判断源码隔离范围，非目标族保持 legacy；验证记录只对应实际测试设备。同族资源差异由实际能力/资源谓词处理，不得按具体型号增加门禁。先观察同仓其他算子的既有风格，再选择同一种隔离轴：
 
 1. 已有 `arch35/`、`v35/` 等目录：target kernel/tiling 数据结构放同代目录，共享入口只增加编译期/运行期接线；
 2. host 已用 `SocVersion`：在进入 A5 专用 UB/核数/VF 模型前分流，非 target 调用原 legacy 函数；
 3. 已有 TilingKey/模板轴：增加 target 专用 key/轴，未命中 target guard 时保持原 key；
 4. build config 按 SoC 分源：沿用 config，不另造平行机制。
 
-合格 diff 必须同时证明：target 路由可达、未被目标验证结果覆盖的 SoC 仍落到 legacy fallback、原公开接口/约束/dtype 零差异。典型不合格形态是“新 kernel 放在 `arch35/`，但公共 tiling 的 UB 模型已经被 A5 版本整体替换”——kernel 文件隔离不能抵消 host 共享逻辑污染。
+合格 diff 必须同时证明：target 路由可达、非目标 NpuArch 族仍落到 legacy fallback、原公开接口/约束/dtype 零差异。典型不合格形态是“新 kernel 放在 `arch35/`，但公共 tiling 的 UB 模型已经被 A5 版本整体替换”——kernel 文件隔离不能抵消 host 共享逻辑污染。
 
 `integration-safety-scope.json` 最小结构：
 
@@ -106,9 +106,9 @@ template<int RANK> __global__ __aicore__ void xlog1py(GM_ADDR x, GM_ADDR y, GM_A
 
 ## 3. 自定义注册工程 → 原注册工程的映射
 
-两侧均为注册调用，不引入直调桥接。以 `extraction-manifest.json` 区分原源码、工程接线适配和新增优化副本：
+两侧均为注册调用，不引入直调桥接。以 `workspace-manifest.json` 区分原源码、工程接线适配和新增优化副本：
 
-- **入口**：保留已验证注册入口和 launch ABI；剥离时的生成器/include 路径适配按映射回接，不能重写计算主体。
+- **入口**：保留已验证注册入口和 launch ABI；worktree/骨架时期的生成器/include 路径适配按 workspace-manifest 映射回接，不能重写计算主体。
 - **TilingData**：优化副本的新结构与 host/kernel 一起移植，保持字段顺序、类型、对齐与 TilingKey 对应关系。
 - **dtype/cast**：保留已验收的模板实参和 cast 链，不借机扩大原声明支持类型。
 - **公共库**：新增优化依赖只复制到目标私有目录，不能覆盖原公共文件；名称变化仅为必要的冲突适配，并记录对照。
@@ -133,7 +133,7 @@ ge::graphStatus Xlog1pyTiling::RunTiling() {
 ```
 
 - `FillBrcTilingData()` 把最终工作工程的 tiling 计算（PickBroadcastMode / TryOneDim / 多核切分 / UB 切分 / strides）**照搬**过来，填进新 TilingData。
-  - **这是“桶 A”：逐行移植、禁止重写**，包括每一处守卫和分支边界（例如 `PickBroadcastMode` 的 `!lastAxisBrc` 守卫）。只做必要且有映射依据的类型适配；注册接口验收失败时先对照回写版与已验收版路由，不先修改 kernel。
+  - **这是已验收算法：逐字节来自 final 标签 commit、禁止重写**，包括每一处守卫和分支边界（例如 `PickBroadcastMode` 的 `!lastAxisBrc` 守卫）。只做必要且有映射依据的类型适配；注册接口验收失败时先对照合并结果与已验收 commit 路由，不先修改 kernel。
 - **别忘 workspace**：`TilingFuncXxx` 里的 `GetWorkspaceSizes` 要覆盖新路径需求。
 
 ## 5. 路由谓词的保真
@@ -143,7 +143,6 @@ ge::graphStatus Xlog1pyTiling::RunTiling() {
 ## 6. 编译与常见坑
 
 - `op_api/`、op def/proto、infer shape、API 适配头是公开契约面；性能回集成中 SHA 必须不变。不得新增 dtype、放宽 shape/attr 检查或改变参数顺序。
-- 编译是**长任务**：放后台或设超时，别前台死等。
 - `TPL_SEL` 与 `TPL_ARGS_DECL` 取值必须一一对应（漏条 → 选不到核）。
 - 新 TilingData 结构 host/kernel 两侧定义必须一致（字段顺序、类型、对齐）。
 - 新 kernel 头文件加算子前缀，避免和原 kernel 的类型/宏重名。

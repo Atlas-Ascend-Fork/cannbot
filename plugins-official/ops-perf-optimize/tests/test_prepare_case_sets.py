@@ -16,6 +16,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = (
@@ -588,21 +590,21 @@ def test_new_effect_policy_default_override_and_legacy_missing_field(
     request = tmp_path / "request.json"
     create_request(request, code, cases)
     assert load(request)["performance_effect_policy"] == {
-        "id": "legacy_jitter_v1",
+        "id": "median_v1",
         "version": 1,
     }
     run("freeze", "--request", request, "--output-dir", tmp_path / "new")
     frozen_manifest = load(tmp_path / "new/run-manifest.json")
     assert (
         frozen_manifest["configuration"]["performance_effect_policy"]["id"]
-        == "legacy_jitter_v1"
+        == "median_v1"
     )
     create_request(
         request, code, cases, extra=("--performance-effect-policy", "confidence_effect_v1")
     )
     assert load(request)["performance_effect_policy"]["id"] == "confidence_effect_v1"
-    run("freeze", "--request", request, "--output-dir", tmp_path / "strict")
-    assert load(tmp_path / "strict/run-manifest.json")["configuration"][
+    run("freeze", "--request", request, "--output-dir", tmp_path / "explicit")
+    assert load(tmp_path / "explicit/run-manifest.json")["configuration"][
         "performance_effect_policy"
     ]["id"] == "confidence_effect_v1"
     legacy = load(request)
@@ -613,3 +615,52 @@ def test_new_effect_policy_default_override_and_legacy_missing_field(
         "performance_effect_policy"
         not in load(tmp_path / "legacy/run-manifest.json")["configuration"]
     )
+
+
+def test_freeze_rejects_a_failed_preflight_report(tmp_path: Path) -> None:
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
+    performance = tmp_path / "performance.csv"
+    write_cases(performance, 5)
+    request = tmp_path / "request.json"
+    create_request(request, code, performance)
+    output = tmp_path / "run"
+    baseline_dir = output / "baseline"
+    baseline_dir.mkdir(parents=True)
+    (baseline_dir / "preflight-report.json").write_text(
+        json.dumps({"summary": {"status": "fail", "fail_count": 2, "warn_count": 0, "checks": []}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run("freeze", "--output-dir", output, "--request", request)
+    assert "preflight failed with 2 failure" in failure.value.stdout
+    # A passing report (or no report at all) still freezes.
+    (baseline_dir / "preflight-report.json").write_text(
+        json.dumps({"summary": {"status": "pass", "fail_count": 0, "warn_count": 1, "checks": []}}),
+        encoding="utf-8",
+    )
+    result = run("freeze", "--output-dir", output, "--request", request)
+    assert result["status"] == "frozen"
+
+
+def test_freeze_identity_ignores_test_artifact_dirs(tmp_path: Path) -> None:
+    """Freezing source identity excludes generated TTK golden caches, even for source-like files."""
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
+    performance = tmp_path / "performance.csv"
+    write_cases(performance, 5)
+    request = tmp_path / "request.json"
+    create_request(request, code, performance)
+    clean = run("freeze", "--output-dir", tmp_path / "run-clean", "--request", request)
+    baseline_sha = load(tmp_path / "run-clean" / "run-manifest.json")["inputs"]["code"]["sha256"]
+    # Test artifacts (source-suffix files under golden_cache/) appear after the
+    # functional baseline ran pytest inside the worktree.
+    cache = code / "golden_cache" / "case-000"
+    cache.mkdir(parents=True)
+    (cache / "golden_case.py").write_text("# generated\n", encoding="utf-8")
+    (cache / "meta.cpp").write_text("// generated\n", encoding="utf-8")
+    dirty = run("freeze", "--output-dir", tmp_path / "run-dirty", "--request", request)
+    assert dirty["status"] == "frozen"
+    assert load(tmp_path / "run-dirty" / "run-manifest.json")["inputs"]["code"]["sha256"] == baseline_sha

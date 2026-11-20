@@ -102,17 +102,22 @@ def test_legacy_default_and_invalid_language_inputs(tmp_path):
         validate_backend({"backend": "cannbot_dsl", "dsl": {**config(tmp_path), "entrypoint": "python op.py"}})
 
 
-def test_create_and_freeze_dsl_request_preserve_original_inventory(tmp_path):
+@pytest.mark.parametrize("effect_policy", [None, "legacy_jitter_v1"])
+def test_create_and_freeze_dsl_request_preserve_original_inventory(tmp_path, effect_policy):
     code = tmp_path / "code"
     code.mkdir()
     (code / "op.py").write_text("def run(x): return x\n")
     cases = tmp_path / "network.csv"
     write_cases(cases, 3)
     request = tmp_path / "request.json"
+    override = ("--performance-effect-policy", effect_policy) if effect_policy else ()
     create_request(request, code, cases, extra=(
         "--backend", "cannbot_dsl", "--dsl-repo-root", str(tmp_path),
         "--dsl-entrypoint", "op:run", "--dsl-execution-mode", "jit",
+        *override,
     ))
+    expected_policy = effect_policy or "median_v1"
+    assert load(request)["performance_effect_policy"]["id"] == expected_policy
     package = tmp_path / "package.py"
     package.write_text("# test package identity")
     write_json(tmp_path / "dsl-environment.json", {
@@ -121,19 +126,11 @@ def test_create_and_freeze_dsl_request_preserve_original_inventory(tmp_path):
     run("freeze", "--request", request, "--output-dir", tmp_path / "run")
     manifest = load(tmp_path / "run/run-manifest.json")
     assert manifest["configuration"]["backend"] == "cannbot_dsl"
-    assert manifest["configuration"]["performance_effect_policy"] == {
-        "id": "confidence_effect_v1", "version": 1,
-    }
+    assert manifest["configuration"]["performance_effect_policy"]["id"] == expected_policy
     assert manifest["configuration"]["dsl"]["entrypoint"] == "op:run"
     assert manifest["configuration"]["tuning_mode"] == "standard"
     assert manifest["collections"]["performance_full"]["count"] == 3
     assert manifest["inputs"]["dsl_environment"] == file_identity(tmp_path / "run/dsl-environment.json")
-    create_request(request, code, cases, extra=(
-        "--backend", "cannbot_dsl", "--dsl-repo-root", str(tmp_path),
-        "--dsl-entrypoint", "op:run", "--dsl-execution-mode", "jit",
-        "--performance-effect-policy", "legacy_jitter_v1",
-    ))
-    assert load(request)["performance_effect_policy"]["id"] == "legacy_jitter_v1"
 
 
 def test_evidence_validates_and_tracks_all_dependencies(tmp_path):
@@ -305,7 +302,7 @@ def test_stale_or_misattributed_dsl_evidence_is_rejected(tmp_path, mutation, mat
     if mutation == "coverage":
         variant["case_ids"].pop()
     elif mutation == "stage":
-        evidence["stage"] = "preparation"
+        evidence["stage"] = "baseline"
     elif mutation == "source":
         (tmp_path / "source/op.py").write_text("def run(x): return x + 1\n")
     elif mutation == "build":
@@ -333,11 +330,14 @@ def test_stale_or_misattributed_dsl_evidence_is_rejected(tmp_path, mutation, mat
 
 def test_phase_gate_requires_compilation_proof(tmp_path):
     manifest, _ = fixture_evidence(tmp_path)
-    names = ["extraction-manifest.json", "source-compatibility.md", "functional-acceptance.md"]
+    names = [
+        "preflight-report.json", "performance-targets.json", "环境检查报告.md", "性能目标.md",
+        "workspace-manifest.json", "source-compatibility.md", "functional-acceptance.md",
+    ]
     for name in names:
         (tmp_path / name).write_text("{}")
     with pytest.raises(ValueError, match="dsl-compile-evidence"):
-        check_phase_artifacts("preparation", [str(tmp_path / name) for name in names], manifest)
+        check_phase_artifacts("baseline", [str(tmp_path / name) for name in names], manifest)
 
 
 def test_python_signature_is_protected_but_kernel_body_can_change(tmp_path):
@@ -424,7 +424,7 @@ def test_phase_evidence_lookup_prefers_operator_registration_over_closure_extras
     manifest = tmp_path / "run-manifest.json"
     manifest.write_text(json.dumps({
         "schema_version": 2,
-        "configuration": {"workflow_layout": "five-stage-v1", "backend": "cannbot_dsl",
+        "configuration": {"workflow_layout": "four-stage-v1", "backend": "cannbot_dsl",
                           "target_socs": ["Ascend950"],
                           "dsl": {"repo_root": str(tmp_path), "entrypoint": "m:f",
                                   "execution_mode": "jit", "workload_scope": "network_cases"},

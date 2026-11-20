@@ -7,13 +7,15 @@ python3 "$WORKFLOW_SCRIPTS/preflight_dependencies.py" --request <optimization-re
     [--ttk-root <ops-test-kit>] [--device 0]
 ```
 
-预检一次性校验整条依赖链（插件脚本、Python/torch_npu/ml_dtypes、CANN 版本与 opapi 库族与 warmup 符号、msprof/atc、TTK 可导入与多副本漂移、构建工具链、设备可见/可初始化/忙闲、磁盘空间），报告写入 `$OUTPUT_DIR/baseline/preflight-report.json`，不落在运行目录根。存在 **fail 项时禁止 freeze**——修复依赖或重新确认环境后重跑预检；仅 warn 项（如共享设备占用、不完整 CANN 但 compiled 回退可用、TTK 多副本漂移）登记原因后可继续。依赖问题必须在启动一步暴露，不允许留到某个脚本中途失败后再补救。该预检只证明环境具备执行能力；被测实现的源码、构建与加载同源性由 freeze 后的 execution identity 门禁证明，两者不能互相替代。
+直调 demo 沿用户指定的现有 C++/比较器验证时，预检显式传 `--validation-runner existing`，不导入或安装 TTK；保持原精度判据。
 
-`code_dir` 可以是仓库内的算子子目录，不要求本层存在 `build.sh`。预检发现上层构建入口仅代表候选路径，需从真实脚本确认单算子 target、工作目录、参数与环境，并将成功命令记录为后续构建依据；不为满足目录检查扩大已确认源码范围。
+预检一次性校验通用构建与运行依赖（插件脚本、Python/torch_npu/ml_dtypes、CANN 版本与 opapi 库族、atc、TTK 可导入与多副本漂移、构建工具链、设备可见/可初始化/忙闲、磁盘空间），报告写入 `$OUTPUT_DIR/baseline/preflight-report.json`，不落在运行目录根。存在 **fail 项时禁止 freeze**——修复依赖或重新确认环境后重跑预检；仅 warn 项（如共享设备占用、TTK 多副本漂移）登记原因后可继续。通用依赖问题必须在本步骤暴露；采集后端依赖由报告入口加载后检查，不列入本预检的固定清单。该预检检查通用构建/运行环境；性能测量能力在加载 `ops-profiling-report` 后由其检查，缺能力时不得开始采集或宣称性能就绪。被测实现的源码、构建与加载同源性由 freeze 后的 execution identity 门禁证明，两者不能互相替代。
+
+`code_dir` 可以是仓库内的算子子目录，不要求本层存在 `build.sh`。预检发现上层构建入口仅代表候选路径，需从真实脚本确认单算子 target、工作目录、参数与环境，并将成功命令记录为后续构建依据；不为满足目录检查扩大已确认源码范围。AscendC 后端的预检同时校验 git 可用性与版本（≥2.20）及 `code_dir` 的 git 仓状态：非 git 目录仅 warn，处置方案（原地 `git init` 或终止）已在 request 确认时记录。
 
 无交互运行必须提供已确认的 request JSON，不得自行猜测功能模式、目标或环境。`validate-request` 校验 schema、确认状态、路径和 Python 版本；CANN 选择 `inherit` 时还校验确认时的环境快照。失效时回到用户确认，不静默替换环境。
 
-使用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py freeze --request <optimization-request.json>` 把 request 复制到运行目录，原子生成 `run-manifest.json`（run 级，根目录）和模式对应集合（写入 `baseline/` 阶段文件夹）。manifest 记录 request 路径/SHA、本次源码与用例身份、目标和环境。standard 使用以下四类集合：
+使用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py freeze --request <optimization-request.json>` 把 request 复制到运行目录，原子生成 `run-manifest.json`（run 级，根目录）和模式对应集合（写入 `baseline/` 阶段文件夹）。manifest 记录 request 路径/SHA、本次源码与用例身份、目标和环境；源码身份在源码树哈希之外附带 git 事实（`head_commit` 与脏文件清单，非 git 目录为 null），供准备期核对基线 commit。standard 使用以下四类集合：
 
 | 集合 | 文件 | 用途 |
 |---|---|---|
@@ -28,7 +30,7 @@ python3 "$WORKFLOW_SCRIPTS/preflight_dependencies.py" --request <optimization-re
 
 generalization 固定把泛化性能全集复用为功能全集。已有性能用例在 freeze 时直接冻结；没有性能用例时 manifest 将用例准备标为 `pending`，基线评估代理生成性能/功能合一用例后用 `attach-generalization` 接入。已有竞品文件在 freeze 时规范化并校验覆盖；外部采集结果用 `attach-competitor` 接入。竞品性能必须精确覆盖泛化全集 case ID。
 
-库存静态检查结果直接写入 `collections.functional_full.validation`。缺少显式接口、golden 或阈值字段时标 `needs_review`，由主 Agent依据库存框架的可信生成契约补充说明后再验收；不再为此临时编写脚本或生成第二份 preparation JSON。
+库存静态检查结果直接写入 `collections.functional_full.validation`。缺少显式接口、golden 或阈值字段时标 `needs_review`，由主 Agent依据库存框架的可信生成契约补充说明后再验收；不再为此临时编写脚本或生成第二份阶段 JSON。
 
 `confirm-performance`、`attach-functional`、`attach-generalization` 或 `attach-competitor` 合法更新 manifest 后，立即执行 `$WORKFLOW_SCRIPTS/workflow_state.py sync-manifest`，使恢复身份与报告同步；其他未声明的 manifest 变化仍按 stale input 处理。
 

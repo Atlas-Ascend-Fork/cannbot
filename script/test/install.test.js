@@ -506,7 +506,8 @@ for (const source of sources) {
     // Query is installed by the knowledge repository's consumer installer,
     // preserving its Contract dependencies and prepared index.
     assert.equal(existsSync(join(skillRoot(target, "opencode"), "knowledge-query")), false);
-    assert.equal(readPluginRecord(target, "opencode", "ops-perf-optimize").skills.length, 27);
+    assert.equal(readPluginRecord(target, "opencode", "ops-perf-optimize").skills.length, 24);
+    assert.ok(existsSync(join(skillRoot(target, "opencode"), "ops-profiling-report", "profilers.json")));
     const pluginRoot = join(target, ".cannbot", "plugins", "ops-perf-optimize");
     const workflowRoot = join(skillRoot(target, "opencode"), "ops-perf-optimize-workflow");
     const workflowScripts = join(workflowRoot, "scripts");

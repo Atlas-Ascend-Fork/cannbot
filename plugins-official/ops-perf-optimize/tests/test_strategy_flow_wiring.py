@@ -13,12 +13,11 @@ from pathlib import Path
 from ops_perf_test_paths import ANALYSIS, CONTRACT, IMPL, ROOT, WRAPPER
 
 
-
 def read(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
     references = {
         "ops-perf-analysis": "references/analysis-execution.md",
-        "ops-perf-implementation": "references/implementation-execution.md",
+        "ops-perf-implementation": "references/selection-and-final.md",
     }
     if path.parent.name in references:
         text += (path.parent / references[path.parent.name]).read_text()
@@ -68,12 +67,14 @@ def test_mc2_step2_evidence_is_collected_upstream_and_consumed_read_only() -> No
 
 
 def test_strategy_flow_does_not_widen_analysis_boundaries() -> None:
-    analysis = read(ANALYSIS)
+    skill = ANALYSIS.read_text(encoding="utf-8")
+    analysis = read(ANALYSIS.parent / "references/analysis-execution.md")
     contract = read(CONTRACT)
     # The strategy flow supplements domain method; the contract stays the single
     # source of truth for stages, routing and acceptance.
     assert "角色文件只补充领域执行方法" in contract or "唯一工作流真源" in contract
-    assert "不得重选 case、重采性能" in analysis
-    assert "分析推导不得重采、重选 case 或修改基线" in read(
-        ROOT / "skills/ops-perf-analysis/SKILL.md"
-    )
+    assert "](references/analysis-execution.md)" in skill
+    assert "准备性能基线" in skill and "复用或采集当前基线" in skill
+    assert "只读边界约束采集完成后的分析推导" in analysis
+    assert "不得重选 case、重采性能、编译 demo 或修改源码" in analysis
+    assert "冻结基线不变" in analysis

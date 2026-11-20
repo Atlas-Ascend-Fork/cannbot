@@ -31,8 +31,19 @@ def request_fixture(tmp_path):
     return path
 
 
-def test_new_request_freezes_schedule_policy(tmp_path):
+def test_new_request_defaults_to_no_schedule_policy(tmp_path):
+    """S2: the schedule contract is opt-in; most schemes pay pure overhead for it."""
     request = request_fixture(tmp_path)
+    assert "schedule_policy" not in load_request(request)
+    run("freeze", "--request", request, "--output-dir", tmp_path / "run")
+    assert "schedule_policy" not in load_manifest(tmp_path / "run/run-manifest.json")["configuration"]
+
+
+def test_explicit_schedule_policy_is_frozen(tmp_path):
+    request = request_fixture(tmp_path)
+    body = load(request)
+    body["schedule_policy"] = {"id": "schedule_contract_v1", "version": 1}
+    request.write_text(json.dumps(body))
     expected = {"id": "schedule_contract_v1", "version": 1}
     assert load_request(request)["schedule_policy"] == expected
     run("freeze", "--request", request, "--output-dir", tmp_path / "run")
@@ -43,6 +54,8 @@ def test_new_request_freezes_schedule_policy(tmp_path):
 def test_old_request_is_not_silently_upgraded(tmp_path):
     request = request_fixture(tmp_path)
     body = load(request)
+    body["schedule_policy"] = {"id": "schedule_contract_v1", "version": 1}
+    request.write_text(json.dumps(body))
     del body["schedule_policy"]
     request.write_text(json.dumps(body))
     assert "schedule_policy" not in load_request(request)
@@ -55,6 +68,9 @@ def test_old_request_is_not_silently_upgraded(tmp_path):
                                    {"id": "schedule_contract_v1", "version": 2}])
 def test_bad_policy_rejected_at_both_input_boundaries(tmp_path, bad):
     request = request_fixture(tmp_path)
+    body = load(request)
+    body["schedule_policy"] = {"id": "schedule_contract_v1", "version": 1}
+    request.write_text(json.dumps(body))
     run("freeze", "--request", request, "--output-dir", tmp_path / "run")
     body = load(request)
     body["schedule_policy"] = bad

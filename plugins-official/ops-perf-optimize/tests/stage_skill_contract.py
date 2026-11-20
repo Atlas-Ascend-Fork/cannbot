@@ -22,7 +22,6 @@ def require(condition: object, message: object = "contract check failed") -> Non
 
 STAGE_SKILLS = {
     "baseline": "ops-perf-baseline-evaluate",
-    "preparation": "ops-perf-preparation",
     "analysis": "ops-perf-analysis",
     "implementation": "ops-perf-implementation",
     "integration": "ops-perf-postprocess",
@@ -44,6 +43,7 @@ def _linked_targets(path: Path, root: Path, main: Path) -> list[Path]:
 
 
 def _check_skill(root: Path, entry: Path, main: Path, name: str) -> None:
+    bundled_kb = root / "references/kb"
     pending, reachable = [entry], set()
     while pending:
         path = pending.pop()
@@ -51,14 +51,17 @@ def _check_skill(root: Path, entry: Path, main: Path, name: str) -> None:
             continue
         require(path.is_file(), path)
         reachable.add(path)
-        pending.extend(_linked_targets(path, root, main))
+        # The bundled corpus contains historical source quotations and checker
+        # fixtures, not stage instructions. Validate its linked entrypoints here;
+        # kb/tools/check_entries.sh owns the entry format and negative fixtures.
+        if bundled_kb not in path.parents:
+            pending.extend(_linked_targets(path, root, main))
     # The intentionally unlinked knowledge template is an authoring asset.
-    docs = set(root.rglob("*.md")) - {
+    docs = {path for path in root.rglob("*.md") if bundled_kb not in path.parents} - {
         root / "references/perf-review-knowledge/_template.md"
     }
     require(docs <= reachable, (name, docs - reachable))
     if name in STAGE_SKILLS.values():
-        require("阶段内不加载主编排 Skill" in entry.read_text())
         require("ops-perf-acceptance-criteria" in entry.read_text())
 
 

@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "AscendC / CANNBot-DSL 算子性能调优",
     "shortDescription": "AscendC / CANNBot-DSL 算子性能调优工作流",
-    "longDescription": "AscendC / CANNBot-DSL 算子端到端性能调优工作流。AscendC 按基线评估→前处理→诊断分析→实施验证→后处理的五阶段工作流执行；CANNBot-DSL 按基线评估→诊断分析→实施验证→后处理的四阶段工作流执行。",
+    "longDescription": "AscendC / CANNBot-DSL 算子端到端性能调优工作流。两个后端均按基线评估→诊断分析→实施验证→后处理的四阶段工作流执行。",
     "developerName": "CANNBot",
     "category": "Productivity",
     "capabilities": [

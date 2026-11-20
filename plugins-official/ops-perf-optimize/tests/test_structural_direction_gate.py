@@ -81,7 +81,7 @@ def test_pursue_optimal_gate_blocks_unresolved_and_allows_after_resolution(tmp_p
     assert rejected.returncode != 0
     assert "unrealized structural directions" in (rejected.stderr + rejected.stdout)
     # resolving to realized clears the structural gate; control then passes to the
-    # independently-enforced five-stage completeness gate (see test_five_stage_workflow.py).
+    # independently-enforced four-stage completeness gate (see test_five_stage_workflow.py).
     _run(STATE, "structural-direction", "--state", st, "--id", "whole-op-fusion", "--status", "realized")
     after = _run(STATE, "finish", "--state", st, "--status", "success",
                  "--reason-code", "completed", "--message", "done", check=False)
@@ -118,7 +118,7 @@ def test_safe_incremental_does_not_gate(tmp_path: Path) -> None:
     st = out / "workflow-state.json"
     _run(STATE, "structural-direction", "--state", st, "--id", "fuse", "--status", "blocked_by_scope")
     # safe_incremental never engages the structural gate, even with an unresolved direction;
-    # finish only meets the separate five-stage completeness gate, never the structural one.
+    # finish only meets the separate four-stage completeness gate, never the structural one.
     res = _run(STATE, "finish", "--state", st, "--status", "success",
                "--reason-code", "completed", "--message", "ok", check=False)
     combined = res.stderr + res.stdout

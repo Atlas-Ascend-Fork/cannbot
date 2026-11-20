@@ -1,0 +1,14 @@
+{
+  "tools": [
+    {
+      "id": "msopprof",
+      "guide": "tools/tool-msopprof/TOOL.md",
+      "adapter": "tools/tool-msopprof/scripts/adapter.py"
+    },
+    {
+      "id": "msprof",
+      "guide": "tools/tool-msprof/TOOL.md",
+      "adapter": "tools/tool-msprof/scripts/adapter.py"
+    }
+  ]
+}

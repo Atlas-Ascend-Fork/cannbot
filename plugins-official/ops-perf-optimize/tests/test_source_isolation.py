@@ -44,7 +44,11 @@ def write(root: Path, name: str, text: str) -> None:
 @pytest.fixture
 def prepared(tmp_path: Path) -> tuple[Path, Path, dict]:
     baseline, candidate = tmp_path / "baseline", tmp_path / "candidate"
-    write(baseline, "op_kernel/shared.h", "template<class T> void Legacy(T x) { Compute(x); }\n")
+    write(
+        baseline,
+        "op_kernel/shared.h",
+        "template<class T> void Legacy(T x) { Compute(x); }\n",
+    )
     write(baseline, "common/params.h", "constexpr int kTile = 128;\n")
     write(baseline, "op_kernel/entry.cpp", "void Run() {\n  Legacy(x);\n}\n")
     write(baseline, "op_kernel/uninvolved.h", "void OtherShape() { Legacy(y); }\n")
@@ -56,14 +60,24 @@ def prepared(tmp_path: Path) -> tuple[Path, Path, dict]:
         "target_socs": TARGETS,
         "baseline_files": ISOLATION.snapshot(baseline),
         "editable_ranges": {
-            "op_kernel/entry.cpp": [{
-                "start": 2, "end": 2, "kind": "routing",
-                "reason": "Dispatch only; original shared implementation remains intact",
-            }],
+            "op_kernel/entry.cpp": [
+                {
+                    "start": 2,
+                    "end": 2,
+                    "kind": "routing",
+                    "reason": "Dispatch only; original shared implementation remains intact",
+                }
+            ],
         },
-        "new_files": {"op_kernel/arch35/optimized.h": {"copied_from": "op_kernel/shared.h"}},
+        "new_files": {
+            "op_kernel/arch35/optimized.h": {"copied_from": "op_kernel/shared.h"}
+        },
     }
-    write(candidate, "op_kernel/arch35/optimized.h", "template<class T> void Optimized(T x) { FastCompute(x); }\n")
+    write(
+        candidate,
+        "op_kernel/arch35/optimized.h",
+        "template<class T> void Optimized(T x) { FastCompute(x); }\n",
+    )
     write(
         candidate,
         "op_kernel/entry.cpp",
@@ -76,17 +90,75 @@ def test_copy_and_narrow_route_edits_pass(prepared) -> None:
     baseline, candidate, scope = prepared
     report = ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)
     assert report["decision"] == "pass"
-    assert (baseline / "op_kernel/shared.h").read_bytes() == (candidate / "op_kernel/shared.h").read_bytes()
+    assert (baseline / "op_kernel/shared.h").read_bytes() == (
+        candidate / "op_kernel/shared.h"
+    ).read_bytes()
 
 
-@pytest.mark.parametrize("path,text", [
-    ("op_kernel/shared.h", "template<class T> void Legacy(T x) { FastCompute(x); }\n"),
-    ("common/params.h", "constexpr int kTile = 256;\n"),
-    ("op_kernel/uninvolved.h", "void OtherShape() { Optimized(y); }\n"),
-    ("op_host/config/ascend910b/op.json", '{"source": "arch35/optimized.h"}\n'),
-    ("CMakeLists.txt", "add_subdirectory(arch35)\n"),
-])
-def test_shared_helpers_uninvolved_templates_and_build_routes_are_protected(prepared, path, text) -> None:
+@pytest.mark.parametrize(
+    "ranges,changed,expected",
+    [
+        ([(1, 1), (2, 2)], [1, 2], "pass"),
+        ([(2, 2), (1, 1)], [1, 2], "pass"),
+        ([(1, 2), (2, 3)], [1, 2, 3], "pass"),
+        ([(1, 1), (3, 3)], [1, 2, 3], "fail"),
+    ],
+)
+def test_diff_spans_use_exact_authorized_union_without_filling_gaps(
+    tmp_path, ranges, changed, expected
+):
+    baseline, candidate = tmp_path / "before", tmp_path / "after"
+    rows = ["int a = 0;\n", "int b = 0;\n", "int c = 0;\n"]
+    write(baseline, "kernel.cpp", "".join(rows))
+    write(
+        candidate,
+        "kernel.cpp",
+        "".join(
+            row.replace("= 0", "= 1") if i in changed else row
+            for i, row in enumerate(rows, 1)
+        ),
+    )
+    scope = {
+        "schema_version": 1,
+        "target_socs": TARGETS,
+        "baseline_files": ISOLATION.snapshot(baseline),
+        "new_files": {},
+        "editable_ranges": {
+            "kernel.cpp": [
+                {
+                    "start": start,
+                    "end": end,
+                    "kind": "target_private",
+                    "reason": "synthetic frozen declaration scope",
+                }
+                for start, end in ranges
+            ]
+        },
+    }
+    assert (
+        ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)[
+            "decision"
+        ]
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "path,text",
+    [
+        (
+            "op_kernel/shared.h",
+            "template<class T> void Legacy(T x) { FastCompute(x); }\n",
+        ),
+        ("common/params.h", "constexpr int kTile = 256;\n"),
+        ("op_kernel/uninvolved.h", "void OtherShape() { Optimized(y); }\n"),
+        ("op_host/config/ascend910b/op.json", '{"source": "arch35/optimized.h"}\n'),
+        ("CMakeLists.txt", "add_subdirectory(arch35)\n"),
+    ],
+)
+def test_shared_helpers_uninvolved_templates_and_build_routes_are_protected(
+    prepared, path, text
+) -> None:
     baseline, candidate, scope = prepared
     write(candidate, path, text)
     report = ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)
@@ -98,7 +170,12 @@ def test_all_target_socs_does_not_unlock_other_templates(prepared) -> None:
     baseline, candidate, scope = prepared
     scope["target_socs"] = ["Ascend910B", "Ascend950"]
     write(candidate, "op_kernel/uninvolved.h", "void OtherShape() { Optimized(y); }\n")
-    assert ISOLATION.validate_source_isolation(scope, baseline, candidate, scope["target_socs"])["decision"] == "fail"
+    assert (
+        ISOLATION.validate_source_isolation(
+            scope, baseline, candidate, scope["target_socs"]
+        )["decision"]
+        == "fail"
+    )
 
 
 def test_insertions_do_not_move_permission_to_neighboring_code(prepared) -> None:
@@ -108,7 +185,12 @@ def test_insertions_do_not_move_permission_to_neighboring_code(prepared) -> None
         "op_kernel/entry.cpp",
         "void ChangedInterface() {\n  if (TargetSoc()) Optimized(x);\n  else Legacy(x);\n}\n",
     )
-    assert ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)["decision"] == "fail"
+    assert (
+        ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)[
+            "decision"
+        ]
+        == "fail"
+    )
 
 
 @pytest.mark.parametrize("change", ["delete", "undeclared_new", "missing_copy"])
@@ -120,10 +202,17 @@ def test_file_inventory_cannot_be_silently_changed(prepared, change) -> None:
         write(candidate, "common/override.h", "#define kTile 256\n")
     else:
         (candidate / "op_kernel/arch35/optimized.h").unlink()
-    assert ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)["decision"] == "fail"
+    assert (
+        ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)[
+            "decision"
+        ]
+        == "fail"
+    )
 
 
-@pytest.mark.parametrize("field", ["baseline_files", "target_socs", "copied_from", "range"])
+@pytest.mark.parametrize(
+    "field", ["baseline_files", "target_socs", "copied_from", "range"]
+)
 def test_invalid_or_stale_scope_is_rejected(prepared, field) -> None:
     baseline, candidate, original = prepared
     scope = copy.deepcopy(original)
@@ -143,7 +232,9 @@ def test_invalid_or_stale_scope_is_rejected(prepared, field) -> None:
 def test_aliasing_original_source_is_rejected(prepared, kind) -> None:
     baseline, candidate, scope = prepared
     if kind == "directory_symlink":
-        (candidate / "linked_common").symlink_to(baseline / "common", target_is_directory=True)
+        (candidate / "linked_common").symlink_to(
+            baseline / "common", target_is_directory=True
+        )
     else:
         path = candidate / "common/params.h"
         path.unlink()
@@ -158,27 +249,54 @@ def test_aliasing_original_source_is_rejected(prepared, kind) -> None:
 def test_reports_do_not_become_source_changes(prepared) -> None:
     baseline, candidate, scope = prepared
     write(candidate, "scheme-conformance.json", '{"decision": "pass"}\n')
-    assert ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)["decision"] == "pass"
+    assert (
+        ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)[
+            "decision"
+        ]
+        == "pass"
+    )
 
 
-@pytest.mark.skipif(not os.environ.get("OPS_PERF_VALIDATION_ROOT"), reason="optional real operator checkout")
-@pytest.mark.parametrize("old,new", [
-    ("kBufferNum = 2", "kBufferNum = 3"),
-    ("kStreamingTwoPass = 1", "kStreamingTwoPass = 2"),
-])
-def test_xllm_shared_code_mutation_in_physical_copy_is_rejected(tmp_path: Path, old: str, new: str) -> None:
-    original = Path(os.environ["OPS_PERF_VALIDATION_ROOT"]) / "xllm-ops/xllm_ops/layer_norm_fwd"
+@pytest.mark.skipif(
+    not os.environ.get("OPS_PERF_VALIDATION_ROOT"),
+    reason="optional real operator checkout",
+)
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("kBufferNum = 2", "kBufferNum = 3"),
+        ("kStreamingTwoPass = 1", "kStreamingTwoPass = 2"),
+    ],
+)
+def test_xllm_shared_code_mutation_in_physical_copy_is_rejected(
+    tmp_path: Path, old: str, new: str
+) -> None:
+    original = (
+        Path(os.environ["OPS_PERF_VALIDATION_ROOT"])
+        / "xllm-ops/xllm_ops/layer_norm_fwd"
+    )
     before = ISOLATION.snapshot(original)
     declaration = (original / "op_host/layer_norm_fwd_def.cpp").read_text()
-    assert all(f'AddConfig("{soc}"' in declaration for soc in ("ascend910b", "ascend910_93", "ascend950"))
+    assert all(
+        f'AddConfig("{soc}"' in declaration
+        for soc in ("ascend910b", "ascend910_93", "ascend950")
+    )
     baseline, candidate = tmp_path / "baseline", tmp_path / "candidate"
     shutil.copytree(original, baseline)
     shutil.copytree(original, candidate)
     scope = {
-        "schema_version": 1, "target_socs": TARGETS,
-        "baseline_files": ISOLATION.snapshot(baseline), "editable_ranges": {}, "new_files": {},
+        "schema_version": 1,
+        "target_socs": TARGETS,
+        "baseline_files": ISOLATION.snapshot(baseline),
+        "editable_ranges": {},
+        "new_files": {},
     }
-    assert ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)["decision"] == "pass"
+    assert (
+        ISOLATION.validate_source_isolation(scope, baseline, candidate, TARGETS)[
+            "decision"
+        ]
+        == "pass"
+    )
     kernel = candidate / "op_kernel/layer_norm_fwd.cpp"
     source = kernel.read_text()
     assert source.count(old) == 1
@@ -187,3 +305,16 @@ def test_xllm_shared_code_mutation_in_physical_copy_is_rejected(tmp_path: Path, 
     assert report["decision"] == "fail"
     assert any("op_kernel/layer_norm_fwd.cpp" in error for error in report["failures"])
     assert ISOLATION.snapshot(original) == before
+
+
+def test_snapshot_ignores_test_artifact_dirs(tmp_path: Path) -> None:
+    """Writing pytest golden caches must preserve the frozen isolation scope."""
+    baseline = tmp_path / "baseline"
+    write(baseline, "op_kernel/entry.cpp", "void Run() {}\n")
+    clean = ISOLATION.snapshot(baseline)
+    cache = baseline / "golden_cache" / "case-000"
+    cache.mkdir(parents=True)
+    (cache / "golden_case.py").write_text("# generated\n", encoding="utf-8")
+    (cache / "meta.cpp").write_text("// generated\n", encoding="utf-8")
+    assert ISOLATION.snapshot(baseline) == clean
+    assert not any(name.startswith("golden_cache") for name in clean)

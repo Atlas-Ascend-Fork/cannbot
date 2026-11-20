@@ -1,6 +1,20 @@
 # 基线评估
 
-本阶段由 baseline 角色的通用 subagent 执行，原工程只读。输入来自已确认 request，先运行预检，再 freeze/start；freeze 前的预检开始/结束时间来自原报告，不能事后伪造阶段耗时。状态初始化后登记预检、集合和目标证据。
+本阶段由 baseline 角色的通用 subagent 执行（两次派发：定稿 → 采集），原工程只读（git 机械操作除外）。输入来自已确认 request，先运行预检，再 freeze/start；freeze 前的预检开始/结束时间来自原报告，不能事后伪造阶段耗时。状态初始化后登记预检、集合和目标证据。
+
+## 基线定稿与 run worktree（派发 1，git 管理的起点）
+
+按 harness-git 协议（`$WORKFLOW_ROOT/workflows/references/harness-git.md`）定稿基线 commit：**基线 = 原工程已提交状态（HEAD，或用户显式选择的 upstream 状态），未提交/暂存区改动不得进入基线**。
+
+- 非 git 目录：按 request 冻结的 `GIT_INIT` 处置——同意则 `git_workspace.py init --code-dir <dir> --out <json>` 原地初始化（只新增 `.git`、配置仓内局部身份、首 commit 作基线、比对 `git ls-files` 与磁盘差异并对被 `.gitignore` 排除的源码型文件列警告）；拒绝则终止并列出待办。
+- 脏改动：按 request 冻结的 `DIRTY_POLICY` 处置——**(b) 留在用户工作树（默认）**，报告"脏文件 ∩ 算子闭包"交集警告（`prepare-baseline --option b --closure-files <json>`）；**(d) 存 patch 丢弃**（审计 patch 存 run 目录，仅用户显式选择时执行）；**(c) 终止**。
+- 定稿结果返回主 Agent 后，主 Agent 机械调用 `git_workspace.py worktree-add --repo <repo> --branch perf-opt/<run-id>/work --from <baseline_commit> --path <run-dir>/worktree --out <json>` 建立 run worktree（登记进事件流与 `workspace-manifest.json`），再派发派发 2。优化任务的一切构建、采集与验证只在 worktree 内进行，绝不使用用户工作树。
+
+## 工作区构建与功能基线（派发 2，AscendC）
+
+- 按 [harness.md](harness.md) 在 worktree 基线 commit 上就绪构建入口与 runner（repo-native 优先；无单算子入口按 SDK 骨架/直调 harness 规则；staging 禁改），构建原实现并证明实际加载本次构建产物；构建命令、产物与加载证据记入 `workspace-manifest.json` 与执行身份。
+- 加载 TTK 标准 skill（`ttk-how-run-test`）在 worktree 基线 commit 上执行完整功能验收子集，用相同原始 case/golden/阈值核对基线语义与加载身份；精度结论严格按 `ops-perf-acceptance-criteria` 的精度规则，已知原始失败依工作流规则分类（strict/conditional），不直接终止。产出 `functional-acceptance.md`。
+- 产出 `source-compatibility.md`：从原工程的 build config、`SocVersion` 路由、架构目录和 kernel 入口列出"工程支持 SoC / 本次 `TARGET_SOCS` / 证据 / 是否已验证"，定位公开契约面，盘点共享文件/传递依赖、TilingKey/模板分支及使用者；只陈述源码事实，不把当前设备推断为工程唯一支持代际。
 
 ## 环境与用例
 
@@ -62,8 +76,8 @@ python3 "$WORKFLOW_SCRIPTS/validate_execution_identity.py" validate \
 |---|---|---|
 | `xpu` 其他算力卡 | 用户提供覆盖泛化全集的竞品性能文件（`case_id,gpu_total_us`，或 `testcase_name,gpu_time_us` 由脚本规范化）；记录实际 kernel/端到端计时边界、同步、输入与实现 SHA；不能假设单一采集协议适用于所有卡 | 对标卡耗时 / 目标比率；例如 ratio=1 表示不慢于对标卡 |
 | `theoretical` 理论上限 | 加载 `ops-theoretical-performance-estimation`，逐 case 建模计算流、dtype、流量、指令/overlap/tiling 与硬件常量来源，保存模型 JSON 和原报告；当前技能仅支持 Ascend950 纯 Vector，其他芯片、Cube 或混合算子必须报告 unsupported，取得可信扩展模型或由用户选择其他对标后再继续 | 理论时延下界 / 效率，0 < 效率 ≤ 1；理论上限是吞吐上限，不是时延上限 |
-| `unfused` 小算子 | 在独立目录编写 `unfused_reference.py`，保持原始运算序列/中间张量/精度/广播语义，禁用会把序列重新融合的编译路径；先用冻结 golden 验证，再加载 `ops-profiling` 实测整个未融合链及各小算子。记录启动次数、同步、临时分配和设备身份，按同一计时边界比较融合实现 | 融合前整链实测耗时 / 期望加速比（≥1）；不能把各步骤独立中位数相加冒充整链中位数 |
-| `baseline` 原始实现 | 在原工程只读快照上按“被测实现身份”门禁构建并加载，再用现有入口采原实现全集；已有同一 execution identity 的性能证据直接复用，不提前做剥离或优化 | 原始耗时 / 目标加速比；旧请求默认比率 1，不凭空承诺收益 |
+| `unfused` 小算子 | 在独立目录编写 `unfused_reference.py`，保持原始运算序列/中间张量/精度/广播语义，禁用会把序列重新融合的编译路径；先用冻结 golden 验证，再加载 `ops-profiling-report` 实测整个未融合链及各小算子。记录启动次数、同步、临时分配和设备身份，按同一计时边界比较融合实现 | 融合前整链实测耗时 / 期望加速比（≥1）；不能把各步骤独立中位数相加冒充整链中位数 |
+| `baseline` 原始实现 | 在基线 commit（本阶段定稿；run worktree 由 harness 建立）上按“被测实现身份”门禁构建并加载，再用现有入口采原实现全集；已有同一 execution identity 的性能证据直接复用，不提前优化 | 原始耗时 / 目标加速比；旧请求默认比率 1，不凭空承诺收益 |
 
 standard 的 xpu 来源与访问参数写入 `performance_reference` JSON（例如 `source_configuration`），不使用仅属于 generalization 的 `--competitor-*` 参数。泛化模式保留已有 `generalization.competitor` 与 ratio 1.0/0.6 合同；`performance_reference` 必须为 xpu，目标比例不能静默改变泛化退出门限。单纯 xpu 对比无需切换为泛化模式。
 

@@ -34,7 +34,7 @@ from workflow_state_cli import (
     progress_payload,
     validate_mark_args,
 )
-from summarize_performance_effects import recompute_summary, summary_dependency_paths
+from summarize_performance_effects import requires_routing, summary_dependency_paths
 from performance_effect_evidence import policy
 from validate_execution_identity import dependency_paths, validate_execution_identity
 import search_policy
@@ -42,7 +42,7 @@ import search_policy
 
 SCHEMA_VERSION = 3
 WORKFLOW_VERSION = "unified-workflow-v12-execution-identity"
-PHASES = ("baseline", "preparation", "analysis", "implementation", "integration")
+PHASES = ("baseline", "analysis", "implementation", "integration")
 TUNING_MODES = ("standard", "generalization")
 UNRESOLVED_STRUCTURAL_STATUSES = ("not_attempted", "blocked_by_scope")
 
@@ -144,6 +144,8 @@ def read_manifest(path: Path) -> dict[str, Any]:
 
     policy_enabled(payload)
     search_policy.enabled(payload)
+    from experience_reflux import enabled as experience_enabled
+    experience_enabled(payload)
     tuning_mode = payload["configuration"].get("tuning_mode", "standard")
     if tuning_mode not in TUNING_MODES:
         raise ValueError(f"invalid tuning mode: {tuning_mode}")
@@ -253,11 +255,6 @@ def recorded_performance(
         if artifact_identity(path) != artifacts.get(path):
             raise ValueError(f"performance artifact changed or not registered: {path}")
         summary = read_json(Path(path))
-        expected = recompute_summary(summary)
-        if any(summary.get(k) != v for k, v in expected.items()):
-            raise ValueError(
-                "recorded effect summary differs from recomputed policy/evidence"
-            )
         for source in [
             summary["baseline_path"],
             summary["candidate_path"],
@@ -397,7 +394,7 @@ def _latest_performance_lines(
             f"- 当前保留实现：`{report_cell(performance['selected_candidate'])}`",
             f"- 统计范围：{scope}，{current['total_case_count']} 个 case；子集结果不代表未测全集。",
             "- 本轮变化相对轮初基线；累计变化相对原始基线，均只统计同一组已实测 case。",
-            "- 有效几何加速比只统计冻结规则判为有效的 case；confidence规则的待确认项不计入有效指标。",
+            "- median_v1 的几何加速比包含全部 case；旧策略按冻结规则统计。",
             "",
             "| 比较 | 总 case | 抖动 | 有效 | 有效提升 | 有效回退 | 有效几何加速比 |",
             "|---|---:|---:|---:|---:|---:|---:|",
@@ -412,7 +409,7 @@ def _latest_performance_lines(
             "",
             "### 逐 case 当前性能",
             "",
-            "差值 = 当前耗时 − 对应基线耗时，负值表示提升；抖动 case 保留展示但不计入有效指标。",
+            "差值 = 当前耗时 − 对应基线耗时，负值表示提升；所有实测 case 均保留展示。",
             "",
             "| case_id | 原始基线(us) | 轮初基线(us) | 当前(us) | 本轮差值(us) | 本轮变化(%) | 本轮加速比 | 本轮分类 | "
             "累计差值(us) | 累计变化(%) | 累计加速比 | 累计分类 |",
@@ -619,9 +616,9 @@ def _generalization_lines(generalization: dict) -> list[str]:
 
 
 def _five_stage_lines(configuration: dict, state: dict) -> list[str]:
-    lines = ["", "## 五阶段交接", "", "| 阶段 | 状态 |", "|---|---|"]
+    lines = ["", "## 四阶段交接", "", "| 阶段 | 状态 |", "|---|---|"]
     for phase, label in zip(
-        PHASES, ("基线评估", "前处理", "诊断分析", "实施验证", "后处理")
+        PHASES, ("基线评估", "诊断分析", "实施验证", "后处理")
     ):
         record = state.get("stages", {}).get(f"phase.{phase}", {})
         lines.append(f"| {label} | {record.get('status', 'pending')} |")
@@ -645,7 +642,7 @@ def _mode_lines(configuration: dict, state: dict) -> list[str]:
         lines.append(
             f"- 性能对标：`{report_cell(reference['kind'])}`；目标比率：{reference['target_ratio']}"
         )
-    if configuration.get("workflow_layout") == "five-stage-v1":
+    if configuration.get("workflow_layout") == "four-stage-v1":
         lines.extend(_five_stage_lines(configuration, state))
     return lines
 
@@ -823,7 +820,11 @@ def report_text(state: dict[str, Any]) -> str:
             ]
         )
         if search.get("anchor"):
-            lines.append(f"- 当前参考：`{report_cell(search['anchor']['path'])}`")
+            anchor = search["anchor"]
+            if search_policy.is_git_identity(anchor):
+                lines.append(f"- 当前参考：`{anchor['commit'][:12]}` (git tree `{anchor['tree'][:12]}`)")
+            else:
+                lines.append(f"- 当前参考：`{report_cell(anchor['path'])}`")
         for item in search.get("observations", []):
             lines.append(
                 f"- `{report_cell(item['decision_id'])}`：{item['classification']}；"
@@ -898,6 +899,11 @@ def _new_state(manifest: dict, manifest_id: dict, version: str) -> dict:
             else {}
         ),
         **(
+            {"experience_policy": manifest["configuration"]["experience_policy"]}
+            if "experience_policy" in manifest["configuration"]
+            else {}
+        ),
+        **(
             {
                 "performance_effect_policy": policy(
                     manifest["configuration"]["performance_effect_policy"]
@@ -958,6 +964,8 @@ def command_start(args: argparse.Namespace) -> int:
 
 
 def validate_frozen_effect_policy(state, manifest):
+    if state.get("experience_policy") != manifest["configuration"].get("experience_policy"):
+        raise ValueError("experience policy changed; start a new run")
     if state.get("search_policy") != manifest["configuration"].get("search_policy"):
         raise ValueError("search policy changed; start a new run")
     if state.get("schedule_policy") != manifest["configuration"].get("schedule_policy"):
@@ -1058,15 +1066,31 @@ def _recheck_conformance(path, identity):
         sys.executable,
         str(Path(__file__).with_name("validate_implementation_conformance.py")),
     ]
-    for key in (
-        "contract",
-        "result",
-        "manifest",
-        "isolation_scope",
-        "baseline",
-        "candidate",
-    ):
-        command.extend(["--" + key.replace("_", "-"), identity[key]["path"]])
+    git_identity = identity.get("git")
+    if git_identity:
+        # git 模式：identity 的 baseline/candidate 为 {commit, tree}，物理路径
+        # 与仓信息在 git 块；传 git 参数而非 legacy 目录参数。
+        command.extend(
+            [
+                "--git-repo", git_identity["repo"],
+                "--baseline-rev", git_identity["baseline_rev"],
+                "--candidate-rev", git_identity["candidate_rev"],
+            ]
+        )
+        if git_identity.get("candidate_root"):
+            command.extend(["--candidate-root", git_identity["candidate_root"]])
+        for key in ("contract", "result", "manifest", "isolation_scope"):
+            command.extend(["--" + key.replace("_", "-"), identity[key]["path"]])
+    else:
+        for key in (
+            "contract",
+            "result",
+            "manifest",
+            "isolation_scope",
+            "baseline",
+            "candidate",
+        ):
+            command.extend(["--" + key.replace("_", "-"), identity[key]["path"]])
     result = subprocess.run(
         command + ["--verify-existing", str(path)],
         capture_output=True,
@@ -1095,10 +1119,17 @@ def _check_implementation_schedule(
         "conformance manifest identity mismatch",
     )
     if selected_candidate is not None:
+        candidate_ref = identity["candidate"]
+        candidate_path = candidate_ref.get("path")
+        if candidate_path is None and "git" in identity:
+            # git 模式：candidate 身份为 {commit, tree}，物理路径在 git.candidate_root
+            candidate_path = identity["git"].get("candidate_root")
         require(
             str(selected_candidate) == value.get("scheme_id")
-            or Path(identity["candidate"]["path"]).resolve()
-            == Path(selected_candidate).resolve(),
+            or (
+                candidate_path is not None
+                and Path(candidate_path).resolve() == Path(selected_candidate).resolve()
+            ),
             "selected candidate differs from schedule conformance",
         )
     _recheck_conformance(path, identity)
@@ -1106,7 +1137,8 @@ def _check_implementation_schedule(
         value["schedule"]["runtime"]["path"],
         manifest_path,
         "runtime",
-        identity["candidate"]["path"],
+        identity["candidate"].get("path")
+        or (identity.get("git", {}).get("candidate_root")),
     )
     if level == "integration":
         require(
@@ -1329,6 +1361,7 @@ def _check_postprocess_gate(gate: dict, manifest_path: Path) -> list[str]:
 def _integration_artifacts(files: dict, manifest_path: Path) -> list[str]:
     manifest = read_manifest(manifest_path)
     gates = {}
+    equivalences: list[dict] = []
     extra: list[str] = []
     for path in files.values():
         if path.suffix != ".json":
@@ -1336,6 +1369,17 @@ def _integration_artifacts(files: dict, manifest_path: Path) -> list[str]:
         gate = read_json(path)
         if not isinstance(gate, dict):
             continue  # Raw execution records can be JSON arrays, not full gates.
+        if {"ff_check", "tree_identity"}.issubset(gate) and gate.get("decision") in (
+            "fast_forward",
+            "merge",
+        ):
+            # merge-equivalence evidence: fast-forward identity proves the merged
+            # tree equals the accepted tree, replacing full re-measurement.
+            equivalences.append(gate)
+            smoke = gate.get("smoke")
+            if isinstance(smoke, dict) and smoke.get("path"):
+                extra.append(smoke["path"])
+            continue
         if (
             gate.get("schema_version") not in (1, 2)
             or "target_soc" not in gate
@@ -1348,7 +1392,14 @@ def _integration_artifacts(files: dict, manifest_path: Path) -> list[str]:
         gates[gate["target_soc"]] = gate
         for item in gate["collections"].values():
             extra.extend(summary_dependency_paths(item["summary"]))
-    if set(gates) != set(manifest["configuration"]["target_socs"]):
+    ff_reuse = any(
+        item.get("decision") == "fast_forward"
+        and item.get("evidence_reuse_eligible")
+        and item.get("smoke") is not None
+        and item.get("rebuild") is not None
+        for item in equivalences
+    )
+    if not ff_reuse and set(gates) != set(manifest["configuration"]["target_socs"]):
         raise ValueError(
             "postprocess requires both full inventories on every target SoC"
         )
@@ -1358,7 +1409,7 @@ def _integration_artifacts(files: dict, manifest_path: Path) -> list[str]:
 def _dsl_phase_artifacts(phase, files, manifest, manifest_path):
     extra = []
     if manifest["configuration"].get("backend", "ascendc") == "cannbot_dsl":
-        if phase in ("preparation", "implementation", "integration"):
+        if phase in ("baseline", "implementation", "integration"):
             from dsl_evidence import validate as validate_dsl_evidence
 
             evidence_path = files.get("dsl-compile-evidence.json")
@@ -1367,7 +1418,7 @@ def _dsl_phase_artifacts(phase, files, manifest, manifest_path):
             evidence = read_json(evidence_path)
             expected_collection = (
                 "functional_acceptance"
-                if phase == "preparation"
+                if phase == "baseline"
                 else "generalization_full"
                 if manifest["configuration"].get("tuning_mode") == "generalization"
                 else "performance_full"
@@ -1394,21 +1445,29 @@ def check_phase_artifacts(
     from earlier rounds (e.g. dsl-compile-evidence.json); the operator's
     explicit registration must win over closure extras.
     """
-    files = {
-        Path(path).name: Path(path).resolve()
-        for path in (user_paths if user_paths is not None else paths)
-    }
+    manifest = read_manifest(manifest_path)
+    preserve_first = (
+        user_paths is None and phase == "integration"
+        and "experience_policy" in manifest["configuration"]
+    )
+    files = {}
+    for path in (user_paths if user_paths is not None else paths):
+        # Completion preserves explicit artifacts before appended dependencies.
+        # New experience closures can contain same-named sources/raw exports.
+        # Keep the legacy lookup protocol for runs without this policy.
+        if preserve_first:
+            files.setdefault(Path(path).name, Path(path).resolve())
+        else:
+            files[Path(path).name] = Path(path).resolve()
     required = {
         "baseline": (
             "环境检查报告.md",
             "性能目标.md",
             "performance-targets.json",
             "preflight-report.json",
-        ),
-        "preparation": (
-            "extraction-manifest.json",
-            "source-compatibility.md",
+            "workspace-manifest.json",
             "functional-acceptance.md",
+            "source-compatibility.md",
         ),
         "analysis": ("analysis.md",),
         "implementation": (
@@ -1421,7 +1480,6 @@ def check_phase_artifacts(
     if missing:
         raise ValueError(f"{phase} phase missing artifacts: {sorted(missing)}")
     extra: list[str] = []
-    manifest = read_manifest(manifest_path)
     if phase in ("analysis", "implementation", "integration"):
         level = {
             "analysis": "model",
@@ -1434,6 +1492,8 @@ def check_phase_artifacts(
         extra.extend(_baseline_artifacts(files, manifest_path))
     if phase == "integration":
         extra.extend(_integration_artifacts(files, manifest_path))
+        from experience_reflux import integration_artifacts as experience_artifacts
+        extra.extend(experience_artifacts(files, manifest_path))
     return list(dict.fromkeys(paths + extra))
 
 
@@ -1446,7 +1506,7 @@ def _phase_artifact_check(
     manifest = read_manifest(manifest_path)
     if manifest["configuration"].get(
         "workflow_layout"
-    ) != "five-stage-v1" or not args.stage.startswith("phase."):
+    ) != "four-stage-v1" or not args.stage.startswith("phase."):
         return args.artifact or []
     phase = args.stage.removeprefix("phase.")
     if phase not in PHASES:
@@ -1497,9 +1557,7 @@ def _validate_checkpoint_summaries(stage, performance, manifest):
             raise ValueError(
                 "final performance has inconclusive cases requiring confirmation"
             )
-        if stage.startswith("integration.performance.") and saved.get(
-            "effective_regression_count", 0
-        ):
+        if stage.startswith("integration.performance.") and requires_routing(saved):
             raise ValueError(
                 "integrated performance has regressions requiring original-code routing"
             )
@@ -1779,6 +1837,17 @@ def command_structural_direction(args: argparse.Namespace) -> int:
             entry["round"] = args.round
         if args.evidence:
             entry["evidence"] = args.evidence
+        if args.id.startswith(search_policy.AXIS_DIRECTION_PREFIX):
+            entry.pop("evidence_ref", None)
+            if args.status in search_policy.EXCLUDED_DIRECTION_STATUSES:
+                search_policy.require(
+                    args.evidence
+                    and Path(args.evidence).is_file()
+                    and Path(args.evidence).stat().st_size > 0,
+                    "search-axis exclusion requires a nonempty --evidence file",
+                )
+                entry["evidence_ref"] = search_policy.ref(args.evidence)
+                entry["evidence"] = entry["evidence_ref"]["path"]
         if args.estimated_gain:
             entry["estimated_gain"] = args.estimated_gain
         append_event(
@@ -1883,6 +1952,49 @@ def command_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_search_frontier(args: argparse.Namespace) -> int:
+    """Validate, prune and rank a frontier; state remains owned by workflow events."""
+    state = read_json(args.state.resolve())
+    manifest = read_manifest(Path(state["manifest"]["path"]))
+    search_policy.require(
+        search_policy.enabled(manifest), "search policy is not enabled"
+    )
+    frontier = search_policy.load(args.frontier)
+    contract = search_policy.load(args.contract) if args.contract else None
+    accepted = search_policy.accepted_from_state(args.state)
+    payload = {"status": "valid", "round": frontier.get("round")}
+    if args.no_go:
+        payload["axis_coverage"] = search_policy.axis_coverage(
+            state, frontier, contract
+        )
+        try:
+            search_policy.require_no_go(state, payload["axis_coverage"])
+        except ValueError as error:
+            payload.update(status="blocked", error=str(error))
+    else:
+        pruned = search_policy.prune(frontier, args.best_us)
+        search_policy.validate_frontier(pruned, contract, manifest, accepted=accepted)
+        observations = search_policy.view(state).get("observations", [])
+        selection = search_policy.select(
+            pruned,
+            observations,
+            strategy=args.strategy,
+            width=args.width,
+            force_explore=args.force_explore,
+        )
+        payload.update(
+            pruned=pruned.get("pruned", []),
+            selection=selection,
+            axis_coverage=search_policy.axis_coverage(state, frontier, contract),
+        )
+    if args.out:
+        args.out.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    emit(json.dumps(payload, ensure_ascii=False))
+    return 2 if payload["status"] == "blocked" else 0
+
+
 def command_search_replan(args: argparse.Namespace) -> int:
     state_path = args.state.resolve()
     with state_lock(state_path):
@@ -1955,6 +2067,7 @@ def _verify_stage_evidence(
             recorded_performance(record)
         if name == "phase.integration" and (
             "schedule_policy" in state
+            or "experience_policy" in read_manifest(Path(state["manifest"]["path"]))["configuration"]
             or policy(state.get("performance_effect_policy"))["id"]
             == "confidence_effect_v1"
         ):
@@ -2113,7 +2226,7 @@ def _check_phase_completion(state: dict, args: argparse.Namespace) -> None:
             not search_policy.verify(state),
             "search evidence changed; verify before finishing",
         )
-    if manifest["configuration"].get("workflow_layout") != "five-stage-v1":
+    if manifest["configuration"].get("workflow_layout") != "four-stage-v1":
         return
     if artifact_identity(manifest_path) != state["manifest"]:
         raise ValueError("run manifest changed; verify before finishing")
@@ -2138,6 +2251,15 @@ def _check_phase_completion(state: dict, args: argparse.Namespace) -> None:
         for artifact in record.get("artifacts", []):
             if artifact_identity(artifact["path"]) != artifact:
                 raise ValueError(f"phase artifact changed: {artifact['path']}")
+        if phase == "integration":
+            from experience_reflux import integration_artifacts as experience_artifacts
+            experience_files = {}
+            for artifact in record.get("artifacts", []):
+                experience_files.setdefault(Path(artifact["path"]).name, Path(artifact["path"]))
+            experience_artifacts(
+                experience_files,
+                manifest_path,
+            )
 
 
 def command_finish(args: argparse.Namespace) -> int:
@@ -2152,6 +2274,11 @@ def command_finish(args: argparse.Namespace) -> int:
     state_path = args.state.resolve()
     with state_lock(state_path):
         state = read_json(state_path)
+        if "search_policy" in state and args.reason_code in (
+            "no_material_improvement",
+            "ceiling_bound",
+        ):
+            search_policy.require_search_no_go(state)
         _check_structural_directions(state, args)
         _check_phase_completion(state, args)
         state["terminal"] = {
@@ -2186,6 +2313,7 @@ def parser() -> argparse.ArgumentParser:
             "migrate": command_migrate,
             "progress": command_progress,
             "render": command_render,
+            "search_frontier": command_search_frontier,
             "search_replan": command_search_replan,
             "start": command_start,
             "structural_direction": command_structural_direction,

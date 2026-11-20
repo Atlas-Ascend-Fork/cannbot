@@ -54,7 +54,7 @@ def test_matmul_family_routes_to_blaze() -> None:
     assert "MatMul Blaze 确定性路由" in skill
     assert "ascendc-blaze-best-practice" in skill
     assert "ascendc-blaze-migration" in skill
-    assert "`unsupported_points` 证据" in skill
+    assert "`unsupported_points`" in skill
 
 
 def test_blaze_design_defers_execution_to_the_blaze_skill() -> None:

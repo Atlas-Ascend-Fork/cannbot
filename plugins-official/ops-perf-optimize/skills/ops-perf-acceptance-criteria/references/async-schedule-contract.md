@@ -1,12 +1,14 @@
 # 异步调度契约
 
-本页是调度 schema、状态与交接的唯一解释入口。适用于新策略下的跨 tile、多 engine、异步缓冲复用及相关事件协议；原五阶段、角色、round/gen/state 不变。契约把原有依赖分析转成实施要消费的候选证据，不声称能证明任意 kernel 安全或预测速度。
+本页是调度 schema、状态与交接的唯一解释入口。适用于新策略下的跨 tile、多 engine、异步缓冲复用及相关事件协议；原四阶段、角色、round/gen/state 不变。契约把原有依赖分析转成实施要消费的候选证据，不声称能证明任意 kernel 安全或预测速度。
 
 ## 策略、适用性与兼容
 
 新请求默认 `schedule_policy={"id":"schedule_contract_v1","version":1}`，冻结到 `manifest.configuration.schedule_policy`。历史 request/manifest 缺字段保持旧流程；恢复不能静默补策略或重写旧报告。未知策略版本须拒绝，version 必须为整数 1；策略改变按输入身份变化处理。manifest 引用冻结 request 时，检查 request 文件 SHA 及两处策略一致性；不能删除 manifest 策略冒充旧任务。
 
 主 Agent 依据真实代码、方案范围与已验收证据复核是否涉及调度，不由候选随意填写不适用。普通单流水局部修改可说明不涉及跨任务顺序/同步/复用的依据；复用已验收契约时必须核对相同 scope、源码/编译身份和覆盖条件。不能用“未改 API 名称”推定调度没变。no-op 也需对应实际保留实现的证据。
+
+**不适用契约的最小合规清单**（一次凑齐，避免逐字段试错）：顶层身份字段（`schema_version/kind/scheme_id/candidate_root/scope/identities`，含 `reference_absence_reason`）、`applicability`（`required=false` + reason + 证据 + 主 Agent 复核）、`model`、`unknowns`、`coverage_review`（两组非空引用）照常填写；`tasks/programs/resources/buffers/branches/events/edges/capacities` 按不适用不展开。实施侧 runtime/lowering 契约不因不适用而豁免：lowering 审阅块需 `generated_code/build/task_mapping/event_mapping/last_reader_review` 非空引用且 `status=pass`，逐 case `coverage_row` 用 `branch: null` 覆盖 `scope.case_ids × scope.target_socs`，并附当前候选的构建/加载与原功能证据。
 
 每份就绪实施契约使用以下引用；`path` 指向实际文件，`sha256` 为该文件内容摘要。model 检查报告先冻结；实施代码尚未生成时不能编造候选 SHA。
 

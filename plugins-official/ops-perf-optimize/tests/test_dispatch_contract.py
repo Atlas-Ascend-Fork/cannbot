@@ -19,7 +19,6 @@ same-directory relative operations or pin knowledge-query CLI specifics.
 
 from pathlib import Path
 
-from stage_skill_contract import STAGE_SKILLS
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / "skills" / "ops-perf-optimize-workflow"
@@ -53,13 +52,6 @@ def test_envelope_paths_are_absolute_and_placeholders_are_not_env_vars() -> None
     assert "占位符而非环境变量" in contract
     assert "常规相对路径操作不受影响" in contract
 
-    for skill in STAGE_SKILLS.values():
-        entry = read(ROOT / "skills" / skill / "SKILL.md")
-        assert "信封中的路径均为解析后的绝对路径" in entry, skill
-        assert "当作环境变量" in entry, skill
-        # The rule must stay scoped: ordinary relative operations stay allowed.
-        assert "不受此限制" in entry, skill
-
 
 def test_path_rule_is_scoped_not_a_general_relative_path_ban() -> None:
     """绝对路径条款只覆盖信封与工作流脚本，不得升级成全面相对路径禁令。"""
@@ -72,7 +64,7 @@ def test_path_rule_is_scoped_not_a_general_relative_path_ban() -> None:
 
 def test_knowledge_query_note_defers_to_its_own_skill() -> None:
     """不把 knowledge-query 的 CLI 细节钉死在本插件文案里。"""
-    for skill in ("ops-perf-analysis", "ops-perf-implementation"):
+    for skill in ("ops-perf-analysis",):
         entry = read(ROOT / "skills" / skill / "SKILL.md")
         assert "先读其 SKILL 与 `references/cli.md`" in entry, skill
         assert "确认任务目标平台" in entry, skill

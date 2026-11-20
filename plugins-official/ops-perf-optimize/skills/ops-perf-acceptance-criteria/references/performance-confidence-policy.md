@@ -1,4 +1,6 @@
-# confidence_effect_v1
+# 历史 canonical10 与 application 置信证明
+
+本页用于按原协议复核已有计划和收据。新采集按 [profile-evidence.md](profile-evidence.md) 生成证明，效果判定按 [performance-jitter-policy.md](performance-jitter-policy.md) 执行。
 
 canonical10 首先初筛：每次 target 全部 kernel 求和后取10样本中位数。[公共判定规则](performance-jitter-policy.md)中的历史四档阈值仅产生 `screening_signal`，不能否决已确认的小收益。无合法 proof 时，无论初筛变化大小都为 `inconclusive`，小变化依据 `needs_confirmation`，大变化依据 `screening_only_needs_confirmation`；大变化也不冒充统计确认。
 

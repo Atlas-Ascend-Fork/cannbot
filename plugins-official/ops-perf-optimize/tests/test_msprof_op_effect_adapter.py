@@ -188,7 +188,7 @@ def _fixture_collection(root, plan, registration, samples, bad, gain):
     return SimpleNamespace(plan=plan, registration=registration, collection=collection, baseline=base, candidate=cand)
 
 
-def fixture(root, bad=None, gain=100):
+def fixture(root, bad=None, gain=100, order=None):
     manifest, env = _fixture_environment(root)
     identities = {}
     for v in ("baseline", "candidate"):
@@ -196,7 +196,7 @@ def fixture(root, bad=None, gain=100):
     frozen = json.loads(manifest.read_text())
     frozen["inputs"] = {"code": env.sources["baseline"]}
     dump(manifest, frozen)
-    order = _fixture_order()
+    order = _fixture_order() if order is None else order
     plan, registration = _fixture_plan(root, manifest, env, identities, order)
     samples = [_fixture_sample(env, root, slot, bad, gain) for slot in order]
     return _fixture_collection(root, plan, registration, samples, bad, gain)
@@ -228,12 +228,37 @@ def test_malformed_or_unattributed_op_samples_rejected(tmp_path, bad, expected):
         proof(fixture(tmp_path, bad))
 
 
-def test_small_op_change_still_requires_paired_confirmation(tmp_path):
-    f = fixture(tmp_path, gain=1)
+@pytest.mark.parametrize("gain,classification", [
+    (1, "effective_improvement"), (-1, "effective_regression"), (0, "inconclusive"),
+])
+def test_small_op_changes_follow_their_confidence_interval(tmp_path, gain, classification):
+    f = fixture(tmp_path, gain=gain)
     saved = dump(tmp_path / "proof.json", proof(f))
     summary = summarize(f.baseline, f.candidate, policy_id="confidence_effect_v1", evidence_paths=[saved])
-    assert summary["cases"][0]["classification"] == "inconclusive"
-    assert summary["cases"][0]["classification_basis"] == "small_change_requires_paired_confirmation"
+    assert summary["cases"][0]["classification"] == classification
+    suffix = "_interval_crosses_zero" if classification == "inconclusive" else "_confidence"
+    assert summary["cases"][0]["classification_basis"] == KIND + suffix
+
+
+@pytest.mark.parametrize("layout", ["baseline_first", "candidate_first", "interleaved"])
+def test_op10_accepts_complete_predeclared_sample_orders(tmp_path, layout):
+    names = ["baseline", "candidate"]
+    variants = names * 10 if layout == "interleaved" else [v for v in names for _ in range(10)]
+    if layout == "candidate_first":
+        variants.reverse()
+    order = [{"slot": i, "variant": v, "sample_index": variants[:i].count(v)}
+             for i, v in enumerate(variants)]
+    value = proof(fixture(tmp_path, order=order))
+    assert value["statistics"]["ci_us"] == [-100, -100]
+
+
+def test_op10_rejects_duplicate_sample_indices(tmp_path):
+    f = fixture(tmp_path)
+    plan = json.loads(f.plan.read_text())
+    plan["order"][3]["sample_index"] = plan["order"][0]["sample_index"]
+    dump(f.plan, plan)
+    with pytest.raises(ValueError, match="ten sample indices"):
+        validate_plan(f.plan)
 
 
 def test_op_receipts_rechecked_after_source_or_raw_mutation(tmp_path):

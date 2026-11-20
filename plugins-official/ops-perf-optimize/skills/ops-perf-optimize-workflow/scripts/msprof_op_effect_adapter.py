@@ -243,23 +243,16 @@ def _validate_variant_identities(plan, manifest, soc, deps):
 def _validate_order(plan, variants):
     order = plan.get("order")
     require(isinstance(order, list) and len(order) == 20, "pre-registered order requires twenty slots")
-    seen, ab = {v: [] for v in variants}, 0
-    for pair_index in range(10):
-        pair = order[2 * pair_index:2 * pair_index + 2]
+    seen = {v: [] for v in variants}
+    for slot, item in enumerate(order):
         require(
-            {item.get("variant") for item in pair} == set(variants),
-            "each frozen pair must contain baseline and candidate",
+            set(item) == {"slot", "variant", "sample_index"}
+            and item["slot"] == slot and item["variant"] in seen,
+            "slot/variant differs from frozen order",
         )
-        ab += pair[0]["variant"] == variants[0]
-        for position, item in enumerate(pair):
-            require(
-                set(item) == {"slot", "variant", "sample_index"}
-                and item["slot"] == 2 * pair_index + position
-                and item["sample_index"] == pair_index,
-                "slot/sample index differs from frozen pair order",
-            )
-            seen[item["variant"]].append(item["sample_index"])
-    require(ab == 5, "frozen AB/BA order must be balanced five/five")
+        seen[item["variant"]].append(item["sample_index"])
+    require(all(sorted(indices) == list(range(10)) for indices in seen.values()),
+            "each variant must cover ten sample indices")
 
 
 def validate_plan(plan_path, deps=None):

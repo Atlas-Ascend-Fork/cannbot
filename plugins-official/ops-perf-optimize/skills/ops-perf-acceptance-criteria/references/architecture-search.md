@@ -14,12 +14,14 @@
 
 在现有 schema 3 `implementation-contract-<scheme_id>.json` 中添加 `search` 字段。以下示例为字段模板，机制、证据路径、验证结论和重试条件均须根据当前算子与本轮证据填写：
 
+### git 模式（两个后端统一使用）
+
 ```json
 {
   "search": {
     "kind": "architecture",
     "mechanism": "<本轮待验证的机制标识>",
-    "parent": {"path": "/abs/current-baseline", "sha256": "<source identity>"},
+    "parent": {"commit": "<基线 commit 全 SHA>", "tree": "<基线树哈希>"},
     "workload": {"path": "/abs/frozen-tuning-cases.csv", "sha256": "<file sha256>"},
     "baseline_performance": {"path": "/abs/baseline/performance.csv", "sha256": "<file sha256>"},
     "depends_on": [],
@@ -29,10 +31,18 @@
 }
 ```
 
+### 关键约束（两种模式通用）
+
+- **`trigger` 必须是 list**（`[{"path": ..., "sha256": ...}]`），不能是单个 dict。
+- **`workload` 必须引用冻结调优集合 CSV**（`run/baseline/performance-tuning-cases.csv`），不能自建副本。
+- **`baseline_performance` 的 case_id 顺序必须与 `workload` 完全一致**。TTK 输出顺序通常不同于冻结调优集，agent 必须重排。
+- **`case_ids` 必须从 `workload` CSV 读取**（与冻结调优集同序），不能从 TTK 输出或自建 CSV 读取。
+- `parent` 的值必须与 conformance gate 的 `evidence_identity.baseline` 逐键相等（两个后端统一为 git 模式：`{"commit","tree"}`）。
+
 - `scheme_id` 是全 run 唯一的决策 ID，使用字母、数字、下划线或连字符；一份契约的全部 required features 作为一个原子单元。一个方案可覆盖多个真实输入分支，但不能藏入多种待比较的互斥实现。
 - `kind=architecture|local` 区分结构性决策与既定结构上的局部优化。动作、目的、成本、收益假设及后续方向写入已有 `analysis.md`；未就绪方向不生成可派发契约。
-- `parent` 使用现有 `validate_schedule_contract.source_identity(Path(...))` 的源码/构建输入快照算法，与 conformance gate 的 baseline 身份一致。首次由主 Agent 对照 preparation 的真实基线验收；之后必须是当前保留实现。它不替代构建与实际加载身份链。
-- `workload` 引用本轮冻结的用例 CSV；契约 `case_ids` 与其顺序完全一致，baseline performance 也覆盖同序 case。standard 使用冻结调优集合，generalization 使用从冻结全集选出的本轮子集。选择子集仍属于 analysis，搜索不重选用例。
+- `parent` 使用基线评估定稿的基线 commit 的 `{"commit","tree"}`（两个后端统一 git 模式）。首次由主 Agent 对照基线评估定稿的真实基线验收；之后必须是当前保留实现。它不替代构建与实际加载身份链。
+- `workload` 引用本轮冻结的用例 CSV；契约 `case_ids` 与其顺序完全一致，baseline performance 也覆盖同序 case。**TTK 输出的 case 顺序通常与冻结调优集不同，必须重排后再写入 baseline_performance CSV**。standard 使用冻结调优集合，generalization 使用从冻结全集选出的本轮子集。选择子集仍属于 analysis，搜索不重选用例。泛化收敛轮（无不达标 case、跳过内层新优化）不构造空调优子集：`workload`/`baseline_performance` 允许引用冻结全集作为证据映射（按 workflow-contract 第 5 节证据映射处置），机械校验按全集身份判定，不得为通过非空校验虚构调优子集。
 - `depends_on` 只引用已接受且未被重新打开的决策。架构与局部优化形成可追溯依赖；自依赖、未知依赖、尚未接受或已重开的依赖不能放行。
 - `trigger` 必须是实际读取的测量/诊断证据。`mechanism_check` 写可检验的机制条件，实施后用流水、生成代码或隔离 probe 检查；单个速度数值不能证明架构或机制成立。
 
@@ -59,22 +69,43 @@
 }
 ```
 
-`outcome` 为 `measured`、`implementation_failed`、`precision_failed`、`evidence_invalid` 或 `no_candidate`。没有实施契约时使用 `no_candidate`，`scheme_id=null`。非 measured 结果保留实际故障/缺口证据，不提供虚假的 effect 或通过 gate。
+`outcome` 为 `screened`、`measured`、`implementation_failed`、`precision_failed`、`evidence_invalid` 或 `no_candidate`。没有实施契约时使用 `no_candidate`，`scheme_id=null`。screened 的探索记录及 measured 的晋升条件见 [终选参考](../../ops-perf-implementation/references/selection-and-final.md)。
 
-`mechanism.status=verified|refuted|unknown`。verified/refuted 须引用非空机制证据；unknown 不得被解释为机制无效。`retry_condition` 记录改变哪些条件或补什么证据后才值得重试；无适用重试时说明原因。SHA 只证明材料未改，主 Agent 仍需审阅证据是否支持谓词、候选是否真实构建并完成原功能/序列门禁。
+`mechanism.status=verified|refuted|unknown`。verified/refuted 须引用非空机制证据；unknown 不得被解释为机制无效。`retry_condition` 记录改变哪些条件或补什么证据后才值得重试；无适用重试时说明原因。
 
-`roundN.complete` 自动核验：合同归属、已接受的 `roundN.impl.<scheme_id>`、重算的 conformance gate、候选源码、冻结效果策略、完整 effect/proof 依赖与 case 覆盖。已接受的实施保存点须引用 gate 及真实构建/加载、功能、序列材料。
+正式 measured 结果在 `roundN.complete` 自动核验：合同归属、已接受的 `roundN.impl.<scheme_id>`、重算的 conformance gate、候选源码、冻结效果策略、完整 effect/proof 依赖与 case 覆盖。已接受的实施保存点须引用 gate 及真实构建/加载、功能、序列材料。
 
 - 晋升只发生在本轮唯一终选后：保留候选必须有实测净收益，其当前摘要与 `--performance-summary` 相同。`expected_effect` 不参与收益判定。
 - 候选落选时，`search.effect_summary` 仍引用该候选的真实评估；`--performance-summary` 则引用保留基线的自比较。不能用 baseline vs baseline 推断候选失败。
 - 原始基线、外部性能目标和当前搜索参考各有用途；晋升仅更新当前参考。累计摘要仍直接比较原始基线，不连乘逐轮加速比。
-- 已有效的采集和身份链直接复用；近噪声边界按冻结 confidence 策略确认，不引入固定百分比收益门槛。
+- 已有效的采集和身份链直接复用；效果按冻结策略判定。
+
+显式 confidence 策略可用 `screened`、`provisional:true` 和逐 case 双方 `screening_evidence` 暂定参考；通过候选符合性与实施验收、身份核验且观察到净收益后晋升，正式效果待最终确认。字段见 [性能证据](profile-evidence.md)。median 比较使用 `measured`。
+
+## 候选前沿与搜索执行（frontier）
+
+使用 frontier 时，analysis 交付候选前沿和本轮唯一实施契约，implementation 交付该契约方案的真实观测。初始候选数量至少为 `ceil(n / p_pass)`，剪枝后至少保留 `n` 个；前沿节点数量不等于本轮实施数量。候选生成与结果适配的操作分别由各阶段 Skill 管理。
+
+`candidate-frontier-<scheme_id>.json` 由 `search_policy.validate_frontier` 核验：
+
+- 轮次与父身份绑定本轮契约；`parent` 沿用既有 Git/目录身份格式。
+- `n/p_pass/epsilon` 定义生成与剪枝预算；`prefilter.l0/l1/l2` 记录模型范围、覆盖、证据或不可用原因。
+- `nodes[]` 包含唯一 `scheme_id`、`kind/level`、`mechanism`、`optimization_type`、`trigger`、`expected_gain_range`、`cost/risk`、`fidelity/status`、`explore_tag`、`depends_on` 和可选 `factors/bindings`；保留至少两种优化类型和一个 `open` 节点。
+- 选中节点与契约的 `search.frontier_parent/fidelity/expected_gain_range/cost` 一致；声明 `candidate_factors/candidate_bindings` 时也须与节点一致。这是声明一致性检查，实际源码、构建和运行实现仍由原 conformance gate 验证。
+
+生成器另保存可选 `base_factors`，供单轴/组合归因解释参数变化。历史先验与代理排序只消费已验证的工作流记录；归因报告只是后续诊断建议，不替代 `mechanism.status` 的证据要求，不写 no-go、不晋升参考。具体操作分别见 analysis 和 implementation 的搜索交接。
+
+生成器的可选 `candidate_space` 收据绑定剪枝前轴定义，供原 `search-frontier` 命令统计真实实测覆盖；缺失时保持 unknown。L1 实际剪枝（`budget_skipped>0`）须附 `ranking_validation` 收据，其 SHA 与原 L1 证据一并核验；校准报告的内容、模型适用范围及覆盖结果的方向处置由 analysis 按本阶段参考复核。
+
+`workflow_state.py search-frontier` 从现有事件读取有效历史，调用统一策略排序、检查探索配额和剪枝，不写状态。frontier 在 `roundN.analysis` 的原 `mark --artifact` 保存点登记；结果和辅助证据随原实施/轮次保存点登记。
+
+探索与确认复用 [统一采集协议](performance-collection.md) 和 [性能证据](profile-evidence.md)。搜索适配已有 effect summary，`score_distribution.unit=case_median_ratio` 表示逐 case 中位数之比，其摘要引用须与 `selection.json.search.effect_summary` 一致，Pareto 层级用于排序；CI 只携带原 proof 统计，不将 case 中位数作为独立重复样本。holdout 在 analysis 阶段冻结且与调优集分离，回退/补证结论沿用冻结性能策略。`ready_for_confirmation` 只是建议，正式晋升条件见上文。
 
 ## 下一动作与架构重规划
 
 计数单位是一次已完成、可比较的候选评估。相同父实现、负载、backend 和目标 SoC 下连续三次未刷新最优，返回 `next_action=replan`。候选真正被接受后清零；泛化子集或参考身份改变后重新计数。一次记录或报告重绘不等于一次尝试。
 
-编译/精度失败返回 `repair_candidate`，无效采集返回 `repair_evidence`，都不增加停滞次数。已关闭失败轮次的诊断和补证由下一轮 analysis 消费；同机制重试必须满足下文的新证据要求。统计不足以确认净收益时先完成合法确认，再结束本轮。无就绪决策、验收僵局或架构限制可提前要求重规划，不必等三次。
+编译/精度失败返回 `repair_candidate`，无效采集返回 `repair_evidence`，都不增加停滞次数。已关闭失败轮次的诊断和补证由下一轮 analysis 消费；同机制重试必须满足下文的新证据要求。无就绪决策、验收僵局或架构限制可提前要求重规划，不必等三次。
 
 analysis 对参考的测量特征、剩余目标差额、关键未知与可改变的拓扑重新分析，交付实际诊断证据。主 Agent 据此登记：
 

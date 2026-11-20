@@ -16,6 +16,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,20 @@ def write_performance(path: Path, rows: list[tuple[str, float]]) -> None:
         writer = csv.writer(stream)
         writer.writerow(["case_id", "total_us"])
         writer.writerows(rows)
+
+
+@pytest.mark.parametrize("values", [(4.9, 20.5, 100, 200), (5, 20, 100, 200)])
+def test_medians_include_small_changes_and_ties_even_with_high_spread(tmp_path, values):
+    baseline, candidate = tmp_path / "base.csv", tmp_path / "candidate.csv"
+    write_performance(baseline, list(zip("abcd", (5, 20, 100, 200))))
+    candidate.write_text("case_id,total_us,spread_over_median\n" +
+                         "".join(f"{c},{v},0.8\n" for c, v in zip("abcd", values)))
+    result = MODULE.summarize(baseline, candidate, policy_id="median_v1")
+    assert result["effective_case_count"] == 4 and result["jitter_case_count"] == 0
+    assert result["effective_geomean_speedup"] == pytest.approx(
+        math.prod(a / b for a, b in zip((5, 20, 100, 200), values)) ** .25)
+    assert MODULE.recompute_summary(result) == result
+    assert result["cases"][-1]["classification"] == "unchanged"
 
 
 class PerformanceJitterSummaryTest(unittest.TestCase):
@@ -192,15 +207,10 @@ class PerformanceJitterSummaryTest(unittest.TestCase):
         analysis = (
             ROOT / "skills/ops-perf-analysis/references/analysis-execution.md"
         ).read_text(encoding="utf-8")
-        selection = (
-            ROOT / "skills/ops-perf-implementation/references/selection-and-final.md"
-        ).read_text(encoding="utf-8")
         self.assertNotIn("则弃", analysis)
         self.assertNotIn('"abandon_if"', analysis)
         self.assertIn("不得新增 `abandon_if`", analysis)
         self.assertIn("不参与候选选择", analysis)
-        self.assertIn("整体目标未达不等于候选落选", selection)
-        self.assertIn("不另设最小收益门槛", selection)
 
     def test_case_set_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

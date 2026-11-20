@@ -7,14 +7,13 @@
 | `ROLE` | 只读取此模板 | 执行者 |
 |---|---|---|
 | `baseline` | [`prompts/baseline.md`](prompts/baseline.md) | 通用 subagent + `ops-perf-baseline-evaluate` |
-| `preparation` | [`prompts/preparation.md`](prompts/preparation.md) | 通用 subagent + `ops-perf-preparation` |
 | `analysis` | [`prompts/analysis.md`](prompts/analysis.md) | 通用 subagent + `ops-perf-analysis` |
 | `implementation` | [`prompts/implementation.md`](prompts/implementation.md) | 通用 subagent + `ops-perf-implementation` |
 | `integration` | [`prompts/integration.md`](prompts/integration.md) | 通用 subagent + `ops-perf-postprocess` |
 
 派发方先完整读取工作流契约，再按本次 `ROLE` 读取且只读取一份角色模板。不得预载其他角色模板，也不得从模板反推阶段、模式或验收规则。
 
-五个 ROLE 统一派发给当前环境的**通用 subagent**，信封中声明 `ROLE` 并要求加载对应阶段 Skill；阶段职责、流程与验收以各 Skill 为唯一真源。前处理与后处理必须是独立实例，靠剥离映射、快照和冻结证据交接；不得恢复前处理实例执行后处理。用例生成由 baseline 角色按需读取 `prompts/generation.md` 的库存变体，不另派 generation 角色。
+四个 ROLE 统一派发给当前环境的**通用 subagent**，信封中声明 `ROLE` 并要求加载对应阶段 Skill；阶段职责、流程与验收以各 Skill 为唯一真源。基线评估分两次派发（定稿 → 采集），两次派发之间由主 Agent 机械调用 harness 建立 run worktree（不算替代阶段执行）。用例生成由 baseline 角色按需读取 `prompts/generation.md` 的库存变体，不另派 generation 角色。
 
 ## 派发前检查（主 Agent 必做）
 
@@ -24,7 +23,7 @@
 ## 通用信封
 
 ```text
-ROLE: <baseline|preparation|analysis|implementation|integration>
+ROLE: <baseline|analysis|implementation|integration>
 TASK_KIND: <role template variant>
 WORKFLOW_ROOT: <resolved absolute ops-perf-optimize-workflow skill directory>
 WORKFLOW_SCRIPTS: <resolved absolute ops-perf-optimize-workflow/scripts directory>
@@ -40,13 +39,14 @@ TARGET_SOCS: <exact list from RUN_MANIFEST>
 ROUND: <N or absent>
 CODE_DIR: <assigned isolated absolute path>
 KB_ROOT: <absolute cannbot-knowledge repository root containing governance/ and knowledge/, or absent>
+REFINERY_ROOT: <optional absolute cann-refinery checkout for postprocess knowledge reflux; never used by analysis, or absent>
 INPUT_ARTIFACTS: <absolute paths, one per line>
 OUTPUT_ARTIFACTS: <absolute paths, one per line>
 ACCEPTANCE: <mechanically verifiable completion conditions>
 CONDITIONAL_SKILLS: <additional skills required by the selected route, or absent>
 ```
 
-只替换模板占位符，不删字段。基线 freeze 前 `TUNING_MODE`、`TARGET_SOCS` 取自已确认 REQUEST；freeze 后 `TUNING_MODE` 必须取自 manifest，输入与输出必须是绝对路径；`KB_ROOT` 由主 Agent 按编排契约解析一次后全程复用，absent 表示知识库不可用，阶段按无知识增强继续；执行细则以对应阶段 Skill 为准；角色基础技能以 Agent 定义为准，条件技能只按契约和已确认输入填写，不能因猜测预载。
+角色模板补充本阶段取值，与通用信封合并后派发。基线 freeze 前 `TUNING_MODE`、`TARGET_SOCS` 取自已确认 REQUEST；freeze 后 `TUNING_MODE` 必须取自 manifest，输入与输出必须是绝对路径；`KB_ROOT` 由主 Agent 按编排契约解析一次后全程复用，absent 表示外部知识库不可用，分析阶段按 `ops-perf-analysis` 的「Agent 的参考输入」检索随技能提供的内置板卡事实库和其他资料，各项之间没有固定先后顺序；精炼区知识由 `$KB_ROOT/distill/book` 只读软链提供。`REFINERY_ROOT` 仅供后处理知识回流，由主 Agent 从 `CANNBOT_REFINERY_ROOT`、`.cannbot/ops-perf-references.env` 或同级 `cann-refinery` 检出解析，不进入分析输入；未安装时后处理写入本地 `$OUTPUT_DIR/integration/knowledge-reflux/`。执行细则以对应阶段 Skill 为准；角色基础技能以 Agent 定义为准，条件技能只按契约和已确认输入填写，不能因猜测预载。
 
 
 主 Agent 不预载阶段执行参考，不将整份工作流契约复制进任务。受派 Agent 先加载角色声明的本阶段 Skill 和共享验证，再按 backend 及实际任务加载领域与工具技能；不加载其他阶段 Skill。`workflows/prompts/<role>.md` 是主 Agent 的派发模板，不随信封下发，受派 Agent 的角色定义即阶段 Skill。受派 Agent 先读自己的角色定义及冻结输入；manifest/state 已初始化时，先用 `$WORKFLOW_SCRIPTS/workflow_state.py inspect --state <WORKFLOW_STATE> --stage <本阶段键>` 读取配置、集合身份和本阶段记录，按需读取原文件的详细字段；基线 freeze 前改读已确认 REQUEST。只写分配目录。返回 `status`、产物绝对路径、适用的源码/二进制 SHA、门禁结论和未决证据；不得用对话摘要代替落盘文件。输入不完整、身份不匹配或验收不可机械验证时，返回主 Agent 补齐，不在 prompt 中临时发明流程。
@@ -55,4 +55,4 @@ CONDITIONAL_SKILLS: <additional skills required by the selected route, or absent
 
 阶段内的可验证进展先落盘再返回文本摘要；保存点同时写明已完成证据、未核验产物和下一动作，便于中断后续接。不要让结束时一次性补写所有交付文档。
 
-backend 与 DSL 字段属于冻结输入，不以文件后缀猜测。DSL 每角色加载领域技能和本阶段 DSL 参考，按角色传递原始领域文件路径、dsl-environment.json、原测试与编译依据；analysis/implementation 另传公共方法和族级 DSL 实践。角色定义保留全部技能依赖，先加载本阶段和共享验证，其他技能按本阶段实际任务使用；客户端自动预加载声明技能时，不据此执行不适用的工程步骤。
+backend 与 DSL 字段属于冻结输入，不以文件后缀猜测。DSL 按当前阶段 Skill 的语言路由执行，按角色传递原始领域文件路径、dsl-environment.json、原测试与编译依据；analysis/implementation 另传公共方法和族级 DSL 实践。角色定义保留全部技能依赖，先加载本阶段和共享验证，其他技能按本阶段实际任务使用；客户端自动预加载声明技能时，不据此执行不适用的工程步骤。

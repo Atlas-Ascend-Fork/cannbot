@@ -210,6 +210,24 @@ def _add_control_commands(sub, handlers):
 
 
 def _add_search_commands(sub, handlers):
+    frontier = _command(
+        sub,
+        "search-frontier",
+        "validate, prune and rank a candidate frontier without writing state",
+        handlers["search_frontier"],
+    )
+    frontier.add_argument("--frontier", type=Path, required=True)
+    frontier.add_argument("--contract", type=Path)
+    frontier.add_argument("--best-us", type=float)
+    frontier.add_argument("--strategy", choices=("ucb", "beam"), default="ucb")
+    frontier.add_argument("--width", type=int, default=2)
+    frontier.add_argument("--force-explore", action="store_true")
+    frontier.add_argument("--out", type=Path)
+    frontier.add_argument(
+        "--no-go",
+        action="store_true",
+        help="audit measured values and evidenced exclusions; exit 2 if incomplete",
+    )
     replan = _command(
         sub,
         "search-replan",

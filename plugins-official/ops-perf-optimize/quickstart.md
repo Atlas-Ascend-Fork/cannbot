@@ -88,7 +88,7 @@ bash /path/to/cannbot-knowledge/install.sh opencode /path/to/your/tuning-project
 
 ### 验证安装
 
-统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示插件安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 27 个插件 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 hooks 资产与 `quickstart.md`；工作流定义和脚本随 `ops-perf-optimize-workflow` Skill 的 `workflows/`、`scripts/` 目录安装。完成知识仓 consumer 安装后，另有两个知识消费 Skill 及 `.cannbot/knowledge.env`。
+统一安装器输出 `Installed ops-perf-optimize@4.1.0 for <tool>`、skills/agents 数量及 quickstart 路径即表示插件安装完成。也可在目标项目确认 `.agents/skills/`（opencode/codex）或 `.claude/skills/`（claude）下的 24 个插件 Skill、`.opencode/agents/perf-optimize.md`（claude/codex 为对应 agents 目录）中的主 Agent，以及 `.cannbot/plugins/ops-perf-optimize/` 下的 hooks 资产与 `quickstart.md`；工作流定义和脚本随 `ops-perf-optimize-workflow` Skill 的 `workflows/`、`scripts/` 目录安装。完成知识仓 consumer 安装后，另有两个知识消费 Skill 及 `.cannbot/knowledge.env`。
 
 从调优工程运行一次只读覆盖检查（所有客户端均可使用安装器创建的 `.agents/skills/` 规范入口）：
 
@@ -155,7 +155,7 @@ Python：/path/to/venv/bin/python；CANN 环境继承当前环境。
 目标 SoC：Ascend950；工程其他代际必须保留原路径。
 性能用例是 /path/to/performance.csv。
 功能用例由工作流自动生成。
-固定优化 3 轮。
+固定优化 5 轮。
 Python 使用 /path/to/venv/bin/python，CANN 环境继承当前环境。
 中间文件输出到 /path/to/output。
 ```
@@ -168,7 +168,7 @@ Python 使用 /path/to/venv/bin/python，CANN 环境继承当前环境。
 
 ```text
 对 /path/to/operator/，先只采集性能并分析瓶颈、输出方案，完成后暂停，等我选择再实施。
-使用 ops-profiling 采集，结合 ascendc-perf-optimize 和 ascendc-performance-best-practices 分析。
+使用 ops-profiling-report 采集，结合 ascendc-perf-optimize 和 ascendc-performance-best-practices 分析。
 目标 SoC：Ascend950；用例：/path/to/cases.csv；Python：/path/to/venv/bin/python。
 CANN：source /path/to/Ascend/cann/bin/setenv.bash；输出到 /path/to/output/。
 ```
@@ -196,17 +196,16 @@ CANN：source /path/to/Ascend/cann/bin/setenv.bash；输出到 /path/to/output/�
 
 | 阶段 | 执行内容 | 主要交付 |
 |---|---|---|
-| 基线评估 | 依赖/NPU 检查、可选用例生成、逐 case 制定性能目标 | 环境检查报告.md、性能目标.md |
-| 前处理(DSL程序调优跳过) | 剥离独立 demo，保持原调用方式，TTK 基线精度 | 剥离映射、构建/加载与精度证据 |
-| 诊断分析 | 统一性能采集、逐 case 瓶颈分析，并输出性能调优方案 | analysis.md、实施契约、冻结 scope |
-| 实施验证 | 隔离实施、符合性/功能/序列门禁、性能终选、demo 全集验收 | 候选证据、最终 demo、逐轮报告 |
-| 后处理 | 回集成原工程、芯片族保护、功能和性能两类全集检查、退化回原代码并复验 | 逐 case 性能 gate、路由证据、VERIFY_REPORT.md |
+| 基线评估（两次派发） | 依赖/NPU 检查、基线 commit 定稿（HEAD；非 git 询问 init）、run worktree（主 Agent 机械建立）、worktree 上原实现构建与 TTK/原测试功能基线、可选用例生成、逐 case 制定性能目标 | 环境检查报告.md、性能目标.md、workspace-manifest、功能基线证据 |
+| 诊断分析 | 统一性能采集、逐 case 瓶颈、每轮恰好一套方案 | analysis.md、实施契约、冻结 scope |
+| 实施验证 | worktree attempt commit、符合性/功能/序列门禁、1v1 终选、最终保留 commit 全集验收 | attempt 证据、final 标签、逐轮报告 |
+| 后处理 | 合并交付（fast-forward 等价免重测/并发变更全量复验）、芯片族保护、退化回原代码并复验 | 合并条件证据、逐 case 性能 gate、路由证据、VERIFY_REPORT.md |
 
 诊断分析与实施验证的方案设计、方案实施经 `knowledge-query` 引用 cannbot-knowledge 知识卡支撑（方案与符合性证据记录引用的 doc-id）；知识库不可用时以无知识增强模式继续，不改变精度与性能验收要求。
 
-诊断与实施按已有轮次/目标循环。generalization 保留泛化全集、分层调优及涉及/不涉及路由检查。后处理对两套全集的每个 case 都检查修改前后性能；出现有效退化就将真实输入条件对应的范围切回原实现，新路由重新验证。不能用平均收益覆盖局部回退。
+诊断与实施按已有轮次/目标循环。generalization 保留泛化全集、分层调优及涉及/不涉及路由检查。后处理逐例展示变化。默认 median_v1 对两个全集分别要求几何加速比 ≥1；显式策略或用户约束要求修复局部退化时，按真实输入条件回切原实现并复验。
 
-910b 和 910_93 默认同族、950 独立一族；未涉及芯片族的实现与依赖保持不变。同族归类不扩大实际验证范围，未验证型号仍走原代码。
+910b 和 910_93 默认同族、950 独立一族；未涉及芯片族的实现与依赖保持不变。报告记录实际验证型号，同族路径按原工程支持范围和实际资源条件适配。
 
 同一代码、二进制、用例、设备和采集协议身份只保留一次可比较性能采集。下一轮直接复用上一轮终选证据，不为“最终确认”重复 profiling。
 
@@ -306,7 +305,7 @@ generalization 模式以 `generalization-full-cases.csv`、每轮 `generalizatio
 
 端到端时间主要取决于：
 
-- 单算子工程剥离、真实构建及加载产物身份验证；
+- 基线 commit 定稿、worktree 与 harness 就绪、真实构建及加载产物身份验证；
 - NPU 可用性及每个身份的一次 profiling；
 - 候选数量和轮次；
 - 功能全集规模；

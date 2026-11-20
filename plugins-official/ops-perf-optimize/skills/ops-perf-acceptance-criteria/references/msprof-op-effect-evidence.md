@@ -1,3 +1,5 @@
+> 历史 msprof-op proof 契约，仅用于已存收据的只读重算。新采集按 [工作流性能证据](profile-evidence.md)，不执行本文件 profiler 流程。
+
 # msprof op 独立十样本确认
 
 仅用于 `confidence_effect_v1` 任务的稳定最终候选。本适配器不占设备、不调用 profiler；探索阶段的合法单次 `Task Duration` 可继续作诊断，但不能冒充统计终选。冻结的 `confidence_effect_v1`、原 baseline 和旧 application collector 均保持不变。
@@ -50,7 +52,6 @@ timeout 120s python3 "$SCRIPTS/summarize_performance_effects.py" \
 1. **复用条件**：回写字节一致性证明成立（集成后源码与 demo 验收实现逐字节一致，built 与 loaded 同 SHA）且源/编译/加载身份链闭合时，集成层绑定 demo 侧正式确认结论和当前比较的合法 proof，不重复采样；绑定关系写入 effect summary 的 evidence_paths。
 2. **边界**：回路由、编译分支或输入分布变化即新身份，字节等价不再成立，集成层必须重新确认；不得把 `msprof_op10_independent_v1` 改名或降级口径冒充集成层证据，也不得为凑集成层证据改写已登记 plan。
 3. **登记时序不变**：集成层 canonical10 proof 仍走 `performance_effect_evidence.py` 事前 registration（早于全部 candidate 采集）；baseline 绑定既有冻结收据时在 plan 中显式声明其 manifest 路径与 SHA，不重采。
-4. 逐 case 分类仍按冻结 `performance_effect_policy` 执行：小变化不因集成层复用而豁免配对确认，`inconclusive` 照常阻断最终 PASS。
 
 ## plan schema 1
 
@@ -102,11 +103,11 @@ timeout 120s python3 "$SCRIPTS/summarize_performance_effects.py" \
 }
 ```
 
-`order` 必须填满 20 项。推荐对 `pair=0..9`，偶数 pair 按 baseline,candidate，奇数 pair 按 candidate,baseline；各项为 `{slot:0..19, variant:"baseline|candidate", sample_index:pair}`。每对各一 variant、每侧 index0..9、AB/BA各五对。顺序只用于控制位置偏差，统计仍为独立 bootstrap，不伪称 paired。
+`order`必须事前固定并填满20项，各项为`{slot:0..19, variant:"baseline|candidate", sample_index:0..9}`；每侧各有完整的10个样本索引，按已登记顺序串行执行，不在结果出来后调整顺序或替换有效样本。
 
 本适配器用于相对原始冻结实现的最终确认，不允许替换为某个上一轮候选。baseline execution_identity.source 默认必须精确等于 manifest.inputs.code。
 
-如果集成会改动原 source root，应在注册 plan 之前使用字节相同的独立源码归档，并在 baseline identity 增加 `source_archive: {path,sha256}`，引用 preparation 的 extraction-manifest.json。该文件必须含 `schema_version:1`、`manifest`（与 plan 相同）、`original_source`（等于 manifest.inputs.code）和 `original_snapshot`（等于执行 identity.source）。归档 identity 除 path 外所有字段都必须与原冻结 identity 相同；source-tree-v1 的 SHA 覆盖相对文件路径及内容，因此不是只认一个自报名称。所有基线执行、build/load/precision 收据从开始就绑定归档。恢复验证会重算归档内容，而不要求已集成的原目录仍保持旧字节。不能事后重写已经注册的 plan；不要用软链接或硬链接代替独立归档。此映射只覆盖 source-tree-v1 选中的源码，生成代码、构建二进制及 loaded artifact 仍各自核验。
+如果集成会改动原 source root，应在注册 plan 之前使用字节相同的独立源码归档，并在 baseline identity 增加 `source_archive: {path,sha256}`，引用基线评估的 workspace-manifest.json。该文件必须含 `schema_version:1`、`manifest`（与 plan 相同）、`original_source`（等于 manifest.inputs.code）和 `original_snapshot`（等于执行 identity.source）。归档 identity 除 path 外所有字段都必须与原冻结 identity 相同；source-tree-v1 的 SHA 覆盖相对文件路径及内容，因此不是只认一个自报名称。所有基线执行、build/load/precision 收据从开始就绑定归档。恢复验证会重算归档内容，而不要求已集成的原目录仍保持旧字节。不能事后重写已经注册的 plan；不要用软链接或硬链接代替独立归档。此映射只覆盖 source-tree-v1 选中的源码，生成代码、构建二进制及 loaded artifact 仍各自核验。
 
 `rated_frequency_mhz` 必须在 plan 中冻结为实际额定频率，20 份原始 CSV 的 Current Freq 和 Rated Freq 都须等于该值。原始 CSV、run.log 和 runtime evidence 的 PID 必须一致；20 个成功样本 PID 必须全部不同，以拒绝复制同一 capture 冒充独立采样。本版保守拒绝真实操作系统 PID 重用，应记录失败原因后重新安排整组确认，不能改写 PID。
 
@@ -179,5 +180,3 @@ timeout 120s python3 "$SCRIPTS/summarize_performance_effects.py" \
 ```
 
 `samples` 必须按完整 plan.order 填满20项；attempt 和 raw capture 路径不得跨 slot 重用。实际时间必须严格晚于 registration，顺序无重叠。每侧 spread/median 不超过10%，headline 必须等于原始 median10。所有引用在 proof 恢复时重新校验。
-
-当前只实现独立十样本大变化确认。原小变化规则、CI跨零、最终inconclusive门禁保持生效；小变化仍需已支持的真正paired证据，不能把本kind改名来冒充。930us绝对目标与相对baseline统计改善分别报告。

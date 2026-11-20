@@ -79,7 +79,7 @@ def fixture(tmp_path, *, directory=False):
                 "performance_reference": {"kind": "theoretical", "target_ratio": 0.8},
                 "precision_diagnosis_policy": "persistent",
                 "tuning_mode": "standard",
-                "workflow_layout": "five-stage-v1",
+                "workflow_layout": "four-stage-v1",
             },
             "collections": {
                 "performance_full": identity(performance),
@@ -123,6 +123,27 @@ def profiles(tmp_path, *, functional=(100, 100), performance=(100, 100)):
         )
         paths[kind] = (baseline, candidate)
     return paths
+
+
+@pytest.mark.parametrize("values,decision", [((200, 10), "pass"), ((101, 101), "route_required")])
+def test_median_full_gate_uses_net_gain_and_keeps_regression_details(tmp_path, values, decision):
+    manifest, _ = fixture(tmp_path)
+    value = json.loads(manifest.read_text())
+    value["configuration"]["performance_effect_policy"] = {"id": "median_v1", "version": 1}
+    dump(manifest, value)
+    paths = profiles(tmp_path, performance=values)
+    gate = validate(manifest, "Ascend950", paths)
+    assert gate["decision"] == decision
+    assert gate["policy_id"] == "median_v1"
+    assert "p1" in gate["collections"]["performance"]["regressed_case_ids"]
+    from workflow_state import _validate_checkpoint_summaries
+    summary = dump(tmp_path / "median-summary.json", gate["collections"]["performance"]["summary"])
+    refs = {"round_summary": str(summary), "cumulative_summary": str(summary)}
+    if decision == "pass":
+        _validate_checkpoint_summaries("integration.performance.Ascend950", refs, value)
+    else:
+        with pytest.raises(ValueError, match="regressions"):
+            _validate_checkpoint_summaries("integration.performance.Ascend950", refs, value)
 
 
 def mixed_expected_error_fixture(tmp_path):
@@ -373,7 +394,7 @@ def test_workflow_cannot_skip_baseline_or_finish_early(tmp_path):
             "--state",
             str(state),
             "--stage",
-            "phase.preparation",
+            "phase.analysis",
             "--status",
             "in_progress",
         ],
@@ -400,7 +421,7 @@ def test_workflow_cannot_skip_baseline_or_finish_early(tmp_path):
     assert attempt.returncode != 0 and "incomplete" in attempt.stdout
 
 
-def test_five_roles_dispatch_to_generic_subagent_without_named_experts():
+def test_four_roles_dispatch_to_generic_subagent_without_named_experts():
     manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
     assert manifest.get("agents", []) == ["./AGENTS.md"]
     assert not (ROOT / "agents").exists()
@@ -410,7 +431,6 @@ def test_five_roles_dispatch_to_generic_subagent_without_named_experts():
     assert "通用 subagent" in contract
     for skill in (
         "ops-perf-baseline-evaluate",
-        "ops-perf-preparation",
         "ops-perf-analysis",
         "ops-perf-implementation",
         "ops-perf-postprocess",
@@ -437,11 +457,14 @@ def phase_files(tmp_path, preflight, targets, gate):
         return path
 
     return {
-        "baseline": [preflight, targets, note("环境检查报告.md"), note("性能目标.md")],
-        "preparation": [
-            note("extraction-manifest.json"),
-            note("source-compatibility.md"),
+        "baseline": [
+            preflight,
+            targets,
+            note("环境检查报告.md"),
+            note("性能目标.md"),
+            note("workspace-manifest.json"),
             note("functional-acceptance.md"),
+            note("source-compatibility.md"),
         ],
         "analysis": [note("analysis.md")],
         "implementation": [
@@ -565,6 +588,9 @@ def test_baseline_reference_requires_valid_execution_identity(tmp_path):
         str(targets),
         str(dump(tmp_path / "环境检查报告.md", {})),
         str(dump(tmp_path / "性能目标.md", {})),
+        str(dump(tmp_path / "workspace-manifest.json", {})),
+        str(dump(tmp_path / "functional-acceptance.md", {})),
+        str(dump(tmp_path / "source-compatibility.md", {})),
     ]
     with pytest.raises(ValueError, match="execution-identity.json"):
         check_phase_artifacts("baseline", artifacts, manifest)

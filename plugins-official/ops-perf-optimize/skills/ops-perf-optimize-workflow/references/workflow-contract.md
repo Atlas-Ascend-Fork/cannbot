@@ -4,35 +4,31 @@
 
 ## 1. 事实与职责
 
-`optimization-request.json` 保存已确认意图；`run-manifest.json` 冻结本次请求、源码、环境、集合与 SHA；`workflow-state.json` 保存阶段、证据身份、诊断与决策；`性能调优报告.md` 是持续生成的现场和终稿视图。同一事实只写一次，不另建进度 JSON、双份多轮汇总或逐轮同名报告。
+`optimization-request.json` 保存已确认意图；`run-manifest.json` 冻结本次请求、源码、环境、集合与 SHA；`workflow-state.json` 保存阶段、证据身份、诊断与决策；`性能调优报告.md` 是持续生成的现场和终稿视图。
 
 各阶段统一派发**当前环境的通用 subagent**，信封声明 `ROLE` 并要求加载对应阶段 Skill；阶段职责、流程与验收以各 Skill 为唯一真源：
 
 | 阶段 / ROLE | 派发方式 | 执行 Skill |
 |---|---|---|
-| 基线评估 / `baseline` | 通用 subagent + 加载 `ops-perf-baseline-evaluate` | `ops-perf-baseline-evaluate` |
-| 前处理 / `preparation` | 通用 subagent + 加载 `ops-perf-preparation` | `ops-perf-preparation` |
+| 基线评估 / `baseline` | 通用 subagent + 加载 `ops-perf-baseline-evaluate`（两次派发：定稿 → 采集） | `ops-perf-baseline-evaluate` |
 | 诊断分析 / `analysis` | 通用 subagent + 加载 `ops-perf-analysis` | `ops-perf-analysis` |
 | 实施验证 / `implementation` | 通用 subagent + 加载 `ops-perf-implementation` | `ops-perf-implementation` |
 | 后处理 / `integration` | 通用 subagent + 加载 `ops-perf-postprocess` | `ops-perf-postprocess` |
 
-前处理和后处理分别定义、使用独立实例，通过文件映射和证据交接。用例生成归 baseline；每轮由实施代理执行一个隔离方案，评估后决定保留候选或基线。主 Agent 负责请求接入、设备排他调度、scope 冻结、门禁复核、选择登记、恢复和报告，不制定优化算法或修改候选。
+**git 版本管理是 harness 贯穿机制**（单点协议 `$WORKFLOW_ROOT/workflows/references/harness-git.md` + 单点脚本 `git_workspace.py`），不属于任何单一阶段：基线定稿在基线评估派发 1，worktree 由主 Agent 在两次派发之间机械调用建立，attempt commit / final 标签 / 合并交付贯穿实施与后处理，两个后端同构。基线评估分两次派发：派发 1 定稿基线 commit（HEAD/upstream 已提交状态；GIT_INIT/DIRTY_POLICY 处置），派发 2 在 run worktree 上构建原实现、建立功能基线并采集。用例生成归 baseline；每轮由实施代理执行一个隔离方案（两个后端均为工作分支上的一个 attempt commit），评估后决定保留候选或基线，独立构建/静态检查可并行。主 Agent 负责请求接入、设备排他调度、scope 冻结、门禁复核、选择登记、恢复和报告，不制定优化算法或修改候选。
 
-### 运行目录布局与阶段总结
+### 运行目录布局
 
 阶段产物按阶段命名的文件夹归档，根目录只保留 run 级文件；阶段产物、探针和日志不得散落在根目录：
 
 ```text
 $OUTPUT_DIR/
 ├── optimization-request.json、run-manifest.json、workflow-state.json、性能调优报告.md   # run 级，脚本管理，固定在根目录
-├── baseline/        预检、冻结集合 CSV、环境报告、目标证据与逐 case 目标、原实现身份 + 阶段总结.md
-├── preparation/     demo 工程、剥离映射、兼容矩阵、功能基线证据 + 阶段总结.md
-├── analysis/        roundN/（分析报告、实施契约、隔离 scope、调度模型、调优选例）+ 阶段总结.md
-├── implementation/  roundN/（候选工程、采集与 effect、终选）、最终全集验收与 final_optimized/ + 阶段总结.md
-└── integration/     回集成、安全门禁、全集 gate、回路由与 VERIFY_REPORT + 阶段总结.md
+├── baseline/        预检、冻结集合 CSV、环境报告、目标证据与逐 case 目标、基线定稿与 worktree 身份（workspace-manifest）、构建/harness 证据、功能基线与兼容矩阵、原实现身份
+├── analysis/        roundN/（分析报告、实施契约、隔离 scope、调度模型、调优选例）
+├── implementation/  roundN/（attempt 工程与证据、采集与 effect、终选）、最终全集验收与 final 标签（两个后端统一）
+└── integration/     合并条件分路（fast-forward 等价证据或全集 gate）、安全门禁、回路由与 VERIFY_REPORT
 ```
-
-`阶段总结.md` 由本阶段 subagent 在交付时写入自己的阶段文件夹，固定三部分：做了什么（关键决策与流程，含轮次）、获取了什么成果（结论、关键产物绝对路径清单、与目标的差距）、未决项与下一动作。主 Agent 验收阶段产物时核对阶段总结与实际文件一致；恢复轮无实质变化时更新同一份总结，不另建副本。
 
 ## 2. 请求接入
 
@@ -42,14 +38,14 @@ $OUTPUT_DIR/
 
 DSL 默认 standard，围绕指定网络 case 优化，不自动生成 1000 条泛化库存。用户明确 generalization 才沿原模式执行；不静默切换。功能使用原 pytest/checker/golden 和必要修改边界，保持功能/性能全集与影响路径验收。网络性能 case 需冻结长度、索引/页表分布、mask、量化及 metadata 配置，不仅 shape。
 
-五个角色和阶段键保持不变，Agent 的原有技能依赖全部保留。先加载本阶段 Skill 和共享验证，再按 backend 选择执行步骤：AscendC 使用原阶段步骤；DSL 执行本阶段 Skill 的 references/dsl-<stage>.md（共享验证与领域边界见 ops-perf-acceptance-criteria 的 references/cannbot-dsl.md），使用原测试入口，并交付编译及实际加载证据。原测试使用 TTK 时保留 TTK；原工程包含 Native/AOT、C++ 扩展或注册入口时保留对应构建与集成检查。纯 Python/JIT 输入不要求改造成 C++ 注册工程。阶段依赖、exact/forbidden、身份、全集、抖动和恢复门禁均须满足；语言选择不允许跳过门禁。其他声明技能按本阶段实际任务使用，客户端自动预加载不改变其适用范围。
+五个角色和阶段键保持不变，Agent 的原有技能依赖全部保留。先加载本阶段 Skill 和共享验证，再按 backend 选择执行步骤：AscendC 使用原阶段步骤；DSL 按本阶段 Skill 的语言路由执行（共享验证与领域边界见 ops-perf-acceptance-criteria 的 references/cannbot-dsl.md），使用原测试入口，并交付编译及实际加载证据。原测试使用 TTK 时保留 TTK；原工程包含 Native/AOT、C++ 扩展或注册入口时保留对应构建与集成检查。纯 Python/JIT 输入不要求改造成 C++ 注册工程。阶段依赖、exact/forbidden、身份、全集、抖动和恢复门禁均须满足；语言选择不允许跳过门禁。其他声明技能按本阶段实际任务使用，客户端自动预加载不改变其适用范围。
 
-主 Agent 将 DSL 仓库与领域原文件路径、原测试、dsl-environment.json、编译依据按职责放入 INPUT_ARTIFACTS；analysis 接收知识库、最佳实践、优化方法和理论建模四项通用参考的概览、索引与适用范围，浏览后结合当前证据自主搜索、比较方案并按需深读；MC²、AscendC 静态性能检视和 AscendC API 文档检索不作为 DSL 参考输入。implementation 消费已冻结方案及其采用的证据。前处理、最终实施、后处理交接增加 dsl-compile-evidence.json，workflow_state.py 在 complete 时机械验证并登记编译/加载依赖。仅有源码与二进制 SHA、同名 kernel 或进程 exit 0 不能代替血缘证明。
+主 Agent 将 DSL 仓库与领域原文件路径、原测试、dsl-environment.json、编译依据按职责放入 INPUT_ARTIFACTS；analysis 接收内置板卡事实库、`$KB_ROOT/distill/book`、扩展知识库、最佳实践、优化方法和理论建模的概览、索引与适用范围，按 `ops-perf-analysis` 的「Agent 的参考输入」结合当前证据自主选择资料与方案，各项之间没有固定先后顺序；MC²、AscendC 静态性能检视和 AscendC API 文档检索不作为 DSL 参考输入。implementation 消费已冻结方案及其采用的证据。基线评估（工作区功能基线）、最终实施、后处理交接增加 dsl-compile-evidence.json，workflow_state.py 在 complete 时机械验证并登记编译/加载依赖。仅有源码与二进制 SHA、同名 kernel 或进程 exit 0 不能代替血缘证明。
 
 DSL 分析生成实施契约前必须执行本阶段 [方案净收益评估](../../ops-perf-analysis/references/dsl-analysis.md)。在同一 analysis.md 逐方向/方案、逐 case × SoC 记录关键路径、新增成本、完整调用收益区间或 unknown、目标贡献、证据可信度和处置；主 Agent 审阅后再冻结 scope。ready_for_implementation 才派发实施，needs_probe 按分析阶段采集路由补齐已登记诊断，deferred 保留证据和下一动作。字段完整不证明估计正确；理论空间、单核仿真跨度或局部加速不能直接作为完整调用收益。关键未知不允许作为不可行或收敛结论，正式终选仍按实测。
 
 原短程序可整体重排合法计算流，scope 按真实依赖和公开接口确定；不要求虚构 C++ 模板。性能收益以上板完整调用及同协议证据判定，编译/初始化成本单列。修改同文件 Python wrapper 时逐项审阅其公开契约。
-`TARGET_SOCS` 记录实际验证的 SoC。A2/A3 共用同一套 arch22（DAV_2201）实现，验证结果可互换；同时作为目标时，在冻结请求前选一个代表 SoC，兼容矩阵为另一型号引用同一份证据并保留实际测试型号。不同代际仍分别验证。
+先识别现有目标设备的 `NpuArch` 和具体型号，在可用设备上完成验证；`TARGET_SOCS` 和原始证据记录实际测试型号。优化适用范围按 `NpuArch` 族确定，同族代码须泛化，未测型号不得记为已验证。
 
 已有 request：`$WORKFLOW_SCRIPTS/prepare_case_sets.py validate-request` 校验后复用。缺少或失效时按 [request-intake.md](request-intake.md) 收集代码、精确 TARGET_SOCS、模式、用例、对标来源、停止目标、优化意图、可选性能锚点、Python/CANN 环境，生成用户已确认的 request。无交互环境必须提供已确认 request，不猜测环境或目标。
 
@@ -59,25 +55,36 @@ DSL 分析生成实施契约前必须执行本阶段 [方案净收益评估](../
 
 baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_STATE 为 pending；freeze 后初始化状态。后续合法 attach/confirm 必须 sync-manifest；未声明的身份变化为 stale_inputs。主 Agent 串行接入集合更新，不让多个代理并发修改 manifest。
 
+### 知识来源与回流
+
+分析阶段读取 `$KB_ROOT/distill/book`（cann-refinery 的 `book/` 只读软链，由独立安装脚本创建）：用 `demand/` 和 `guides/` 找问题与路线，`claims/` 作为知识索引读卡，`obs/` 查证据；只读。
+
+不新增每轮知识文件。回流直接使用既有产物：`analysis.md`、`implementation-contract-<scheme_id>.json`、`selection.json`、effect 摘要、构建/加载身份和原始测试/性能证据。后处理按 cann-refinery README 的「整理原料」整理这些文件。
+
+新请求默认冻结 `experience_policy={"id":"evidence_lessons_v2","version":2}`。经验质量契约见 [经验提炼与验收](../../ops-perf-postprocess/references/experience-reflux.md)：analysis/selection 保存本轮的条件、具体改法/新增成本、观察与未证实归因、采用/避免/重试规则；integration 从全部完成轮次提炼，不只罗列结果和证据路径。输出 `experience-lessons.json`、确定性生成的 `experience-material.md`、由未参与正文编写的代理完成的 `experience-review.json`。主端按角色模板派独立阅读测试，不提供期望答案；phase.integration 和 finish 重算结构、证据、数值、覆盖与阅读门禁。v2 的公开交付另按 [可移植回流](../../ops-perf-postprocess/references/portable-reflux.md) 验证隐私、完整正文、全部直接来源与脱敏哈希，不继承旧本地评审分数。历史 v1 保留原出口检查。经验门禁不替代或放宽性能/精度终选。历史 request/manifest 缺该字段时保持旧完成语义，可在新目录离线改进经验，不能改写已冻结的旧记录。
+
+`REFINERY_ROOT` 只用于后处理回流，从 `CANNBOT_REFINERY_ROOT`、工程或祖先 `.cannbot/ops-perf-references.env`（由 `install-distill-book.sh` 写入）或同级 `cann-refinery` 检出解析；不进入分析输入。可用时按该仓 README「整理原料」写入原料卡（四区 `yard/rough/`，旧布局 `rough/`）；未安装时写入本地 `$OUTPUT_DIR/integration/knowledge-reflux/`。两条路径都不写 claims/obs/journal、不推送。
+
+启用 experience_policy 时，另登记 `knowledge-reflux.json`：其 card、experience_material、experience_review 的 path/SHA 绑定实际回流卡、已评正文与评审。实际卡保留完整已评正文；integration/verify/finish 重核出口，合格的中间文档不能代替缩水的回流卡。
+
 ## 3. 阶段交接
 
 | 阶段 | 必要输入 | 输出与放行条件 |
 |---|---|---|
-| baseline | 已确认 request、原代码/库存、对标配置 | `preflight-report.json`、`环境检查报告.md`、冻结集合、`performance-targets.json`、`性能目标.md`；原实现实测另有 `execution-identity.json`；环境无 fail，目标精确覆盖性能全集 × TARGET_SOCS，功能库存就绪 |
-| preparation | 基线评估产物与原工程 | 独立 demo、`extraction-manifest.json`、`source-compatibility.md`、原快照、构建/加载证据、`functional-acceptance.md`；原调用方式/算法不变，依赖闭包与功能基线 strict/conditional 门禁通过（AscendC 用 TTK，DSL 用原测试入口） |
-| analysis | 当前可信基线、冻结目标/调优集合、已有性能证据 | 一份 `analysis/roundN/analysis.md`、一个就绪方案的 `implementation-contract-<scheme_id>.json` 和 source-isolation scope；每个 case 覆盖，方案收益与目标差额有证据对应，方案 exact/forbidden，主 Agent 冻结 scope；无就绪方案时交证据与下一诊断动作 |
-| implementation | 冻结方案/scope、当前与原始基线、用例/目标 | 每候选符合性/安全/构建/精度/序列门禁、eligible 性能、`selection.json`、本轮/累计 effect；退出循环时另交最终功能/性能全集报告和 `final_optimized/` |
-| integration | 最终 demo 与验收证据、原快照/映射、两个全集 | 集成计划/scope、安全与加载证据、两个全集精度/性能、每 SoC `postprocess-performance-<soc>.json`、回路由复验、`VERIFY_REPORT.md`；原入口保持、非目标族不变、无有效性能退化 |
-
-各阶段产物一律写入该阶段对应的文件夹（布局见「运行目录布局与阶段总结」），交付时同步更新该文件夹的 `阶段总结.md`。
+| baseline | 已确认 request、原代码/库存、对标配置 | 派发 1：基线 commit 定稿（HEAD/upstream 已提交状态，GIT_INIT/DIRTY_POLICY 处置）；派发 2：worktree 上原实现构建/加载证据、`functional-acceptance.md`（strict/conditional）、`source-compatibility.md`、`workspace-manifest.json`、`preflight-report.json`、`环境检查报告.md`、冻结集合、`performance-targets.json`、`性能目标.md`；原实现实测另有 `execution-identity.json`；环境无 fail，目标精确覆盖性能全集 × TARGET_SOCS，功能库存就绪，原工程目标分支与用户工作树零改动（git 机械操作除外） |
+| analysis | 当前可信基线、冻结目标/调优集合、已有性能证据、`$KB_ROOT/distill/book` 简报 | 一份 `analysis/roundN/analysis.md`、一个就绪方案的 `implementation-contract-<scheme_id>.json` 和 source-isolation scope；每个 case 覆盖，方案收益与目标差额有证据对应，方案 exact/forbidden，知识卡引用有路径与采用/排除，主 Agent 冻结 scope；无就绪方案时交证据与下一诊断动作 |
+| implementation | 冻结方案/scope、当前与原始基线、用例/目标、`analysis.md` | 每轮 attempt 的探索或验收结果、`selection.json`（含 attempt 记录）、effect 摘要、构建/加载身份和原始测试/性能证据；退出循环时另交最终功能/性能全集报告和最终保留身份（两个后端统一为 final 标签） |
+| integration | 最终保留 commit 与验收证据、workspace-manifest、两个全集、每轮 analysis.md/selection.json | 合并条件判定（fast-forward 等价：`merge-equivalence.json` + 复用清单免重测；并发变更：重新冻结 scope + 全量复测 + 每 SoC `postprocess-performance-<soc>.json`）、安全 gate、回路由复验、回流材料（原料卡或本地 knowledge-reflux 文件夹）、`VERIFY_REPORT.md`；原入口保持、非目标族不变、按冻结性能策略验收 |
 
 理论建模在 analysis 搜索、比较方案时按分析 Skill 的[分析标准](../../ops-perf-analysis/references/analysis-execution.md#分析标准)评估并按需使用。交接复核其使用依据与证据可信度，不以性能预测模型的运行成功或预测精度作为实施放行条件；精度、安全及实测终选规则不变。
 
-启用 `manifest.configuration.schedule_policy={"id":"schedule_contract_v1","version":1}` 时，analysis/implementation 按 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md) 交接候选模型与检查报告。analysis 在原阶段内完成 A1 独立程序/微任务恢复、A2 数据/资源/复用与事件约束检查、A3 本轮候选模型；主 Agent 核验适用性、未知项与身份后冻结。implementation 先消费契约，再核对实际生成代码和运行/序列证据。模型可行不等于 eligible，更不等于更快。同步/所有权关键未知先 probe；纯性能收益 unknown 不阻止合法候选实测。integration 的路由、编译选路或输入分支改变时，对新身份重新核验，不能把满 tile 的证据外推到未覆盖路径。旧 request/manifest 缺字段保持原门禁；新策略不重写历史状态。
+调度契约**按需开启**（新请求默认不冻结，create-request 显式 `--schedule-policy` 或 request 写入该字段才启用）：仅当候选方案涉及跨 tile、多 engine 或异步缓冲复用时才值得付出模型填写与检查成本；非异步调度类方案直接跳过。启用 `manifest.configuration.schedule_policy={"id":"schedule_contract_v1","version":1}` 时，analysis/implementation 按 [调度契约](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md) 交接候选模型与检查报告。analysis 在原阶段内完成 A1 独立程序/微任务恢复、A2 数据/资源/复用与事件约束检查、A3 本轮唯一候选模型；主 Agent 核验适用性、未知项与身份后冻结。implementation 先消费契约，再核对实际生成代码和运行/序列证据。模型可行不等于 eligible，更不等于更快。同步/所有权关键未知先 probe；纯性能收益 unknown 不阻止合法候选实测。integration 的路由、编译选路或输入分支改变时，对新身份重新核验，不能把满 tile 的证据外推到未覆盖路径。旧 request/manifest 缺字段保持原门禁；新策略不重写历史状态。
 
-阶段返回 `status`、产物绝对路径、代码/二进制 SHA、门禁结论、未决证据与下一动作。主 Agent 检查实际文件和 gate，不能把文字“完成”当作验收。脚本 gate 证明数值/文件范围，不能替代真实构建、调用链和运行身份审阅。证据身份与覆盖完全相同时复用已有证据，不重采择优。confidence待确认case允许在看到确认结果前冻结一次配对计划，按原canonical10及完整门禁采该新计划；不默认每case十轮、不事后加轮。
+阶段返回 `status`、产物绝对路径、代码/二进制 SHA、门禁结论、未决证据与下一动作。证据身份与覆盖完全相同时复用已有证据，不重采择优。
 
-原实现性能对标在正式功能或性能采集前先通过 execution identity 门禁：冻结源码、本次构建产物与实际加载产物必须形成可复核的同源链。为取得实际加载路径而执行的专用身份探针不产生功能、精度或性能结论。身份不成立时只修正构建或加载路由；不得把该运行的现象归因于冻结源码。身份成立后的基线失败只在本阶段完成故障归类所需的最小复现与对照，根因搜索留给诊断或实施阶段。
+性能统一入口为 `ops-profiling-report`；调用前只约定目标、身份、输入输出与采样计划，后端选择和依赖探测由报告入口负责。工作流按 [报告采集与性能证据](../../ops-perf-acceptance-criteria/references/profile-evidence.md) 保留默认 median 与显式 confidence 两条路径；独立报告不反向加载工作流。报告入口无法覆盖的目标边界保持 pending。源码、构建、实际加载、输入与协议未变时复用有效证据。
+
+原实现性能对标在正式功能或性能采集前先通过 execution identity 门禁：冻结源码、本次构建产物与实际加载产物必须形成可复核的同源链。**v13 过渡设计说明**：执行身份层的源码主键仍是目录树哈希（source-tree-v1），git 身份（基线 commit/树哈希）在 manifest 中作为附加事实记录，尚未作为身份链主键——这是为 DSL/非 git 输入与历史证据复用保留的双重口径，属已知过渡态；集成后如需重验执行身份，用 `git archive <基线 commit>` 导出作为字节归档（与旧 original_snapshot 逐字节等价）。为取得实际加载路径而执行的专用身份探针不产生功能、精度或性能结论。身份不成立时只修正构建或加载路由；不得把该运行的现象归因于冻结源码。身份成立后的基线失败只在本阶段完成故障归类所需的最小复现与对照，根因搜索留给诊断或实施阶段。
 
 派发中的事实必须引用对应身份的证据；待验证的源码路由、完成度或精度解释写成待办，不能写进 ACCEPTANCE 充当已成立前提。父子结论冲突时以冻结输入和实际证据核对差异；不得以派发文字覆盖失败 gate、改变比较器或放宽 scope。能在原授权内补齐的证据由原阶段继续，涉及契约变更才返回主 Agent 决策。
 
@@ -85,13 +92,15 @@ baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_S
 
 ## 4. 循环与退出
 
-standard：preparation → 每轮 analysis → implementation → 主 Agent 复核终选及报告 → 下一轮或 integration。最终 demo 全集验收由 implementation 完成。baseline 也参与候选选择，无有效收益时保留 baseline；未实测的拼接代码不参与选择。`expected_effect`、历史 `abandon_if` 和整体优化目标不是候选淘汰条件，有有效净收益的候选即使未达目标也可保留并进入下一轮。每轮按同协议逐 case 核对实测净收益与剩余目标差额。
+standard：基线评估（定稿 + 工作区功能基线与采集）→ 每轮 analysis → implementation → 主 Agent 登记终选 → 下一轮或 integration。每轮分析和实施把策略/效果写入现有 `analysis.md` 与 `selection.json`；下一轮分析读取此前 `analysis.md` 和 `selection.json`，复用已证实机制和失败分类。这些字段不参与候选选择或验收门禁，但缺记录须在报告中如实说明原因。
 
-每轮只冻结并实施一个方案，契约内耦合的架构特性作为整体评估。允许在同一契约和 scope 内诊断、修复实现；需要改变优化方向、依赖或范围时，先记录本轮处置和保留实现，再在下一轮重新分析、冻结。诊断证据不能提升基线或替代终选。正式确认计划注册后，按原采集协议完成，不得把慢样本改称探索后择优重采。
+**同轮单派发（默认）**：延续方向（carry code、同方向精化、组合既有组件）的轮次默认按"同轮诊断修订"走**单次实施派发**——实施信封附带本轮方案上下文（上一轮 analysis 摘要、selection 结果、契约与 scope 引用），实施代理在既有"同轮未终选诊断修订"机制内完成方案确认与实施；不为每次延续新开独立分析派发。仅当出现**新方向、search 重规划、候选失败分类或首轮分析**时才派发独立分析。分析独立派发的产物仍是唯一契约真源；单派发不放宽任何门禁。最终保留 commit 上的全集验收由 implementation 完成（两个后端统一为 final 标签）。baseline 也参与选择，无有效收益时保留 baseline；未实测的拼接代码不参与选择。`expected_effect`、历史 `abandon_if` 和整体优化目标不是候选淘汰条件，有有效净收益的候选即使未达目标也可保留并进入下一轮。每轮按同协议逐 case 核对实测净收益与剩余目标差额。
 
-新请求冻结 `search_policy={"id":"architecture_search_v1","version":1}`，按 [搜索决策](../../ops-perf-acceptance-criteria/references/architecture-search.md) 在既有 analysis/implementation 交接中登记契约依赖与实测结果。连续三次**可比较的候选评估**未刷新最优、决策耗尽或已测架构瓶颈触发重新分析；编译/精度失败和无效采集分别处置，统计待确认先补证，不计作无收益。每轮结束后读取 `inspect.search.next_action` 决定下一轮的分析重点。重规划从最早受影响的决策展开，保留可信实现；它不增加用户轮数、不重置泛化计数、不构成自动退出条件。实际停止仍按下文目标与完成规则。
+每轮只冻结并实施一个方案（一个 attempt），契约内耦合的架构特性作为整体评估。允许在同一契约和 scope 内诊断、修复实现；需要改变优化方向、依赖或范围时，先记录本轮处置和保留实现，再在下一轮重新分析、冻结。诊断证据不能提升基线或替代终选。正式确认计划注册后，按原采集协议完成，不得把慢样本改称探索后择优重采。
 
-`fixed_rounds` 执行已确认轮数，默认 5 轮；`target` 使用冻结的 metric/comparison/value/unit，可选 max_rounds，无显式上限则不另设上限。`target` 的性能循环只在目标达成、显式轮数/用户停止条件到达，或证据证明所有仍可能填补目标差额的合法方向均不可实施后结束。某轮零实施契约、候选退化、连续数轮无改善、缺少物理 roofline，均不单独证明“没有可信方向”；一次候选退化须先区分机制、实现、正确性和证据问题。循环停止不截断未完成的精度诊断。
+新请求冻结 `search_policy={"id":"architecture_search_v1","version":1}`，按 [搜索决策](../../ops-perf-acceptance-criteria/references/architecture-search.md) 在既有 analysis/implementation 交接中登记契约依赖与实测结果。连续三次**可比较的候选评估**未刷新最优、决策耗尽或已测架构瓶颈触发重新分析；编译/精度失败和无效采集分别处置，统计待确认先补证，不计作无收益。每轮结束后读取 `inspect.search.next_action` 决定下一轮的分析重点。重规划从最早受影响的决策展开，保留可信实现；它不增加用户轮数、不重置泛化计数、不构成自动退出条件。实际停止仍按下文目标与完成规则。search 契约的父实现在两个后端统一用 git 模式 `{"commit","tree"}`（由 conformance 对照冻结基线 revision 核验）。
+
+`fixed_rounds` 执行已确认轮数，默认 5 轮；`target` 使用冻结的 metric/comparison/value/unit，可选 max_rounds，无显式上限则不另设上限。每轮恰好一份实施契约、恰好一个 attempt；候选在功能门禁、序列压测或性能比较中不达标时，本轮结论为保留当前基线（搜索决策按其失败分类处置），下一轮重新分析。`target` 的性能循环只在目标达成、显式轮数/用户停止条件到达，或证据证明所有仍可能填补目标差额的合法方向均不可实施后结束。某轮零实施契约、候选退化、连续数轮无改善、缺少物理 roofline，均不单独证明“没有可信方向”；一次候选退化须先区分机制、实现、正确性和证据问题。循环停止不截断未完成的精度诊断。
 
 当目标未达且关键收益/安全性仍为 `unknown`，主 Agent 应派下一轮有界诊断或方案分析，并在状态中记录待核验假设与下一动作，不得把 `unknown` 写成 `infeasible_evidenced`、`ceiling_bound` 或用 `no_material_improvement` 结束。足以改变退出结论的未知量须先有界验证；缩小问题规模或改变关键负载特征的探针，只有证明关键路径与目标 case 可比时才可外推，否则只支持定性定位，不能据此否定完整目标场景。诊断工具无法归因时保留未知并继续寻找同身份证据；实际外部资源阻断按第 5 节记录 blocker，不冒充性能收敛。
 
@@ -103,7 +112,7 @@ standard：preparation → 每轮 analysis → implementation → 主 Agent 复�
 
 generalization 保留既有规则：
 
-- baseline 准备默认 1000 条性能/功能合一全集和精确覆盖的竞品证据；preparation 建立 demo 功能基线。
+- baseline 准备默认 1000 条性能/功能合一全集和精确覆盖的竞品证据，并在 worktree 上建立原实现功能基线。
 - analysis 取得当前 NPU 全集性能及 ratio，每轮从 `ratio < 1.0` 中确定性选择最多 30 条；选例方法属于 analysis，计算口径属于共享验证。
 - implementation 先按 geomean ratio ≥ 1.0 且 min ratio ≥ 0.6 判断候选达标，再按原有 ratio/有效性能/复杂度顺序终选；内层最多 3 轮。
 - 达到内层门限、没有不达标 case 或内层到上限时，implementation 执行外层全集验证。全集未达标且未到上限时回 analysis；外层最多 2 次，恢复不清零计数。
@@ -116,51 +125,52 @@ generalization 保留既有规则：
 |---|---|
 | 请求/环境/对标缺失或集合未就绪 | 返回 baseline；需用户决定的缺口由主 Agent 汇总询问 |
 | 原始对标的源码、构建产物或实际加载产物身份不一致 | 返回 baseline 修正构建/加载路由；该身份上的运行结论全部失效 |
-| 剥离、依赖闭包或基线加载错误 | 返回 preparation，冻结原工程不变 |
+| worktree、基线 commit、harness 或基线加载错误 | 返回 baseline（对应派发），冻结原工程不变 |
 | 采集证据缺失/失效、方案与契约不一致 | 返回 analysis；旧方案冻结范围不得被实施代理放宽 |
-| 单候选新增/恶化精度失败、符合性失败或压测崩溃 | implementation 修复或淘汰该候选，其他候选和当前基线继续 |
+| 单候选新增/恶化精度失败、符合性失败或压测崩溃 | implementation 修复或淘汰该 attempt，其他候选和当前基线继续；无其他活跃方案时保留基线，下一轮重新分析 |
 | 回集成接线、隔离或两类全集退化 | integration 修复接线或将真实输入条件回原代码，并复验新身份 |
 | 实际外部资源 blocker | 保存证据、未决项和恢复点，由主 Agent 记录状态 |
 
 若冻结用例语义与工作流校验脚本的输入契约冲突，主 Agent 应定位口径差异，修复脚本或证据映射后重跑原门禁；可复现且可修复的校验缺陷不得用 `workflow_error` 结束任务，也不得将未通过的门禁伪装为通过。`workflow_error` 仅用于已记录具体故障、恢复尝试与恢复点后仍无法推进的工作流故障，不代替目标未达或技术方向未知的结论。
 
-公开 API、原约束、dtype/format 和用例/golden/阈值不变。TARGET_SOCS 是精确验证范围，芯片族归类不扩大权限；共享实现先复制后单独路由，未涉及代际/模板保持原路径。前四阶段原工程只读。
+公开 API、原约束、dtype/format 和用例/golden/阈值不变。优化与验证范围按目标 `NpuArch` 族确定，不得新增具体芯片型号专属门禁；共享实现先复制后按族路由，非目标族及未涉及模板保持原路径。前四阶段原工程只读。
 
 精度分类使用共享验证规则：已证实 `known_baseline_failure` 且候选不恶化可 `conditional_pass`；未证实的失败不得冒充原始问题。精度诊断固定持续执行，精度诊断没有自动停止预算，不设总时长、轮次、Agent turn 或 token 上限；命令级防挂死 watchdog 只作用于单命令。候选失败或原始已知失败不得直接终止整个任务。
 
 ## 6. 派发、状态与报告
 
-主 Agent 将知识库、最佳实践、优化方法和理论建模的概览、真实索引入口与目标适用范围作为两条 backend 的分析输入；理论建模概览包含 `ops-theoretical-performance-estimation` 与 `ops-opmodel-toolkit` 的实际 Skill 入口和适用范围。仅在 AscendC 路径追加 MC²、静态性能检视与 API 文档检索三项，DSL 不接收这三项。缺失来源注明原因。分析 Agent 浏览适用概览后根据当前任务搜索、比较方案、按需深读资料，平台/API/同步及特殊路线检查独立于资料选择；实施验证消费所选方案及其实际采用的证据。选用知识库时，使用知识仓自身 `install.sh <tool> <project> consumer` 安装的 `knowledge-query`，不使用 cannbot-skills 中的旧版副本。主 Agent 在首次派发需要它的阶段前读取该 Skill 与 `references/cli.md`，解析一次 `KB_ROOT` 并全程复用：优先按 Query 自身规则使用环境变量 `CANNBOT_KNOWLEDGE_ROOT`、当前目录及祖先中的 `.cannbot/knowledge.env`、真实 Skill 所在知识仓；未配置且尚未定位时，可检查项目下 `.cannbot/dependencies/*/cannbot-knowledge`，或同级检出的 cannbot-knowledge，并显式交给 Query。`KB_ROOT` 必须是包含 `governance/` 与 `knowledge/` 的仓根绝对路径，不是 `knowledge/` Bundle 根；显式配置无效时报告配置错误，不静默改用别的仓。
+两条 backend 的分析任务按 `ops-perf-analysis` 的「Agent 的参考输入」检索其内置[板卡事实库](../../ops-perf-analysis/references/kb/README.md)、`$KB_ROOT/distill/book` 和其他资料；各项之间没有固定先后顺序。主 Agent 将实际加载的分析 Skill 内 `references/kb/`、目标册 `INDEX.md`、`distill/book` 的绝对路径和适用范围随概览派发；未命中或证据不足时记录缺口，再补查其他来源。
 
-首次进入该知识仓运行 `discover --json`，使用其返回的 `root` 与真实覆盖信息；同一任务、同一知识根且索引指纹未变时复用。Query 只读已准备的索引；索引缺失、损坏或 stale 时记录具体错误，由知识仓安装器或维护者准备，不在调优阶段自动重建或扫描全库兜底。知识库不可用（Skill 未安装、依赖仓克隆被跳过、离线、配置或索引错误）不是阻塞项：信封省略 `KB_ROOT`，阶段标注 `kb_unavailable`，按无知识增强继续，不降低精度与性能验收要求；主 Agent 在报告中登记原因与恢复方式。有效零命中保留为当前决策的知识缺口，不等同于知识库不可用，更不能作为技术不可行的证据。
+主 Agent 将精炼区（`$KB_ROOT/distill/book`）、扩展知识库、最佳实践、优化方法和理论建模的概览、真实索引入口与目标适用范围作为两条 backend 的分析输入；仅在 AscendC 路径追加 MC²、静态性能检视与 API 文档检索三项，DSL 不接收这三项。缺失来源注明原因。分析 Agent 浏览适用概览后根据当前任务择优选择方案、按需深读资料，平台/API/同步及特殊路线检查独立于资料选择；实施验证消费所选方案及其实际采用的证据。选用外部知识库时，使用知识仓自身 `install.sh <tool> <project> consumer` 安装的 `knowledge-query`，不使用 cannbot-skills 中的旧版副本。主 Agent 在首次派发需要它的阶段前读取该 Skill 与 `references/cli.md`，解析一次 `KB_ROOT` 并全程复用：优先按 Query 自身规则使用环境变量 `CANNBOT_KNOWLEDGE_ROOT`、当前目录及祖先中的 `.cannbot/knowledge.env`、真实 Skill 所在知识仓；未配置且尚未定位时，可检查项目下 `.cannbot/dependencies/*/cannbot-knowledge`，或同级检出的 cannbot-knowledge，并显式交给 Query。`KB_ROOT` 必须是包含 `governance/` 与 `knowledge/` 的仓根绝对路径，不是 `knowledge/` Bundle 根；显式配置无效时报告配置错误，不静默改用别的仓。
 
-读取 `$WORKFLOW_ROOT/workflows/task-prompts.md`，按 ROLE 只取对应模板；通用信封的字段定义以该稳定派发入口为准。传入 WORKFLOW_ROOT、WORKFLOW_SCRIPTS、REQUEST、RUN_MANIFEST、WORKFLOW_STATE、TUNING_MODE、TARGET_SOCS、ROUND、CODE_DIR、KB_ROOT（或省略）、输入/输出、ACCEPTANCE 和条件技能；不把整个编排契约复制给 subagent。
+首次进入该知识仓运行 `discover --json`，使用其返回的 `root` 与真实覆盖信息；同一任务、同一知识根且索引指纹未变时复用。Query 只读已准备的索引；索引缺失、损坏或 stale 时记录具体错误，由知识仓安装器或维护者准备，不在调优阶段自动重建或扫描全库兜底。外部知识库不可用（Skill 未安装、依赖仓克隆被跳过、离线、配置或索引错误）不是阻塞项：信封省略 `KB_ROOT`，阶段标注 `kb_unavailable`，继续使用内置板卡事实库和其他有效输入，不降低精度与性能验收要求；主 Agent 在报告中登记原因与恢复方式。有效零命中保留为当前决策的知识缺口，不等同于知识库不可用，更不能作为技术不可行的证据。
+
+读取 `$WORKFLOW_ROOT/workflows/task-prompts.md`，按 ROLE 只取对应模板；通用信封的字段定义以该稳定派发入口为准。传入 WORKFLOW_ROOT、WORKFLOW_SCRIPTS、REQUEST、RUN_MANIFEST、WORKFLOW_STATE、TUNING_MODE、TARGET_SOCS、ROUND、CODE_DIR、KB_ROOT（或省略）、REFINERY_ROOT（或省略，仅后处理回流）、输入/输出、ACCEPTANCE 和条件技能；不把整个编排契约复制给 subagent。
 
 派发前主 Agent 必须读取本次 `ROLE` 对应的 `workflows/prompts/<role>.md` 并按模板逐字段填写信封；只凭通用信封手写视为派发准备未完成。信封内路径与工作流脚本调用必须是解析后的绝对路径，`$WORKFLOW_ROOT`/`$WORKFLOW_SCRIPTS` 是主 Agent 侧占位符而非环境变量；子 agent 在自己工作目录内的常规相对路径操作不受影响。同一 `ROLE` 已有 `in_progress` 或取消中的会话时，先核对保存点与产物再决定是否补派；预计超过 2 分钟的命令建议后台执行并轮询日志。
 
 使用 `$WORKFLOW_SCRIPTS/workflow_state.py` 管理状态，具体命令和字段按需读取 `$WORKFLOW_ROOT/workflows/references/state-reporting.md`。主 Agent 派发前 mark in_progress，验收后 complete；诊断假设/候选变化时记录 progress。阶段没有真实开始时间就保留未知，不伪造耗时。
 
-保留 `phase.baseline/preparation/analysis/implementation/integration` 和原 round/gen 保存点。phase.analysis 记录初次交接，轮内重复诊断用细粒度键；phase.implementation 在最终 demo 全集验收后完成。每轮 complete 前登记所保留实现的本轮与累计摘要，二者引用同一候选 CSV；原始基线不能换成上一轮基线或连乘加速比。
+保留 `phase.baseline/analysis/implementation/integration` 和原 round/gen 保存点（基线评估两次派发共用 `phase.baseline`，派发间由主 Agent 机械调用 harness 建 worktree，不另立阶段键）。phase.analysis 记录初次交接，轮内重复诊断用细粒度键；phase.implementation 在最终全集验收后完成。每轮 complete 前登记所保留实现的本轮与累计摘要，二者引用同一候选 CSV；原始基线不能换成上一轮基线或连乘加速比。
 
-主 Agent 复核阶段返回的摘要并登记状态，持续报告由脚本重绘；每轮刷新完整实测范围，最终引用回集成后的性能与身份。恢复前 verify 检查 manifest 和 artifact SHA；失效保存点不能被当作完成。版本变化按 [migration.md](migration.md) 审计，只失效受影响证据。
+主 Agent 依据阶段结论登记状态；持续报告由脚本重绘；每轮刷新完整实测范围，最终引用回集成后的性能与身份。恢复前 verify 检查 manifest 和 artifact SHA；失效保存点不能被当作完成。版本变化按 [migration.md](migration.md) 审计，只失效受影响证据。
 
-中止或空返回后，先核对现有保存点和实际产物，只派发尚缺的工作。`verify` 只验证已登记文件是否改变，不证明其属于当前候选；实施 gate 还须按实施 Skill 核验 contract、scope、候选源码及构建/运行身份。未登记或归属不明的产物保留为未核验，不从文件存在、复制目录或工具 completed 推断完成。只有当前基线副本且无方案实现证据时，按未实施恢复。
+中止或空返回后，先核对现有保存点和实际产物，只派发尚缺的工作。`verify` 只验证已登记文件是否改变，不证明其属于当前候选；未登记或归属不明的产物保留为未核验，不从文件存在、复制目录或工具 completed 推断完成。只有当前基线副本且无方案实现证据时，按未实施恢复。
 
 空返回时优先续接同角色实例补交摘要与缺失文档；实例不可恢复再新派。已验收构建/采集不因缺摘要重做。用户调整轮数、阶段安排或停止目标时先登记决策；被明确暂停或移交给后续阶段的工作，在用户修改决定前不得由主 Agent自动重派。只停止性能探索而仍要求交付的，按最后可信实现安排剩余验收；明确取消整个任务的，立即停止派发、构建和设备操作，仅记录可信实现与恢复点，不追加验收或回集成。恢复信息复用现有 stage/context/progress，不另建并行状态文件。
 
 ## 7. 完成定义
 
 - 五个阶段交接产物齐全，request/manifest/state 的模式、目标、环境（含 `optimization_intent`、`reference_perf`）与集合身份一致。
-- 每个阶段文件夹的 `阶段总结.md` 与实际产物一致；根目录只有 run 级文件，无散落的阶段产物、探针或日志。
-- 每个候选有符合性、隔离、构建与功能结论，合格候选有一次可比较性能证据，淘汰原因可追溯。
+- 拟晋升候选有符合性、隔离、构建、功能与可比较性能证据；screened 仅需实际探索材料和未采用原因。
 - pursue_optimal 的结构空间判定以算子内在最小成本 roofline 为普适锚点，`REFERENCE_PERF` 仅在恰有可比实现时作机会性增强、缺参考不阻塞不降级；结构方向台账无 `not_attempted`/`blocked_by_scope` 残留（否则终态为 `awaiting_operator` + `structural_headroom_unrealized`，不得伪装 `success/completed`）。
-- 最终 demo 完成功能/性能全集验收，原工程沿原入口回集成，非目标芯片族与未涉及模板保持原实现。
-- 原工程两个全集在每个目标 SoC 都无新增/恶化精度失败和有效性能退化；必要回路由已对最终身份完整复验。no-op 也须有原始身份的全集证据。
+- 最终保留 commit（final 标签）完成功能/性能全集验收，原工程经条件化合并（fast-forward 等价或全量复验）交付，非目标芯片族与未涉及模板保持原实现。
+- 原工程两个全集在每个目标 SoC 都无新增/恶化精度失败，性能按冻结策略验收（median 比较各全集几何平均）；必要回路由已对最终身份完整复验。no-op 也须有原始身份的全集证据。
 - `性能调优报告.md` 与机器状态一致，逐轮/最终性能、精度异常、是否达标、未决问题和安全恢复点完整。泛化内外层计数和最终 ratio 完整。
-- 正常成功、失败、等待用户或 blocker 返回前更新状态与报告；finish success 需五阶段完成且证据 SHA 未变，不能用对话替代落盘结果。
+- 后处理已从 `analysis.md` 和 `selection.json` 整理回流材料：有 `REFINERY_ROOT` 时按 cann-refinery README「整理原料」写入原料卡，否则写入本地 `$OUTPUT_DIR/integration/knowledge-reflux/`；两条路径都不推送，也不得把原料卡写成已确立知识。
+- 启用 experience_policy 时，全部轮次已覆盖到可操作经验，bundle/material/review 的当前字节已通过经验门禁；不得以“原件齐全”替代经验正文，也不得把自评或同一代理改名当独立阅读验证。
+- 正常成功、失败、等待用户或 blocker 返回前更新状态与报告；finish success 需全部四阶段完成且证据 SHA 未变，不能用对话替代落盘结果。
 
-## 冻结效果策略与确认门禁
+## 冻结效果策略
 
-新请求默认策略按 backend 选择，用户指定优先；旧 request/manifest 缺字段保持 `legacy_jitter_v1`。公共规则见 [效果判定](../../ops-perf-acceptance-criteria/references/performance-jitter-policy.md)，仅 confidence 策略读取 [确认细则](../../ops-perf-acceptance-criteria/references/performance-confidence-policy.md)，不从固定3%阈值否决已证实小收益，不引入1us下限。schema2旧summary与schema1旧全集gate原算法复核；schema3新summary与schema2新gate记录版本、统计依据和完整proof依赖SHA。CLI提供manifest或显式policy，未知版本拒绝。
-
-confidence 下主Agent复核当前comparison独立proof，A/base不能替代A/B或不同累计基线。confidence最终/原工程全集有待确认case时不是PASS：合法确认或同source/build/loaded no-op依据后才结束；稳定小回退回原代码并复验。采集完整性、原精度、身份、频率、spread与泛化ratio不放宽。配对原始证据变更时对应summary/report/gate失效，不重写旧历史。
+效果判定见 [性能效果判定](../../ops-perf-acceptance-criteria/references/performance-jitter-policy.md)。

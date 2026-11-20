@@ -18,7 +18,13 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts"))
-SCRIPT = ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "preflight_dependencies.py"
+SCRIPT = (
+    ROOT
+    / "skills"
+    / "ops-perf-optimize-workflow"
+    / "scripts"
+    / "preflight_dependencies.py"
+)
 SKILL = ROOT / "skills" / "ops-perf-optimize-workflow" / "SKILL.md"
 CONTRACT = (
     ROOT
@@ -36,7 +42,9 @@ SPEC.loader.exec_module(MODULE)
 
 def test_plugin_scripts_all_present() -> None:
     for name in MODULE.PLUGIN_SCRIPTS:
-        assert (ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / name).is_file(), name
+        assert (
+            ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / name
+        ).is_file(), name
 
 
 def test_check_plugin_scripts_detects_missing_script() -> None:
@@ -53,7 +61,7 @@ def test_check_python_env_fails_fast_on_missing_executable() -> None:
     assert any("executable not found" in check["detail"] for check in report.checks)
 
 
-def test_check_cann_flags_incomplete_install_as_warn_when_libs_exist() -> None:
+def test_general_preflight_defers_measurement_backend_and_warmup() -> None:
     import tempfile
 
     report = MODULE.Report()
@@ -80,11 +88,11 @@ def test_check_cann_flags_incomplete_install_as_warn_when_libs_exist() -> None:
             MODULE.check_cann(report, "source /x/setenv.bash")
 
     statuses = {check["name"]: check["status"] for check in report.checks}
-    assert statuses["warmup-symbols"] == "warn"
-    assert "incomplete install" in next(
-        check["detail"] for check in report.checks if check["name"] == "warmup-symbols"
-    )
-    assert report.status == "warn"
+    assert "warmup-symbols" not in statuses
+    assert "msprof" not in statuses
+    assert "npu-compute" not in statuses
+    assert statuses["atc"] == "ok"
+    assert report.status == "pass"
 
 
 def test_check_device_busy_is_warn_not_fail() -> None:

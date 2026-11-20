@@ -10,7 +10,7 @@
 
 from pathlib import Path
 
-from ops_perf_test_paths import ANALYSIS, CONTRACT, IMPL, ROOT, WRAPPER
+from ops_perf_test_paths import ANALYSIS, CONTRACT, ROOT, WRAPPER
 
 
 SKILL = ROOT / "skills" / "ops-perf-optimize-workflow" / "SKILL.md"
@@ -22,33 +22,35 @@ def read(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
     references = {
         "ops-perf-analysis": "references/analysis-execution.md",
-        "ops-perf-implementation": "references/implementation-execution.md",
+        "ops-perf-implementation": "references/selection-and-final.md",
     }
     if path.parent.name in references:
         text += (path.parent / references[path.parent.name]).read_text()
     return text
 
 
-def test_application_profiling_protocol_is_single_source_and_identity_bound() -> None:
-    contract = read(
-        ROOT
-        / "skills/ops-perf-acceptance-criteria/references/performance-collection.md"
-    )
+def test_npu_profiling_protocol_is_single_source_and_identity_bound() -> None:
+    contract_path = ROOT / "skills/ops-perf-acceptance-criteria/references/performance-collection.md"
+    contract = read(contract_path)
     analysis = read(ANALYSIS)
     for token in (
-        "profiler=msprof",
-        "aic_metrics=PipeUtilization",
-        "10 组 `warmup → target`",
-        "schema v3",
-        "expected/parsed/mapped relevant launches",
-        "全部 kernel",
-        "源码、加载二进制、case、Device、CANN、频率和 warmup 身份",
-        "ArgMax",
-        "Max",
+        "ops-profiling-report",
+        "screening_only",
+        "源码、加载二进制、case、Device、CANN、频率",
+        "--dry-run",
     ):
         assert token in contract
-    assert "只使用 `mapped_launches[]`" in analysis
-    assert "MC²" in contract and "msprof op" in contract
+    # The overview delegates the confidence sampling policy to this contract.
+    assert "](profile-evidence.md)" in contract
+    evidence = read(contract_path.with_name("profile-evidence.md"))
+    confidence = next(
+        line for line in evidence.splitlines()
+        if line.startswith("- 显式 `confidence_effect_v1`")
+    )
+    assert "最终候选稳定后" in confidence
+    assert "每侧 10 次独立进程采集" in confidence
+    assert "summary 收据" in analysis
+    assert "MC²" in contract and "unsupported/pending" in contract
     assert "不套用 application 协议" in analysis
     assert "身份与覆盖完全相同时复用已有证据" in contract
 
@@ -71,7 +73,6 @@ def test_runtime_artifact_model_has_three_truth_layers_and_no_duplicate_summarie
     )  # wording stays operational, not implementation chatter
     assert "持续更新" in skill
     assert "一份 `analysis/roundN/analysis.md`" in skill
-    assert "同一事实只写一次" in contract
 
     prompts = read(
         ROOT / "skills" / "ops-perf-optimize-workflow" / "workflows" / "task-prompts.md"
@@ -85,7 +86,6 @@ def test_runtime_artifact_model_has_three_truth_layers_and_no_duplicate_summarie
         / "workflows"
         / "resume-and-lessons.md"
     ).exists()
-    assert "不另建进度 JSON、双份多轮汇总或逐轮同名报告" in contract
     assert "不拆成三段保存点或重复的方案报告" in read(
         ROOT / "skills/ops-perf-analysis/references/analysis-execution.md"
     )
@@ -94,7 +94,7 @@ def test_runtime_artifact_model_has_three_truth_layers_and_no_duplicate_summarie
 def test_precision_redlines_are_explicit_in_entry_contract_and_implementation_role() -> (
     None
 ):
-    documents = [read(SKILL), read(CONTRACT), read(IMPL)]
+    documents = [read(SKILL), read(CONTRACT)]
     for text in documents:
         assert "known_baseline_failure" in text
         assert "conditional_pass" in text

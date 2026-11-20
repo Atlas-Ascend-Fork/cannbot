@@ -72,6 +72,7 @@ IGNORED_CODE_DIRS = {
     "dist",
     "output",
     "outputs",
+    "golden_cache",
 }
 CODE_SUFFIXES = {
     ".c",
@@ -143,9 +144,47 @@ def identity(path: Path) -> dict[str, Any]:
     }
 
 
-def code_identity(path: Path) -> dict[str, Any]:
-    """Hash source/build-contract files without walking generated binaries."""
+def _dirty_tree_sha(repo: Path) -> str:
+    """Content hash of the full working state (tracked + untracked, gitignore-
+    respected) via a temporary index — O(changes) instead of a directory walk."""
+    index_dir = tempfile.mkdtemp(prefix="perf-opt-index-")
+    index = os.path.join(index_dir, "index")  # must not exist yet
+    env = dict(os.environ, GIT_INDEX_FILE=index)
+    try:
+        subprocess.run(
+            ("git", "-C", str(repo), "add", "-A", "--", "."),
+            env=env, check=True, capture_output=True,
+        )
+        out = subprocess.run(
+            ("git", "-C", str(repo), "write-tree"),
+            env=env, check=True, capture_output=True, text=True,
+        )
+        return out.stdout.strip()
+    finally:
+        shutil.rmtree(index_dir, ignore_errors=True)
+
+
+def code_identity(path: Path, *, recorded: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Identity of a code directory.
+
+    git repositories use git-tree-v1: the dirty working state is hashed via a
+    temporary git index, so validation costs O(changes) and ignores are
+    respected. Non-git inputs keep the source-tree-v1 directory walk. Recorded
+    legacy identities are re-validated with the method that produced them.
+    """
     resolved = path.resolve()
+    git_facts = _git_identity(resolved)
+    if git_facts and not (
+        isinstance(recorded, dict)
+        and recorded.get("identity_method") == "source-tree-v1"
+    ):
+        return {
+            "path": str(resolved),
+            "kind": "directory",
+            "sha256": _dirty_tree_sha(resolved),
+            "identity_method": "git-tree-v1",
+            "git": git_facts,
+        }
     digest = hashlib.sha256()
     count = 0
     for root, directories, files in os.walk(resolved):
@@ -171,7 +210,29 @@ def code_identity(path: Path) -> dict[str, Any]:
         "sha256": digest.hexdigest(),
         "identity_method": "source-tree-v1",
         "file_count": count,
+        "git": git_facts,
     }
+
+
+def _git_identity(resolved: Path) -> dict[str, Any] | None:
+    """Record git facts alongside the source-tree hash; None for non-git inputs."""
+    try:
+        from git_tree import is_git_repo, rev_resolve, run_git
+    except ImportError:
+        return None
+    if not is_git_repo(resolved):
+        return None
+    try:
+        head = rev_resolve(resolved, "HEAD")
+        status = run_git(resolved, "status", "--porcelain")
+    except RuntimeError:
+        return None
+    dirty = sorted({
+        line[3:].partition(" -> ")[2].strip() or line[3:].strip()
+        for line in status.splitlines()
+        if line.strip()
+    })
+    return {"head_commit": head, "dirty_files": dirty}
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -684,19 +745,37 @@ def request_summary(request: dict[str, Any]) -> dict[str, Any]:
         "optimization_objective": request["optimization_objective"],
         "optimization_intent": request.get("optimization_intent", "safe_incremental"),
         "reference_perf": request.get("reference_perf"),
+        "dirty_policy": request.get("dirty_policy", "b"),
+        "git_init": request.get("git_init"),
         "performance_reference": request.get("performance_reference"),
         "performance_effect_policy": request.get("performance_effect_policy"),
         "schedule_policy": request.get("schedule_policy"),
         "search_policy": request.get("search_policy"),
+        "experience_policy": request.get("experience_policy"),
         "python": request["environments"]["python"],
         "cann": request["environments"]["cann"],
         "confirmation": request["confirmation"],
     }
 
 
+DIRTY_POLICIES = ("b", "d", "c")
+
+
 def _validate_request_policies(request: dict[str, Any]) -> None:
     from performance_effect_evidence import policy
 
+    dirty_policy = request.get("dirty_policy", "b")
+    if dirty_policy not in DIRTY_POLICIES:
+        raise ValueError(
+            f"invalid dirty_policy: {dirty_policy!r}; expected one of {DIRTY_POLICIES} "
+            "(b: keep dirty changes in the user worktree [default], "
+            "d: save an audit patch then discard, c: abort)"
+        )
+    request["dirty_policy"] = dirty_policy
+    git_init = request.get("git_init")
+    if git_init is not None and not isinstance(git_init, bool):
+        raise ValueError("git_init must be a boolean consent for in-place git init")
+    request["git_init"] = git_init
     if "performance_effect_policy" in request:
         request["performance_effect_policy"] = policy(
             request["performance_effect_policy"]
@@ -709,6 +788,9 @@ def _validate_request_policies(request: dict[str, Any]) -> None:
         validate_schedule_policy(request["schedule_policy"])
     if "search_policy" in request:
         validate_search_policy(request["search_policy"])
+    if "experience_policy" in request:
+        from experience_reflux import validate_policy as validate_experience_policy
+        validate_experience_policy(request["experience_policy"])
 
 
 def _has_unique_target_socs(target_socs: Any) -> bool:
@@ -1109,14 +1191,17 @@ def _build_create_request(
         "optimization_objective": optimization_objective(args),
         "optimization_intent": args.optimization_intent,
         "reference_perf": str(reference_perf) if reference_perf else None,
+        "dirty_policy": args.dirty_policy,
+        "git_init": args.git_init,
         "performance_reference": reference,
         "performance_effect_policy": {
-            "id": getattr(args, "performance_effect_policy", None)
-            or ("legacy_jitter_v1" if args.backend == "ascendc" else "confidence_effect_v1"),
+            "id": getattr(args, "performance_effect_policy", None) or "median_v1",
             "version": 1,
         },
-        "schedule_policy": {"id": "schedule_contract_v1", "version": 1},
         "search_policy": dict(SEARCH_POLICY),
+        "experience_policy": {"id": "evidence_lessons_v2", "version": 2},
+        **({"schedule_policy": {"id": "schedule_contract_v1", "version": 1}}
+           if getattr(args, "schedule_policy", False) else {}),
         "generalization": generalization,
         "environments": _environment_configuration(args, executable),
         "confirmation": {
@@ -1200,13 +1285,38 @@ def load_manifest(path: Path) -> dict[str, Any]:
         validate_schedule_policy(configuration["schedule_policy"])
     if "search_policy" in configuration:
         validate_search_policy(configuration["search_policy"])
+    if "experience_policy" in configuration:
+        from experience_reflux import validate_policy as validate_experience_policy
+        validate_experience_policy(configuration["experience_policy"])
     return payload
+
+
+def _reject_failed_preflight(output_dir: Path, request_source: Path) -> None:
+    """Defense in depth: refuse to freeze when a recorded preflight failed."""
+    candidates = [
+        output_dir / "baseline" / "preflight-report.json",
+        request_source.parent / "preflight-report.json",
+    ]
+    for report_path in candidates:
+        if not report_path.is_file():
+            continue
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"cannot read preflight report {report_path}: {error}") from error
+        fail_count = payload.get("summary", {}).get("fail_count", payload.get("fail_count"))
+        if isinstance(fail_count, int) and fail_count > 0:
+            raise ValueError(
+                f"preflight failed with {fail_count} failure(s): {report_path}; "
+                "fix dependencies or re-confirm the environment before freeze"
+            )
 
 
 def command_freeze(args: argparse.Namespace) -> int:
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     request_source = args.request.resolve()
+    _reject_failed_preflight(output_dir, request_source)
     request = load_request(request_source)
     tuning_mode = request.get("tuning_mode", "standard")
     code_dir = Path(request["code_dir"])
@@ -1317,7 +1427,7 @@ def _freeze_manifest(
         "optimization_objective": request["optimization_objective"],
         "optimization_intent": request.get("optimization_intent", "safe_incremental"),
         "reference_perf": request.get("reference_perf"),
-        "workflow_layout": "five-stage-v1",
+        "workflow_layout": "four-stage-v1",
         "performance_reference": performance_reference,
         "environments": request["environments"],
         "precision_diagnosis_policy": PRECISION_DIAGNOSIS_POLICY,
@@ -1331,6 +1441,8 @@ def _freeze_manifest(
         configuration["schedule_policy"] = request["schedule_policy"]
     if "search_policy" in request:
         configuration["search_policy"] = request["search_policy"]
+    if "experience_policy" in request:
+        configuration["experience_policy"] = request["experience_policy"]
     return {
         "schema_version": RUN_SCHEMA_VERSION,
         "created_at": now(),
@@ -1630,6 +1742,13 @@ def command_attach_competitor(args: argparse.Namespace) -> int:
     manifest["inputs"]["competitor_performance"] = identity(
         args.competitor_perf.resolve()
     )
+    # The performance is now file-backed: flip the configuration source so
+    # workflow-state manifest validation (source == "file") accepts the run.
+    manifest["configuration"]["generalization"]["competitor"] = {
+        "source": "file",
+        "performance": competitor["path"],
+        "gpu_environment": None,
+    }
     manifest.setdefault("generalization_preparation", {})["competitor"] = {
         "status": "complete",
         "completed_at": now(),
@@ -1672,9 +1791,9 @@ def _add_create_parser(subparsers: Any) -> None:
     create.add_argument("--performance-cases", type=Path)
     create.add_argument(
         "--performance-effect-policy",
-        choices=("legacy_jitter_v1", "confidence_effect_v1"),
+        choices=("median_v1", "legacy_jitter_v1", "confidence_effect_v1"),
         default=None,
-        help="default: ascendc uses legacy_jitter_v1; cannbot_dsl uses confidence_effect_v1",
+        help="default: median_v1; explicit choice wins",
     )
     create.add_argument(
         "--performance-reference",
@@ -1714,6 +1833,28 @@ def _add_create_objective_arguments(create: argparse.ArgumentParser) -> None:
     create.add_argument("--python-activation-command")
     create.add_argument("--cann-env-command", required=True)
     create.add_argument("--confirmed-by", default="user")
+    create.add_argument(
+        "--schedule-policy",
+        action="store_true",
+        help="opt in to the async schedule contract (schedule_contract_v1); off by "
+             "default — enable it only when the candidate scheme involves cross-tile, "
+             "multi-engine or async buffer reuse",
+    )
+    create.add_argument(
+        "--dirty-policy",
+        choices=DIRTY_POLICIES,
+        default="b",
+        help="uncommitted/staged changes handling at baseline finalize: "
+             "b keep them in the user worktree (default), d save an audit patch "
+             "then discard, c abort",
+    )
+    create.add_argument(
+        "--git-init",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="consent for in-place git init when code_dir is not a git repository; "
+             "refusal aborts the run",
+    )
     create.add_argument(
         "--optimization-intent",
         choices=("safe_incremental", "pursue_optimal"),

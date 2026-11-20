@@ -91,7 +91,7 @@ def _validate_context(evidence: dict, manifest: dict, manifest_path: Path, stage
         raise ValueError("DSL evidence requires a cannbot_dsl manifest")
     if evidence.get("schema_version") not in (1, 2) or evidence.get("backend") != "cannbot_dsl":
         raise ValueError("unsupported DSL evidence schema/backend")
-    if evidence.get("stage") not in ("baseline", "preparation", "analysis", "implementation", "integration"):
+    if evidence.get("stage") not in ("baseline", "analysis", "implementation", "integration"):
         raise ValueError("invalid DSL evidence stage")
     if stage is not None and evidence["stage"] != stage:
         raise ValueError("DSL evidence belongs to another stage")
@@ -104,7 +104,7 @@ def _validate_context(evidence: dict, manifest: dict, manifest_path: Path, stage
 
 def _validate_source(evidence: dict, manifest: dict, config: dict) -> dict:
     source = evidence.get("source", {})
-    if not source.get("path") or code_identity(Path(source["path"])) != source:
+    if not source.get("path") or code_identity(Path(source["path"]), recorded=source) != source:
         raise ValueError("DSL source/dependency identity changed")
     if evidence["stage"] == "baseline" and source != manifest["inputs"]["code"]:
         raise ValueError("baseline DSL source differs from frozen source")

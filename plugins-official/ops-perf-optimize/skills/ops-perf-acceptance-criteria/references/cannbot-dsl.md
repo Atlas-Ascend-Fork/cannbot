@@ -16,13 +16,36 @@ DSL 代码与文档不限单一来源；官方站点 [编程模型](https://cann
 
 ## 共享验证契约
 
-保持原冻结集合、精度阈值、源码隔离、抖动规则及五阶段状态协议。原 pytest/checker/golden 是功能真源；原测试使用 TTK 时保留 TTK。纯 Python/JIT 不要求改造成 OPP 注册工程；原工程包含 Native/AOT、C++ 扩展或注册入口时，沿实际入口保留对应构建与集成检查。
+保持原冻结集合、精度阈值、源码隔离、抖动规则及四阶段状态协议。原 pytest/checker/golden 是功能真源；原测试使用 TTK 时保留 TTK。纯 Python/JIT 不要求改造成 OPP 注册工程；原工程包含 Native/AOT、C++ 扩展或注册入口时，沿实际入口保留对应构建与集成检查。
 
 ### 编译证据
 
 在确认的 Python/CANN 环境运行 `$WORKFLOW_SCRIPTS/dsl_evidence.py environment --out <path>`。环境文件保存真实包源文件和编译器二进制身份；preflight 保存其身份，后续正常候选使用同一工具链。升级环境必须记录决策、失效受影响证据，不能静默复用。
 
-前处理、最终实施和后处理交接必须含 `dsl-compile-evidence.json`，由 `dsl_evidence.py validate --manifest <path> --evidence <path> --stage <role>` 验证；状态脚本在阶段 complete 时执行同一检查，并登记依赖。运行期间归档临时 `.so` 和原始加载记录，不能等待进程退出才取证。
+基线评估（工作区功能基线）、最终实施和后处理交接必须含 `dsl-compile-evidence.json`，由 `dsl_evidence.py validate --manifest <path> --evidence <path> --stage <role>` 验证；状态脚本在阶段 complete 时执行同一检查，并登记依赖。
+
+**最小合规示例**（schema v1，字段一次凑齐；文件身份用 `file_identity`（path+sha256），`source` 必须等于 manifest 的 `inputs.code`）：
+
+```json
+{
+  "schema_version": 1, "backend": "cannbot_dsl", "stage": "baseline",
+  "manifest": {"path": "/abs/run/run-manifest.json", "sha256": "<file sha>"},
+  "dsl": {"repo_root": "...", "entrypoint": "simnet:run", "execution_mode": "jit", "workload_scope": "network_cases"},
+  "source": {"<等于 manifest.inputs.code（code_identity 全量字段）>": "..."},
+  "environment": {"path": "/abs/run/dsl-environment.json", "sha256": "<file sha>"},
+  "collection": "functional_acceptance",
+  "variants": [{
+    "id": "v1", "target_soc": "Ascend910_95", "case_ids": ["c1"],
+    "compile_config": {"path": "/abs/run/baseline/compile-config.json", "sha256": "..."},
+    "generated_sources": [{"path": ".../generated_kernel.py", "sha256": "..."}],
+    "build_log": {"path": ".../build.log", "sha256": "..."},
+    "built_artifacts": [{"path": ".../kernel.so", "sha256": "..."}],
+    "runtime_evidence": {"path": ".../runtime-evidence.json", "sha256": "..."}
+  }]
+}
+```
+
+配套构件约束（缺一即被拒）：`compile-config.json` 内嵌 `source`（等于 evidence 的 source）、`environment`（同一 file_identity）、`target_soc`/`target_arch`、`entrypoint`/`execution_mode`（等于冻结 dsl 配置）、`parameters` 对象；`build.log` 正文必须包含 source 的 sha256、compile_config 的 sha256、每个 generated_sources/built_artifacts 的 sha256（构建收据绑定输入与输出）；`runtime-evidence.json` 的 `compile_config` 引用必须与 variant 一致，`loaded_artifacts` 的 sha 必须出现在 `built_artifacts` 中，且 `source_artifacts` 原文必须能定位到实际加载路径（如 loader 日志含加载绝对路径）；JIT 模式 `generated_sources` 不可为空；`case_ids` 必须精确覆盖冻结集合的全部 case。运行期间归档临时 `.so` 和原始加载记录，不能等待进程退出才取证。
 
 文件身份为 `{path:绝对路径, sha256:文件SHA}`。证据 schema 1：
 
@@ -57,11 +80,11 @@ variants 的 case×SoC 并集必须恰好覆盖冻结 collection 中需要设备
 
 有非设备行时追加 `non_device_evidence` 文件身份，其 results 精确覆盖非设备 case×SoC：每条记录 case_id、target_soc、execution_kind、status=PASS、raw_evidence 文件身份；expected_error 另含匹配的 expected_substring/error_excerpt，host_only 另含匹配的 assertion。编译 gate 只证明该检查的独立证据，不把其标为设备执行。性能库存只使用实际设备 case；原测试中的非设备检查保留功能覆盖和原预期报错验证，不要求 NPU 耗时。
 
-前处理使用 functional_acceptance；最终实施与后处理使用 performance_full，功能全集另有完整运行证据。每轮候选分别记录覆盖调优库存的证据，不能借终选产物冒充被淘汰候选的执行结果。
+基线评估使用 functional_acceptance；最终实施与后处理使用 performance_full，功能全集另有完整运行证据。每轮候选分别记录覆盖调优库存的证据，不能借终选产物冒充被淘汰候选的执行结果。
 
 ### 功能与稳定性
 
-原测试 nodeid、seed、输入分布、golden/比较器/容差冻结，并映射到库存 case_id。pytest 的 skip/xfail、测试收集成功、进程 exit 0 不等于覆盖通过；报告实际执行及输出比较结果。测试命令只在运行副本上 import 候选。以 functional-acceptance.md 和 acceptance-run-manifest.json 交接，至少含命令、case/nodeid 映射、源码/编译/加载/工具链身份、逐例判定与原日志路径。
+原测试 nodeid、seed、输入分布、golden/比较器/容差冻结，并映射到库存 case_id。pytest 的 skip/xfail、测试收集成功、进程 exit 0 不等于覆盖通过；报告实际执行及输出比较结果。测试命令只在 run worktree 上 import 候选（attempt commit 检出处）。以 functional-acceptance.md 和 acceptance-run-manifest.json 交接，至少含命令、case/nodeid 映射、源码/编译/加载/工具链身份、逐例判定与原日志路径。
 
 strict 基线要求原 PASS case 仍 PASS；原已知失败经同 case/seed/环境证实且不恶化才能 conditional。新增失败只修复/淘汰该候选。依赖变更或新代码重新验证；不换 golden、不放宽容差。数值诊断优先 DSL 调试/编译/布局/同步依据；AscendC 排障只在后端生成代码问题被确认时按需使用。
 
@@ -71,7 +94,7 @@ strict 基线要求原 PASS case 仍 PASS；原已知失败经同 case/seed/环�
 
 加载 [统一性能采集](performance-collection.md) 和 [抖动规则](performance-jitter-policy.md)。DSL 按同一 sample 全部相关 target launches 聚合，正式终选使用共享中位数口径，不混用样例 README 的 min。Cube/Mix 不用单独 aiv_time 代替完整 Task Duration。
 
-JIT 编译/加载在正式样本前完成。优先用 `cbd.compile` 准备程序；若必须执行目标初始化或 prime，使用 ops-profiling 的可声明非计时 launch 路径，登记角色与预期拓扑。不得偷偷发射未映射的目标 kernel，或在解析时按顺序/名称删除它。正式调用中意外出现重新编译、debug 回读或未声明 launch 时采集无效。
+JIT 编译/加载在正式样本前完成。优先用 `cbd.compile` 准备程序；若必须执行目标初始化或 prime，显式登记编译/加载探针，并通过统一入口核对实际目标采集边界，登记角色与预期拓扑。不得偷偷发射未映射的目标 kernel，或在解析时按顺序/名称删除它。正式调用中意外出现重新编译、debug 回读或未声明 launch 时采集无效。
 
 设备计时、必要的接口端到端计时、编译耗时分开记录；metadata/workspace 的范围按冻结的原入口确定。同 shape 的真实稀疏/量化数据与调度配置不能替换为更容易的分布。诊断探针只用于证明对应假设，不参加候选排名。
 

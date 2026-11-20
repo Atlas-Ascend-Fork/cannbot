@@ -33,7 +33,7 @@ from prepare_case_sets import (
     load_manifest,
     read_csv,
 )
-from summarize_performance_effects import summarize
+from summarize_performance_effects import requires_routing, summarize
 from performance_effect_evidence import policy
 
 
@@ -307,7 +307,7 @@ def _validate_collection(
     return results_entry
 
 
-def _apply_confidence_policy(
+def _apply_effect_policy(
     result: dict,
     selected_policy: dict,
     regressions: bool,
@@ -351,7 +351,7 @@ def validate(
         )
         for name in ("functional", "performance")
     }
-    regressions = any(item["regressed_case_ids"] for item in results.values())
+    regressions = any(requires_routing(item["summary"]) for item in results.values())
     result = {
         "schema_version": 1,
         "manifest": identity(manifest_path),
@@ -359,8 +359,8 @@ def validate(
         "decision": "route_required" if regressions else "pass",
         "collections": results,
     }
-    if selected_policy["id"] == "confidence_effect_v1":
-        _apply_confidence_policy(result, selected_policy, regressions, effect_evidence, same_implementation)
+    if selected_policy["id"] != "legacy_jitter_v1":
+        _apply_effect_policy(result, selected_policy, regressions, effect_evidence, same_implementation)
     return result
 
 

@@ -117,7 +117,7 @@ class Run:
         self.cli("start", "--manifest", self.manifest)
         self.evidence = root / "diagnosis.txt"
         self.evidence.write_text("synthetic fixture, not a hardware measurement")
-        accept_stage(self.cli, "phase.preparation", self.evidence)
+        accept_stage(self.cli, "phase.baseline", self.evidence)
 
     def cli(self, command, *args, ok=True):
         result = subprocess.run(
@@ -460,12 +460,26 @@ def test_no_candidate_needs_analysis_and_requests_replanning(tmp_path):
     assert run.view()["stagnation"] == 0
 
 
-def test_net_gain_cannot_bypass_existing_per_case_retreat_limit(tmp_path):
+def test_net_gain_can_retain_a_candidate_with_a_slow_case(tmp_path):
     run = Run(tmp_path)
     plan = run.plan(1)
     args, _, _ = run.outcome(1, plan, values=(200, 10), selected=True)
-    error = run.cli("mark", *args, ok=False)
-    assert "retreat limit" in error["error"]
+    run.cli("mark", *args)
+    assert run.view()["accepted_decisions"] == ["s1"]
+
+
+def test_screening_can_close_without_full_acceptance_but_cannot_promote(tmp_path):
+    run = Run(tmp_path)
+    plan = run.plan(1)
+    args, _, _ = run.outcome(1, plan, kind="screened")
+    invalid = args.copy()
+    invalid[invalid.index("--selected-candidate") + 1] = "s1"
+    assert "cannot be promoted" in run.cli("mark", *invalid, ok=False)["error"]
+    run.cli("mark", *args)
+    view = run.view()
+    assert view["accepted_decisions"] == [] and view["stagnation"] == 0
+    assert view["next_action"] == "analyze"
+    run.cli("verify")
 
 
 @pytest.mark.parametrize(
@@ -822,7 +836,7 @@ def test_search_consumes_schedule_acceptance_without_certifying_failed_trials(
 
     cli = state_cli(state)
     cli("start", "--manifest", manifest)
-    accept_stage(cli, "phase.preparation", evidence)
+    accept_stage(cli, "phase.baseline", evidence)
     accept_stage(
         cli, "round1.analysis", evidence if outcome == "no_candidate" else contract
     )
@@ -855,3 +869,100 @@ def test_search_consumes_schedule_acceptance_without_certifying_failed_trials(
     view = search.view(search.load(state))
     assert view["accepted_decisions"] == (["s1"] if selected else [])
     assert view["stagnation"] == int(outcome == "measured" and not selected)
+
+
+def test_unfinished_round_can_remeasure_without_replacing_its_plan(tmp_path):
+    run = Run(tmp_path)
+    contract = run.plan(1)
+    frozen_contract = contract.read_bytes()
+    args, _, _ = run.outcome(1, contract, values=(80, 80), selected=True)
+    # A malformed collection cannot be accepted, and does not close the round.
+    (tmp_path / "perf-1.csv").write_text("case_id,total_us\na,broken\nb,80\n")
+    before = run.state.read_bytes()
+    run.cli("mark", *args, ok=False)
+    assert run.state.read_bytes() == before
+
+    # Recollect the same implementation and publish fresh evidence in this round.
+    repaired_perf = run.performance("perf-1-repaired", (80, 80))
+    effect = write(
+        tmp_path / "round1/effect-repaired.json",
+        summarize(run.baseline, repaired_perf),
+    )
+    selection_path = Path(args[args.index("--artifact") + 1])
+    selection = search.load(selection_path)
+    selection["search"]["effect_summary"] = search.ref(effect)
+    write(selection_path, selection)
+    for option in ("--performance-summary", "--cumulative-performance-summary"):
+        args[args.index(option) + 1] = effect
+    run.cli("mark", *args)
+    assert contract.read_bytes() == frozen_contract
+    assert run.view()["accepted_decisions"] == ["s1"]
+    events = search.load(run.state)["events"]
+    assert sum(e["kind"] == "search_plan" for e in events) == 1
+    assert sum(e["kind"] == "search_result" for e in events) == 1
+    assert not any(e.get("invalidated") for e in events)
+    assert run.cli("verify")["status"] == "valid"
+
+
+def test_removed_search_invalidate_command_cannot_change_state(tmp_path):
+    run = Run(tmp_path)
+    before = run.state.read_bytes()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "workflow_state.py"),
+            "search-invalidate",
+            "--state", str(run.state),
+            "--round", "round1",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "invalid choice: 'search-invalidate'" in result.stderr
+    assert run.state.read_bytes() == before
+
+
+@pytest.mark.parametrize("mode", ["standard", "generalization"])
+def test_legacy_invalidated_round_is_audit_only_and_cannot_be_reopened(tmp_path, mode):
+    run = Run(tmp_path, mode=mode)
+    run.finish_round(1)
+    state = search.load(run.state)
+    # Restore a historical state produced by the removed invalidation command.
+    invalidated = []
+    for event in state["events"]:
+        if event.get("kind", "").startswith("search_"):
+            event.update(invalidated=True, invalidated_round=run.round(1))
+            invalidated.append(event["kind"])
+    for stage, record in state["stages"].items():
+        if stage.startswith(run.round(1) + "."):
+            record["status"] = "invalid"
+    state["events"].append({
+        "kind": "search_invalidate",
+        "round": run.round(1),
+        "invalidated_events": invalidated,
+    })
+    state["repeated_invalidation"] = {"count": 2, "reason_code": "proof_adapter_missing"}
+    history = state["events"]
+    write(run.state, state)
+    assert run.view()["stagnation"] == 0
+    assert run.view()["observations"] == []
+
+    before = run.state.read_bytes()
+    rejected = run.cli(
+        "mark", "--stage", f"{run.round(1)}.analysis", "--status", "complete",
+        "--artifact", tmp_path / run.round(1) / "implementation-contract-s1.json",
+        ok=False,
+    )
+    assert "checkpoint already recorded" in rejected["error"]
+    assert run.state.read_bytes() == before
+
+    run.finish_round(2)
+    assert run.view()["stagnation"] == 1
+    assert [o["decision_id"] for o in run.view()["observations"]] == ["s2"]
+    assert run.cli("verify")["status"] == "valid"
+    run.cli(
+        "finish", "--status", "success", "--reason-code", "completed",
+        "--message", "continued after legacy invalidated round",
+    )
+    assert search.load(run.state)["events"][:len(history)] == history
