@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
+import json
 from pathlib import Path
 
 from ops_perf_test_paths import ANALYSIS, CONTRACT, IMPL, ROOT, WRAPPER
@@ -37,6 +38,25 @@ def test_reference_skills_are_available_to_analysis() -> None:
     # 主编排入口不加载该策略 Skill。
     assert "ascendc-perf-optimize" in read(IMPL)
     assert "ascendc-perf-optimize" not in read(WRAPPER)
+
+
+def test_dsl_implementation_skill_is_installed_and_dispatched() -> None:
+    sources = json.loads(
+        (ROOT / "plugin-sources.json").read_text(encoding="utf-8")
+    )["skills"]
+    assert "ops/cannbot-dsl-best-practice" in sources
+
+    prompt = read(
+        ROOT
+        / "skills"
+        / "ops-perf-optimize-workflow"
+        / "workflows"
+        / "prompts"
+        / "implementation.md"
+    )
+    assert "BACKEND=cannbot_dsl" in prompt
+    assert "CONDITIONAL_SKILLS" in prompt
+    assert "cannbot-dsl-best-practice" in prompt
 
 
 def test_selected_strategy_flow_preserves_its_four_steps() -> None:

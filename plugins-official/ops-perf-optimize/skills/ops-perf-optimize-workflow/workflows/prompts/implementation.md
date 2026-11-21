@@ -26,3 +26,5 @@ CONDITIONAL_SKILLS:
 ```
 
 DSL 使用原测试与编译入口；启用 schedule_policy 时交付当前候选的 runtime conformance。
+
+`BACKEND=cannbot_dsl` 时，`CONDITIONAL_SKILLS` 必须包含 `cannbot-dsl-best-practice`。实施代理在开始修改前完整读取该 Skill，并将实际采用的 DSL 写法、适用边界和版本事实记录到现有交接产物中。

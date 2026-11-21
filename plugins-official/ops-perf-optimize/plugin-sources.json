@@ -15,6 +15,7 @@
     "ops/ascendc-precision-debug",
     "ops/ascendc-sync-audit",
     "ops/ascendc-mc2-best-practice",
+    "ops/cannbot-dsl-best-practice",
     "ops/ops-precision-standard",
     "ops/ascendc-registry-invoke-template"
   ]
