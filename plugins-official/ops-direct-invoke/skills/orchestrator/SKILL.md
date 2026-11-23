@@ -134,6 +134,8 @@ python3 "$OPS_DIRECT_INVOKE_ROOT/tools/run_workflow.py" \
 
 默认以 tmux 后台运行，返回会话名及 `work_dir/orchestrator.log`。检查实际退出状态，不将启动成功当成交付完成。`--foreground` 前台运行并返回 harness 退出码，`--dry-run` 透传模拟执行选项；脚本不自行重试或修改调度状态。
 
+后台设备作业或长时间子进程必须在启动时保存真实 PID/进程组，并用 `kill -0 "$pid"` 或会话状态判断存活；禁止使用包含自身命令行的 `pgrep -f <pattern>` 作为等待条件。确需按命令匹配时使用规避自匹配的正则（如 `[s]tage2_detail`），循环必须有明确超时、退出码和日志证据；结束时只清理本节点记录的进程组。
+
 ## 执行、验收与恢复
 
 每个普通节点按模板配置由 executor 执行、verifier 独立验收。双方都读取 goal、acceptance、out_of_scope；approach 只交给执行者，procedure 只交给验收者。角色身份和 Skill 权限由本轮固定的身份及节点契约承接，不根据模板名称另配一套身份。阶段声明分别绑定所需 Skill；工具为 execute/verifier 准备独立 cwd、身份、技能集合和会话，`AGENTS.md` 链接到原角色文件。`WORK_DIR` 始终指向本轮产物目录，`CODE_DIR` 指向实际代码目录，产物与证据使用明确路径访问。

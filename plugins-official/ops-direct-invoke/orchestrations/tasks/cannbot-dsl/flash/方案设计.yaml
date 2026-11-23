@@ -10,7 +10,7 @@ approach:
 - 对全部 Case 做轻量适用性检查，以原 Case 的代表集比较必要候选，范围覆盖影响成本、分发及资源策略的差异。复用身份一致的有效模型结果、静态容量推导和回读，仅为影响选型或明确约束的缺口补算；规模较小时可直接比较。遵守用户预算与授权，保留实际范围、未评价部分和停止原因。
 - 模型赢家须有有效成本、容量与依赖依据及最终归档配置的加载回读。对实际分配、临时量、转换缓冲、对齐和槽复用核算最重实例；适用的静态上界可覆盖多个 Case。已知算法、容量或同步错误在实际交付方案中解决；路线降级后按新方案重新核对受影响依据。
 - '模型路线 selection 沿用 `version: 1`、`route: model_groups`、context 和非空 groups。每组保留唯一 id、非空 case_ids、rationale/applicability/objective/budget 和 winner。winner 包含 candidate、`qualified: true`、config/search_evidence/replay_evidence/qualification_evidence、非空 artifacts/cost_evidence 及 vf_evidence（无 VF 时可空并说明）。context 位于 design/model/，组内引用位于 design/model/<id>/，路径相对 WORK_DIR 且指向真实文件；保留 toolkit 所需模型定义和复现资料。'
-- 输出单文件 `design/doc/DESIGN.md`，明确算法与数值链、完整支持域的分发和默认路径、Host/Kernel 与公开调用及导出关系、数据流、资源生命周期及同步。影响调用的 Host 标量、Tensor 所在设备和必要预处理在此确定，测试集成使用同一契约；例如 shape 依赖的长度来自 CPU 时，明确公开入口和固定 runner 如何提供它。每个用户 Case 可关联到实际适用路径；模型结论限于已评价范围，范式降级如实标注性能未验证范围。单算子交付默认必须是单个实际可执行 kernel：逻辑阶段、循环阶段和 `switch`/条件分支应在同一 kernel 内表达，不得把阶段数直接升级为 kernel 数量。只有用户或规格明确授权多 kernel，且 DESIGN 同时写明 kernel 数量、阶段职责、跨 kernel 数据依赖、同步关系及性能/容量理由时，才可例外。
+- 单算子交付必须是 1 个实际可执行 kernel、1 次 launch；逻辑阶段、循环阶段和 `switch`/条件分支均在同一 kernel 内表达。
 - 普通 API 组合、循环写法、地址及事件编号由实现选择。仅编译或设备可确认的组合能力，在设计中写清待验证行为、证据、通过条件和首次消费前的完成时机；当前数值、容量及关键依赖矛盾在交接前解决。
 - 写 `environment/soc-info.yaml`，记录设计所需硬件事实及来源。提交前一次联查 DESIGN、selection、soc-info 和有效原始证据；在 `.workflow/reports/` 的节点记录索引选择及未到期验证安排。恢复先读产物和反馈，只更新实际受影响的定义、引用和失效证据。
 procedure:

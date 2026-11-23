@@ -34,6 +34,21 @@ from support import (
 
 
 class WorkflowExecutionTests(unittest.TestCase):
+    def test_background_wait_does_not_use_self_matching_pgrep(self):
+        skill = (support.SKILL_ROOT / "SKILL.md").read_text()
+        self.assertIn('kill -0 "$pid"', skill)
+        self.assertIn("[s]tage2_detail", skill)
+
+        # The safe form must report no live job after the short-lived child exits;
+        # the bracket expression does not match its own command line.
+        command = (
+            "sleep 0.1 & pid=$!; wait $pid; "
+            "if kill -0 \"$pid\" 2>/dev/null; then exit 1; fi; "
+            "if pgrep -f '[s]tage2_detail_regression_xyz' >/dev/null 2>&1; then exit 2; fi"
+        )
+        result = subprocess.run(["/bin/bash", "-c", command], shell=False, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_selected_environment_survives_launch_and_recovery(self):
         for background in (False, True):
             with (

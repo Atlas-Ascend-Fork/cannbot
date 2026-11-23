@@ -7,8 +7,8 @@ approach:
 - 生成独立 Golden 和白盒暂存行，记录参考来源、触发条件和观察判据；不导入生产实现，不运行设备。
 - 在首次 CPU 检查前对齐 DESIGN 的公开调用与固定 runner：输入所在设备、Host 标量和已有预处理 hook 的执行顺序必须一致；优先使用 runner 已有入口，不另造调用链或改变公开契约。真实契约冲突在交给实现前解决。
 - 通过原分组更新入口汇合 blackbox、performance 和 whitebox，保留原 Case ID、分组、输入和来源；只做字段、重复 ID、必要断言和分组完整性检查。
-- 使用固定 casebook/runner 入口检查实际存在的分组，并对适用 Case 做 CPU 可执行性检查。记录当前 casebook、Golden、runner 身份和退出结果；输入、参考和比较器未变时复用已有有效检查；已有失败先据原记录修对应产物，只对变化部分补查。
-- 汇合通过后按现有版本协议冻结实际交给下游的测试源和 Golden，不发布缓存、日志、结果或生产实现；记录文件身份并 checkpoint。checkpoint 后直接读取 code_versions status --node test-integration，核对当前源码 SHA、冻结的 spec/DESIGN 等输入、Golden、runner、比较器、完整 CPU 命令及原始 evidence：同一身份已有 valid 且 exit_code=0 的完整结果时引用原 attempt 和 evidence；同一身份只有完整失败记录时先据此修测试产物，不原样重跑；身份变化、没有完整原始记录，或针对失败完成实际修复后，才用 code_versions verify 运行适用 CPU 检查。若 harness 已提供冻结目录和有效身份，直接复用，不额外创建或切换目录；报告写入 WORK_DIR/test-integration/report.md。
+- 使用固定 casebook/runner 入口检查实际存在的分组，并对适用 Case 做 CPU 可执行性检查；运行前设置 `CANNBOTDSL_CASE_CACHE_DIR=$WORK_DIR/case-cache/flash`，并设置 `CANNBOTDSL_NATIVE_REFERENCE_DEVICE=npu`。缓存同时物化主参考 Golden 与 staged_relative 所需的 `NATIVE_REFERENCE_FUNCTION` 输出，按 Golden、输入和 Torch 身份派生；同一轮后续节点和重试复用该目录，不能在阶段二比较时重新计算 native reference。记录当前 casebook、Golden、runner 身份和退出结果；输入、参考和比较器未变时复用已有有效检查；已有失败先据原记录修对应产物，只对变化部分补查。
+- 汇合通过后按现有版本协议冻结实际交给下游的测试源和 Golden；`$WORK_DIR/case-cache/flash` 是本轮可复用的派生缓存，不纳入源码冻结，但必须保留供 implementation 和重试命中；记录文件身份并 checkpoint。checkpoint 后直接读取 code_versions status --node test-integration，核对当前源码 SHA、冻结的 spec/DESIGN 等输入、Golden、runner、比较器、完整 CPU 命令及原始 evidence：同一身份已有 valid 且 exit_code=0 的完整结果时引用原 attempt 和 evidence；同一身份只有完整失败记录时先据此修测试产物，不原样重跑；身份变化、没有完整原始记录，或针对失败完成实际修复后，才用 code_versions verify 运行适用 CPU 检查。若 harness 已提供冻结目录和有效身份，直接复用，不额外创建或切换目录；报告写入 WORK_DIR/test-integration/report.md。
 - 执行者自检按“准备、汇合、可执行性、冻结”四段核对；失败只修对应阶段，不重新生成无关资产。
 
 procedure:
