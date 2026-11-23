@@ -9,7 +9,6 @@
 # -----------------------------------------------------------------------------------------------------------
 
 """Exercise both values of the evidence gate; fixtures are not content reviews."""
-import copy
 import json
 import sys
 from pathlib import Path
@@ -21,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills/ops-perf-optimize-workflow/scripts"))
 import experience_reflux as reflux
 import workflow_state as workflow
-from test_search_installed import installed_search, python as installed_python
+from test_search_installed import installed_search, python as installed_python  # noqa: F401
 
 
 def save(path, value):
@@ -146,6 +145,65 @@ def test_complete_evidence_closure_passes(case):
 
 def test_structure_only_is_not_semantic_pass(case):
     assert reflux.validate(case.bp, case.manifest)["status"] == "structure_pass"
+
+
+@pytest.mark.parametrize("decision,outcome", [
+    ("retain_candidate", "accepted"),
+    ("retain_baseline", "rejected"),
+])
+def test_legacy_decision_renders_without_rewriting_frozen_inputs(case, decision, outcome):
+    import subprocess
+
+    selection_path = case.root / "implementation/round1/selection.json"
+    selection = json.loads(selection_path.read_text())
+    selection.pop("candidate_accepted")
+    selection["decision"] = decision
+    save(selection_path, selection)
+    reference = reflux.file_ref(selection_path)
+    case.state["stages"]["round1.complete"]["artifacts"] = [reference]
+    state_path = save(case.root / "workflow-state.json", case.state)
+    case.bundle["sources"]["selection1"] = reference
+    case.bundle["rounds"][0]["outcome"] = outcome
+    save(case.bp, case.bundle)
+    frozen = {path: path.read_bytes() for path in (selection_path, state_path, case.bp, case.manifest)}
+    material = case.root / "legacy-material.md"
+
+    result = subprocess.run([
+        sys.executable, "-B", str(ROOT / "skills/ops-perf-optimize-workflow/scripts/experience_reflux.py"),
+        "render", "--manifest", str(case.manifest), "--bundle", str(case.bp), "--out", str(material),
+    ], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"| round1.complete | {outcome} |" in material.read_text()
+    assert all(path.read_bytes() == content for path, content in frozen.items())
+
+
+@pytest.mark.parametrize("selection", [
+    {"search": {"outcome": "measured"}},
+    {"decision": "unknown", "search": {"outcome": "measured"}},
+    {"decision": "retain_candidate", "search": {}},
+    {"candidate_accepted": None, "decision": "retain_candidate", "search": {"outcome": "measured"}},
+    {"candidate_accepted": "true", "decision": "retain_candidate", "search": {"outcome": "measured"}},
+])
+def test_legacy_decision_does_not_accept_ambiguous_or_invalid_records(selection):
+    with pytest.raises(ValueError, match="selection lacks candidate_accepted"):
+        reflux.selection_outcome(selection)
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_explicit_candidate_accepted_remains_authoritative(accepted):
+    selection = {
+        "candidate_accepted": accepted,
+        "decision": "retain_baseline" if accepted else "retain_candidate",
+        "search": {"outcome": "measured"},
+    }
+    assert reflux.selection_outcome(selection) == ("accepted" if accepted else "rejected")
+
+
+@pytest.mark.parametrize("outcome", ["implementation_failed", "screened", "no_candidate"])
+def test_failed_outcome_still_rejects_accepted_candidate(outcome):
+    with pytest.raises(ValueError, match="failed candidate marked accepted"):
+        reflux.selection_outcome({"candidate_accepted": True, "search": {"outcome": outcome}})
 
 
 @pytest.mark.parametrize(
@@ -387,10 +445,12 @@ def test_cli_cannot_overwrite_evidence(case, monkeypatch):
     assert source.read_bytes() == before
 
 
-def test_installed_gate_runs_without_source_checkout_imports(case, installed_search):
-    output = installed_python(installed_search,
+@pytest.mark.usefixtures("installed_search")
+def test_installed_gate_runs_without_source_checkout_imports(case, request):
+    installation = request.getfixturevalue("installed_search")
+    output = installed_python(installation,
         "import experience_reflux as e; import workflow_state; "
         "print(e.validate(sys.argv[2], sys.argv[3], material_path=sys.argv[4], "
         "review_path=sys.argv[5])['status'])", case.bp, case.manifest, case.material, case.rp)
     assert output.strip() == "pass"
-    assert (installed_search["skills"] / "ops-perf-postprocess/references/experience-reflux.md").is_file()
+    assert (installation["skills"] / "ops-perf-postprocess/references/experience-reflux.md").is_file()

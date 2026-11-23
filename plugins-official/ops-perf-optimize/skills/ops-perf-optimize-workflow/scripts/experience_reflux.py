@@ -134,8 +134,16 @@ def selection_outcome(selection):
     if outcome in ("implementation_failed", "screened", "no_candidate"):
         require(selection.get("candidate_accepted") is not True, "failed candidate marked accepted")
         return outcome
-    require(isinstance(selection.get("candidate_accepted"), bool), "selection lacks candidate_accepted")
-    return "accepted" if selection["candidate_accepted"] else "rejected"
+    accepted = selection.get("candidate_accepted")
+    if "candidate_accepted" not in selection and outcome == "measured":
+        # Legacy measured selections record the same choice in decision.
+        decision = selection.get("decision")
+        if decision == "retain_candidate":
+            accepted = True
+        elif decision == "retain_baseline":
+            accepted = False
+    require(isinstance(accepted, bool), "selection lacks candidate_accepted")
+    return "accepted" if accepted else "rejected"
 
 
 def validate_bundle(bundle_path, manifest_path):
