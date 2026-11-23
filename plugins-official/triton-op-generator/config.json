@@ -6,5 +6,7 @@
     "smi_timeout_seconds": 5
   },
   "metric_mode": "speedup",
-  "target_policy": "geometric_mean"
+  "target_policy": "geometric_mean",
+  "single_launch_required": true,
+  "max_kernel_launches": 1
 }

@@ -58,6 +58,59 @@ Phase 6: 会话导出          (session.jsonl + session.md)
 
 ---
 
+## 多 kernel 基线（通用，single_launch_required=true 时为硬门）
+
+- **`single_launch_required=true` 的强制路径**：Phase 3 必须先交付 multi-kernel 基线（>=2 个 `@triton.jit` / >=2 次 launch）并通过全部必测用例的正式精度验证；Phase 4 在该基线上做 stage-level fused epilogue；Phase 4 迭代内实现并验证 1 个 `@triton.jit` / 1 次 launch 的候选，Phase 5 归档已验收的候选。
+- **过程基线 ≠ 交付物**：prompt 里“只允许单个 Triton kernel / 不得拆分为多个 kernel 串联”约束的是**最终交付物**（`output/` 下参与 verify/benchmark 的实现）。Phase 3/4 的 multi-kernel 基线是**过程证据**，只写在 `{工作目录}/dev/`（如 `dev/k1_<stage>.py`、`dev/fused_epilogue.py`、`dev/baseline_note.md`），不进 `output/`、不计入 launch 数；两者不冲突，不得以 prompt 的单 kernel 约束为由跳过基线。
+- **不允许**跳过 multi-kernel 基线直接写单 kernel；直接单 kernel 视为 `delivery_path_violation`，不得进入 benchmark。`contract_conflict` 只用于 Phase 4 取证后仍无精度全过且满足 launch 契约的候选，**不得**用于豁免基线缺失或 launch 路径违规。
+- Phase 2 precheck 必须记录 `delivery_path=multi-kernel baseline -> fused epilogue -> single launch`；sketch 必须写出三阶段（三阶段的代码落点见 Phase 3 的 `dev/` 约定）。
+- 生成代码后必须按 3.2c 用 `check_launch_path.py --phase iteration` 检查 sketch 声明的基线；没有 multi-kernel 基线证据、或直接单 kernel，直接 fail。
+- `single_launch_required=false` 时，按 `multi_kernel_best` 交付，launch 数不限制；不得把“再融合为单 launch”写成交付要求。
+- `single_launch_required=true` 时：融合保持中间量 dtype/舍入点与消费者顺序；逐输出对比；记录 fusion tax；精度或 launch 契约经修复仍无法满足时才回退多 kernel，记 `contract_conflict`；单 kernel 版本必须复用多 kernel 的 per-case 证据。
+
+## 单 launch 可行性与回退（条件性，仅 single_launch_required=true）
+
+- 若一个输出精确、另一个只在边缘块错（或 `max_error_cap` 持续超限），先做 failing consumer 的 standalone 测试、交换 consumer 顺序或 dummy dot；最多 2 次。
+- 2 次仍不收敛：**先按“可融合重构”方向检索知识库并尝试一次结构改造**（检索方向：阶段边界归属、中间量布局、屏障形式）。记录命中的卡、实际结构变更及逐阶段验证结果。混合 cube/vector 交接至少区分 program 到达与数据可见性，覆盖尾块和工作区复用；只改轮询、cache modifier 或 delay 不计作结构改造。若故障集中在 scatter 后的首个消费者，优先尝试由中间量 tile 的生产者合并该 tile 的索引更新并整块写出，兼顾重复索引、舍入和尾块；先用满核重复探针核对交接，再进行全用例验收。重构后仍失败再记 `contract_conflict`，交付多 kernel 版本（显式标注 fallback），性能目标单独报告。
+- 不要继续缩 tile 或盲调；单 kernel 是交付目标，不是无限调试许可证。
+
+## 单 kernel 定义（条件性，仅 single_launch_required=true）
+
+- 最终实现只允许 **1 个 `@triton.jit` 定义**；helper/barrier 必须 inline；静态 verify 按定义计数。
+- 该定义只针对 `output/` 下的交付实现；`dev/` 下的阶段基线（`dev/k*.py`、`dev/fused_epilogue.py`）是过程证据，不计入该定义，不参与 launch 数校验。
+- 多 kernel fallback 必须显式标注，不得静默通过。
+
+## 算子内屏障（通用）
+
+- 先读完本节，再按 barrier/可见性方向检索知识库（`search --query "barrier 可见性 交接 GM"`），不要凭记忆假定屏障语义。
+- `sync_block_all` 只同步指定核类型；cube/vector 混合要成对使用；`tl.debug_barrier` 不是 grid barrier。
+- grid barrier 必须所有 program 无条件参与；atomic counter + 可观测读/volatile；arrive 结果被使用防 DCE；counter 每 launch 清零/epoch 复用。
+- barrier 不保证 DMA 完成；consumer 前 read-back；不要放在 divergence 内；先做 2-program 测试；评估 barrier 成本。
+
+## 标杆设置（Phase 1/2，通用）
+
+- 标杆优先用**用户原始** `topk_log_probs_backward.py`；只有缺少用户标杆、且任务允许构造参考时，才选用 auto-built。**`golden_source` 由 Phase 1 冻结模式决定**：原始标杆逐字节复制（副本 sha 与源一致）→ `--mode=user --source_path <用户文件>`，记 `user`；经 `triton-task-extractor` 重建/扩 case 改写了内容（副本 sha ≠ 源 sha，`--mode user` 会 exit 5）→ 用 `--mode auto`，记 `auto`。
+- 默认 `golden_device=npu`（Ascend 算子）；用户代码/提示词明确 CPU 时用 CPU；NPU 不可用回退 CPU 并记录原因。
+- precheck/sketch 必须写 `golden_device`（npu/cpu）与 `golden_source`（user/auto）。
+- verifier 读 `CANNBOT_VERIFY_GOLDEN_DEVICE`；CPU/NPU 同一代码结果可能差 1-ulp，CPU golden 失败先判 golden device，再判 kernel。
+
+## 性能路径（Phase 2/4，通用）
+
+- 先多 kernel 基线；再做 **stage-level fused epilogue**（multi-kernel + epilogue 融合）。只有 `single_launch_required=true` 才做 full single launch。
+- multi fused epilogue 与 full single launch 都要逐 case benchmark；交付优先级为精度正确性、交付契约、性能目标。单 launch 候选通过全部精度验证和 launch 契约后即具备交付资格。性能未达标时继续优化，优化结束后交付合格的单 launch 版本并记 `target_reached=false`。
+- 检索并使用：`single_launch_fusion`、`sync_and_barrier`、`block_pointer_tiles`、`dot_matmul_rewrite`、`software_pipeline`、`arithmetic_intensity_balancing`。卡名以 `$KB_ROOT/ops/triton/optimizations/*/index.md` 实际存在为准，禁止引用不存在的卡名。
+- 高目标时性能主路径是 multi fused epilogue；full single launch 仅作为 `single_launch_required=true` 的交付目标，不作为高目标性能路径。
+- 禁止把单 kernel 约束当无限调试许可证；单 launch 与 multi 的 fusion tax 必须逐 case 记录。
+
+## 交付契约选择（prompt-driven）
+
+- 判定后**必须在 Phase 0 结束前写入本工程 `triton_op_generator.config.json`** 的 `single_launch_required`、`max_kernel_launches`（`golden_device` 一并写入），写后回读并打印；不得只写在 sketch 或对话里。Phase 0 未写入即禁止进入 Phase 1（见「Phase 0」的「交付契约写入」）。
+
+- 先解析用户 prompt：明确要求 one launch / 单 kernel / 单次 launch ⇒ 设置 `single_launch_required=true`、`max_kernel_launches=1`，进入 single-launch 路径。
+- prompt 未要求 ⇒ `single_launch_required=false`、`max_kernel_launches=null`，走常规多 kernel 路径；不得用固定 config 强制 single。
+- config 只作默认/覆盖；`prompt 优先`**只用于决定 `single_launch_required` 的取值**，不构成跳过 Phase 3/4/5 交付路径（multi-kernel 基线 → fused epilogue → 单 launch）的理由；prompt 中的单 kernel 约束只作用于交付物，见「多 kernel 基线」的“过程基线 ≠ 交付物”；Phase 2 sketch 必须记录判定结果与依据。
+- `single_launch_required=true` 时 Phase 4 按 single-launch 交付；融合失败标 `contract_conflict`；verifier 强制 `max_kernel_launches=1`。`single_launch_required=false` 时 `max_kernel_launches` 不生效，不检查 launch 数。
+
 ## Phase 0: 参数确认
 
 从用户输入中提取硬件架构 `arch`；未指定时通过 `npu-smi info` 自动检测。检测失败时记录 unknown 并补充设备/运行时查询，禁止默认为其他架构。Phase 0 记录选定物理卡与逻辑映射、torch/torch_npu/Triton/CANN 实际版本及路径，并在该卡执行最小原语编译与需要的官方算子 API smoke；探测属于诊断，不能作为最终精度或性能结论。低精度格式必须验证实际前端/后端支持，不得把 HiF8 等格式静默替换为 IEEE FP8。历史知识卡的版本限制与当前实测不一致时，保存两者证据和适用范围，再据此设计。
@@ -81,10 +134,13 @@ Phase 6: 会话导出          (session.jsonl + session.md)
 当用户仅提供 GPU Triton kernel（无 PyTorch 标杆）且满足以下任一条件时进入：
 
 1. 文件路径含 `GPU Kernel`等类似关键词
-2. 文件内容包含 `@triton.jit`（即这是一个 GPU Triton kernel，而非 PyTorch Model）
+2. 文件内容包含 `@triton.jit` 且不是 NPU 实现（无 `torch_npu`、`.npu()` 或 `device="npu"`）
 3. 用户显式提供了 `gpu_perf_csv` 或 GPU 的`pt_file` 路径
 
-**优先级 3：标准算子任务（Mode A）**
+**优先级 3：NPU Kernel 输入模式（Mode C）**
+当用户提供 Ascend NPU Kernel 实现（代码含 `torch_npu`、`.npu()` 或 `device="npu"`）时进入：以该 kernel 为 oracle，默认 `golden_device=npu`，benchmark 与 golden 都在 NPU 上；CPU golden 仅在用户明确要求时使用。
+
+**优先级 4：标准算子任务（Mode A）**
 普通 PyTorch 实现文件，无 GPU kernel 相关特征时，走标准 Mode A 流程。
 
 **路径推导规则**（必须通过 bash 工具探测确认）：
@@ -124,28 +180,51 @@ python3 -c "import datetime,random; ts=datetime.datetime.now().strftime('%Y%m%d_
 
 本插件的全部领域知识卡片（类别约束、优化点参考、案例）位于 cannbot-knowledge 知识库，安装时已自动克隆到项目内。按优先级解析 `KB_ROOT`：
 
-1. 环境变量 `CANNBOT_KNOWLEDGE_ROOT`（已设置且目录存在）；
+1. 环境变量 `CANNBOT_KNOWLEDGE_ROOT`（可指向知识仓根或 `knowledge/` 目录，解析后统一令 `KB_ROOT` 指向 `knowledge/`）；
 2. 从当前目录及其至多 6 级祖先探测 `.cannbot/dependencies/*/cannbot-knowledge/knowledge`（glob 取第一个匹配）；
-3. 运行 knowledge-query 的 `discover` 取 `selected.path`：
+3. 若仓内路径未解析，使用已安装的 knowledge-query（存在时）运行 `discover`，取 `selected.path`：
 
 ```bash
 python3 skills/knowledge-query/scripts/knowledge_query.py discover
 ```
 
-解析成功后，记录实际 KB_ROOT。构建后确认索引文件可读并执行一次带显式 `--knowledge-root` 的 preflight；记录 exit code、索引路径和文档数。若索引构建失败，保存具体原因并使用显式卡片读取，后续阶段不要重复同一失败检索；环境或知识内容变化后可重试。卡片可读与检索可用分开记录。
-
-初始化命令：
+解析成功后，记录 `KB_ROOT`，从知识仓副本定位查询与索引脚本。先执行实际检索；遇到索引缺失或卡片集合变化，重建一次后用同一查询复查。保存构建日志和检索结果，记录退出码及命中卡片。卡片可读与检索可用分开记录；恢复失败时保存原因并显式读卡。
 
 ```bash
-# 检索索引缺失时在初始化构建一次；大知识库可能需要数十秒。保存构建日志，避免将全部警告输出到会话。
-[ -f "$KB_ROOT/search/okf.index.json" ] || \
-  python3 skills/knowledge-query/scripts/knowledge_query.py --knowledge-root "$KB_ROOT" build || \
-  echo "WARN: KB index build failed (non-fatal)"
+KB_REPO="$(dirname "$KB_ROOT")"
+KB_SCRIPTS="$KB_REPO/.agents/skills/knowledge-query/scripts"
+KB_QUERY="$KB_SCRIPTS/knowledge_query.py"
+KB_INDEX="$KB_SCRIPTS/knowledge_index.py"
+python3 "$KB_QUERY" search --knowledge-root "$KB_REPO" --query "{op_name} 设计约束" \
+  --platform <arch> --technology triton -k 5
+# 仅在检索报告索引缺失或过期时执行，再重跑上面的检索。
+python3 "$KB_INDEX" build --knowledge-root "$KB_REPO" > kb-index-build.log 2>&1
 ```
 
 - **KB 就绪判定**：`$KB_ROOT/ops/triton/guides/constraints/index.md` 可读即为就绪。
 - **KB 不可用**（依赖仓克隆被跳过/离线）：告警并在 report.md 标注 `kb_unavailable: true`，流程继续（骨架模式，无知识增强）。
 - 后续所有 Phase 中 `$KB_ROOT` 均指此处解析结果；卡片用 Read 工具按 `$KB_ROOT/<doc-id>` 直接读取（doc-id = 相对 knowledge 根的 .md 路径）。
+
+### 交付契约写入（强制，Phase 0 收尾）
+
+进入 Phase 1 前必须完成以下动作，任一项未完成禁止进入 Phase 1：
+
+1. 按 prompt 判定并记下四项：`single_launch_required`（true/false）、`max_kernel_launches`（true→1、false→null）、`golden_device`（默认 `npu`，用户明确 CPU 才 cpu）、`golden_source`（**由 Phase 1 冻结模式决定**：原始标杆逐字节复制→`user`；经 extractor 重建/扩 case→`auto`；冻结前暂记 `user`，冻结后以锚文件的 `source_mode` 为准）。
+2. 用脚本**合并**写入 `triton_op_generator.config.json`（保留 `metric_mode`/`target_policy`/`target_speedup` 等既有键，禁止整文件覆盖）：
+
+```bash
+python3 - <<'PY'
+import json
+p = "triton_op_generator.config.json"
+cfg = json.load(open(p, encoding="utf-8"))
+cfg.update({"single_launch_required": True, "max_kernel_launches": 1, "golden_device": "npu"})
+json.dump(cfg, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+print(json.dumps(cfg, ensure_ascii=False))
+PY
+```
+
+3. 回读打印三键；与实际判定不一致视为 A 类，重写后再继续。
+4. 在 report/precheck 记录判定依据（prompt 原文片段 → 结论映射）。
 
 ---
 
@@ -203,6 +282,7 @@ python3 skills/triton-op-verifier/scripts/freeze_baseline.py \
 
 **通用要求**：
 
+- 用户通过提示词或任务文件提供用例时，完整保留并逐项执行所有用户用例。未提供用例时，根据算子的输入契约自定义精度用例，记录输入规格后逐项执行。探针用于定位问题，不能替代正式验收。
 - 所有任务文件必须通过 `validate_task.py` 检查（多 case 模式下需遍历全部 groups 通过）
 - 完整 Model 任务的下游 `verify.py` / `benchmark.py` 已内建 case 分支判断（优先 `get_input_groups`、回落 `get_inputs`），无需为 single/multi 另补兼容层；函数式 oracle 按下节独立适配
 
@@ -243,6 +323,33 @@ python3 skills/triton-op-verifier/scripts/freeze_baseline.py \
 
 验证通过后直接进入 Phase 2。
 
+### 模式 C：NPU Kernel 输入模式
+
+**不调用 `triton-task-extractor` skill**，由当前会话自身执行以下步骤：
+
+**适用**：用户提供 Ascend NPU Kernel 实现（代码含 `torch_npu`、`.npu()` 或 `device="npu"`），而不是标准 PyTorch 算子。
+
+1. **读取数据源**
+   - `desc_file`：NPU kernel 源码（用户提供的 `.py`）
+   - 输入/输出协议按 NPU kernel 的实际签名提取，不沿用 GPU kernel 的 dtype/layout 假设
+
+2. **构建 `Model` 类**
+   - 首选：以用户 NPU kernel 的实际输出作为 oracle（`golden_source=user`）
+   - 兜底：按 NPU kernel 语义手写等价 PyTorch 参考，保持与 NPU 一致的 bf16 舍入点
+
+3. **构建输入函数**
+   - `get_inputs()` / `get_init_inputs()` 按 NPU kernel 的参数顺序构造
+
+4. **标杆与 device**
+   - 默认 `golden_device=npu`，benchmark 与 golden 都在 NPU 上
+   - 用户明确 CPU golden 时 `golden_device=cpu`，并记录原因
+   - `CANNBOT_VERIFY_GOLDEN_DEVICE=npu` 让 verifier 按 NPU golden 落点；CPU/NPU 同一代码可能有 1-ulp 差异
+   - precheck/sketch 记录 `golden_device` 与 `golden_source`
+
+5. **验证 task_desc.py**
+   - 保存 `{工作目录}/{op_name}.py`
+   - 使用 `validate_task.py` 验证；通过后进入 Phase 2
+
 ---
 
 ## Phase 2: 算法设计
@@ -264,14 +371,15 @@ python3 skills/triton-op-verifier/scripts/freeze_baseline.py \
 1. **读取类别约束卡**（强制显式读取）：用 Read 工具直接读取
    `$KB_ROOT/ops/triton/guides/constraints/{category}_constraints.md`
    （类别名换算：`-` 换 `_` 加 `_constraints.md` 后缀；例外：`activation` → `elementwise_constraints.md`，`attention-paged` → `paged_attention_constraints.md`）。
-   **无论卡是否存在**，都必须产出 `{工作目录}/precheck.json`，记录 `category`、`constraint_card`（KB 相对路径）、`card_exists`、`layer1_constraints_loaded`（卡存在时逐条原文摘录 Layer 1 约束，不得为空）、`loaded_via`（只允许 `kb_explicit_path` 或 `kb_explicit_path+preflight`，**禁止自动发现、禁止凭记忆**）。
+   **无论卡是否存在**，都必须产出 `{工作目录}/precheck.json`，记录 `category`、`constraint_card`（KB 相对路径）、`card_exists`、`layer1_constraints_loaded`（卡存在时逐条原文摘录 Layer 1 约束，不得为空）、`loaded_via`（只允许 `kb_explicit_path`、`kb_explicit_path+search` 或 `kb_explicit_path+search+preflight`，**禁止自动发现、禁止凭记忆**），以及 `delivery_contract` 对象中的五个字段：`single_launch_required`、`max_kernel_launches`、`delivery_path`、`golden_device`、`golden_source`。这五个字段必须与 `triton_op_generator.config.json` 和 Phase 0 的判定一致；`single_launch_required=true` 时 `delivery_path` 固定写 `multi-kernel baseline -> fused epilogue -> single launch`、`max_kernel_launches` 固定 `1`。
 2. 若该卡存在，`precheck.json` 中记录的 Layer 1 约束视为本次草图设计的**硬性边界**；若不存在，标记 `new_category` 并在 Phase 7 归档时新建该约束卡。
-3. **（可选增强）preflight 补充检索**：KB 索引就绪时执行
-   `python3 skills/knowledge-query/scripts/knowledge_query.py preflight --task "{op_name} {category} 设计约束 已知坑" --brief`，
-   将 `read_first` 中 relevance 为 strong 的卡追加记录到 `precheck.json` 的 `kb_cards: [{doc_id, kind}]`，其约束与 Layer 1 一并作为 Step 3 核对集（冲突时约束卡 Layer 1 优先并标注）；此时 `loaded_via` 记为 `kb_explicit_path+preflight`。
+3. **检索补充**：KB 索引就绪时执行
+   `python3 "$KB_QUERY" search --knowledge-root "$KB_REPO" --query "{op_name} {category} 设计约束 已知坑" --platform <arch> --technology triton -k 8 --text`，
+   将前若干条卡路径追加记录到 `precheck.json` 的 `kb_cards: [{doc_id, kind}]`，其约束与 Layer 1 一并作为 Step 3 核对集（冲突时约束卡 Layer 1 优先并标注）；此时 `loaded_via` 记为 `kb_explicit_path+search`。对复合算子，再按参考源码里的关键子阶段分别检索，例如索引累加、舍入与阶段间交接，避免类别总查询掩盖关键子阶段。记录实际读取的命中卡及其对应阶段。
+   检索必须带 `--platform <arch>` 与 `--technology triton`：不带域名过滤会被 ascendc / catlass-dsl 卡挤占；命中不足时改用 `--include-unlocated --status all`（该选项不能与 `--platform` 同用，且必须带 `--status draft|all`）。若 Phase 0 复查后检索仍不可用，记 `kb_search_unavailable` 及实际错误，并显式读卡。
 4. **KB 不可用时**（Phase 0 判定 `kb_unavailable`）：`precheck.json` 记 `loaded_via: "unavailable"`、`card_exists: false`、`layer1_constraints_loaded: []`，流程继续但不享有 Layer 1 保护。
 
-**门禁**：`precheck.json` 未产出，或 `loaded_via` 非上述合法值时，**禁止进入 Step 2**。
+**门禁**：`precheck.json` 未产出、`loaded_via` 非上述合法值、或缺少上述五个交付契约字段（`single_launch_required` / `max_kernel_launches` / `delivery_path` / `golden_device` / `golden_source`）中任一项时，**禁止进入 Step 2**。`single_launch_required=true` 时，另执行 `check_launch_path.py --op-dir {工作目录} --phase precheck` 校验字段类型及嵌套字段与旧顶层字段的一致性。
 
 ### Step 2：调用 designer skill 设计草图（后执行）
 
@@ -291,7 +399,6 @@ python3 skills/triton-op-verifier/scripts/freeze_baseline.py \
 - 该检查门最多重试 2 次，若仍无法通过，终止任务并报告"草图架构与历史 Layer 1 约束持续冲突"。
 
 仅执行一次，后续 Phase 3 迭代不再重新设计草图。
-
 
 ---
 
@@ -317,6 +424,7 @@ while iteration < max_iterations:
     3.1 代码生成
     3.2 AST 预检查
     3.2b 架构符合性判定（强制）
+    3.2c 交付路径断言（强制，single_launch_required=true）
     3.3 功能验证
     3.4 Conductor 分析与决策
     3.5 性能测试（基线）
@@ -386,6 +494,27 @@ while iteration < max_iterations:
 
 ---
 
+### 3.2c 交付路径断言（强制，仅 single_launch_required=true）
+
+**执行工具**：`check_launch_path.py`。按 sketch 中的基线文件传参；若基线分多个文件，每个文件各传一次 `--baseline`。
+
+```bash
+python3 skills/triton-op-verifier/scripts/check_launch_path.py --op-dir {工作目录} \
+  --phase iteration --baseline dev/multi_kernel_baseline.py
+```
+
+**通过条件**：声明的 `dev/` 基线合计至少有两个实际 `@triton.jit` 定义，判定为 `pass_iteration`。最终文件在 Phase 5 单独检查。
+
+- **PASS** → 进入 **3.3 功能验证**。
+- **FAIL（`delivery_path_violation`）** → 记 `delivery_path_violation`，按 A 类处理：
+  - 设置 `verifier_error = "A-DeliveryPathViolation: <缺失的基线/阶段文件>"`
+  - 删除 `{工作目录}/output/generated_code.py`（如存在）
+  - 回到 **3.1**，先按 sketch 补齐 `dev/` 阶段基线，再融合为单 kernel
+  - **禁止**进入 3.3 与 benchmark，**禁止**以 `contract_conflict` 收尾
+- 本步骤每轮迭代都执行，不得只在最后一轮补跑。脚本会把判定写入 `{工作目录}/output/launch_path.json`（迭代判定为 `pass_iteration` 或 `delivery_path_violation`）；Phase 4.0 复核基线，Phase 5 对最终产物重新执行终检。
+
+---
+
 ### 3.3 功能验证
 
 **调用 Skill**：`triton-op-verifier` (`verify.py`)
@@ -436,7 +565,7 @@ while iteration < max_iterations:
 **错误分类**：
 
 - **A 类**：代码逻辑/算法错误（可修复）
-  - 含 A-PyTorchFallback-Type1/2/3 子类型
+  - 含 A-PyTorchFallback-Type1/2/3 子类型；含由对照确认的索引、重复目标累加、尾块或舍入点不一致。误差未经阶段对照时，先用失败 shape 和有代表性的最小输入定位；不能仅凭逐位不一致或诊断性舍入实验判为契约冲突。
 - **B 类**：环境/基础设施错误（不可修复）
 - **C 类**：重复失败，同一 A 类子类型连续 ≥ 10 次
 
@@ -458,7 +587,7 @@ while iteration < max_iterations:
 **前置断言（强制）**：
 
 - 进入本步骤前重新读取 `verify_result.json`，再次确认 `passed_cases == total_cases > 0`。
-- 任何不符立即返回 **3.4**，不得调用 `benchmark.py`。
+- 任何不符立即返回 **3.4**，不得调用 `benchmark.py`，也不得以 `--verify_not_required` 绕过。
 
 **L1 兜底**：
 
@@ -557,6 +686,8 @@ while iteration < max_iterations:
 
 ⚠️ **Phase 4 是必须执行的阶段，禁止跳过。** Phase 3 验证通过后，无论性能数据如何，都必须进入 Phase 4 尝试优化。
 
+单 launch 任务优先完成 stage-level fused epilogue 和首个全融合候选，再继续调单阶段 tile。先用代表性小 shape、尾块或多 chunk shape 验证阶段交接，通过后再跑全量 verify；按剩余运行时间预留完整精度、逐 case launch 和端到端性能验收。多 kernel 基线耗时和性能仅用于对照，不作为进入单 launch 尝试的性能阈值。
+
 ⚠️ **本阶段优化目标由 metric_mode 决定，且是该模式下唯一的优化目标、采纳判定与退出判据：**
 - **speedup 模式**：几何平均加速比，4.3.A 用 benchmark.py 测定。
 - **mfu 模式**：固定极限 case 的 MFU（`mfu_achievable_pct`），4.3.B 用 `triton-mfu-analyzer` skill 测定，全程不调用 benchmark.py（加速比只在 Phase 3.5 测一次，仅供报告引用）。
@@ -611,7 +742,7 @@ simulator_attempted = false                         # triton-simulator-optimizer
 在执行 4.1 之前，必须打开 `{工作目录}/output/iter_{phase3_last_iter}/verify/verify_result.json`
 读取数值字段，确认 `passed_cases == total_cases > 0`。
 
-- 断言通过 → 正常进入 4.1
+- 断言通过 → 保留 3.2c 的全部 `--baseline` 参数，执行 `check_launch_path.py --op-dir {工作目录} --phase fusion --baseline dev/multi_kernel_baseline.py --baseline-verify output/iter_{phase3_last_iter}/verify/verify_result.json`，核对完整精度结果与所测基线源码哈希（`single_launch_required=true` 时强制）：PASS 才进入 4.1；FAIL 记 `delivery_path_violation`，C 类终止，不得调用 benchmark。
 - 断言失败 → **C 类终止整个任务**。此时意味着 Phase 3 的闸门被违反但流程仍走到了
   Phase 4，这是流程级 bug，禁止继续优化也禁止退回 Phase 3（退回只会再次误判）。
   写 summary.json：
@@ -687,7 +818,7 @@ while opt_iteration < max_opt_iterations:
 - **存在普通优化点（1-30）命中** → 走原流程重写代码，本轮产物目录 `current_iter_dir = opt_iter_{opt_iteration}`，`last_optimization_point = <命中点编号>`
 - **triton-latency-optimizer 报告无更多普通优化点**：
   - 若以下任一条件满足，**不终止**，要求 latency-optimizer 继续尝试对应优化点（这些仍属普通轮）：
-    - `total_cases > 1` 且 `speedup_vs_torch < 0.5`：强制尝试 kernel 分裂（优化点 17）
+    - `total_cases > 1` 且 `speedup_vs_torch < 0.5`：普通任务强制尝试 kernel 分裂（优化点 17）。单 launch 任务可用分裂版本诊断性能，交付仍遵循 launch 契约
     - `speedup_vs_torch < target_speedup` 且 `opt_iteration < 3`：
       要求重新扫描，重点检查当前算子类别对应的高频命中点
       （见 `skills/triton-latency-optimizer/references/Index.md` 的"算子类别与高频优化点"表）
@@ -760,7 +891,7 @@ while opt_iteration < max_opt_iterations:
 **前置断言（强制）**：
 
 - 进入本步骤前重新读取 `verify_result_optimized.json`，确认 `passed_cases == total_cases > 0`。
-- 任何不符立即跳到 **4.5（A 类）**，不得调用 `benchmark.py`。
+- 任何不符立即跳到 **4.5（A 类）**，不得调用 `benchmark.py`，也不得以 `--verify_not_required` 绕过。
 - baseline 侧无需校验：`verify_result_baseline.json` 来自 Phase 3，已在 4.0 断言中确保全过。
 
 **L1 兜底**：
@@ -823,6 +954,8 @@ Phase 3 基线及每轮 Phase 4 性能结果都调用本插件 `workflows/evalua
     进入 4.5（A 类分析），不得写入任何 speedup 数值。
   - 若 `baseline_speedup` 或 `optimized_speedup` 任一为 `null`（全部 shape 异常，
     无几何平均可算），直接判定为优化失败（拒绝优化），跳到 4.5 A 类分析。
+
+  单 launch 任务须单独保留精度全过且运行时 launch 合规的最佳候选及其验收证据。首个合规候选即使慢于多 kernel 基线也纳入交付候选。后续在合规候选之间按项目性能策略选优。
 
   optimized_speedup > baseline_speedup:
   → 优化成功（几何平均加速比有提升）
@@ -894,9 +1027,9 @@ Phase 3 基线及每轮 Phase 4 性能结果都调用本插件 `workflows/evalua
   （不得直接 4.6）。`improvement_made == true` 不构成退出条件。
 
   通过退出前置门后，break，进入 Phase 5；最终代码始终为按项目 target_policy
-  选取的 best_code，不能取最后一轮 optimized_code.py。
+  选取的 best_code，不能取最后一轮 optimized_code.py。单 launch 任务以已验证的合规候选优先，性能只用于同等交付资格下的排序。
   improvement_made 仅描述是否曾有提升，不重新选择文件；若没有候选优于 Phase 3，
-  best_code 保持为已验证的 Phase 3 baseline_code。
+  普通任务的 best_code 保持为已验证的 Phase 3 baseline_code。单 launch 任务按 Phase 5 的交付条件选择。
 
 ````
 
@@ -914,8 +1047,8 @@ Phase 3 基线及每轮 Phase 4 性能结果都调用本插件 `workflows/evalua
 
 ### Phase 4 终局处理
 
-- 从所有精度全过的候选中按项目 target_policy 选取 best_code（可能是 Phase 3 基线）；最终交付复制 best_code，不得默认取最后一轮 optimized_code.py。交付前对该精确文件重新跑完整精度门并绑定代码哈希，性能数据必须对应同一文件和用例集合。若尚未达到目标，报告实际差距并继续适用的优化分支，不能把某轮有所改善等同于任务达成。
-- 优化分支未改善或失败时仍保留此前已验证的 best_code；只有此前没有候选优于 Phase 3 时，best_code 才是 Phase 3 的 generated_code.py。
+- 先筛选精度全过且符合交付契约的候选，再按项目 target_policy 选取 best_code（普通任务可选 Phase 3 基线）；最终交付复制 best_code，不得默认取最后一轮 optimized_code.py。交付前对该精确文件重新跑完整精度门并绑定代码哈希，性能数据必须对应同一文件和用例集合。若尚未达到目标，报告实际差距并继续适用的优化分支，不能把某轮有所改善等同于任务达成。
+- 优化分支未改善或失败时仍保留此前已验证且符合交付契约的 best_code。普通任务在没有候选优于 Phase 3 时保留 Phase 3 的 generated_code.py。
 - 两种情况都进入 Phase 5
 
 ---
@@ -924,10 +1057,20 @@ Phase 3 基线及每轮 Phase 4 性能结果都调用本插件 `workflows/evalua
 
 **选择最终代码**：
 
-- Phase 4 完成、未改善或分支失败，都使用按项目 target_policy 选取的 `best_code`，保留该精确文件的代码哈希。
+- 按精度正确性、交付契约、性能目标的顺序选取 `best_code`。`single_launch_required=true` 时，在精度全过且满足运行时 launch 契约的候选中按项目 target_policy 选优。未达到性能目标时仍交付该候选，记录 `target_reached=false` 及实测差距。Phase 4 取证后仍无精度全过且满足 launch 契约的候选时才选多 kernel 回退。保留所选文件的代码哈希。
 - 对该精确文件重跑完整精度门，将结果记录为 `best_verify_result`；`best_perf_result` 必须绑定同一代码哈希与用例集合，不能改用最后一轮或仅 Phase 3 的结果。
 
 复制 `best_code` 到 `{工作目录}/{op_name}_generated.py`，核对复制前后 SHA256 一致。
+
+**交付路径终检（强制，`single_launch_required=true` 时）**：复制后按 sketch 声明的阶段文件及实际交付文件执行：
+
+```bash
+python3 skills/triton-op-verifier/scripts/check_launch_path.py --op-dir {工作目录} \
+  --phase final --baseline dev/multi_kernel_baseline.py --baseline-verify output/iter_{phase3_last_iter}/verify/verify_result.json \
+  --fused-epilogue dev/fused_epilogue.py --final-code {op_name}_generated.py
+```
+
+`pass_final_shape` 仅确认静态交付形态。以同一 SHA256 绑定逐 case 的 profiler 计算 kernel launch 计数、完整精度结果和端到端性能结果；每 case 恰好一次计算 kernel launch 且全部必测用例精度通过，即可记录单 launch 交付。以交付文件的实测性能写入 `target_reached`，并在报告中列出未达到的性能指标。经过 Phase 4 取证的多 kernel 回退在终检命令加 `--fallback`，将 exit 2 / `contract_conflict` 和回退性能单独写入报告；缺阶段证据仍记 `delivery_path_violation`。
 
 **写入 `{工作目录}/report.md`**：
 
@@ -1020,9 +1163,9 @@ Phase 3 基线及每轮 Phase 4 性能结果都调用本插件 `workflows/evalua
 - `metric_mode`: 本任务的优化指标模式（`speedup` / `mfu`），透传自 `{工作目录}/metric_mode.txt`，决定 4.6/5 的目标与达标判据口径
 - `target_speedup`: 按 `target_policy` 解释的目标加速比，读取自 `config.json` 的 `target_speedup` 字段（`metric_mode==speedup` 时生效）
 - `target_mfu`: 目标 MFU（%），读取自 `config.json` 的 `target_mfu` 字段；口径为 dtype 修正实测峰值（`mfu_decompose.json` 的 `mfu_achievable_pct`）(`metric_mode==mfu` 时生效)
-- `target_reached`: 是否达到目标指标（speedup 模式 evaluate_performance.py 的 target_reached / mfu 模式 optimized_mfu >= target_mfu）
-- `best_speedup`: Phase 4 历史最佳几何平均加速比（speedup 模式）
-- `best_mfu`: Phase 4 历史最佳 MFU（%）（mfu_decompose 的 `mfu_achievable_pct`，mfu 模式）
+- `target_reached`: 最终交付文件是否达到全部适用性能目标。speedup 模式使用 evaluate_performance.py 的 target_reached 及用户指定的逐例性能下限。mfu 模式比较最终 MFU 与 target_mfu。
+- `best_speedup`: 最终交付文件的几何平均加速比（speedup 模式）
+- `best_mfu`: 最终交付文件的 MFU（%）（mfu_decompose 的 mfu_achievable_pct，mfu 模式）
 - `baseline_mfu`: 4.0b 测定的基线 MFU（%）（mfu 模式，用于评估优化幅度）
 - `speedup_vs_torch`: **几何平均**聚合 = `(∏ s_i)^(1/n)`（仅对通过且 `s_i` 为有限正数的 shape）；全部异常时为 `null`
 - `speedup_vs_baseline`: Phase 4 时 = `optimized.speedup_vs_torch / baseline.speedup_vs_torch`（两个几何平均之比）
