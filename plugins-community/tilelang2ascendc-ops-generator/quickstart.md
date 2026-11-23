@@ -47,7 +47,7 @@ Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md 
 ```bash
 git clone https://github.com/tile-ai/tilelang-ascend.git
 cd tilelang-ascend
-git checkout 585ad8c3b5fae175f1d1661059d347645f1f9536
+git checkout ce41146309e43fdd2d8f492f33bc469ed2a2b6e2
 prs=(
   1573  # atomic-add
   1754  # active dimensions
@@ -56,14 +56,8 @@ prs=(
   1757  # FloorDiv/FloorMod
   1758  # BF16 scalar cast
   1759  # im2col
-  1760  # FP32 GEMM
   1761  # 多维 scalar offset
-  1770  # ring clear
-  1772  # BF16 transpose
   1774  # copy alignment
-  1776  # GM→L1 coalesce
-  1821  # flat UB slice
-  1822  # SiLU
 )
 for pr in "${prs[@]}"; do
   git fetch origin "refs/pull/${pr}/merge"
