@@ -699,15 +699,28 @@ def validate_reference(value: dict) -> dict:
     return value
 
 
+OBJECTIVE_SCOPES = ("per_case", "aggregate")
+TARGET_OBJECTIVE_FIELDS = (
+    "scope",
+    "metric",
+    "comparison",
+    "value",
+    "unit",
+    "max_rounds",
+)
+
+
 def optimization_objective(args: argparse.Namespace) -> dict[str, Any]:
     if args.optimization_mode == "fixed_rounds":
         if args.rounds <= 0:
             raise ValueError("--rounds must be positive")
         target_fields = (
             args.target_metric,
+            args.target_comparison,
             args.target_value,
             args.target_unit,
             args.max_rounds,
+            args.objective_scope,
         )
         if any(value is not None for value in target_fields):
             raise ValueError(
@@ -721,10 +734,14 @@ def optimization_objective(args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.max_rounds is not None and args.max_rounds <= 0:
         raise ValueError("--max-rounds must be positive")
+    # Issue #205: a per-case bottom line must not be silently rewritten into an
+    # aggregate metric. per_case is the default acceptance scope; aggregate is
+    # an explicit user choice recorded in the frozen request.
     return {
         "mode": "target",
+        "scope": args.objective_scope or "per_case",
         "metric": args.target_metric,
-        "comparison": args.target_comparison,
+        "comparison": args.target_comparison or "ge",
         "value": args.target_value,
         "unit": args.target_unit,
         "max_rounds": args.max_rounds,
@@ -910,6 +927,10 @@ def _validate_objective(request: dict[str, Any]) -> None:
     if objective["mode"] == "fixed_rounds":
         if not isinstance(objective.get("rounds"), int) or objective["rounds"] <= 0:
             raise ValueError("fixed_rounds objective requires positive integer rounds")
+        if any(field in objective for field in TARGET_OBJECTIVE_FIELDS):
+            raise ValueError(
+                "target fields are valid only with --optimization-mode target"
+            )
     elif objective["mode"] == "target":
         if (
             not objective.get("metric")
@@ -919,6 +940,13 @@ def _validate_objective(request: dict[str, Any]) -> None:
             raise ValueError("target objective requires metric, value, and unit")
         if objective.get("comparison") not in ("ge", "le", "eq"):
             raise ValueError("target comparison must be ge, le, or eq")
+        if "scope" not in objective:
+            objective["scope"] = "aggregate"
+        elif objective["scope"] not in OBJECTIVE_SCOPES:
+            raise ValueError(
+                "target objective scope must be per_case or aggregate "
+                "(legacy requests without scope stay aggregate)"
+            )
         if objective.get("max_rounds") is not None and (
             not isinstance(objective["max_rounds"], int) or objective["max_rounds"] <= 0
         ):
@@ -1360,13 +1388,40 @@ def command_freeze(args: argparse.Namespace) -> int:
 
     path = output_dir / "run-manifest.json"
     atomic_json(path, manifest)
-    emit(
-        json.dumps(
-            {"status": "frozen", "manifest": str(path), "confirmation": confirmation},
-            ensure_ascii=False,
-        )
-    )
+    payload = {"status": "frozen", "manifest": str(path), "confirmation": confirmation}
+    advisories = _budget_advisories(manifest)
+    if advisories:
+        payload["advisories"] = advisories
+    emit(json.dumps(payload, ensure_ascii=False))
     return 0
+
+
+def _budget_advisories(manifest: dict[str, Any]) -> list[str]:
+    """Honest budget guidance: a fixed round budget must match the workload.
+
+    A 5-round default cannot systematically cover a large tuning set; the
+    per-case ledger will block convergence claims, so the freeze output tells
+    the operator up front instead of letting a budget stop masquerade as
+    "cannot optimize" later.
+    """
+    objective = manifest.get("configuration", {}).get("optimization_objective", {})
+    if objective.get("mode") != "fixed_rounds":
+        return []
+    tuning = manifest.get("collections", {}).get("performance_tuning", {})
+    count = tuning.get("count")
+    rounds = objective.get("rounds")
+    if not isinstance(count, int) or not isinstance(rounds, int) or count <= 0:
+        return []
+    suggested = max(5, -(-count // 20))
+    if rounds >= suggested:
+        return []
+    return [
+        f"fixed_rounds={rounds} is likely too small for {count} tuning cases; "
+        f"consider --rounds >= {suggested}, a target-mode objective, or batching "
+        "the set into focused sub-runs by shape regime (see workflow_state.py "
+        "remaining-work). Budget stops with unresolved cases finish with "
+        "reason-code budget_exhausted, never as convergence.",
+    ]
 
 
 def _freeze_dsl_environment(
@@ -1772,15 +1827,7 @@ def _add_create_parser(subparsers: Any) -> None:
     create.add_argument("--operator-name")
     create.add_argument("--code-dir", type=Path, required=True)
     create.add_argument("--backend", choices=BACKENDS, default="ascendc")
-    create.add_argument(
-        "--dsl-repo-root",
-        type=Path,
-        help="DSL reference/sample repository; not an import fallback",
-    )
-    create.add_argument(
-        "--dsl-entrypoint", help="Original public Python module:callable"
-    )
-    create.add_argument("--dsl-execution-mode", choices=DSL_EXECUTION_MODES)
+    _add_create_dsl_arguments(create)
     create.add_argument("--tuning-mode", choices=TUNING_MODES, default="standard")
     create.add_argument(
         "--target-soc",
@@ -1805,8 +1852,30 @@ def _add_create_parser(subparsers: Any) -> None:
     create.add_argument(
         "--target-case-count", type=int, default=DEFAULT_GENERALIZATION_CASE_COUNT
     )
+    create.add_argument(
+        "--objective-scope",
+        choices=OBJECTIVE_SCOPES,
+        default=None,
+        help=(
+            "acceptance scope for target objectives; per_case (default) requires "
+            "every frozen case to meet its per-case target, aggregate accepts an "
+            "explicit user-confirmed aggregate metric"
+        ),
+    )
     _add_create_objective_arguments(create)
     create.set_defaults(func=command_create_request)
+
+
+def _add_create_dsl_arguments(create: argparse.ArgumentParser) -> None:
+    create.add_argument(
+        "--dsl-repo-root",
+        type=Path,
+        help="DSL reference/sample repository; not an import fallback",
+    )
+    create.add_argument(
+        "--dsl-entrypoint", help="Original public Python module:callable"
+    )
+    create.add_argument("--dsl-execution-mode", choices=DSL_EXECUTION_MODES)
 
 
 def _add_create_objective_arguments(create: argparse.ArgumentParser) -> None:
@@ -1825,7 +1894,7 @@ def _add_create_objective_arguments(create: argparse.ArgumentParser) -> None:
     )
     create.add_argument("--rounds", type=int, default=5)
     create.add_argument("--target-metric")
-    create.add_argument("--target-comparison", choices=("ge", "le", "eq"), default="ge")
+    create.add_argument("--target-comparison", choices=("ge", "le", "eq"), default=None)
     create.add_argument("--target-value", type=float)
     create.add_argument("--target-unit")
     create.add_argument("--max-rounds", type=int)

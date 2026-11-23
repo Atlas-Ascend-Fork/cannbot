@@ -84,6 +84,9 @@ def build(measurements_path, frontier_path, holdout_path=None, neutral_control=N
                 "mechanism": {"status": "unknown"},
                 "retry_condition": "complete evidence under the frozen performance policy",
                 "factors": nodes[item["scheme_id"]].get("factors", {}),
+                # Case-bucket scope (M3): carried from the frontier node so a
+                # bucket-local trial does not poison other shape regimes.
+                "case_bucket": nodes[item["scheme_id"]].get("case_bucket"),
                 # Diagnostic only: a control never changes scores or policy verdicts.
                 "differential": [
                     {

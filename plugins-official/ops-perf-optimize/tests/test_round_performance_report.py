@@ -23,7 +23,13 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "ops-perf-optimize-wo
 
 
 class Run:
-    def __init__(self, root: Path, mode: str = "standard", policy: str = "legacy_jitter_v1"):
+    def __init__(
+        self,
+        root: Path,
+        mode: str = "standard",
+        policy: str = "legacy_jitter_v1",
+        objective: dict | None = None,
+    ):
         self.root = root
         self.state = root / "workflow-state.json"
         self.report = root / "性能调优报告.md"
@@ -34,6 +40,8 @@ class Run:
             "tuning_mode": mode,
             "functional_mode": "reuse_performance",
         }
+        if objective is not None:
+            configuration["optimization_objective"] = objective
         if mode == "generalization":
             configuration["generalization"] = {"competitor": {"source": "file"}}
         manifest = root / "run-manifest.json"

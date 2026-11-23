@@ -94,6 +94,8 @@ baseline 允许在 freeze 前以 REQUEST 派发，此时 RUN_MANIFEST/WORKFLOW_S
 
 standard：基线评估（定稿 + 工作区功能基线与采集）→ 每轮 analysis → implementation → 主 Agent 登记终选 → 下一轮或 integration。每轮分析和实施把策略/效果写入现有 `analysis.md` 与 `selection.json`；下一轮分析读取此前 `analysis.md` 和 `selection.json`，复用已证实机制和失败分类。这些字段不参与候选选择或验收门禁，但缺记录须在报告中如实说明原因。
 
+**逐 case 收敛账本**：工作流维护机器计算的 `case_convergence` 账本（`case_ledger.py`），把"还能不能优化"从主 Agent 判断降级为脚本可判定问题。每个性能保存点完成时按 `performance-targets.json` × 累计实测自动重算：case 状态为 `pending`（未测）/`headroom_open`（已测未达标）/`optimized`（逐 SoC 实测 ≤ 冻结目标）/`converged`（有绑定当前参考实现的逐 case verdict 证据）/`waived`（用户显式豁免）；verdict 绑定实现身份，参考实现晋升即降级 `stale`。下轮分析输入必须携带剩余未达标清单，方案排序以未达标 case 为主键，geomean 只作防退化约束；账本不可用时如实报告，不得据缺席推断收敛。
+
 **同轮单派发（默认）**：延续方向（carry code、同方向精化、组合既有组件）的轮次默认按"同轮诊断修订"走**单次实施派发**——实施信封附带本轮方案上下文（上一轮 analysis 摘要、selection 结果、契约与 scope 引用），实施代理在既有"同轮未终选诊断修订"机制内完成方案确认与实施；不为每次延续新开独立分析派发。仅当出现**新方向、search 重规划、候选失败分类或首轮分析**时才派发独立分析。分析独立派发的产物仍是唯一契约真源；单派发不放宽任何门禁。最终保留 commit 上的全集验收由 implementation 完成（两个后端统一为 final 标签）。baseline 也参与选择，无有效收益时保留 baseline；未实测的拼接代码不参与选择。`expected_effect`、历史 `abandon_if` 和整体优化目标不是候选淘汰条件，有有效净收益的候选即使未达目标也可保留并进入下一轮。每轮按同协议逐 case 核对实测净收益与剩余目标差额。
 
 每轮只冻结并实施一个方案（一个 attempt），契约内耦合的架构特性作为整体评估。允许在同一契约和 scope 内诊断、修复实现；需要改变优化方向、依赖或范围时，先记录本轮处置和保留实现，再在下一轮重新分析、冻结。诊断证据不能提升基线或替代终选。正式确认计划注册后，按原采集协议完成，不得把慢样本改称探索后择优重采。
@@ -102,9 +104,15 @@ standard：基线评估（定稿 + 工作区功能基线与采集）→ 每轮 a
 
 `fixed_rounds` 执行已确认轮数，默认 5 轮；`target` 使用冻结的 metric/comparison/value/unit，可选 max_rounds，无显式上限则不另设上限。每轮恰好一份实施契约、恰好一个 attempt；候选在功能门禁、序列压测或性能比较中不达标时，本轮结论为保留当前基线（搜索决策按其失败分类处置），下一轮重新分析。`target` 的性能循环只在目标达成、显式轮数/用户停止条件到达，或证据证明所有仍可能填补目标差额的合法方向均不可实施后结束。某轮零实施契约、候选退化、连续数轮无改善、缺少物理 roofline，均不单独证明“没有可信方向”；一次候选退化须先区分机制、实现、正确性和证据问题。循环停止不截断未完成的精度诊断。
 
+**预算停止与收敛是不同的终态**：`finish --reason-code` 中 `no_material_improvement` 与 `ceiling_bound` 是**收敛声明**，受逐 case 硬门禁——账本存在任何 `pending`/`headroom_open` case、目标不可用或性能证据失效时被拒绝（退出码 2 + 未了结清单）；`budget_exhausted` 是**诚实预算停止**，用于轮数/预算耗尽且账本仍有未了结 case 的场景，终态记录由脚本附上机器生成的逐 case 汇总与未了结清单，报告措辞脚本渲染，禁止把预算耗尽报告成"优化不动"。freeze 阶段对 `fixed_rounds` 轮数与调优 case 数明显失配时输出 advisory，建议提高轮数、改 target 模式或按 shape 档位分批子 run。
+
+**验收口径不得隐式改写**：`target` 目标携带 `scope: per_case | aggregate`，由用户显式选择，接入规则与禁令见 [request-intake.md](request-intake.md)。`scope=per_case` 下 `finish success/completed` 同受逐 case 账本硬门禁——聚合指标达标而逐 case 底线未全达标（如 4/11）不得报告 ACHIEVED；`scope=aggregate` 允许 completed，账本逐 case 结果照附作过程描述。
+
 当目标未达且关键收益/安全性仍为 `unknown`，主 Agent 应派下一轮有界诊断或方案分析，并在状态中记录待核验假设与下一动作，不得把 `unknown` 写成 `infeasible_evidenced`、`ceiling_bound` 或用 `no_material_improvement` 结束。足以改变退出结论的未知量须先有界验证；缩小问题规模或改变关键负载特征的探针，只有证明关键路径与目标 case 可比时才可外推，否则只支持定性定位，不能据此否定完整目标场景。诊断工具无法归因时保留未知并继续寻找同身份证据；实际外部资源阻断按第 5 节记录 blocker，不冒充性能收敛。
 
-分析后、候选实施前检查理论上限，门**分两级**且机器可检：(1)「当前结构天花板」——全部冻结调优 case 的 `verdict` 为 `NEAR-BANDWIDTH-CEILING`、`NEAR-COMPUTE-CEILING` 或 `MEMORY-CEILING`，且现 kernel 结构内没有合法可实施减量方案（方案数为 0）；(2)「算子内在天花板」——实测已逼近**算子内在最小成本 roofline**（`实测 ≤ ceiling_intrinsic_us * 1.5`；该 roofline 由 shape/dtype/权重字节恒可计算，无需任何外部实现）且不落后 `REFERENCE_PERF`。**仅两级同时满足**才以 `reason_code=ceiling_bound` 结束性能探索，保留当前基线。若只触及当前结构天花板、但离内在最小成本仍显著（或落后参考锚点），则当前结构天花板 ≠ 物理天花板：门不触发，本轮须先评估结构性重写方向（`pursue_optimal` 下为强制门禁，`safe_incremental` 下记录方向与预估收益交用户决策）；仅当结构性方向也经源码/建模证据判不可行后方可收敛。`safe_incremental` 下需要用户决定更宽实施范围时，先交付可审阅的范围、风险与有依据的收益估计，不能把尚未定界的技术未知当作用户决策。报告须引用逐 case 的 `MBU/MFU/mte2_util/ceiling_us/headroom/verdict`、目标 SoC 峰值口径和合法手段不可用的证据；PIPELINE-TRAP 还须排除已证明不重读权重的重叠方案。有合法候选（增量或结构性）时继续实施，不因 bound/verdict 标签单独停止；用户显式要求继续时，将覆盖理由登记到 workflow-state。
+分析后、候选实施前检查理论上限，门**分两级**且机器可检：(1)「当前结构天花板」——全部冻结调优 case 的 `verdict` 为 `NEAR-BANDWIDTH-CEILING`、`NEAR-COMPUTE-CEILING` 或 `MEMORY-CEILING`，且现 kernel 结构内没有合法可实施减量方案（方案数为 0）；(2)「算子内在天花板」——实测已逼近**算子内在最小成本 roofline**（`实测 ≤ ceiling_intrinsic_us * 1.5`；该 roofline 由 shape/dtype/权重字节恒可计算，无需任何外部实现）且不落后 `REFERENCE_PERF`。**仅两级同时满足**才以 `reason_code=ceiling_bound` 结束性能探索，保留当前基线。逐 case verdict 以 `case-converge --verdict <case-verdict.json>` 登记（schema：`case_id`/`verdict`/`measured_us`/`ceiling_us`/`reference_identity`/`evidence:[{path,sha256}]`），脚本核验标签、身份绑定与证据 SHA；身份不匹配当前参考实现或证据被篡改时拒绝登记、已登记的自动降级。工具只核验覆盖、身份与文件完整性，排除论证是否充分仍由 analysis 复核。若只触及当前结构天花板、但离内在最小成本仍显著（或落后参考锚点），则当前结构天花板 ≠ 物理天花板：门不触发，本轮须先评估结构性重写方向（`pursue_optimal` 下为强制门禁，`safe_incremental` 下记录方向与预估收益交用户决策）；仅当结构性方向也经源码/建模证据判不可行后方可收敛。`safe_incremental` 下需要用户决定更宽实施范围时，先交付可审阅的范围、风险与有依据的收益估计，不能把尚未定界的技术未知当作用户决策。报告须引用逐 case 的 `MBU/MFU/mte2_util/ceiling_us/headroom/verdict`、目标 SoC 峰值口径和合法手段不可用的证据；PIPELINE-TRAP 还须排除已证明不重读权重的重叠方案。有合法候选（增量或结构性）时继续实施，不因 bound/verdict 标签单独停止；用户显式要求继续时，将覆盖理由登记到 workflow-state。
+
+**剩余工作信封（分批续跑的官方机制）**：任意时点可用 `$WORKFLOW_SCRIPTS/workflow_state.py remaining-work --state <state> [--out <path>]` 从账本生成聚焦剩余 case 的后续 run 提案：**继承**冻结输入与基线身份、已验证机制（`mechanism.status=verified`）和已达标 case 结论；**不继承**失败先验、停滞计数与 retry 封锁（同机制可在新证据下重新尝试）。信封只是续跑提案，不是原 run 的收敛结论；用 `remaining_cases` 构造新 run 的调优集合时按身份复用基线证据，不得拼接不同实现的历史性能。超大调优集（超 `input-freezing` 上限需确认）建议按 shape 档位分批子 run，每批独立循环、共享基线。
 
 `pursue_optimal` 的结构性方向是跨轮义务，登记进 `workflow-state` 的结构方向台账（`$WORKFLOW_SCRIPTS/workflow_state.py structural-direction --id <稳定id> --status <status>`）：`not_attempted`/`blocked_by_scope` 为**未了结**（`blocked_by_scope` 须重冻结更宽 scope 后重试，不得当作完成），`realized`/`infeasible_evidenced`/`blocked_by_precision` 为了结。**硬门禁**：台账存在未了结方向时，`$WORKFLOW_SCRIPTS/workflow_state.py finish --status success --reason-code completed` 被拒绝；须先把每个方向推进到了结态，或以 `finish --status awaiting_operator --reason-code structural_headroom_unrealized` 显式驻留交人工决策。运行时风险（死锁/同步）不能作为 `infeasible_evidenced` 的理由，须先经 `ascendc-sync-audit` 产出缓解方案或"风险不可避免"的证据。
 
@@ -162,6 +170,7 @@ generalization 保留既有规则：
 ## 7. 完成定义
 
 - 五个阶段交接产物齐全，request/manifest/state 的模式、目标、环境（含 `optimization_intent`、`reference_perf`）与集合身份一致。
+- 逐 case 收敛账本与报告一致：收敛类终态（`no_material_improvement`/`ceiling_bound`）要求全部冻结调优 case 处于 `optimized`/`converged`/`waived`；`scope=per_case` 目标下的 `success/completed` 同样要求账本完全了结，聚合指标达标不冒充逐 case 达标；预算停止用 `budget_exhausted` 并附未了结清单，不得与收敛互冒。
 - 拟晋升候选有符合性、隔离、构建、功能与可比较性能证据；screened 仅需实际探索材料和未采用原因。
 - pursue_optimal 的结构空间判定以算子内在最小成本 roofline 为普适锚点，`REFERENCE_PERF` 仅在恰有可比实现时作机会性增强、缺参考不阻塞不降级；结构方向台账无 `not_attempted`/`blocked_by_scope` 残留（否则终态为 `awaiting_operator` + `structural_headroom_unrealized`，不得伪装 `success/completed`）。
 - 最终保留 commit（final 标签）完成功能/性能全集验收，原工程经条件化合并（fast-forward 等价或全量复验）交付，非目标芯片族与未涉及模板保持原实现。

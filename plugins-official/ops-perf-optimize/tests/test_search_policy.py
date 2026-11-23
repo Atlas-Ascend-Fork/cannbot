@@ -67,6 +67,47 @@ def state_cli(state):
     return cli
 
 
+def _run_configuration(root, mode, backend, confidence):
+    configuration = {
+        "precision_diagnosis_policy": "persistent",
+        "target_socs": ["Ascend950"],
+        "functional_mode": "reuse_performance",
+        "tuning_mode": mode,
+        "backend": backend,
+        "search_policy": search.POLICY,
+        "optimization_objective": {"mode": "fixed_rounds", "rounds": 3},
+    }
+    if confidence:
+        configuration["performance_effect_policy"] = {
+            "id": "confidence_effect_v1",
+            "version": 1,
+        }
+    if mode == "generalization":
+        configuration["generalization"] = {"competitor": {"source": "file"}}
+    if backend == "cannbot_dsl":
+        configuration["dsl"] = {
+            "repo_root": str(root),
+            "entrypoint": "op:run",
+            "execution_mode": "jit",
+            "workload_scope": "network_cases",
+        }
+    return configuration
+
+
+def _run_targets(root):
+    return write(
+        root / "performance-targets.json",
+        {
+            "schema_version": 1,
+            "target_socs": ["Ascend950"],
+            "cases": [
+                {"case_id": "a", "target_soc": "Ascend950", "target_us": 100.0},
+                {"case_id": "b", "target_soc": "Ascend950", "target_us": 100.0},
+            ],
+        },
+    )
+
+
 class Run:
     def __init__(self, root, mode="standard", backend="ascendc", confidence=False):
         self.root = root
@@ -79,29 +120,7 @@ class Run:
         self.original = self.performance("original", [100, 100])
         self.baseline = self.original
         self.mode = mode
-        self.configuration = {
-            "precision_diagnosis_policy": "persistent",
-            "target_socs": ["Ascend950"],
-            "functional_mode": "reuse_performance",
-            "tuning_mode": mode,
-            "backend": backend,
-            "search_policy": search.POLICY,
-            "optimization_objective": {"mode": "fixed_rounds", "rounds": 3},
-        }
-        if confidence:
-            self.configuration["performance_effect_policy"] = {
-                "id": "confidence_effect_v1",
-                "version": 1,
-            }
-        if mode == "generalization":
-            self.configuration["generalization"] = {"competitor": {"source": "file"}}
-        if backend == "cannbot_dsl":
-            self.configuration["dsl"] = {
-                "repo_root": str(root),
-                "entrypoint": "op:run",
-                "execution_mode": "jit",
-                "workload_scope": "network_cases",
-            }
+        self.configuration = _run_configuration(root, mode, backend, confidence)
         key = (
             "generalization_full" if mode == "generalization" else "performance_tuning"
         )
@@ -117,7 +136,20 @@ class Run:
         self.cli("start", "--manifest", self.manifest)
         self.evidence = root / "diagnosis.txt"
         self.evidence.write_text("synthetic fixture, not a hardware measurement")
-        accept_stage(self.cli, "phase.baseline", self.evidence)
+        # Frozen per-case targets (100us = the original baseline), registered as a
+        # baseline artifact so the per-case convergence ledger can partition cases.
+        self.targets = _run_targets(root)
+        self.cli(
+            "mark",
+            "--stage",
+            "phase.baseline",
+            "--status",
+            "complete",
+            "--artifact",
+            self.evidence,
+            "--artifact",
+            self.targets,
+        )
 
     def cli(self, command, *args, ok=True):
         result = subprocess.run(
@@ -966,3 +998,140 @@ def test_legacy_invalidated_round_is_audit_only_and_cannot_be_reopened(tmp_path,
         "--message", "continued after legacy invalidated round",
     )
     assert search.load(run.state)["events"][:len(history)] == history
+
+
+def _bucketed_analysis(run, tmp_path, bucket="small-shape"):
+    from test_search_frontier import frontier
+
+    value = frontier(tmp_path)
+    selected = value["nodes"][0]
+    selected["case_bucket"] = bucket
+    contract_path = run.plan(1, register=False)
+    contract = search.load(contract_path)
+    contract["search"].update(
+        {
+            "frontier_parent": selected["scheme_id"],
+            "fidelity": selected["fidelity"],
+            "expected_gain_range": selected["expected_gain_range"],
+            "cost": selected["cost"],
+            "case_bucket": bucket,
+        }
+    )
+    write(contract_path, contract)
+    value["parent"] = contract["search"]["parent"]
+    frontier_path = write(
+        run.root / "round1/candidate-frontier-s1.json", value
+    )
+    run.cli(
+        "mark",
+        "--stage",
+        "round1.analysis",
+        "--status",
+        "complete",
+        "--artifact",
+        contract_path,
+        "--artifact",
+        frontier_path,
+    )
+    return contract_path
+
+
+def test_frontier_and_contract_case_buckets_must_be_nonempty_and_match(tmp_path):
+    from test_search_frontier import frontier
+
+    value = frontier(tmp_path)
+    selected = value["nodes"][0]
+    contract = {"scheme_id": "s1", "search": {"parent": value["parent"]}}
+    search.validate_frontier(value, contract)
+
+    selected["case_bucket"] = "small-shape"
+    contract["search"]["case_bucket"] = "large-shape"
+    with pytest.raises(ValueError, match="case_bucket differs"):
+        search.validate_frontier(value, contract)
+
+    contract["search"]["case_bucket"] = "small-shape"
+    search.validate_frontier(value, contract)
+    for record in (selected, contract["search"]):
+        record["case_bucket"] = ""
+        with pytest.raises(ValueError, match="case_bucket must be a nonempty string"):
+            search.validate_frontier(value, contract)
+        record["case_bucket"] = "small-shape"
+
+
+def test_consistent_case_bucket_propagates_to_round_observation(tmp_path):
+    from test_search_frontier import observation
+
+    run = Run(tmp_path)
+    contract_path = _bucketed_analysis(run, tmp_path)
+    args, _, _ = run.outcome(1, contract_path, values=(90, 90), selected=True)
+    selection_path = tmp_path / "round1/selection.json"
+    selection = search.load(selection_path)
+    selection["search"]["case_bucket"] = "small-shape"
+    write(selection_path, selection)
+    observation(selection_path)
+    run.cli("mark", *args)
+    assert run.view()["observations"][0]["case_bucket"] == "small-shape"
+
+
+@pytest.mark.parametrize("observed_bucket", ["large-shape", "", None])
+def test_selection_case_bucket_conflict_is_rejected(tmp_path, observed_bucket):
+    from test_search_frontier import observation
+
+    run = Run(tmp_path)
+    contract_path = _bucketed_analysis(run, tmp_path)
+    args, _, _ = run.outcome(1, contract_path, values=(90, 90), selected=True)
+    selection_path = tmp_path / "round1/selection.json"
+    selection = search.load(selection_path)
+    selection["search"]["case_bucket"] = observed_bucket
+    write(selection_path, selection)
+    observation(selection_path)
+    before = run.state.read_bytes()
+    error = run.cli("mark", *args, ok=False)
+    assert "case_bucket" in error["error"]
+    assert run.state.read_bytes() == before
+
+    event = {"classification": "measured", "result": selection["search"]}
+    decisions = {"s1": (None, search.load(contract_path))}
+    with pytest.raises(ValueError, match="case_bucket"):
+        search.observation_payload("s1", event, decisions)
+
+
+def test_legacy_null_case_bucket_remains_unbucketed(tmp_path):
+    from test_search_frontier import observation
+
+    run = Run(tmp_path)
+    contract_path = run.plan(1)
+    args, _, _ = run.outcome(1, contract_path, values=(90, 90), selected=True)
+    selection_path = tmp_path / "round1/selection.json"
+    selection = search.load(selection_path)
+    selection["search"]["case_bucket"] = None
+    write(selection_path, selection)
+    observation(selection_path)
+    run.cli("mark", *args)
+    assert run.view()["observations"][0]["case_bucket"] is None
+    assert run.cli("inspect")["search"]["observations"][0]["case_bucket"] is None
+    assert run.cli("verify")["status"] == "valid"
+    assert run.cli("render")["status"] == "rendered"
+
+
+def test_remaining_work_rechecks_verified_mechanism_evidence(tmp_path):
+    run = Run(tmp_path)
+    contract_path = run.plan(1)
+    args, _, _ = run.outcome(1, contract_path, values=(90, 90), selected=True)
+    selection_path = tmp_path / "round1/selection.json"
+    selection = search.load(selection_path)
+    selection["search"]["mechanism"] = {
+        "status": "verified",
+        "evidence": [search.ref(run.evidence)],
+    }
+    write(selection_path, selection)
+    run.cli("mark", *args)
+    payload = run.cli("remaining-work")
+    inherited = payload["inherit"]["verified_mechanisms"]
+    assert payload["schema_version"] == 2
+    assert [item["scheme_id"] for item in inherited] == ["s1"]
+    assert inherited[0]["mechanism"]["status"] == "verified"
+
+    run.evidence.write_text("changed after registration")
+    rejected = run.cli("remaining-work", ok=False)
+    assert "invalid search evidence" in rejected["error"]

@@ -5,7 +5,8 @@
 - `stages.<name>`：`status`、`started_at`、`completed_at`、`elapsed_seconds`、artifacts、context；性能保存点另有 `performance`，只记录保留实现、统计范围及两份 effect 摘要的路径，不复制逐 case 数据；
 - `events[]`：阶段变化、进度、诊断、人工决策和迁移审计；
 - `precision`：原始基线失败、候选新增/恶化失败、当前假设、已排除假设、下一步；
-- `operator`：是否等待人工、问题和安全恢复点。
+- `operator`：是否等待人工、问题和安全恢复点；
+- `case_convergence`：逐 case 收敛账本。脚本在每个性能保存点完成时按 `performance-targets.json` × 累计实测 × 已登记 verdict/豁免自动重算；逐 case 保存 `status`（`pending`/`headroom_open`/`optimized`/`converged`/`waived`）、`target_us`、`best_us`、`gap_us`、证据保存点与 verdict 身份。参考实现晋升后旧 verdict 标记 `stale_verdict` 并降级。
 
 `$WORKFLOW_SCRIPTS/workflow_state.py` 的每次写入都加锁、原子替换状态并重绘同目录 `性能调优报告.md`。长任务至少在开始、每个可验证假设完成、候选状态变化和阶段结束时调用 `progress`；不要用固定频率刷无意义心跳。主 Agent 派发每个阶段时必须先 `mark --status in_progress`，产物就绪后再标 `complete`；未标 `in_progress` 的阶段无法记录 `started_at`/`elapsed_seconds`，报告中如实显示 `-`，禁止事后伪造 0 耗时。
 
@@ -51,6 +52,8 @@ analysis 交接 `search-frontier` 的 `axis_coverage` 后，主 Agent 将复核�
 上述排除证据同时纳入原 `verify`；文件丢失或变更时报告 `search_exclusion`，搜索视图提示修复证据。恢复原文件，或复核后用原台账命令重新登记；未决状态不作为有效排除。
 
 启用搜索时，`finish --reason-code no_material_improvement|ceiling_bound` 自动重算所有已登记空间的轴覆盖，未测项须逐项匹配上述排除记录并通过证据 SHA 校验，否则退出码为 2 且不写终态；漏登记方向、缺空间引用、证据丢失/变更均不能放行。单个方向声明 no-go 前，用只读 `search-frontier --no-go` 执行同一检查。工具核验覆盖、适用范围与文件身份，排除论证是否充分仍由 analysis 复核；通过不证明组合或空间外路线耗尽。普通 `completed` 和 `awaiting_operator/structural_headroom_unrealized` 继续遵循原退出规则，预算停止须保留未决说明，不冒充 no-go，也不自动增加轮次。`pursue_optimal` 的既有未决方向门禁保持生效。
+
+**逐 case 账本命令**：收敛类终态与 per_case 口径 `completed` 的门禁语义以 [workflow-contract.md](../../references/workflow-contract.md) 第 4 节为准。`case-ledger` 强制重算账本并显示分区；`case-converge --case-id <id> --status converged --verdict <case-verdict.json>` 登记逐 case 收敛证据（`reference_identity` 须等于当前参考实现，证据 SHA 逐项核验），`--status waived --reason <决策记录>` 登记用户豁免；`remaining-work [--out <path>]` 生成聚焦剩余 case 的续跑提案（继承冻结输入/基线/已验证机制，不继承失败先验与停滞计数）。报告的"优化目标"行标注验收口径。
 
 `progress --evidence` 只记录路径；需要恢复时校验 SHA 的诊断原件，应通过 `mark --artifact` 或已有门禁消费的依赖链登记。不要修改旧路径内容或依靠一份自报索引替代实际依赖核验。
 

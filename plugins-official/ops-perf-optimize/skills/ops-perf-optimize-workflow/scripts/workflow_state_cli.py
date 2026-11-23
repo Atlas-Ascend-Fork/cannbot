@@ -32,8 +32,17 @@ TERMINAL_REASON_CODES = (
     "candidate_precision_regression",
     "no_material_improvement",
     "ceiling_bound",
+    # Honest budget stop: user-authorized rounds/objective budget is exhausted
+    # while the per-case ledger still has unresolved cases. Distinct from
+    # convergence claims (no_material_improvement/ceiling_bound), which are
+    # hard-gated on a fully terminal case ledger.
+    "budget_exhausted",
     "structural_headroom_unrealized",
 )
+# Per-case convergence ledger claims. "converged" requires a machine-checkable
+# verdict artifact bound to the current reference implementation; "waived"
+# records an explicit operator decision.
+CASE_CONVERGE_STATUSES = ("converged", "waived")
 # Structural-direction ledger (pursue_optimal). A structural direction proposed by analysis is a
 # cross-round obligation that must be discharged before a clean success finish under pursue_optimal.
 STRUCTURAL_DIRECTION_STATUSES = (
@@ -275,12 +284,45 @@ def _add_report_commands(sub, handlers):
     finish.add_argument("--message", required=True)
 
 
+def _add_case_ledger_commands(sub, handlers):
+    _command(
+        sub,
+        "case-ledger",
+        "recompute the per-case convergence ledger and show unresolved cases",
+        handlers["case_ledger"],
+    )
+    converge = _command(
+        sub,
+        "case-converge",
+        "register a per-case convergence claim or operator waiver",
+        handlers["case_converge"],
+    )
+    converge.add_argument("--case-id", required=True)
+    converge.add_argument("--status", choices=CASE_CONVERGE_STATUSES, required=True)
+    converge.add_argument(
+        "--verdict",
+        type=Path,
+        help="case-verdict.json for --status converged",
+    )
+    converge.add_argument(
+        "--reason",
+        help="operator decision record for --status waived",
+    )
+    _command(
+        sub,
+        "remaining-work",
+        "emit a focused follow-up run proposal from the case ledger",
+        handlers["remaining_work"],
+    ).add_argument("--out", type=Path)
+
+
 def build_parser(handlers, description) -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=description)
     sub = result.add_subparsers(dest="command", required=True)
     _add_run_commands(sub, handlers)
     _add_control_commands(sub, handlers)
     _add_search_commands(sub, handlers)
+    _add_case_ledger_commands(sub, handlers)
     _add_report_commands(sub, handlers)
     return result
 

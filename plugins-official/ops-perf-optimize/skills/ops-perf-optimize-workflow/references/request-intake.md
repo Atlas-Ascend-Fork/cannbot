@@ -31,6 +31,8 @@ generalization 还必须在启动时确认竞品性能来源：
 
 `fixed_rounds` 固定执行确认的轮数；未指定轮数时向用户提议默认 5 轮并确认。`target` 按 `metric + comparison(ge/le/eq) + value + unit` 判断达标，指标必须能从本工作流的落盘性能证据计算；可选 `max_rounds`，不提供时不设隐式轮次上限。达到目标即结束性能循环；目标未达时，只有所有仍可能填补差额的合法方向均有不可行证据，或显式停止条件到达，才能结束。零方案、连续无收益或未能外推的诊断仿真不满足这一条件，具体判定以 [workflow-contract.md](workflow-contract.md) 为准。性能轮次或目标不会截断尚未完成的精度诊断。
 
+**验收口径（scope）由用户显式选择，禁止隐式改写**：`target` 目标必须携带 `scope: per_case | aggregate`。用户给出逐 case 底线（如逐 case `gpu/npu ≥ r`、逐 case 目标耗时）时，`scope` 必须为 `per_case`：达标判定以 `performance-targets.json` 的逐 case 目标为准（机器按收敛账本核对），`metric/value` 只是对底线的描述性记录，不得把逐 case 缺口几何平均反推成聚合 geomean 目标。改用 `aggregate` 必须向用户说明差异并获得显式确认；无 scope 的旧请求按 `aggregate` 解释（兼容条款见 [migration.md](migration.md)）。
+
 精度诊断不是用户输入项，固定持续执行，没有工作流级总时长、轮次、Agent turn 或 token 上限。命令级防挂死 watchdog 可以识别单次编译/执行的 Hang，但不得被解释成精度诊断总预算。
 
 用户确认后调用 `$WORKFLOW_SCRIPTS/prepare_case_sets.py create-request` 写 `optimization-request.json`。该文件只保存请求意图和环境，不保存输出目录、冻结 artifact 或阶段状态，因此可以跨 run 复用。核心结构为：

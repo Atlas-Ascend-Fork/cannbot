@@ -167,6 +167,19 @@ def checked_refs(values, label):
     return dependencies
 
 
+def checked_case_bucket(record, label, *, legacy_null=False):
+    if "case_bucket" not in record:
+        return None
+    value = record["case_bucket"]
+    if legacy_null and value is None:
+        return None
+    require(
+        isinstance(value, str) and value.strip(),
+        f"{label} must be a nonempty string",
+    )
+    return value
+
+
 def _finite_number(value, label, *, positive=False, nonnegative=False):
     require(
         isinstance(value, (int, float)) and not isinstance(value, bool),
@@ -378,6 +391,7 @@ def validate_frontier(frontier, contract=None, manifest=None, accepted=()):
     for node in nodes:
         require(isinstance(node, dict), "frontier node must be an object")
         scheme = node["scheme_id"]
+        checked_case_bucket(node, f"{scheme}.case_bucket")
         kind = node.get("kind")
         level = node.get("level")
         require(kind in ("architecture", "local"), f"{scheme}: invalid kind")
@@ -469,6 +483,7 @@ def validate_frontier(frontier, contract=None, manifest=None, accepted=()):
             )
     if contract is not None:
         search = contract.get("search", {})
+        checked_case_bucket(search, "search.case_bucket")
         require(parent == search.get("parent"), "frontier parent differs from contract")
         scheme = contract.get("scheme_id")
         selected = next((node for node in nodes if node["scheme_id"] == scheme), None)
@@ -478,6 +493,11 @@ def validate_frontier(frontier, contract=None, manifest=None, accepted=()):
             and not selected.get("prune_reason"),
             "selected scheme was pruned",
         )
+        if "case_bucket" in search or "case_bucket" in selected:
+            require(
+                search.get("case_bucket") == selected.get("case_bucket"),
+                "search.case_bucket differs from the selected frontier node",
+            )
         require(
             search.get("kind", selected["kind"]) == selected["kind"],
             "selected frontier kind differs from contract",
@@ -568,15 +588,31 @@ def _observations(observations):
     ]
 
 
+def _observation_matches_node(observation, node):
+    """Mechanism equality plus case-bucket scoping.
+
+    A bucketed observation (trial run only on a shape regime / case cluster)
+    counts exclusively against nodes declaring the same ``case_bucket``;
+    an unbucketed observation was run on the whole tuning set and keeps the
+    legacy all-case semantics. A bucket-local failure therefore cannot
+    globally poison the same mechanism for other shape regimes.
+    """
+    mechanism = observation.get("mechanism_id") or observation.get("mechanism")
+    if mechanism != node.get("mechanism"):
+        return False
+    bucket = observation.get("case_bucket")
+    return bucket is None or bucket == node.get("case_bucket")
+
+
 def utility(node, observations=(), *, total_nodes=None, max_cost=None, weights=None):
     """UCB-style utility; callers decide how to use the ranking."""
     weights = _weights(weights)
     observations = _observations(observations)
-    related = []
-    for observation in observations:
-        mechanism = observation.get("mechanism_id") or observation.get("mechanism")
-        if mechanism == node.get("mechanism"):
-            related.append(observation)
+    related = [
+        observation
+        for observation in observations
+        if _observation_matches_node(observation, node)
+    ]
     attempts = len(related)
     statuses = {observation.get("mechanism_status") for observation in related}
     prior = 0.0 if "refuted" in statuses else 1.0 if "verified" in statuses else 0.5
@@ -1344,6 +1380,7 @@ def validate_contract(contract, manifest=None, baseline=None):
         return []
     search = contract["search"]
     require(isinstance(search, dict), "contract.search must be an object")
+    checked_case_bucket(search, "search.case_bucket")
     require(search.get("kind") in ("architecture", "local"), "invalid decision kind")
     for name in ("mechanism", "mechanism_check"):
         require(
@@ -1848,6 +1885,17 @@ def round_selection(record, plan):
         (result["outcome"] == "no_candidate") == (plan is None),
         "no_candidate requires an analysis without a contract",
     )
+    checked_case_bucket(
+        result, "selection.search.case_bucket", legacy_null=True
+    )
+    if plan:
+        contract_search = plan[1]["search"]
+        checked_case_bucket(contract_search, "search.case_bucket")
+        if "case_bucket" in result or "case_bucket" in contract_search:
+            require(
+                result.get("case_bucket") == contract_search.get("case_bucket"),
+                "selection.search.case_bucket differs from contract.search",
+            )
     artifacts = [
         ref(selection["path"]),
         *checked_refs(result.get("evidence"), "outcome"),
@@ -2581,7 +2629,18 @@ def needs_measurement(result):
 
 def observation_payload(sid, event, decisions):
     """One observation row with both legacy and explicit mechanism keys."""
-    mechanism = event["result"]["mechanism"]
+    result = event["result"]
+    mechanism = result["mechanism"]
+    contract = decisions[sid][1]["search"] if sid in decisions else {}
+    result_bucket = checked_case_bucket(
+        result, "result.case_bucket", legacy_null=True
+    )
+    contract_bucket = checked_case_bucket(contract, "search.case_bucket")
+    if "case_bucket" in result:
+        require(
+            result_bucket == contract_bucket,
+            "observation case_bucket differs from the frozen contract",
+        )
     return {
         "decision_id": sid,
         "scheme_id": sid,
@@ -2591,7 +2650,12 @@ def observation_payload(sid, event, decisions):
         "classification": event["classification"],
         "mechanism": mechanism,
         "mechanism_status": mechanism.get("status"),
-        "retry_condition": event["result"]["retry_condition"],
+        "retry_condition": result["retry_condition"],
+        # Consistent declarations are propagated; legacy unbucketed rows keep
+        # the whole-tuning-set semantics.
+        "case_bucket": (
+            result_bucket if result_bucket is not None else contract_bucket
+        ),
     }
 
 

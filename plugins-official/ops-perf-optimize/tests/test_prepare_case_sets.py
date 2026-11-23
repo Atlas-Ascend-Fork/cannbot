@@ -26,6 +26,9 @@ TOOL = (
 STATE_TOOL = (
     ROOT / "skills" / "ops-perf-optimize-workflow" / "scripts" / "workflow_state.py"
 )
+sys.path.insert(0, str(TOOL.parent))
+
+from prepare_case_sets import _validate_objective, load_request  # noqa: E402
 
 
 def write_cases(path: Path, count: int, *, include_l1: bool = False) -> None:
@@ -240,6 +243,23 @@ def test_generate_mode_attaches_inventory_without_a_second_manifest(
     assert not (output / "functional-acceptance-selection.json").exists()
 
 
+def _assert_target_request(payload: dict) -> None:
+    assert payload["optimization_objective"] == {
+        "mode": "target",
+        "scope": "aggregate",
+        "metric": "effective_geomean_speedup",
+        "comparison": "ge",
+        "value": 1.2,
+        "unit": "ratio",
+        "max_rounds": 5,
+    }
+    assert (
+        payload["environments"]["python"]["activation_command"]
+        == "source /opt/venv/bin/activate"
+    )
+    assert payload["confirmation"]["status"] == "confirmed"
+
+
 def test_target_objective_and_environment_are_reusable(tmp_path: Path) -> None:
     code = tmp_path / "code"
     code.mkdir()
@@ -263,6 +283,10 @@ def test_target_objective_and_environment_are_reusable(tmp_path: Path) -> None:
             "1.2",
             "--target-unit",
             "ratio",
+            # An aggregate metric is an explicit user choice (issue #205);
+            # without this flag the request defaults to the per_case scope.
+            "--objective-scope",
+            "aggregate",
             "--max-rounds",
             "5",
             "--python-activation-command",
@@ -270,19 +294,7 @@ def test_target_objective_and_environment_are_reusable(tmp_path: Path) -> None:
         ),
     )
     payload = load(request)
-    assert payload["optimization_objective"] == {
-        "mode": "target",
-        "metric": "effective_geomean_speedup",
-        "comparison": "ge",
-        "value": 1.2,
-        "unit": "ratio",
-        "max_rounds": 5,
-    }
-    assert (
-        payload["environments"]["python"]["activation_command"]
-        == "source /opt/venv/bin/activate"
-    )
-    assert payload["confirmation"]["status"] == "confirmed"
+    _assert_target_request(payload)
 
     for name in ("first", "second"):
         output = tmp_path / name
@@ -293,6 +305,86 @@ def test_target_objective_and_environment_are_reusable(tmp_path: Path) -> None:
             manifest["configuration"]["environments"]["cann"]["setup_command"]
             == "inherit"
         )
+
+
+def test_load_request_validates_target_scope_and_loads_legacy_requests(
+    tmp_path: Path,
+) -> None:
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / "kernel.cpp").write_text("// kernel\n", encoding="utf-8")
+    performance = tmp_path / "performance.csv"
+    write_cases(performance, 2)
+    request = tmp_path / "target-scope-request.json"
+    create_request(
+        request,
+        code,
+        performance,
+        extra=(
+            "--optimization-mode",
+            "target",
+            "--target-metric",
+            "effective_geomean_speedup",
+            "--target-value",
+            "1.2",
+            "--target-unit",
+            "ratio",
+        ),
+    )
+    payload = load(request)
+    assert payload["optimization_objective"]["scope"] == "per_case"
+    assert payload["optimization_objective"]["comparison"] == "ge"
+    assert load_request(request, validate_live=False)["optimization_objective"][
+        "scope"
+    ] == "per_case"
+
+    for scope in (None, "", "global"):
+        payload["optimization_objective"]["scope"] = scope
+        request.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(ValueError, match="target objective scope"):
+            load_request(request, validate_live=False)
+
+    del payload["optimization_objective"]["scope"]
+    request.write_text(json.dumps(payload), encoding="utf-8")
+    legacy = load_request(request, validate_live=False)
+    assert legacy["optimization_objective"]["scope"] == "aggregate"
+
+
+def test_fixed_rounds_rejects_target_only_fields(tmp_path: Path) -> None:
+    target_fields = (
+        ("scope", "aggregate"),
+        ("metric", "effective_geomean_speedup"),
+        ("value", 1.2),
+        ("unit", "ratio"),
+        ("comparison", "ge"),
+        ("max_rounds", 5),
+    )
+    for field, value in target_fields:
+        request = {
+            "optimization_objective": {
+                "mode": "fixed_rounds",
+                "rounds": 5,
+                field: value,
+            }
+        }
+        with pytest.raises(ValueError, match="target fields are valid only"):
+            _validate_objective(request)
+
+    result = run_create_request(
+        tmp_path,
+        (
+            "--target-soc",
+            "Ascend950",
+            "--functional-mode",
+            "reuse_performance",
+            "--cann-env-command",
+            "inherit",
+            "--target-comparison",
+            "le",
+        ),
+    )
+    assert result.returncode == 2
+    assert "target fields are valid only" in result.stdout
 
 
 def test_unconfirmed_request_is_rejected(tmp_path: Path) -> None:

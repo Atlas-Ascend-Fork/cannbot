@@ -38,9 +38,10 @@ from summarize_performance_effects import requires_routing, summary_dependency_p
 from performance_effect_evidence import policy
 from validate_execution_identity import dependency_paths, validate_execution_identity
 import search_policy
+import case_ledger
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 WORKFLOW_VERSION = "unified-workflow-v12-execution-identity"
 PHASES = ("baseline", "analysis", "implementation", "integration")
 TUNING_MODES = ("standard", "generalization")
@@ -290,26 +291,303 @@ def _effective_counts(summary: dict[str, Any]) -> str:
     return "/".join(str(summary[field]) for field in fields)
 
 
-def _completed_checkpoints(state: dict[str, Any]) -> list[tuple[str, dict]]:
-    checkpoints = [
+def _completed_in_order(state: dict[str, Any]) -> list[tuple[str, dict]]:
+    records = [
         (name, record)
         for name, record in state.get("stages", {}).items()
-        if performance_checkpoint(name) or record.get("performance")
+        if record.get("completed_at")
     ]
     completion_order = {
         event.get("stage"): index
         for index, event in enumerate(state.get("events", []))
         if event.get("kind") == "stage" and event.get("status") == "complete"
     }
-    checkpoints.sort(
+    records.sort(
         key=lambda item: (
             item[1].get("completed_at", item[1].get("updated_at", "")),
             completion_order.get(item[0], -1),
         )
     )
+    return records
+
+
+def _completed_checkpoints(state: dict[str, Any]) -> list[tuple[str, dict]]:
     return [
-        (name, record) for name, record in checkpoints if record.get("completed_at")
+        (name, record)
+        for name, record in _completed_in_order(state)
+        if performance_checkpoint(name) or record.get("performance")
     ]
+
+
+def _expected_target_keys(
+    manifest: dict[str, Any], target_socs: list[str]
+) -> set[tuple[str, str]] | None:
+    collection = manifest.get("collections", {}).get(
+        "performance_full"
+    ) or manifest.get("collections", {}).get("generalization_full")
+    if not collection:
+        return None
+    from prepare_case_sets import case_ids_from_collection
+
+    return {
+        (case_id, soc)
+        for case_id in case_ids_from_collection(collection)
+        for soc in target_socs
+    }
+
+
+def _ledger_inputs(state: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+    inputs: dict[str, Any] = {
+        "single_soc": len(manifest["configuration"].get("target_socs", [])) == 1,
+        "checkpoints": [],
+    }
+    baseline = state.get("stages", {}).get("phase.baseline", {})
+    artifacts = (
+        [
+            item
+            for item in baseline.get("artifacts", [])
+            if Path(item["path"]).name == "performance-targets.json"
+        ]
+        if baseline.get("status") == "complete"
+        else []
+    )
+    if len(artifacts) != 1:
+        inputs["targets_error"] = (
+            "exactly one performance-targets.json must be registered by the "
+            "completed phase.baseline stage"
+        )
+        return inputs
+    artifact = artifacts[0]
+    try:
+        if artifact_identity(artifact["path"])["sha256"] != artifact["sha256"]:
+            raise ValueError(
+                "registered performance-targets.json changed; verify before relying on the ledger"
+            )
+        payload = read_json(Path(artifact["path"]))
+        if not isinstance(payload, dict):
+            raise ValueError("performance-targets.json must be an object")
+        declared_socs = payload.get("target_socs")
+        target_socs = manifest["configuration"].get("target_socs", [])
+        if declared_socs is not None and declared_socs != target_socs:
+            raise ValueError("performance target SoCs differ from the frozen manifest")
+        expected_keys = _expected_target_keys(manifest, target_socs)
+        if expected_keys is not None:
+            inputs["expected_target_keys"] = expected_keys
+        case_ledger.targets_map(payload, expected_keys)
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        inputs["targets_error"] = str(error)
+        return inputs
+    inputs["targets"] = payload
+    inputs["targets_identity"] = artifact
+    return inputs
+
+
+def _ledger_checkpoints(state: dict[str, Any]) -> tuple[list[dict], dict[str, str]]:
+    result: list[dict] = []
+    errors: dict[str, str] = {}
+    for name, record in _completed_checkpoints(state):
+        if record.get("status") != "complete" or not record.get("performance"):
+            continue
+        try:
+            _, cumulative = recorded_performance(record)
+        except (OSError, KeyError, ValueError) as error:
+            errors[name] = str(error)
+            continue
+        result.append(
+            {
+                "name": name,
+                "soc": case_ledger.soc_from_stage(name),
+                "selected_candidate": record["performance"]["selected_candidate"],
+                "cumulative": {
+                    case["case_id"]: case["candidate_total_us"]
+                    for case in cumulative["cases"]
+                },
+            }
+        )
+    return result, errors
+
+
+def _stale_verdict_reference(reference: dict[str, Any]) -> bool:
+    try:
+        return artifact_identity(reference["path"])["sha256"] != reference["sha256"]
+    except (OSError, KeyError, TypeError, ValueError):
+        return True
+
+
+def _stale_converged_verdicts(state: dict[str, Any]) -> list[str]:
+    """Converged claims whose verdict/evidence files changed after registration."""
+    stale: list[str] = []
+    for case_id, entry in (
+        (state.get("case_convergence") or {}).get("cases", {}).items()
+    ):
+        verdict = entry.get("verdict") or {}
+        if entry.get("status") != "converged" or not verdict.get("path"):
+            continue
+        references = [verdict] + list(verdict.get("evidence") or [])
+        for reference in references:
+            if _stale_verdict_reference(reference):
+                stale.append(case_id)
+                break
+    return stale
+
+
+def _recompute_case_ledger(
+    state: dict[str, Any], manifest: dict[str, Any]
+) -> dict[str, Any]:
+    inputs = _ledger_inputs(state, manifest)
+    checkpoints, errors = _ledger_checkpoints(state)
+    inputs["checkpoints"] = checkpoints
+    inputs["invalid_verdicts"] = _stale_converged_verdicts(state)
+    ledger = case_ledger.recompute(state.get("case_convergence"), inputs, utc_now())
+    if errors:
+        ledger["evidence_errors"] = errors
+    state["case_convergence"] = ledger
+    return ledger
+
+
+def command_case_ledger(args: argparse.Namespace) -> int:
+    state_path = args.state.resolve()
+    with state_lock(state_path):
+        state = read_json(state_path)
+        manifest = read_manifest(Path(state["manifest"]["path"]))
+        ledger = _recompute_case_ledger(state, manifest)
+        commit(state_path, state)
+    emit(
+        json.dumps(
+            {"status": "recomputed", **case_ledger.inspect_view(ledger)},
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _verdict_issues(
+    payload: dict[str, Any], ledger: dict[str, Any], case_id: str
+) -> list[str]:
+    """Pure schema checks plus on-disk evidence SHA verification."""
+    issues = case_ledger.verdict_issues(
+        payload, case_id, ledger.get("reference_candidate")
+    )
+    if ledger.get("evidence_errors"):
+        issues.append(
+            "performance evidence is invalid: "
+            + json.dumps(ledger["evidence_errors"], ensure_ascii=False)
+        )
+    for item in payload.get("evidence") or []:
+        if not isinstance(item, dict):
+            continue  # shape problems are already reported by verdict_issues
+        try:
+            identity = artifact_identity(item["path"])
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            issues.append(f"verdict evidence unreadable: {error}")
+            continue
+        if identity["sha256"] != item["sha256"]:
+            issues.append(f"verdict evidence SHA mismatch: {item['path']}")
+    return issues
+
+
+def _record_waived_case(entry: dict[str, Any], args: argparse.Namespace) -> str:
+    if not args.reason:
+        raise ValueError("--status waived requires --reason")
+    entry["status"] = "waived"
+    entry["waiver"] = {"reason": args.reason, "at": utc_now()}
+    entry.pop("verdict", None)
+    return args.reason
+
+
+def _record_converged_case(
+    entry: dict[str, Any], args: argparse.Namespace, ledger: dict[str, Any]
+) -> str:
+    if not args.verdict:
+        raise ValueError("--status converged requires --verdict")
+    try:
+        payload = read_json(Path(args.verdict))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"unreadable verdict: {error}") from error
+    issues = _verdict_issues(payload, ledger, args.case_id)
+    if issues:
+        raise ValueError("case-verdict rejected: " + "; ".join(issues))
+    entry["status"] = "converged"
+    entry["verdict"] = {
+        "path": str(Path(args.verdict).resolve()),
+        "sha256": artifact_identity(args.verdict)["sha256"],
+        "verdict": payload["verdict"],
+        "reference_identity": payload["reference_identity"],
+        "evidence": payload["evidence"],
+    }
+    return f"{payload['verdict']} @ {payload['reference_identity']}"
+
+
+def command_case_converge(args: argparse.Namespace) -> int:
+    state_path = args.state.resolve()
+    with state_lock(state_path):
+        state = read_json(state_path)
+        manifest = read_manifest(Path(state["manifest"]["path"]))
+        ledger = _recompute_case_ledger(state, manifest)
+        entry = ledger["cases"].get(args.case_id)
+        if entry is None:
+            raise ValueError(
+                f"unknown case {args.case_id!r}: not part of the frozen target set"
+            )
+        if entry["status"] == "optimized":
+            raise ValueError(
+                f"case {args.case_id} already meets its frozen target; "
+                "no convergence claim is needed"
+            )
+        if args.status == "waived":
+            message = _record_waived_case(entry, args)
+        else:
+            message = _record_converged_case(entry, args, ledger)
+        entry.pop("stale_verdict", None)
+        entry["updated_at"] = utc_now()
+        append_event(
+            state,
+            "case_converged",
+            case_id=args.case_id,
+            status=args.status,
+            message=message,
+        )
+        commit(state_path, state)
+    emit(
+        json.dumps(
+            {"status": "recorded", "case_id": args.case_id, "case_status": args.status},
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def command_remaining_work(args: argparse.Namespace) -> int:
+    """Read-only focused follow-up proposal (the "fresh window" made official)."""
+    state_path = args.state.resolve()
+    with state_lock(state_path):
+        state = read_json(state_path)
+        manifest = read_manifest(Path(state["manifest"]["path"]))
+        if artifact_identity(Path(state["manifest"]["path"])) != state["manifest"]:
+            raise ValueError("run manifest changed; cannot generate remaining-work")
+        if "search_policy" in state:
+            search_errors = search_policy.verify(state)
+            if search_errors:
+                raise ValueError(
+                    "cannot generate remaining-work with invalid search evidence: "
+                    + json.dumps(search_errors, ensure_ascii=False)
+                )
+        state_identity = artifact_identity(state_path)
+        ledger = _recompute_case_ledger(state, manifest)
+        envelope = case_ledger.remaining_work_envelope(
+            state,
+            ledger,
+            utc_now(),
+            state_identity=state_identity,
+            manifest=manifest,
+        )
+        if args.out:
+            atomic_json(args.out.resolve(), envelope)
+    payload = dict(envelope)
+    if args.out:
+        payload["out"] = str(args.out.resolve())
+    emit(json.dumps(payload, ensure_ascii=False))
+    return 0
 
 
 def _recorded_value(record: dict) -> tuple[object, str | None]:
@@ -561,6 +839,11 @@ def _objective_text(objective: dict) -> str:
             f"{objective.get('metric', '-')} {comparison} {objective.get('value', '-')} "
             f"{objective.get('unit') or ''}"
         ).strip()
+        scope = {"per_case": "逐 case 口径", "aggregate": "聚合口径"}.get(
+            objective.get("scope")
+        )
+        if scope:
+            text += f"（{scope}）"
         if objective.get("max_rounds") is not None:
             text += f"（最多 {objective['max_rounds']} 轮）"
         return text
@@ -771,6 +1054,28 @@ def _operator_lines(operator: dict) -> list[str]:
     return lines
 
 
+def _terminal_ledger_lines(ledger: dict[str, Any]) -> list[str]:
+    if not ledger:
+        return []
+    lines = [
+        f"- 逐 case 账本：达标 {ledger.get('optimized', 0)} · 收敛(逐case证据) "
+        f"{ledger.get('converged', 0)} · 豁免 {ledger.get('waived', 0)} · "
+        f"未达标 {ledger.get('headroom_open', 0)} · 未测 {ledger.get('pending', 0)}"
+        f"（未了结 {ledger.get('unresolved_count', 0)}）"
+    ]
+    if ledger.get("targets_error"):
+        lines.append(f"- 账本目标不可用：{report_cell(ledger['targets_error'])}")
+    unresolved = ledger.get("unresolved") or []
+    if unresolved:
+        listing = ", ".join(
+            f"{item['case_id']}[{item['status']}]" for item in unresolved[:20]
+        )
+        if len(unresolved) > 20:
+            listing += f", ... (+{len(unresolved) - 20} more)"
+        lines.append(f"- 未了结 case：{listing}")
+    return lines
+
+
 def _terminal_lines(terminal: dict) -> list[str]:
     lines = ["", "## 最终验收", ""]
     if terminal:
@@ -782,11 +1087,39 @@ def _terminal_lines(terminal: dict) -> list[str]:
                 f"- 完成时间：{terminal.get('at', '-')} ",
             ]
         )
+        lines.extend(_terminal_ledger_lines(terminal.get("case_convergence") or {}))
     else:
         lines.append(
             "- 尚未进入终态；已完成证据见阶段表，候选与逐轮选择见对应 artifact。"
         )
     return lines + [""]
+
+
+def _search_report_lines(state: dict[str, Any]) -> list[str]:
+    search = search_policy.view(state)
+    if search is None:
+        return []
+    lines = [
+        "",
+        "## 搜索决策",
+        "",
+        f"- 下一动作：`{search['next_action']}`",
+        f"- 连续未刷新最优的有效评估：{search.get('stagnation', '-')} / {search_policy.PATIENCE}",
+    ]
+    if search.get("anchor"):
+        anchor = search["anchor"]
+        if search_policy.is_git_identity(anchor):
+            lines.append(f"- 当前参考：`{anchor['commit'][:12]}` (git tree `{anchor['tree'][:12]}`)")
+        else:
+            lines.append(f"- 当前参考：`{report_cell(anchor['path'])}`")
+    for item in search.get("observations", []):
+        lines.append(
+            f"- `{report_cell(item['decision_id'])}`：{item['classification']}；"
+            f"机制 {item['mechanism']['status']}；重试条件：{report_cell(item['retry_condition'])}"
+        )
+    for error in search.get("errors", []):
+        lines.append(f"- 证据待修复：{report_cell(error['reason'])}")
+    return lines
 
 
 def report_text(state: dict[str, Any]) -> str:
@@ -808,30 +1141,8 @@ def report_text(state: dict[str, Any]) -> str:
     lines.extend(_mode_lines(configuration, state))
     lines.extend(performance_report(state))
     lines.extend(structural_directions_report(state))
-    search = search_policy.view(state)
-    if search is not None:
-        lines.extend(
-            [
-                "",
-                "## 搜索决策",
-                "",
-                f"- 下一动作：`{search['next_action']}`",
-                f"- 连续未刷新最优的有效评估：{search.get('stagnation', '-')} / {search_policy.PATIENCE}",
-            ]
-        )
-        if search.get("anchor"):
-            anchor = search["anchor"]
-            if search_policy.is_git_identity(anchor):
-                lines.append(f"- 当前参考：`{anchor['commit'][:12]}` (git tree `{anchor['tree'][:12]}`)")
-            else:
-                lines.append(f"- 当前参考：`{report_cell(anchor['path'])}`")
-        for item in search.get("observations", []):
-            lines.append(
-                f"- `{report_cell(item['decision_id'])}`：{item['classification']}；"
-                f"机制 {item['mechanism']['status']}；重试条件：{report_cell(item['retry_condition'])}"
-            )
-        for error in search.get("errors", []):
-            lines.append(f"- 证据待修复：{report_cell(error['reason'])}")
+    lines.extend(case_ledger.report_lines(state.get("case_convergence")))
+    lines.extend(_search_report_lines(state))
     lines.extend(_inventory_lines(manifest, request, configuration))
     lines.extend(_stage_lines(stages))
     lines.extend(_precision_lines(precision))
@@ -1684,6 +1995,21 @@ def _complete_search_checkpoint(args, state, record, manifest):
             registered.add(artifact["path"])
 
 
+def _should_recompute_case_ledger(
+    args: argparse.Namespace, record: dict, previous: dict
+) -> bool:
+    performance_affected = (
+        performance_checkpoint(args.stage)
+        or record.get("performance")
+        or previous.get("performance")
+    )
+    return bool(performance_affected) and args.status in (
+        "complete",
+        "invalid",
+        "skipped",
+    )
+
+
 def command_mark(args: argparse.Namespace) -> int:
     has_performance = validate_mark_args(args)
     state_path = args.state.resolve()
@@ -1703,6 +2029,8 @@ def command_mark(args: argparse.Namespace) -> int:
             record["context"] = args.context
         state["stages"][args.stage] = record
         _complete_search_checkpoint(args, state, record, manifest)
+        if _should_recompute_case_ledger(args, record, previous):
+            _recompute_case_ledger(state, manifest)
         append_event(
             state,
             "stage",
@@ -2100,14 +2428,16 @@ def command_verify(args: argparse.Namespace) -> int:
     invalid: list[dict[str, str]] = []
     with state_lock(state_path):
         state = read_json(state_path)
-        validate_frozen_effect_policy(
-            state, read_manifest(Path(state["manifest"]["path"]))
-        )
+        manifest = read_manifest(Path(state["manifest"]["path"]))
+        validate_frozen_effect_policy(state, manifest)
         current_manifest = artifact_identity(state["manifest"]["path"])
         if current_manifest["sha256"] != state["manifest"]["sha256"]:
             invalid.append({"kind": "manifest", "path": current_manifest["path"]})
         _verify_stage_records(state, invalid)
         invalid.extend(search_policy.verify(state))
+        for case_id in _stale_converged_verdicts(state):
+            invalid.append({"kind": "case_verdict", "case_id": case_id})
+        _recompute_case_ledger(state, manifest)
         if invalid:
             append_event(
                 state,
@@ -2123,6 +2453,18 @@ def command_verify(args: argparse.Namespace) -> int:
         )
     )
     return 2 if invalid else 0
+
+
+def _inspect_collections(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        name: {
+            key: value[key]
+            for key in ("path", "sha256", "count")
+            if key in value
+        }
+        for name, value in manifest["collections"].items()
+        if isinstance(value, dict)
+    }
 
 
 def command_inspect(args: argparse.Namespace) -> int:
@@ -2148,15 +2490,7 @@ def command_inspect(args: argparse.Namespace) -> int:
                 "manifest": manifest_id,
                 "configuration": manifest["configuration"],
                 "inputs": manifest["inputs"],
-                "collections": {
-                    name: {
-                        key: value[key]
-                        for key in ("path", "sha256", "count")
-                        if key in value
-                    }
-                    for name, value in manifest["collections"].items()
-                    if isinstance(value, dict)
-                },
+                "collections": _inspect_collections(manifest),
                 "current_stage": state.get("current_stage"),
                 "stage_statuses": {
                     name: record.get("status") for name, record in stages.items()
@@ -2165,6 +2499,9 @@ def command_inspect(args: argparse.Namespace) -> int:
                 "recent_events": events[-recent:] if recent else [],
                 "operator": state.get("operator"),
                 "search": search_policy.view(state),
+                "case_convergence": case_ledger.inspect_view(
+                    state.get("case_convergence")
+                ),
                 "safe_restore_point": state.get("safe_restore_point"),
                 "verification": (
                     "manifest_sha_only; use verify for saved artifacts "
@@ -2226,10 +2563,10 @@ def _check_phase_completion(state: dict, args: argparse.Namespace) -> None:
             not search_policy.verify(state),
             "search evidence changed; verify before finishing",
         )
-    if manifest["configuration"].get("workflow_layout") != "four-stage-v1":
-        return
     if artifact_identity(manifest_path) != state["manifest"]:
         raise ValueError("run manifest changed; verify before finishing")
+    if manifest["configuration"].get("workflow_layout") != "four-stage-v1":
+        return
     for stage, saved in state.get("stages", {}).items():
         kind = schedule_stage_kind(
             stage,
@@ -2262,6 +2599,55 @@ def _check_phase_completion(state: dict, args: argparse.Namespace) -> None:
             )
 
 
+def _finish_case_ledger(
+    state: dict[str, Any], args: argparse.Namespace
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Recompute the ledger (and objective scope) for a finish.
+
+    Verified finishes (convergence claims and success under a per_case
+    objective) never swallow verification errors; other reasons stay
+    recordable on broken evidence like before.
+    """
+    try:
+        manifest = read_manifest(Path(state["manifest"]["path"]))
+        ledger = _recompute_case_ledger(state, manifest)
+        objective = manifest["configuration"].get("optimization_objective") or {}
+        scope = (
+            objective.get("scope")
+            if objective.get("mode") == "target"
+            and objective.get("scope") in ("per_case", "aggregate")
+            else None
+        )
+        return ledger, scope
+    except (OSError, KeyError, ValueError) as error:
+        if args.reason_code in case_ledger.CONVERGENCE_REASON_CODES or (
+            args.status == "success" and args.reason_code == "completed"
+        ):
+            raise ValueError(
+                "cannot verify the per-case ledger/objective for this finish: "
+                f"{error}. Fix the state/evidence or use an honest reason code."
+            ) from error
+        return None, None
+
+
+def _record_terminal(
+    state: dict[str, Any], args: argparse.Namespace, ledger: dict[str, Any] | None
+) -> None:
+    state["terminal"] = {
+        "status": args.status,
+        "reason_code": args.reason_code,
+        "message": args.message,
+        "at": utc_now(),
+    }
+    # Machine-generated honesty block: an unresolved case ledger is attached to
+    # every terminal record, so "优化不动" cannot silently absorb "预算耗尽".
+    summary = case_ledger.terminal_summary(ledger) if ledger else None
+    if summary and (summary["unresolved_count"] or summary.get("targets_error")):
+        state["terminal"]["case_convergence"] = summary
+    if args.status == "awaiting_operator":
+        state.setdefault("operator", {})["awaiting"] = True
+
+
 def command_finish(args: argparse.Namespace) -> int:
     if args.status in ("failed", "blocked") and args.reason_code in (
         "known_baseline_failure",
@@ -2279,16 +2665,20 @@ def command_finish(args: argparse.Namespace) -> int:
             "ceiling_bound",
         ):
             search_policy.require_search_no_go(state)
+        ledger, objective_scope = _finish_case_ledger(state, args)
+        if args.reason_code in case_ledger.CONVERGENCE_REASON_CODES:
+            case_ledger.gate_convergence_finish(ledger)
+        if (
+            args.status == "success"
+            and args.reason_code == "completed"
+            and objective_scope == "per_case"
+        ):
+            # Issue #205: an aggregate metric passing (e.g. geomean >= 1.48)
+            # must not be reported ACHIEVED while per-case bottom lines fail.
+            case_ledger.gate_per_case_objective(ledger)
         _check_structural_directions(state, args)
         _check_phase_completion(state, args)
-        state["terminal"] = {
-            "status": args.status,
-            "reason_code": args.reason_code,
-            "message": args.message,
-            "at": utc_now(),
-        }
-        if args.status == "awaiting_operator":
-            state.setdefault("operator", {})["awaiting"] = True
+        _record_terminal(state, args, ledger)
         append_event(state, "finish", message=args.message, status=args.status)
         commit(state_path, state)
     emit(
@@ -2306,12 +2696,15 @@ def command_finish(args: argparse.Namespace) -> int:
 def parser() -> argparse.ArgumentParser:
     return build_parser(
         {
+            "case_converge": command_case_converge,
+            "case_ledger": command_case_ledger,
             "decision": command_decision,
             "finish": command_finish,
             "inspect": command_inspect,
             "mark": command_mark,
             "migrate": command_migrate,
             "progress": command_progress,
+            "remaining_work": command_remaining_work,
             "render": command_render,
             "search_frontier": command_search_frontier,
             "search_replan": command_search_replan,

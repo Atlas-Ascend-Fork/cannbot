@@ -106,6 +106,12 @@ def build(
         "holdout": observations.get("holdout"),
         "no_go": observations.get("no_go", []),
     }
+    # Older observation producers emit null for an unbucketed item; omit that
+    # legacy sentinel while preserving and validating an actual declaration.
+    if item.get("case_bucket") is not None:
+        result["case_bucket"] = search.checked_case_bucket(
+            item, "observation.case_bucket"
+        )
     if outcome == "measured":
         search.require(gate, "measured outcome needs --conformance-gate")
         search.require(effect, "measured outcome needs --effect-summary")

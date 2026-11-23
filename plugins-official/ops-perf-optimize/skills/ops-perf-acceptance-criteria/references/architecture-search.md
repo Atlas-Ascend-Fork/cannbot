@@ -127,4 +127,6 @@ python3 "$WORKFLOW_SCRIPTS/workflow_state.py" search-replan \
 
 相同上下文和机制已有落选/实现失败/精度失败/采集无效记录时，新的实施契约须补 `search.retry={decision_id,reason,evidence:[ref]}`，指向最近一次相关决策并给出条件变化的新证据。实现缺陷、额外成本、机制证伪与采集无效分别记录；一次失败不永久封禁整类优化。
 
+**失败记忆按 case 桶隔离**：frontier 节点、实施契约 `search` 块和 selection 观察可携带可选 `case_bucket`（shape 档位等稳定分桶键）。带桶观察只在同桶节点上计数（`attempts`/`prior` 等）；无桶观察保持原全集语义，作用于全部节点。对某档位失败的机制不得据此封锁其他档位或未分桶方向的重新尝试——跨桶重试不必推翻原失败记录，但须在 `retry.reason` 写明目标桶与原记录的负载差异。
+
 下一轮通过 `inspect.search.observations` 找到结论，再按历史合同/selection 路径读取原件。机制 verified 的实测记录才可整理为知识仓待入库材料，包含平台、触发症状、最小 probe、已知限制和证据引用；性能变快本身不认证解释。跨算子复用沿已有 cannbot-knowledge 流程，调优阶段保持其只读 consumer 边界。

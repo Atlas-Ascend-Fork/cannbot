@@ -34,3 +34,10 @@ v11 的入口调整不改变 request、manifest 和阶段键：原来因入口�
 - **身份快照 git-tree-v1**：git 仓输入的源码身份改为临时索引树哈希（O(改动集)，尊重 .gitignore）；旧 `source-tree-v1` 身份按其原方法复验，不重写。
 
 仅旧 state writer 漏存 request/manifest 已冻结的 schedule_policy 且尚未开始 analysis 等受约束活动时，可显式 `migrate-workflow --adopt-schedule-policy`；必须非空审计、原 manifest SHA 不变和冻结 request 匹配。具体命令、前置条件与拒绝范围见 [调度策略补登记](../../ops-perf-acceptance-criteria/references/async-schedule-contract.md#显式补登记已冻结策略)。普通新任务无需此迁移，历史本无策略或已进入后续阶段不能借此升级或补验。
+
+升级到逐 case 收敛账本版（schema 4）时，`case_convergence` 为附加字段，不改 `WORKFLOW_VERSION`、不失效任何保存点：
+
+- 账本由脚本在每个性能保存点完成时自动重算，旧 state 缺字段时在 `case-ledger`/`finish` 惰性重建；推不出结论的 case 一律记 `pending`/`headroom_open`，宁可不收敛，不可误收敛。
+- 收紧的门禁只作用于新写入的终态：收敛类 reason code 与 `scope=per_case` 的 `completed` 要求账本完全了结（`optimized`/`converged`/`waived`）；旧 run 的既有终态不回溯重判，重开后改用 `budget_exhausted` 驻留，或以 `case-converge`/`remaining-work` 推进未了结 case。
+- **验收口径（issue #205 纠偏）**：新 request 的 `target` 目标携带 `scope: per_case | aggregate`，create-request 默认 `per_case`；旧 request 无 scope 按 `aggregate` 解释以保持兼容。
+- 逐 case verdict 与搜索失败记忆（`case_bucket`）为可选字段，旧 frontier/selection 不带时按原全集语义解释；`freeze` 对 `fixed_rounds` 轮数与调优集规模失配仅输出 `advisories`，不阻塞。
