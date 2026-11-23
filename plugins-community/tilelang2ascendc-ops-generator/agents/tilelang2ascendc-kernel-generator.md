@@ -126,6 +126,7 @@ Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md 
     │   ReLU, Sigmoid, SiLU, GELU, SwiGLU, Add, Sub, Mul, Div 等
     ├─ Attention: FlashAttention, SparseAttention, GQA...
     ├─ MatMul 变体: matmul+leakyrelu, quant_matmul 等
+    ├─ Convolution: 普通卷积、分组卷积
     ├─ Norm 变体: RMSNorm, LayerNorm (多 strategy)
     ├─ Sort: Sort, TopK
     ├─ Pooling: AvgPool, MaxPool 等

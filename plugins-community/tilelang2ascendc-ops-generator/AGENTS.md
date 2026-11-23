@@ -95,6 +95,7 @@ Ascend C Kernel 算子自动生成工具 CANNBot，通过双路径（ops-direct-
     │   ReLU, Sigmoid, SiLU, GELU, SwiGLU, Add, Sub, Mul, Div 等
     ├─ Attention: FlashAttention, SparseAttention, GQA...
     ├─ MatMul 变体: matmul+leakyrelu, quant_matmul 等
+    ├─ Convolution: 普通卷积、分组卷积
     ├─ Norm 变体: RMSNorm, LayerNorm (多 strategy)
     ├─ Sort: Sort, TopK
     ├─ Pooling: AvgPool, MaxPool 等

@@ -29,7 +29,7 @@ Phase 7: Trace 记录 + 知识演进  (tilelang2ascend-trace-recorder: trace.md 
 | 路径 | 算子类型 | Skill 链 |
 |------|---------|---------|
 | 简单算子 | Index, IndexPut, Gather, Scatter, Nonzero, RepeatInterleave, EmbeddingDenseBackward | ops-direct-invoke（Architect → Developer → Reviewer） |
-| 复杂算子 | Attention, MatMul 变体, Norm 变体, Sort, TopK, 多输入融合 | tilelang2ascend-tilelang-designer → tilelang2ascend-translator |
+| 复杂算子 | Attention, MatMul 变体, Convolution, Norm 变体, Sort, TopK, 多输入融合 | tilelang2ascend-tilelang-designer → tilelang2ascend-translator |
 
 ## 一、环境搭建
 
