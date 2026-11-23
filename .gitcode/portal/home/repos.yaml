@@ -1,0 +1,82 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# 首页开源生态（#repo-catalog）与加入社区（#repos）。读取方：RepoDeck.vue、HomeSectionHead.vue、
+# scripts/fetch-stars.mjs、scripts/check-star-api.mjs。
+#
+# stars 是第三级兜底：优先浏览器实时取数（VITE_ATOMGIT_TOKEN），其次构建期快照
+# （pnpm stars → .content/home/stars.yaml），最后用这里的静态值，只保证取不到时不空白。
+
+catalogHead:
+  title: 开源生态
+  lede: 工作流、技能、知识库，CANNBot的各项能力完全开源。
+
+head:
+  title: 加入CANNBot社区
+  lede:
+    - 从一条issue、一个pull request开始。提出意见、给出方案、贡献代码，加入我们，一起见证CANNBot的未来。
+
+actions:
+  - text: 查看源码仓
+    href: https://gitcode.com/cann/cannbot
+    icon: gitcode
+  - text: 开发者文档
+    icon: book
+    symbol: /portal/img/community.svg#book
+    href: /docs/workflows/index.html
+  - text: 短视频教程
+    icon: video
+    symbol: /portal/img/community.svg#video
+    href: https://space.bilibili.com/1190614918/lists/7860188?type=season
+
+repos:
+  - name: cannbot
+    role: 应用仓
+    slug: cann/cannbot
+    desc: 将场景插件编排成工作流，供开发者安装到 Agent 客户端，完成算子开发、模型迁移和推理优化。
+    stars: '1068'
+    link: https://gitcode.com/cann/cannbot
+
+  - name: cannbot-skills
+    role: 技能仓
+    slug: cann/cannbot-skills
+    desc: 提供可复用的 CANN 开发技能，供不同插件和工作流按需组合。
+    stars: '2648'
+    link: https://gitcode.com/cann/cannbot-skills
+
+  - name: cannbot-knowledge
+    role: 知识仓
+    slug: cann/cannbot-knowledge
+    desc: 将 CANN 知识整理成可检索、可追溯来源的知识卡，供不同 Agent 框架查询。
+    stars: '385'
+    link: https://gitcode.com/cann/cannbot-knowledge
+
+  - name: cannbot-dsl
+    role: 算子编程仓
+    slug: cann/cannbot-dsl
+    desc: 提供适合 Agent 编写算子的 DSL 和昇腾 NPU 复杂算子示例。
+    stars: '445'
+    link: https://gitcode.com/cann/cannbot-dsl
+
+  - name: cann-bench
+    role: 评测仓
+    slug: cann/cann-bench
+    desc: 用统一的算子生成与优化任务，评测模型和 Agent 处理 CANN 代码的能力。
+    stars: '479'
+    link: https://gitcode.com/cann/cann-bench
+
+  - name: cannbot-sentry
+    role: 观测与审计仓
+    slug: cann/cannbot-sentry
+    desc: 观测、审计和评测 Agent 工作流的执行过程，帮助开发者定位质量问题。
+    stars: '307'
+    link: https://gitcode.com/cann/cannbot-sentry
+
+starLabel: Star

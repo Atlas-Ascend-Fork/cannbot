@@ -1,0 +1,64 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# 页面外壳：页脚 + 可选 nav 覆盖（项为 { text, href, inNav?, inFooter?, external? }）。
+# 当前导航来自 .content/home/nav.yaml（首页锚点）与自动发现章节，本文件不配 nav。
+# 放这里而不是 site.yaml：这是站点内容（版权、联系方式、分栏），业务团队会改。
+# 站内地址一律带 .html；改完要重启 dev（config.ts 启动时求值一次）。
+
+footer:
+  # 页脚左下；留空则不渲染
+  copyright: © CANN 社区  CANNBot 门户
+  # 页脚右下说明；留空则不渲染
+  note: ''
+  # 分栏顺序即渲染顺序（品牌栏由 preset 固定在最左）。external 省略时按 href 是否 http 开头判断。
+  # 不配 columns 时回退到旧分组（站内 / 社区 / 联系），见 portal-cinnabar/Layout.vue。
+  columns:
+    - title: 文档
+      links:
+        - text: 工作流安装与使用
+          href: /docs/workflows/index.html
+        - text: 社区插件
+          href: /docs/community-plugins.html
+        - text: 提交前检查
+          href: /docs/pre-commit_guide.html
+    - title: 相关
+      links:
+        - text: 门户首页
+          href: /index.html
+        - text: 工作流
+          href: /index.html#workflows
+        - text: 项目
+          href: /index.html#repos
+    - title: 源码与反馈
+      links:
+        - text: AtomGit 插件仓库
+          href: https://atomgit.com/cann/cannbot
+        - text: 反馈与建议
+          href: https://atomgit.com/cann/cannbot/issues
+  # 联系方式：数组，留空则不渲染。页脚按它分栏。上线前换成有效地址。
+  contact:
+    - text: 反馈与建议
+      href: https://atomgit.com/cann/cannbot/issues
+    - text: 参与贡献
+      href: /docs/pre-commit_guide.html
+
+brand:
+  name: CANNBot
+  logo: /portal/img/cannbot-dsh-mark.svg
+  repositoryIcon: /portal/img/gitcode.svg
+legal:
+  - text: 隐私政策
+    href: /legal/privacy.html
+  - text: 用户协议
+    href: /legal/terms.html
+accountLabels:
+  zh: { login: 登录, logout: 退出登录, profile: 个人主页, account: 账户 }
+  en: { login: Sign in, logout: Sign out, profile: Profile, account: Account }

@@ -1,0 +1,17 @@
+# add 算子真机验证原始日志
+# 命令: cannbot-npu-check add
+# 时间: 2026-11-16T15:29+08:00
+# 退出码: 0
+
+operation=add device=Ascend950PR
+        AscendC::Add(zLocal, xLocal, yLocal, count);
+        AscendC::Reg::Add(dstReg, srcReg0, srcReg1, mask);
+[ 50%] Building ASC object CMakeFiles/add_custom.dir/op_host/add_custom.asc.o
+[100%] Linking ASC executable add_custom
+[100%] Built target add_custom
+Generated test data: 32768 elements, dtype=<class 'numpy.float32'>
+  input/input_x.bin: (32768,), float32
+  input/input_y.bin: (32768,), float32
+  output/golden.bin: (32768,), float32
+Verification PASSED! Shape: (32768,)
+Max diff: 0.0

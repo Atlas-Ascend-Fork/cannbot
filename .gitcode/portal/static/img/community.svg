@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+<!--
+Copyright (c) 2026 Huawei Technologies Co., Ltd.
+This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+CANN Open Software License Agreement Version 2.0 (the "License").
+Please refer to the License for details. You may not use this file except in compliance with the License.
+THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+See LICENSE in the root of the software repository for the full text of the License.
+-->
+  <symbol id="book" viewBox="0 0 24 24"><path d="M12 6.5C9.5 4.8 6.5 4.4 3 5.2v13c3.5-.8 6.5-.4 9 1.3 2.5-1.7 5.5-2.1 9-1.3v-13c-3.5-.8-6.5-.4-9 1.3Zm0 0v13" /></symbol>
+  <symbol id="video" viewBox="0 0 24 24"><rect x="3" y="6.5" width="18" height="14" rx="3" />
+        <path d="m8 3 3 3.5m5-3.5-3 3.5m-3 4 5 3-5 3z" /></symbol>
+</svg>

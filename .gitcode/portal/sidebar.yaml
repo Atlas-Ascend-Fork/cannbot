@@ -1,0 +1,44 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# 由 .gitcode/scripts/sync-portal-docs.mjs 根据工作流归档生成。
+'/docs/':
+  - text: "入门"
+    items:
+      - text: "工作流安装与使用"
+        link: /docs/workflows/index.html
+  - text: "算子领域"
+    items:
+      - text: "<<<>>>直调算子开发"
+        link: /docs/workflows/ops-direct-invoke.html
+      - text: "快速Ascend C 算子开发"
+        link: /docs/workflows/ops-direct-invoke-flash.html
+      - text: "aclnn注册算子开发"
+        link: /docs/workflows/ops-registry-invoke.html
+      - text: "HCCL 通信算子开发"
+        link: /docs/workflows/hccl-op-generator.html
+      - text: "Triton 算子开发与优化"
+        link: /docs/workflows/triton-op-generator.html
+      - text: "CATLASS 矩阵与注意力算子开发"
+        link: /docs/workflows/catlass-op-generator.html
+      - text: "Ascend C 算子性能调优"
+        link: /docs/workflows/ops-perf-optimize.html
+      - text: "TileLang 算子开发与调优"
+        link: /docs/workflows/tilelang-op-orchestrator.html
+      - text: "PyPTO 算子开发与调优"
+        link: /docs/workflows/pypto-op-orchestrator.html
+      - text: "算子系统测试"
+        link: /docs/workflows/ascendc-st-design.html
+  - text: "模型领域"
+    items:
+      - text: "PyTorch 图编译与优化"
+        link: /docs/workflows/torch-compile.html
+      - text: "模型迁移与推理优化"
+        link: /docs/workflows/model-infer-optimize.html

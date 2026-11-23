@@ -1,0 +1,65 @@
+# -----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+
+# 本地部署由 install 配置。head、actions、note 供旧版下载入口使用。
+
+head:
+  num: '01'
+  kicker: PREVIEW
+  title: 开箱即用，现在就能跑
+  lede:
+    - 一条命令装进你常用的 Agent 客户端，算子生成、算子测试与模型迁移立刻可用。
+
+actions:
+  - text: 查看安装说明
+    theme: brand
+    href: /docs/workflows/index.html
+  - text: 查看源码仓
+    theme: alt
+    href: https://atomgit.com/cann/cannbot
+
+# 按钮下方的补充说明；留空则不渲染
+note: 支持 OpenCode、DSH、Codex、Claude Code、TRAE 五种客户端，安装命令在首屏面板里按工作流切换。
+
+install:
+  title: 本地部署
+  lede: 整包安装、插件安装、单一工作流安装，选择你喜欢的方式，把CANNBot部署在工作环境上。
+  methodsLabel: 安装方式
+  packageTitle: 整包下载
+  packageDescription: 一键下载安装CANNBot插件和宿主harness
+  osLabel: 选择操作系统
+  platformIcons: /portal/img/download-platforms.svg
+  # packages 按显示顺序排列，下载地址见同目录 installer-links.yaml。
+  platforms:
+    - icon: windows
+      label: Windows 版
+      packages:
+        - { arch: x64 }
+        - { arch: ARM64 }
+    - icon: mac
+      label: Mac 版
+      packages:
+        - { arch: ARM64, label: Apple 芯片 }
+        - { arch: x64, label: Intel 芯片 }
+    - icon: linux
+      label: Linux 版
+      packages:
+        - { arch: x86_64 }
+        - { arch: aarch64 }
+  cliTitle: 独立安装工作流
+  cliDescription: 运行命令，一键安装指定工作流到趁手的harness框架
+  console:
+    category: 领域
+    workflow: 工作流
+    harness: Harness 框架
+    title: 安装插件
+    copy: 复制
+    copied: 已复制
+    announced: 命令已复制到剪贴板
