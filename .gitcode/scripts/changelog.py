@@ -25,7 +25,7 @@ from typing import List, Optional, Tuple
 FRAGMENT_DIR = "docs/changelog.d"
 CHANGELOG = "CHANGELOG.md"
 GENERATED_HEADER = (
-    "<!-- GENERATED FILE: 由 script/scripts/changelog.py 从 docs/changelog.d 聚合；请勿直接修改。 -->"
+    "<!-- GENERATED FILE: 由 .gitcode/scripts/changelog.py 从 docs/changelog.d 聚合；请勿直接修改。 -->"
 )
 NAME_PATTERN = re.compile(r"(?P<pr>[1-9]\d*)\.(?P<kind>added|fixed|docs|chore)\.md")
 VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+")

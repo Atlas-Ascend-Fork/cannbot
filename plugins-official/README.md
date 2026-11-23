@@ -27,4 +27,4 @@ Each plugin's `init.sh` creates project Skill symlinks to the submodule. `npm --
 
 Each `init.sh` is a thin source adapter for the shared Node installer. Optional dependency repositories are declared in `plugin-install.json`.
 
-An official plugin's directory name is its plugin id: the directory name and the manifest `name` must agree, and the bundler rejects a plugin where they do not. Community plugins under `plugins-community/` are indexed by their manifest `name` instead, so their directory name is only a storage location. Each official plugin is assembled with a copy of `plugins/LICENSE`; a community plugin keeps whatever licence it ships with, and the community root has none.
+An official plugin's directory name is its plugin id: the directory name and the manifest `name` must agree, and the bundler rejects a plugin where they do not. Community plugins under `plugins-community/` are indexed by their manifest `name` instead, so their directory name is only a storage location. Each official plugin is assembled with a copy of `plugins-official/LICENSE`; a community plugin keeps whatever licence it ships with, and the community root has none.
