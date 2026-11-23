@@ -20,6 +20,9 @@ import { installWorkflowContext, type Config } from './workflow-context.ts'
 import { registerHostUpdater } from './update-host.ts'
 import { ContentManager } from './content-manager.ts'
 import { registerContentRoutes } from './content-routes.ts'
+import { registerWorkspaceModes } from './workspace-mode-host.ts'
+import { registerRemote } from './remote/register.js'
+import { registerRemoteTree } from './remote-tree.ts'
 import { installNativeWorkflowTools } from './native-workflow-tools.mjs'
 import type { ContentPlugin as Plugin, ContentSkill as BundledSkill, ContentCatalog as Catalog } from './content-types.ts'
 export { Config } from './workflow-context.ts'
@@ -29,13 +32,16 @@ export const inject = ['skills']
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   registerHostUpdater(ctx)
   const content = new ContentManager(fileURLToPath(new URL('../workflow-defaults.json', import.meta.url)))
+  const modes = registerWorkspaceModes(ctx, content)
+  const remote = registerRemote(ctx)
+  registerRemoteTree(ctx, remote)
   const require = createRequire(import.meta.url)
   const catalogFile = require.resolve('@cannbot-plugin/workflow-catalog/package.json')
   const dependencies = createRequire(catalogFile)
   await content.installDependencies(catalogFile, name => dependencies.resolve(`${name}/package.json`))
-  registerContentRoutes(ctx, content)
-  installWorkflowContext(ctx, config, content)
-  installNativeWorkflowTools(ctx, content)
+  registerContentRoutes(ctx, content, modes)
+  installWorkflowContext(ctx, config, content, modes)
+  installNativeWorkflowTools(ctx, content, modes)
   ctx.skills.registerProvider(control => {
     let observed = content.getSource().revision
     const release = content.subscribe(() => {

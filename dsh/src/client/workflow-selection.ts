@@ -112,7 +112,7 @@ export function connectWorkflowSelection(ctx: Context, selection: WorkflowSelect
     const settings = scoped.remote.settings
     scoped.effect(() => selection.attach({
       describe: async () => unwrap(await settings.describe()),
-      update: async (ns, patch, revision) => unwrap(await settings.update(ns, patch, revision)),
+      update: async (ns, patch, revision) => unwrap(await settings.update(ns, { selections: patch.selections.map(({ sessionId, workflow }) => ({ sessionId, workflow })) }, revision)),
     }))
   })
   ctx.inject(['connection'], scoped => {

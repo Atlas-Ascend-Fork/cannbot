@@ -19,5 +19,5 @@ export function Mark({ size }: { size: number }) {
 export function SidebarMark({ size }: SidebarBrandMarkOwnerProps) { return <Mark size={size} /> }
 export function SidebarName() { return <span className="cannbot-dsh-name">CANNBot</span> }
 export function Hero({ size }: HeroBrandMarkOwnerProps) {
-  return <span data-cannbot-dsh-hero=""><Mark size={size} /><span>CANNBot</span></span>
+  return <span data-cannbot-dsh-hero=""><Mark size={size} /><span>现在，交给CANNBot</span></span>
 }

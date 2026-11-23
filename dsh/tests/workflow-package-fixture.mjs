@@ -4,10 +4,21 @@ import { createRequire } from 'node:module'
 import { ContentManager } from '../src/content-manager.ts'
 const pacote = createRequire(import.meta.url)('pacote')
 export async function createVerifiedWorkflowCache() {
-  const reports = JSON.parse(readFileSync(new URL('../dist/workflow-releases/release-1.0.0-report.json', import.meta.url), 'utf8'))
   mkdirSync('.acceptance-workflow-tests', { recursive: true })
   const root = mkdtempSync(resolve('.acceptance-workflow-tests/real-')), cache = join(root, 'cache'), workspace = join(root, 'workspace')
   mkdirSync(workspace)
+  if (process.env.CANNBOT_TEST_HOST_PACKAGE) {
+    const dependencies = createRequire(join(resolve(process.env.CANNBOT_TEST_HOST_PACKAGE), 'package.json'))
+    const catalogFile = dependencies.resolve('@cannbot-plugin/workflow-catalog/package.json')
+    const packages = createRequire(catalogFile)
+    const manager = new ContentManager(resolve('workflow-defaults.json'), cache, {
+      async manifest() { throw new Error('Published Host fixture must remain offline') },
+      async extract() { throw new Error('Published Host fixture must remain offline') },
+    })
+    await manager.installDependencies(catalogFile, name => packages.resolve(name + '/package.json'))
+    return { root, cache, workspace, manager }
+  }
+  const reports = JSON.parse(readFileSync(new URL('../dist/workflow-releases/release-1.0.0-report.json', import.meta.url), 'utf8'))
   const manifest = report => ({ ...JSON.parse(readFileSync(join(report.directory, 'package.json'), 'utf8')), dist: { integrity: report.integrity, tarball: `https://registry.npmjs.org/${report.name}/-/${report.version}.tgz` } })
   const fetcher = {
     async manifest(spec) { const report = reports.find(item => spec === `${item.name}@latest` || spec === `${item.name}@${item.version}`); if (!report) throw new Error('Unknown fixture package'); return manifest(report) },

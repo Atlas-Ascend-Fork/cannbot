@@ -1,3 +1,19 @@
 - insert:
     - id: cannbot-dsh
       name: '@cannbot-plugin/cannbot-dsh'
+- id: ui-settings-account
+  config:
+    version: 1
+    step: done
+    purpose: development
+    process: detailed
+    completion: completed
+    usage: detailed
+    developerTools: true
+- id: ui-chat
+  config:
+    transcriptView: detailed
+    performanceUsage: detailed
+- id: ui-settings
+  config:
+    enabled: true

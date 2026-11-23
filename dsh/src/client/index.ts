@@ -16,21 +16,28 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { en, zh, NAMESPACE, PACKAGE, type LocaleKey } from './locales.ts'
-import { SidebarMark, SidebarName, Hero } from './Brand.tsx'
-import { WorkflowCompat } from './WorkflowCompat.tsx'
+import { Hero, SidebarName } from './Brand.tsx'
+import { BoundWorkspaceWorkflow } from './BoundWorkspaceWorkflow.tsx'
 import { SessionWorkflow } from './SessionWorkflow.tsx'
+import { freezeSessionInputs } from './frozen-sessions.ts'
 import { TaskDock } from './TaskList.tsx'
 import { cannTheme } from './theme.ts'
 import interfaceCss from './interface.css?inline'
 import './controls.css'
 import { createElement } from 'react'
-import { InterfaceToggle } from './InterfaceToggle.tsx'
-import { createPresentationController } from './presentation.ts'
 import { injectSlot } from './slot-compat.ts'
 import { createWorkflowSelection, connectWorkflowSelection, type WorkflowSelection } from './workflow-selection.ts'
 import { registerPluginUpdates } from './register-updates.ts'
 import { createContentStore, type ContentStore } from './content-store.ts'
 import { registerWorkbench } from './register-workbench.ts'
+import { createWorkspaceModes, type WorkspaceModes } from './workspace-modes.ts'
+import { ModeBrandMark, ModeWorkspaceTree, ModeWorkspaceCreation, SERVERS_PANEL } from './ModeSidebar.tsx'
+import { createRemoteClient } from './remote/index.tsx'
+import type { RemoteClient } from './remote/types.ts'
+import { mountEmbeddedShell } from './embedded-shell.ts'
+import { WorkspaceTreeBridge } from './WorkspaceTreeBridge.tsx'
+import { NativeWorkspacePicker } from './NativeWorkbench.tsx'
+import { NativeWorkflowPlaceholder } from './NativeWorkflowPlaceholder.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { cannbotDsh: LocaleKey }
@@ -38,18 +45,21 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const inject = ['slots', 'theme', 'locale', 'sessions', 'conversation']
 
 /** Register presentation with an explicit disposer so the original entries remain live underneath. */
-function mountInterface(ctx: Context, selection: WorkflowSelection, content: ContentStore): () => void {
+function mountInterface(ctx: Context, selection: WorkflowSelection, content: ContentStore, modes: WorkspaceModes, remote: RemoteClient): () => void {
   const style = document.createElement('style')
   style.dataset.cannbotDsh = 'interface'
   style.textContent = interfaceCss
   document.head.append(style)
   const releases = [
     ctx.theme.overrideTokens(PACKAGE, cannTheme),
-    injectSlot(ctx, 'sidebar.brand.mark', () => ctx.slots.register({ name: 'sidebar.brand.mark', priority: -100 }, SidebarMark)),
     injectSlot(ctx, 'sidebar.brand.name', () => ctx.slots.register({ name: 'sidebar.brand.name', priority: -100 }, SidebarName)),
     injectSlot(ctx, 'conversation.hero.brand.mark', () => ctx.slots.register({ name: 'conversation.hero.brand.mark', priority: -100 }, Hero)),
-    injectSlot(ctx, 'conversation.hero.agentPreset', () => ctx.slots.register({ name: 'conversation.hero.agentPreset', priority: -100, locale: NAMESPACE }, props => createElement(WorkflowCompat, { ...props, ctx, selection, content }))),
-    registerWorkbench(ctx, selection, content),
+    injectSlot(ctx, 'conversation.hero.agentPreset', () => ctx.slots.register({ name: 'conversation.hero.agentPreset', priority: -100 }, props => createElement(BoundWorkspaceWorkflow, { modes, ...('sessionId' in props && typeof props.sessionId === 'string' && { sessionId: props.sessionId }) }))),
+    injectSlot(ctx, 'conversation.hero.workspace', () => ctx.slots.register({ name: 'conversation.hero.workspace', priority: -100 }, props => createElement(NativeWorkspacePicker, { ...props, modes }))),
+    injectSlot(ctx, 'conversation.input.overlay', () => ctx.slots.register({ name: 'conversation.input.overlay', id: 'cannbot-workflow-placeholder' }, props => createElement(NativeWorkflowPlaceholder, { ...props, ctx, modes, selection }))),
+    injectSlot(ctx, 'shell.overlay', () => ctx.slots.register({ name: 'shell.overlay', id: 'cannbot-workspace-create' }, () => createElement(ModeWorkspaceCreation, { ctx, modes, content, remote }))),
+    injectSlot(ctx, 'conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'todo', priority: -100, order: 0, locale: NAMESPACE }, TaskDock)),
+    injectSlot(ctx, 'conversation.session.header.actions', () => ctx.slots.register({ name: 'conversation.session.header.actions', id: 'cannbot-session-workflow', order: -100, locale: NAMESPACE }, props => createElement(SessionWorkflow, { ...props, selection }))),
   ]
   return () => { for (const release of releases.reverse()) release(); style.remove() }
 }
@@ -70,18 +80,85 @@ export function apply(ctx: Context): void {
   }, content.prepare)
   connectWorkflowSelection(ctx, selection)
   ctx.effect(() => () => selection.dispose())
-  ctx.effect(() => ctx.locale.register(NAMESPACE, { zh, en, ja: en, es: en, fr: en, de: en, ru: en, pt: en }))
-  ctx.effect(() => injectSlot(ctx, 'conversation.input.dock', () => ctx.slots.register({
-    name: 'conversation.input.dock', id: 'todo', priority: -100, order: 0, locale: NAMESPACE,
-  }, TaskDock)))
-  ctx.effect(() => injectSlot(ctx, 'conversation.session.header.actions', () => ctx.slots.register({
-    name: 'conversation.session.header.actions', id: 'cannbot-session-workflow', order: -100, locale: NAMESPACE,
-  }, props => createElement(SessionWorkflow, { ...props, selection }))))
-  ctx.effect(() => {
-    const controller = createPresentationController(() => mountInterface(ctx, selection, content))
-    const releaseToggle = injectSlot(ctx, 'sidebar.footer.action', () => ctx.slots.register({
-      name: 'sidebar.footer.action', id: 'cannbot-dsh-interface', order: -100,
-    }, props => createElement(InterfaceToggle, { ...props, controller })))
-    return () => { releaseToggle(); controller.dispose() }
-  })
+  ctx.effect(() => ctx.locale.register(NAMESPACE, { zh, en }))
+  ctx.inject(['layout', 'uiWorkspace', 'workspaces'], scoped => scoped.effect(() => {
+    const modes = createWorkspaceModes(scoped)
+    const remote = createRemoteClient(scoped, { onReturnLocal: () => modes.returnLocal(), onSelectServer: id => modes.selectServer(id), onCreateWorkspace: id => modes.setCreating(true, id) })
+    const releases: (() => void)[] = [registerWorkbench(scoped, selection, content, modes)]
+    releases.push(freezeSessionInputs(modes, {
+      storeFor: id => scoped.conversation.blocks.storeFor(id as Parameters<typeof scoped.conversation.blocks.set>[0]),
+      set: (id, value) => scoped.conversation.blocks.set(id as Parameters<typeof scoped.conversation.blocks.set>[0], value),
+    }))
+    releases.push(injectSlot(scoped, 'main', () => scoped.slots.register({ name: 'main', key: SERVERS_PANEL }, () => createElement(ModeWorkspaceTree, { ctx: scoped, modes, content, remote, management: true }))))
+    if (modes.embedded) releases.push(mountEmbeddedShell(document))
+    // Existing owners keep their child declarations. SlotCore permits one declarer
+    // per child; shadowing a seat must never re-declare the native sidebar's seats.
+    releases.push(injectSlot(scoped, 'sidebar.brand.mark', () => scoped.slots.register({ name: 'sidebar.brand.mark', priority: -100 }, props => createElement(ModeBrandMark, { ...props, modes, onServers: () => scoped.layout.selectPanel(SERVERS_PANEL) }))))
+    // Do not replace sidebar.workspaces: its native component must keep its
+    // instance (and consumed search requests) across mode transitions.
+    releases.push(injectSlot(scoped, 'shell.overlay', () => scoped.slots.register({ name: 'shell.overlay', id: 'cannbot-workspace-tree-bridge' }, () => createElement(WorkspaceTreeBridge, {
+      modes, children: wide => createElement(ModeWorkspaceTree, { ctx: scoped, modes, content, remote, wide }),
+    }))))
+    // The official shortcut/native-menu closures call this public service method.
+    // Decorate only during this plugin lifetime and preserve a later owner's replacement.
+    const navigation = scoped.uiWorkspace, originalStart = navigation.startSession
+    const start: typeof originalStart = (workspaceId, options) => {
+      const state = modes.getSnapshot()
+      if (state.mode === 'deepseek') originalStart.call(navigation, workspaceId, options)
+      else if (state.serverId) void remote.open({ serverId: state.serverId, ...(workspaceId && { workspaceId }) }).catch(() => modes.reportError('无法打开远端工作台，请检查连接后重试。'))
+      else modes.newSession(workspaceId)
+    }
+    navigation.startSession = start
+    releases.push(() => { if (navigation.startSession === start) navigation.startSession = originalStart })
+    const originalFork = navigation.forkSession
+    if (typeof originalFork === 'function') {
+      const fork: typeof originalFork = async (id, onCreated, options) => {
+        if (modes.getSnapshot().mode === 'deepseek') return originalFork.call(navigation, id, onCreated, options)
+        // Desktop shortcuts resolve the retained local main view even while an
+        // embedded remote panel is visible. Never apply that target to local data.
+        if (modes.getSnapshot().serverId) throw new Error('请使用远端会话行的操作菜单。')
+        if (!modes.getSnapshot().ready) throw new Error('工作区正在加载，请稍后重试。')
+        const snapshot = modes.getSnapshot()
+        if (snapshot.sessions.find(session => session.sessionId === id)?.frozen) throw new Error('此会话已冻结，请新建会话。')
+        const workspace = snapshot.workspaces.find(item => item.sessionIds.includes(id) || item.workspaceId === snapshot.sessions.find(session => session.sessionId === id)?.workspaceId)
+        if (!workspace && snapshot.sessions.some(session => session.sessionId === id)) {
+          const result = await modes.operate({ action: 'fork-session', sessionId: id, ...options?.allowMigration === undefined ? {} : { allowMigration: options.allowMigration } })
+          if (!result.sessionId) throw new Error('DSH 未返回可用的分支会话。')
+          const child = result.sessionId as Awaited<ReturnType<typeof originalFork>>
+          onCreated?.(child)
+          return child
+        }
+        if ((modes.getSnapshot().mode === 'cannbot') !== !!workspace) throw new Error('请先切换到该会话所属模式。')
+        if (!workspace) return originalFork.call(navigation, id, onCreated, options)
+        const child = await originalFork.call(navigation, id, undefined, options)
+        await modes.recordSession(workspace.workspaceId, child)
+        onCreated?.(child)
+        return child
+      }
+      navigation.forkSession = fork
+      releases.push(() => { if (navigation.forkSession === fork) navigation.forkSession = originalFork })
+    }
+    const originalArchive = navigation.archiveSession
+    if (typeof originalArchive === 'function') {
+      const archive: typeof originalArchive = async (id, options) => {
+        if (modes.getSnapshot().mode === 'deepseek') return originalArchive.call(navigation, id, options)
+        if (modes.getSnapshot().serverId) throw new Error('请使用远端会话行的操作菜单。')
+        if (!modes.getSnapshot().ready) throw new Error('工作区正在加载，请稍后重试。')
+        const snapshot = modes.getSnapshot()
+        const owned = snapshot.workspaces.some(item => item.sessionIds.includes(id)) || snapshot.sessions.some(item => item.sessionId === id)
+        if ((modes.getSnapshot().mode === 'cannbot') !== owned) throw new Error('请先切换到该会话所属模式。')
+        return originalArchive.call(navigation, id, options)
+      }
+      navigation.archiveSession = archive
+      releases.push(() => { if (navigation.archiveSession === archive) navigation.archiveSession = originalArchive })
+    }
+    let presentation: (() => void) | undefined
+    const updatePresentation = () => {
+      if (modes.getSnapshot().mode === 'cannbot') presentation ??= mountInterface(scoped, selection, content, modes, remote)
+      else { presentation?.(); presentation = undefined }
+    }
+    releases.push(modes.subscribe(updatePresentation)); updatePresentation()
+    releases.push(() => presentation?.(), remote.start(), modes.start())
+    return () => { for (const release of releases.reverse()) release(); remote.dispose(); modes.dispose() }
+  }))
 }

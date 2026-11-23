@@ -17,7 +17,7 @@ import type { WorkflowSelection } from './workflow-selection.ts'
 import type { PreparationStage } from './workbench-state.ts'
 
 /** Transfer to the resident DSH composer; its own submit policy remains authoritative. */
-export async function launchWorkbench(ctx: Context, selection: WorkflowSelection, request: { workspaceId: string; workflow: string; prompt: string; files: readonly File[] }, signal: AbortSignal, onStage: (stage: PreparationStage) => void = () => {}) {
+export async function launchWorkbench(ctx: Context, selection: WorkflowSelection, request: { workspaceId: string; workflow: string; prompt: string; files: readonly File[]; recordSession?(workspaceId: string, sessionId: string): Promise<void> }, signal: AbortSignal, onStage: (stage: PreparationStage) => void = () => {}) {
   if (!selection.getSnapshot().ready || selection.getSnapshot().pending) throw new Error('工作流设置尚未就绪，请稍后重试。')
   signal.throwIfAborted()
   const startingPanel = ctx.layout.panelInfo.getSnapshot().activePanelId
@@ -25,6 +25,7 @@ export async function launchWorkbench(ctx: Context, selection: WorkflowSelection
   const sessions = ctx.sessions as unknown as ISessions
   onStage('workspace')
   const id = await sessions.create({ workspaceId: request.workspaceId as WorkspaceId })
+  await request.recordSession?.(request.workspaceId, id)
   signal.throwIfAborted()
   const reference = sessions.retain(id, { source: 'controllerOperation', signal })
   const conversation = ctx.conversation as ConversationController

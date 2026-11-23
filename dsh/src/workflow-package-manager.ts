@@ -15,7 +15,9 @@ import { cp, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'n
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { withContentLock } from './content-lock.ts'
-import { initializeTransaction } from './initializer-transaction.ts'
+import { initializeTransaction, recoverInitialization } from './initializer-transaction.ts'
+import { initializationIO, runInitializationTerminal, type TerminalSpawner } from './initialization-jobs.ts'
+import { workflowRetirement } from './workflow-retirement.ts'
 import { newerVersion } from './client/plugin-update.ts'
 import { CATALOG_PACKAGE, WORKFLOW_SCOPE, REGISTRY, MIRROR, npmFetcher, validateTarball, validId, validVersion, type NpmFetcher, type PackageManifest } from './npm-workflows.ts'
 import type { ContentCatalog, ContentPlugin, ContentSkill, ContentStatus, WorkflowDescriptor, WorkflowEntry, WorkflowRow } from './content-types.ts'
@@ -44,7 +46,10 @@ export class ContentManager {
   private pending?: Promise<void>
   private pendingKey?: string
   private jobs = new Map<string, Promise<void>>()
+  private terminalSpawner?: TerminalSpawner
+  setTerminalSpawner(spawn?: TerminalSpawner) { this.terminalSpawner = spawn }
   private listeners = new Set<() => void>()
+  private preparationGuard?: (cwd: string, id: string, run: () => Promise<void>) => Promise<void>
   private stamp = ''
   private fetcher: NpmFetcher
   private registry = REGISTRY
@@ -54,7 +59,7 @@ export class ContentManager {
   constructor(defaults: string, root = process.env.CANNBOT_DSH_WORKFLOW_ROOT ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'cannbot-dsh-workflows'), fetcher: NpmFetcher = npmFetcher()) {
     this.fetcher = fetcher
     this.root = resolve(root)
-    const entries = JSON.parse(readFileSync(defaults, 'utf8')).workflows.map(checkedEntry)
+    const entries: WorkflowEntry[] = JSON.parse(readFileSync(defaults, 'utf8')).workflows.map(checkedEntry)
     this.shipped = new Set(entries.map(item => item.id))
     this.index = { schemaVersion: 1, entries, records: {}, history: {}, pinned: [] }
     try { this.reload() } catch { /* Invalid cache never becomes active. */ }
@@ -301,17 +306,61 @@ export class ContentManager {
     })
   }
   private async runInitializer(entry: string, args: string[], cwd: string) {
+    const io = initializationIO.getStore()
+    if (io) {
+      io.signal.throwIfAborted()
+      if (!this.terminalSpawner) throw new Error('宿主的交互终端尚未就绪，请更新 DSH 后重试。')
+      return runInitializationTerminal(this.terminalSpawner, [process.execPath, entry, ...args], cwd, io)
+    }
     let output = ''
+    const controller = new AbortController()
+    const interrupt = () => controller.abort(new Error('初始化已取消。'))
+    const interactive = !!process.stdin.isTTY
+    if (interactive) { process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt) }
     try {
       await runProcess(process.execPath, [entry, ...args], {
-        cwd, stdio: ['ignore', 'pipe', 'pipe'], timeoutMs: 20 * 60000,
+        cwd, stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'], timeoutMs: 20 * 60000, signal: controller.signal,
         env: { ...process.env, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}), GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
         onData: (data: Buffer) => { output = (output + data).slice(-16000); this.publish({ log: output.slice(-6000) }) },
       })
     } catch (error) { throw new Error(`${(error as Error).message}\n${output.slice(-1500)}`) }
+    finally { if (interactive) { process.off('SIGINT', interrupt); process.off('SIGTERM', interrupt) } }
   }
 
+  setPreparationGuard(guard: (cwd: string, id: string, run: () => Promise<void>) => Promise<void>) {
+    this.preparationGuard = guard
+  }
+  async switchWorkflow(cwd: string, previous: string, next: string, commit: () => Promise<void>, committed?: (token?: string) => Promise<boolean>, commitToken?: string) {
+    this.refresh()
+    for (const id of [previous, next]) if (id !== 'general' && !this.index.records[id]) await this.sync(id)
+    const oldRecord = this.index.records[previous], nextRecord = this.index.records[next]
+    const old = oldRecord && this.descriptor(oldRecord)
+    const descriptor: WorkflowDescriptor = nextRecord ? this.descriptor(nextRecord) : { schemaVersion: 1, id: 'general', title: '空白工作区', version: '0.0.0', initialization: { kind: 'skill-native' }, skills: [], source: { repository: '', commit: '', skillsCommit: '' } }
+    const workspace = await realpath(cwd), key = createHash('sha256').update(workspace).digest('hex')
+    const base = join(this.root, 'initialized', key), root = nextRecord ? inside(this.root, nextRecord.directory) : this.root
+    await withContentLock(join(base, 'workspace.lock'), async () => {
+      await recoverInitialization(workspace, join(base, 'switch-recovery'), committed)
+      const retirement = await workflowRetirement(workspace, old)
+      // Retain the old managed files outside the workspace for manual recovery.
+      const archive = join(base, 'retired', randomUUID())
+      for (const path of retirement.paths) if (existsSync(join(workspace, path))) { await mkdir(dirname(join(archive, path)), { recursive: true }); await cp(join(workspace, path), join(archive, path), { recursive: true, dereference: false, verbatimSymlinks: true }) }
+      await initializeTransaction(workspace, join(base, 'switch-recovery'), descriptor, join(root, 'resources'), async () => {
+        initializationIO.getStore()?.signal.throwIfAborted()
+        await retirement.retire()
+        if (descriptor.initialization.kind === 'cannbot-cli') await this.runInitializer(inside(root, descriptor.initialization.entry), ['install', next, '--tool', 'dsh', '--target', workspace, '--plugin-dir', join(root, 'resources')], workspace)
+        initializationIO.getStore()?.signal.throwIfAborted()
+        await commit()
+      }, retirement.paths, committed, commitToken)
+      // Receipt failure must not report a failed switch after the binding committed.
+      for (const id of [previous, next]) await rm(join(base, id + '.json'), { force: true }).catch(() => {})
+      if (nextRecord) await writeFile(join(base, next + '.json'), JSON.stringify({ workspace, id: next, package: nextRecord.package, version: nextRecord.version, integrity: nextRecord.integrity }), { mode: 0o600 }).catch(() => {})
+    })
+  }
   async prepare(cwd: string, id: string): Promise<void> {
+    const run = () => this.prepareContent(cwd, id)
+    return this.preparationGuard ? this.preparationGuard(cwd, id, run) : run()
+  }
+  private async prepareContent(cwd: string, id: string): Promise<void> {
     if (!validId(id)) throw new Error('Invalid workflow')
     this.refresh()
     if (!this.index.records[id]) { if (this.pending) await this.pending.catch(() => {}); if (!this.index.records[id]) await this.sync(id) }
@@ -332,6 +381,7 @@ export class ContentManager {
           const entry = inside(root, descriptor.initialization.entry)
           await initializeTransaction(workspace, recoveryRoot, descriptor, join(root, 'resources'), () => this.runInitializer(entry, ['install', id, '--tool', 'dsh', '--target', workspace, '--plugin-dir', join(root, 'resources')], workspace))
         }
+        initializationIO.getStore()?.signal.throwIfAborted()
         await writeFile(marker, receipt, { mode: 0o600 })
         this.publish({ phase: 'ready', message: `${id} is ready for this workspace.` })
       }).catch(error => { this.publish({ phase: 'error', message: String(error.message).slice(-1500) }); throw error }).finally(() => { this.jobs.delete(jobKey); this.publish({}) })
@@ -340,6 +390,6 @@ export class ContentManager {
     await job
     this.refresh()
     const current = this.index.records[id]
-    if (current.version !== record.version || current.integrity !== record.integrity) await this.prepare(cwd, id)
+    if (current.version !== record.version || current.integrity !== record.integrity) await this.prepareContent(cwd, id)
   }
 }

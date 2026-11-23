@@ -17,13 +17,13 @@ npm publish dist/workflow-releases/cannbot-plugin-workflow-ops-direct-invoke-1.0
 
 ## 新增工作流
 
-工作流目录、清单与 Skill 需符合现有 CANNBot 结构。先构建并发布新内容包；确认可公开下载后，再构建、发布一个新版本的目录包，使用户能够发现它：
+工作流目录、清单与 Skill 需符合现有 CANNBot 结构。先将新工作流加入主插件的 `workflow-defaults.json`；构建器和运行时都以该文件作为允许的工作流集合，仅发布目录包不能让旧主插件发现未声明的工作流。准备好资源及默认集合后，构建新内容包和新版本目录包：
 
 ```sh
-node scripts/build-workflow-packages.mjs --source /path/to/cannbot --id new-workflow --version 1.0.0 --catalog true --catalog-version 1.0.1
+node scripts/build-workflow-packages.mjs --source /path/to/cannbot --id new-workflow --version 1.0.0 --catalog true --catalog-version 1.0.5
 ```
 
-该命令会分别产生新工作流包和目录包。按“内容包先公开、目录包再公开”的顺序发布。主程序无需更新。
+该命令会分别产生新工作流包和目录包；目录版本应高于当前已发布版本。按“内容包、目录包、主插件”的顺序发布，主插件必须包含更新后的 `workflow-defaults.json`，并将目录依赖的最低版本设为包含新增项的版本。同步更新短包对主插件的精确依赖。用户升级主插件后才能发现新增工作流。
 
 ## 包格式 v1
 
@@ -48,11 +48,11 @@ node <工作流包>/upstream/bin/cannbot.js install <ID> --tool dsh --target <�
 新包通过校验后才原子切换该工作流，旧版本目录保留。回退后固定版本，自动同步及“更新全部”不会将它升回去；主动更新这一项即可恢复跟随最新版。
 工作区初始化按“工作区、工作流包版本及完整性”记录，更新无关工作流不会重复初始化当前工作流。
 
-仅当主程序界面、加载机制或包格式协议发生不兼容变化时，才需发布新的 DSH 主程序。
+已有工作流的内容更新可独立发布；主插件界面、加载机制、包格式协议或 `workflow-defaults.json` 中的允许集合发生变化时，需要发布新的 CANNBot DSH 主插件。
 
 ## 首次安装依赖
 
-目录包的 `dependencies` 声明全部默认工作流，版本使用 `>=1.0.0`，让新用户在 DSH 标准 npm 安装阶段一次获取当时可解析的最新稳定包，并排除历史占位版本。主插件依赖目录包 `^1.0.4`。发布目录包前必须确保所有工作流已公开；新增默认工作流同时加入目录及其 `dependencies`。已有工作流发布新版本仍不必重发目录包或主插件。
+目录包的 `dependencies` 声明全部默认工作流，版本使用 `>=1.0.0`，让新用户在 DSH 标准 npm 安装阶段一次获取当时可解析的最新稳定包，并排除历史占位版本。当前主插件依赖目录包 `^1.0.4`。发布目录包前必须确保所有工作流已公开；新增默认工作流需同时更新主插件的 `workflow-defaults.json`、目录及其 `dependencies`，并发布包含这些变化的新主插件。已有工作流发布新版本仍不必重发目录包或主插件。
 
 启用时仅从 npm 已安装的依赖准备本地缓存，等待全部完成后才注册工作流能力，不运行 npm 安装脚本，不覆盖缓存内独立升级或固定回退的版本。新版本下载由用户在工作流管理中明确触发。项目级外部依赖依然在选择工作流时按需初始化，不能在未选择项目时提前运行。
 

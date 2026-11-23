@@ -10,6 +10,8 @@
 
 export function WorkbenchIcon({ name = 'grid', size = 20 }: { name?: string; size?: number }) {
   const paths: Record<string, string> = {
+    globe: 'M12 2a10 10 0 1 0 0 20a10 10 0 1 0 0-20 M2 12h20 M12 2c-6 5-6 15 0 20 M12 2c6 5 6 15 0 20',
+    back: 'M20 12H4 M10 6l-6 6 6 6',
     grid: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
     code: 'm8 6-6 6 6 6 M16 6l6 6-6 6 M14 3l-4 18',
     flash: 'm13 2-9 12h7l-1 8 10-13h-7z',

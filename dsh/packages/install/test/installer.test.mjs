@@ -36,6 +36,12 @@ test('validates options without allowing credential-bearing or insecure registri
   assert.equal(options(['--no-start', '--port', '3100']).port, 3100)
   for (const args of [['--registry', 'http://example.test'], ['--registry', 'https://user:pass@example.test'], ['--port', '0'], ['--dir'], ['--unknown']]) assert.throws(() => options(args))
 })
+
+test('pre-launch initialization requires both a directory and a workflow', () => {
+  for (const args of [['--workspace', '/tmp/new'], ['--workflow', 'flow-a'], ['--workspace', '/tmp/new', '--workflow', '../bad']]) assert.throws(() => options(args))
+  const opt = options(['--workspace', '/tmp/new', '--workflow', 'flow-a', '--no-open'])
+  assert.equal(opt.workflow, 'flow-a'); assert.equal(opt.open, false); assert.equal(opt.start, true)
+})
 test('reuses only installer-owned directories and preserves unrelated contents', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cannbot-installer-test-'))
   await writeFile(join(root, 'keep.txt'), 'user data')

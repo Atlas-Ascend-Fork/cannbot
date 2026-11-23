@@ -4,10 +4,22 @@ import { spawn } from 'node:child_process'
 export function runProcess(command, args, { signal, timeoutMs, graceMs = 1000, onData, ...options } = {}) {
   signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { ...options, detached: true })
-    let stopped, escalation, timer
+    const child = spawn(command, args, { ...options, detached: process.platform !== 'win32', windowsHide: true })
+    let stopped, escalation, timer, terminating
     const kill = force => {
       if (!child.pid) return
+      if (process.platform === 'win32') {
+        if (terminating || child.exitCode !== null || child.signalCode !== null) return terminating
+        // Windows has no negative-PID process-group signals. Target only the
+        // process started here and its descendants; taskkill /T waits for the tree.
+        terminating = new Promise(resolve => {
+          const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+          const direct = () => { try { child.kill('SIGKILL') } catch {} }
+          killer.once('error', () => { direct(); resolve() })
+          killer.once('close', code => { if (code !== 0) direct(); resolve() })
+        })
+        return terminating
+      }
       try { process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM') } catch {}
     }
     const stop = reason => {
@@ -23,8 +35,8 @@ export function runProcess(command, args, { signal, timeoutMs, graceMs = 1000, o
     if (signal?.aborted) abort()
     if (timeoutMs !== undefined) timer = setTimeout(() => stop(new Error('Initialization timed out')), timeoutMs)
     child.on('error', error => { cleanup(); reject(error) })
-    child.on('close', (code, exitSignal) => {
-      if (stopped) kill(true)
+    child.on('close', async (code, exitSignal) => {
+      if (stopped) { if (process.platform === 'win32') await terminating; else kill(true) }
       cleanup()
       if (stopped) reject(stopped)
       else if (code !== 0) reject(new Error(`Command failed: ${command} (exit ${code ?? exitSignal})`))

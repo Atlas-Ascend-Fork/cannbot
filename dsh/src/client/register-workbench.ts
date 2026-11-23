@@ -16,25 +16,31 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { WorkflowSelection } from './workflow-selection.ts'
 import type { ContentStore } from './content-store.ts'
 import { Workbench, HOME_PANEL, LIBRARY_PANEL } from './Workbench.tsx'
-import { WorkbenchIcon } from './WorkbenchIcon.tsx'
 import { createWorkbenchState } from './workbench-state.ts'
+import type { WorkspaceModes } from './workspace-modes.ts'
 import { injectSlot } from './slot-compat.ts'
+import { NativeWorkbench, NativeWorkbenchEmpty } from './NativeWorkbench.tsx'
+import { createNativeWorkbenchSession } from './native-workbench-session.ts'
 import './workbench.css'
 
 /** Optional public-slot integration: older DSH keeps its existing branded conversation. */
-export function registerWorkbench(ctx: Context, selection: WorkflowSelection, content: ContentStore): () => void {
+export function registerWorkbench(ctx: Context, selection: WorkflowSelection, content: ContentStore, modes?: WorkspaceModes): () => void {
   const fiber = ctx.inject(['layout', 'uiWorkspace', 'workspaces'], scoped => {
     if (typeof scoped.uiWorkspace.openSession !== 'function' || typeof (scoped.sessions as unknown as ISessions).retain !== 'function'
       || typeof scoped.conversation.input.requestDraftInitialization !== 'function') return
     scoped.effect(() => {
-      const store = createWorkbenchState()
+      const store = modes?.workbench ?? createWorkbenchState()
       const releases: (() => void)[] = []
+      const preparation = modes ? createNativeWorkbenchSession(scoped, selection, modes) : undefined
+      if (preparation) releases.push(() => preparation.dispose())
       for (const [id, library] of [[HOME_PANEL, false], [LIBRARY_PANEL, true]] as const) {
-        releases.push(injectSlot(scoped, 'main', () => scoped.slots.register({ name: 'main', key: id }, () => createElement(Workbench, { ctx: scoped, selection, content, store, library }))))
-        if (!library) releases.push(injectSlot(scoped, 'sidebar.panellist', () => scoped.slots.register({ name: 'sidebar.panellist', id, order: -100, label: 'CANNBot工作台' }, ({ size }) => createElement(WorkbenchIcon, { name: 'grid', size }))))
+        if (!library && modes && preparation) {
+          releases.push(injectSlot(scoped, 'main', () => scoped.slots.register({ name: 'main', key: id, children: { 'cannbot.workbench.content': { kind: 'single', scope: 'session-maybe' } } }, props => createElement(NativeWorkbench, { ...props, ctx: scoped, modes, preparation }))))
+          releases.push(injectSlot(scoped, 'cannbot.workbench.content', () => scoped.slots.register({ name: 'cannbot.workbench.content' }, NativeWorkbenchEmpty)))
+        } else releases.push(injectSlot(scoped, 'main', () => scoped.slots.register({ name: 'main', key: id }, () => createElement(Workbench, { ctx: scoped, selection, content, store, library, modes }))))
       }
       return () => {
-        store.dispose()
+        if (!modes) store.dispose()
         if ([HOME_PANEL, LIBRARY_PANEL].includes(scoped.layout.panelInfo.getSnapshot().activePanelId!)) scoped.layout.selectPanel(null)
         for (const release of releases.reverse()) release()
       }

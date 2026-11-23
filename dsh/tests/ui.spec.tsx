@@ -10,14 +10,13 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ReactNode } from 'react'
+import type { ReactNode, ReactElement } from 'react'
 import { WorkflowSelector, type WorkflowProps } from '../src/client/WorkflowSelector.tsx'
 import { zh } from '../src/client/locales.ts'
 import { apply } from '../src/client/index.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import { WORKFLOWS } from '../src/workflows.ts'
-import { createPresentationController } from '../src/client/presentation.ts'
-import { InterfaceToggle } from '../src/client/InterfaceToggle.tsx'
+import type { WorkspaceModes } from '../src/client/workspace-modes.ts'
 import { createWorkflowSelection, connectWorkflowSelection } from '../src/client/workflow-selection.ts'
 import { WorkflowCompat } from '../src/client/WorkflowCompat.tsx'
 import { SessionWorkflow, type SessionWorkflowProps } from '../src/client/SessionWorkflow.tsx'
@@ -27,6 +26,7 @@ const compatibility = vi.hoisted(() => ({ legacy: false }))
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   Button: ({ children, variant: _variant, size: _size, ...props }: { children: ReactNode; variant: string; size: string }) => <button {...props}>{children}</button>,
   IconChevronDownOutlineRegular: () => null,
+  FishLogo: () => <svg aria-label="DeepSeek logo" />,
   get IconAgentPresetOutlineRegular() { return compatibility.legacy ? undefined : () => <svg aria-hidden="true" /> },
   IconAgentPresetOutline16: () => <svg aria-hidden="true" data-testid="legacy-preset-icon" />,
   Menu: ({ anchor, open, children, items, onSelect }: { anchor: ReactNode; open: boolean; children: ReactNode; items?: { id: string; label: ReactNode }[]; onSelect?(id: string): void }) => <>{anchor}{open && <div role="menu">{items ? items.map(item => <button key={item.id} role="menuitem" onClick={() => onSelect?.(item.id)}>{item.label}</button>) : children}</div>}</>,
@@ -181,49 +181,56 @@ describe('session workflow indicator', () => {
   })
 })
 describe('plugin lifecycle', () => {
-  it('enables the interface immediately and removes the footer and all overrides on unload', () => {
-    const active = new Map<string, object>()
+  it('registers mode navigation without the old footer switch and restores public methods and accent on unload', () => {
+    localStorage.setItem('cannbot.ui.modes.v1', JSON.stringify({ mode: 'deepseek' }))
+    const active = new Map<string, { component: (props: object) => ReactElement<{ modes: WorkspaceModes }> }>()
     const effects: (() => void)[] = []
     const releaseTheme = vi.fn()
+    let panel: string | null = null
+    const originalStart = vi.fn()
+    const snapshot = { byId: {}, items: [], phase: 'ready', state: 'idle' }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ mode: 'cannbot', workspaces: [], sessions: [], servers: [], plugins: [] }))))
+    localStorage.clear()
     const ctx = {
-      inject: () => () => {},
+      inject: (keys: string[], callback: (ctx: object) => void) => { if (keys[0] === 'layout') callback(ctx); return { dispose() {} } },
+      get: () => undefined,
       locale: { register: () => () => {} },
       theme: { overrideTokens: vi.fn(() => releaseTheme) },
       effect: (callback: () => () => void) => { effects.push(callback()) },
+      sessions: { retain: vi.fn(), list: { getSnapshot: () => snapshot, subscribe: () => () => {} } },
+      workspaces: { list: { getSnapshot: () => snapshot, subscribe: () => () => {} } },
+      conversation: { input: { requestDraftInitialization: vi.fn() } },
+      layout: { beginNavigation: vi.fn(), panelInfo: { getSnapshot: () => ({ activePanelId: panel }), subscribe: () => () => {} }, selectPanel: (id: string | null) => { panel = id } },
+      uiWorkspace: { startSession: originalStart, openSession: vi.fn() },
       slots: {
         inject: (_name: string, callback: () => () => void) => callback(),
-        register: (options: { name: string }) => { active.set(options.name, options); return () => { active.delete(options.name) } },
+        register: (options: { name: string; id?: string; key?: string }, component: (props: object) => ReactElement<{ modes: WorkspaceModes }>) => { const key = options.name + (options.id || options.key ? ':' + (options.id || options.key) : ''); active.set(key, { component }); return () => { active.delete(key) } },
       },
     }
     for (let activation = 0; activation < 2; activation++) {
+      localStorage.clear()
+      localStorage.setItem('cannbot.ui.modes.v1', JSON.stringify({ mode: 'deepseek' }))
       apply(ctx as Context)
+      expect(active.has('sidebar.brand.mark')).toBe(true)
+      expect(active.has('sidebar')).toBe(false)
+      expect(active.has('main:cannbot-dsh-workbench')).toBe(true)
+      expect(active.has('conversation.hero.agentPreset')).toBe(false)
+      expect(active.has('sidebar.panellist:cannbot-dsh-workbench')).toBe(false)
+      expect(active.has('sidebar.footer.action:cannbot-dsh-interface')).toBe(false)
+      const element = active.get('sidebar.brand.mark')!.component({ size: 24 })
+      element.props.modes.setMode('cannbot')
       expect(active.has('conversation.hero.agentPreset')).toBe(true)
-      expect(active.has('conversation.session.header.actions')).toBe(true)
-      expect(active.has('sidebar.brand.name')).toBe(true)
-      expect(active.has('sidebar.footer.action')).toBe(true)
-      expect(active.has('plugins.bundle.config')).toBe(false)
+      expect(active.has('sidebar.footer.action')).toBe(false)
+      ctx.uiWorkspace.startSession()
+      expect(panel).toBe('cannbot-dsh-workbench')
+      expect(originalStart).not.toHaveBeenCalled()
       expect(document.querySelectorAll('style[data-cannbot-dsh]')).toHaveLength(1)
       for (const effect of effects.splice(0).reverse()) effect()
       expect(active.size).toBe(0)
       expect(document.querySelector('style[data-cannbot-dsh]')).toBeNull()
+      expect(ctx.uiWorkspace.startSession).toBe(originalStart)
     }
     expect(releaseTheme).toHaveBeenCalledTimes(2)
-  })
-  it('uses a plain CANNBot switch, defaults on and switches presentation without unloading Skills', () => {
-    const unmount = vi.fn()
-    const mount = vi.fn(() => unmount)
-    const controller = createPresentationController(mount)
-    render(<InterfaceToggle wide controller={controller} />)
-    const toggle = screen.getByRole('switch', { name: 'CANNBot' })
-    expect(toggle.getAttribute('aria-checked')).toBe('true')
-    expect(screen.queryByText('CANNBot DSH 界面')).toBeNull()
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
-    expect(unmount).toHaveBeenCalledOnce()
-    fireEvent.click(toggle)
-    expect(toggle.getAttribute('aria-checked')).toBe('true')
-    expect(mount).toHaveBeenCalledTimes(2)
-    cleanup(); controller.dispose()
-    expect(unmount).toHaveBeenCalledTimes(2)
+    vi.unstubAllGlobals()
   })
 })

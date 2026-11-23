@@ -12,7 +12,8 @@
 import { expect, it } from 'vitest'
 import { mkdir, mkdtemp, readFile, writeFile, access, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { initializeTransaction } from '../src/initializer-transaction.ts'
+import { initializeTransaction, recoverInitialization } from '../src/initializer-transaction.ts'
+import { workflowRetirement } from '../src/workflow-retirement.ts'
 import type { WorkflowDescriptor } from '../src/content-types.ts'
 
 async function fixture() {
@@ -67,4 +68,31 @@ it('recovers a previously interrupted initialization before invoking the next in
   await initializeTransaction(f.workspace, f.recovery, f.descriptor, f.resources, async () => {
     expect(await readFile(join(f.workspace, 'AGENTS.md'), 'utf8')).toBe('old instructions before crash')
   })
+})
+
+it('workflow retirement removes only owned registrations and a failed switch restores them', async () => {
+  const f = await fixture(), agents = 'user instructions\n<!-- cannbot:flow:start -->old workflow<!-- cannbot:flow:end -->\nkeep this'
+  await writeFile(join(f.workspace, 'AGENTS.md'), agents)
+  await writeFile(join(f.workspace, '.dsh/cannbot-plugin.json'), JSON.stringify({ schemaVersion: 2, plugins: [{ plugin: 'flow', skills: ['.dsh/skills/shared'], agents: ['.dsh/agents/reviewer.md'] }] }))
+  const retirement = await workflowRetirement(f.workspace, f.descriptor)
+  await expect(initializeTransaction(f.workspace, f.recovery, { ...f.descriptor, id: 'next', skills: [] }, f.resources, async () => {
+    await retirement.retire()
+    await expect(access(join(f.workspace, '.dsh/skills/shared'))).rejects.toThrow()
+    expect(await readFile(join(f.workspace, 'AGENTS.md'), 'utf8')).toBe('user instructions\n\nkeep this')
+    expect(await readFile(join(f.workspace, 'user-code.cpp'), 'utf8')).toBe('user code')
+    throw new Error('questionnaire cancelled')
+  }, retirement.paths)).rejects.toThrow('已恢复')
+  expect(await readFile(join(f.workspace, '.dsh/skills/shared/SKILL.md'), 'utf8')).toBe('old shared skill')
+  expect(await readFile(join(f.workspace, 'AGENTS.md'), 'utf8')).toBe(agents)
+  expect(JSON.parse(await readFile(join(f.workspace, '.dsh/cannbot-plugin.json'), 'utf8')).plugins).toHaveLength(1)
+})
+
+it('a crash after binding commit never resurrects retired workflow files', async () => {
+  const f = await fixture(), directory = join(f.recovery, 'snapshot-committed')
+  await mkdir(directory, { recursive: true }); await writeFile(join(directory, '0'), 'old workflow')
+  await writeFile(join(f.workspace, 'AGENTS.md'), 'new workflow')
+  await writeFile(join(f.recovery, 'recovery.json'), JSON.stringify({ workspace: f.workspace, directory, commitToken: 'accepted', entries: [{ path: 'AGENTS.md', present: true, slot: '0' }] }))
+  await recoverInitialization(f.workspace, f.recovery, async token => token === 'accepted')
+  expect(await readFile(join(f.workspace, 'AGENTS.md'), 'utf8')).toBe('new workflow')
+  expect(await readdir(f.recovery)).toEqual([])
 })

@@ -1,1 +1,7 @@
-{ "meta": { "title": "CANNBot DSH", "description": "CANNBot interface with independent workflow packages, per-workflow updates, rollback and automatic workspace initialization.", "detail": "README.md" } }
+{
+  "meta": {
+    "title": "CANNBot DSH",
+    "description": "CANNBot development workbench for Ascend/CANN: operator workflows, blank Ascend workspaces and embedded remote development.",
+    "detail": "README.md"
+  }
+}

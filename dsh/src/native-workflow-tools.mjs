@@ -6,7 +6,7 @@ import { installGoalWorkflowResume } from './goal-workflow-resume.mjs'
 import { PmProgress } from './pm-progress.mjs'
 
 /** Register generic Python workflow scheduling tools when DSH's native loop is available. */
-export function installNativeWorkflowTools(ctx, content) {
+export function installNativeWorkflowTools(ctx, content, modes) {
   ctx.inject(['tools', 'subagents', 'workingDirectory', 'sessionProjections', 'sessions', 'sessionQuery'], scoped => {
     const execution = new NativeWorkflow(scoped)
     const progress = new PmProgress(scoped)
@@ -15,6 +15,7 @@ export function installNativeWorkflowTools(ctx, content) {
     scoped.on('dispose', () => progress.dispose())
     async function start(args, agent, signal) {
       const workspace = await realpath(await scoped.workingDirectory.ensure(agent, signal))
+      await modes?.assertSessionWorkflow(agent.id, workspace, args.workflow)
       await content.prepare(workspace, args.workflow)
       const source = content.getSource()
       const plugin = source.catalog.plugins.find(item => item.id === args.workflow)

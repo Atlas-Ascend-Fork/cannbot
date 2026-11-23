@@ -22,15 +22,18 @@ export function options(args) {
     if (arg === '--no-start') result.start = false
     else if (arg === '--no-open') result.open = false
     else if (arg === '--start-only') result.startOnly = true
-    else if (['--dir', '--registry', '--port'].includes(arg)) {
+    else if (['--dir', '--registry', '--port', '--workspace', '--workflow'].includes(arg)) {
       const value = args[++i]
       if (!value || value.startsWith('--')) throw Error(`${arg} 缺少参数`)
       if (arg === '--dir') result.root = resolve(value)
+      if (arg === '--workspace') result.workspace = resolve(value)
+      if (arg === '--workflow') { if (!/^[\w-]{1,100}$/.test(value)) throw Error('工作流名称无效'); result.workflow = value }
       if (arg === '--registry') result.registry = registryUrl(value)
       if (arg === '--port') { if (!/^\d+$/.test(value) || +value < 1 || +value > 65535) throw Error('端口应在 1–65535 之间'); result.port = +value }
     } else throw Error(`未知参数：${arg}`)
   }
   result.root = resolve(result.root)
+  if (!!result.workspace !== !!result.workflow) throw Error('--workspace 与 --workflow 必须同时提供')
   return result
 }
 export async function claimRoot(root) {
@@ -100,7 +103,7 @@ export async function freePort(port) {
 }
 export async function main(args = process.argv.slice(2)) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('CANNBot DSH 一键安装器\n用法：npx @cannbot-plugin/cannbot-dsh-install@latest [选项]\n\n默认：安装官方 DSH Web、最新插件及默认工作流，完成后启动浏览器界面。\n--no-start  仅安装并验证\n--no-open   启动但不打开浏览器（服务器推荐）\n--start-only 复用已安装环境，不查询或安装新版本\n--port N    指定本机监听端口\n--dir PATH  指定独立安装目录\n--registry URL 指定 HTTPS npm 源（镜像的 latest 可能滞后）\n\n需要 Node.js >=24.9.0；Web 保持终端运行，Ctrl+C 停止服务。支持 Linux／WSL，请在 Linux 环境中执行。')
+    console.log('CANNBot DSH 一键安装器\n用法：npx @cannbot-plugin/cannbot-dsh-install@latest [选项]\n\n默认：安装官方 DSH Web、最新插件及默认工作流，完成后启动浏览器界面。\n--workspace PATH 与 --workflow ID 配合：在终端完成问卷后启动\n--no-start  仅安装并验证\n--no-open   启动但不打开浏览器（服务器推荐）\n--start-only 复用已安装环境，不查询或安装新版本\n--port N    指定本机监听端口\n--dir PATH  指定独立安装目录\n--registry URL 指定 HTTPS npm 源（镜像的 latest 可能滞后）\n\n需要 Node.js >=24.9.0；Web 保持终端运行，Ctrl+C 停止服务。支持 Linux／WSL，请在 Linux 环境中执行。')
     return
   }
   if (args.includes('--version')) { console.log('1.0.0'); return }
@@ -161,6 +164,14 @@ export async function main(args = process.argv.slice(2)) {
       await writeFile(tmp, JSON.stringify({ owner: MARK, plan, verified, installedAt: new Date().toISOString() }, null, 2), { mode: 0o600 })
       await rename(tmp, record)
       console.log(`安装完成：CANNBot DSH ${plan.plugin}，${verified.workflowCount} 个工作流已到齐。`)
+    }
+    if (opt.workspace) {
+      const profileRequire = createRequire(join(home, 'profiles/web/package.json'))
+      const mainPackage = profileRequire.resolve(CORE + '/package.json')
+      const initialize = join(dirname(mainPackage), 'remote/initialize-workspace.mjs')
+      if (!existsSync(initialize)) throw Error('当前插件不支持启动前问卷初始化，请更新插件')
+      console.log('在当前终端初始化工作流。完成问卷后才会启动工作台。')
+      await run(initialize, [opt.workspace, opt.workflow], { env })
     }
   } finally { await release() }
   if (!opt.start) { console.log('已完成安装验证。下次使用同一命令加 --start-only 启动。'); return }

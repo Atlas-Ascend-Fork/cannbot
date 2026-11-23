@@ -1,0 +1,20 @@
+/*
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+ * CANN Open Software License Agreement Version 2.0 (the "License").
+ * Please refer to the License for details. You may not use this file except in compliance with the License.
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See LICENSE in the root of the software repository for the full text of the License.
+ */
+
+/* Only the no-workspace/loading occurrence needs a host container. Prepared
+   CANNBot blanks use the unmodified resident DSH Conversation and all its CSS. */
+.cannbot-native-home{position:relative;display:flex;flex-direction:column;height:100%;min-width:0;min-height:0;background:var(--dsw-alias-bg-base)}
+.cannbot-native-notice{position:absolute;bottom:16px;left:16px;right:16px;margin:0;text-align:center;font:inherit;color:var(--dsw-alias-label-secondary)}
+.cannbot-native-notice button{margin-left:8px;font:inherit;color:inherit;background:transparent;border:0;cursor:pointer}
+.cannbot-workspace-preparing{margin:auto;padding:32px;text-align:center;color:var(--dsw-alias-label-primary)}
+.cannbot-workspace-preparing strong{display:block;font-size:16px;font-weight:500}.cannbot-workspace-preparing p{margin:12px 0 0;font-size:13px;color:var(--dsw-alias-label-secondary)}
+.cannbot-preparing-spinner{display:block;box-sizing:border-box;width:24px;height:24px;margin:0 auto 20px;border:2px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-state-business-primary);border-radius:50%;animation:cannbot-preparing-spin 1s linear infinite}
+@keyframes cannbot-preparing-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.cannbot-preparing-spinner{animation:none}}

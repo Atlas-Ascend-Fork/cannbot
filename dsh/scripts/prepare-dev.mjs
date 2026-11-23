@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlink
 import { dirname, join, resolve } from 'node:path'
 import { project, resolveSource } from './source.mjs'
 const checkout = resolveSource(process.argv[2])
+const buildOnly = process.argv.includes('--build-only')
 writeFileSync(join(project, '.dsh-source.json'), JSON.stringify({ path: checkout }, null, 2) + '\n')
 const modules = join(project, 'node_modules')
 mkdirSync(modules, { recursive: true })
@@ -10,7 +11,7 @@ function link(name, target) {
   const path = join(modules, name)
   if (existsSync(path)) return
   mkdirSync(dirname(path), { recursive: true })
-  symlinkSync(realpathSync(target), path, 'dir')
+  symlinkSync(realpathSync(target), path, process.platform === 'win32' ? 'junction' : 'dir')
 }
 for (const entry of readdirSync(join(checkout, 'node_modules'), { withFileTypes: true })) {
   if (entry.name.startsWith('.')) continue
@@ -34,7 +35,7 @@ for (const path of workspaces) {
   const manifest = JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'))
   if (manifest.name) link(manifest.name, path)
 }
-for (const name of ['react', 'react-dom', '@testing-library/react', '@types/react', '@types/react-dom']) {
+for (const name of buildOnly ? ['react', 'react-dom'] : ['react', 'react-dom', '@testing-library/react', '@types/react', '@types/react-dom']) {
   link(name, join(checkout, 'packages/client/ui-plugin-manager/node_modules', name))
 }
 console.log('Linked the official checkout for plugin development; no runtime files were changed.')

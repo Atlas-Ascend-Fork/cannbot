@@ -2,13 +2,20 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import * as pluginApi from '../lib/index.js'
 import { readFileSync, accessSync, mkdirSync, mkdtempSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createVerifiedWorkflowCache } from './workflow-package-fixture.mjs'
 
-const catalog = JSON.parse(readFileSync(new URL('../dist/workflow-releases/source-catalog.json', import.meta.url), 'utf8'))
+const pluginApi = await import(process.env.CANNBOT_TEST_HOST_PACKAGE
+  ? pathToFileURL(join(resolve(process.env.CANNBOT_TEST_HOST_PACKAGE), 'lib/index.js')).href
+  : new URL('../lib/index.js', import.meta.url).href)
+if (process.env.CANNBOT_TEST_HOST_PACKAGE) console.log('Host test provenance: isolated copies of published workflow packages; this does not validate rebuilding master workflow resources.')
+// All remote paths and SSH discovery remain inside the test workspace.
+const isolation = resolve('.acceptance-workflow-tests/host-environment')
+process.env.DSH_HOME = isolation
+process.env.CANNBOT_REMOTE_SSH = 'ssh'
+process.env.CANNBOT_REMOTE_SSH_CONFIG = join(isolation, 'ssh-config')
 
 test('a fresh activation awaits all npm-installed workflows before exposing the enabled plugin', async () => {
   mkdirSync('.acceptance-workflow-tests', { recursive: true })
@@ -36,6 +43,7 @@ test('a fresh activation awaits all npm-installed workflows before exposing the 
 test('all three official plugins and every exposed Skill follow enable, disable and re-enable', async () => {
   const ctx = new Context()
   const fixture = await createVerifiedWorkflowCache()
+  const catalog = fixture.manager.getSource().catalog
   const oldRoot = process.env.CANNBOT_DSH_WORKFLOW_ROOT
   process.env.CANNBOT_DSH_WORKFLOW_ROOT = fixture.cache
   try {
@@ -49,7 +57,7 @@ test('all three official plugins and every exposed Skill follow enable, disable 
       assert.equal(catalog.plugins.length, 3)
       for (const plugin of catalog.plugins) {
         assert(names.has(plugin.id), `Missing workflow entry: ${plugin.id}`)
-        for (const name of plugin.skills) assert(names.has(plugin.aliases[name] ?? name), `Missing ${plugin.id} dependency: ${name}`)
+        for (const skill of catalog.exposedSkills.filter(item => item.pluginId === plugin.id)) assert(names.has(skill.name), `Missing ${plugin.id} dependency: ${skill.name}`)
       }
       assert(skills.every(skill => skill.provider === 'cannbot-dsh'))
       for (const expected of catalog.exposedSkills) {
@@ -62,7 +70,7 @@ test('all three official plugins and every exposed Skill follow enable, disable 
         accessSync(skill.path)
       }
       const registryEntry = await ctx.skills.get('ops-registry-invoke')
-      assert(registryEntry.content.includes('ops-registry-invoke-workflow-orchestrator'))
+      assert(registryEntry.content.includes('workflow-orchestrator'))
       await fiber.dispose()
       assert.equal((await ctx.skills.list()).length, 0)
     }

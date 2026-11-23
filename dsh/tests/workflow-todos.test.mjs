@@ -167,7 +167,8 @@ test('tracks the latest explicit external launch and refreshes state without a s
       await mkdir(join(cwd, '.workflow'), { recursive: true })
       await writeFile(yaml, 'workflow: flow\nnodes:\n  - id: design\n    title: 新设计\n')
       await writeFile(join(cwd, '.workflow/status.json'), JSON.stringify({ ...state('running'), workflow: yaml }))
-      events.push({ seq: events.length, type: 'tool/call', data: { name: 'bash', arguments: JSON.stringify({ command: `python3 /skills/run_workflow.py --yaml "${yaml}" --work-dir "${cwd}" --provider codex` }) } })
+      // Bash single quotes preserve Windows backslashes as literal path characters.
+      events.push({ seq: events.length, type: 'tool/call', data: { name: 'bash', arguments: JSON.stringify({ command: `python3 /skills/run_workflow.py --yaml '${yaml}' --work-dir '${cwd}' --provider codex` }) } })
     }
     f.ctx.sessionQuery = { readSession: async () => ({ events }) }
     assert.equal(externalWorkflowLaunch(events[1]).cwd, join(workspace, 'new'))

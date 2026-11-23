@@ -10,7 +10,7 @@
 
 // @vitest-environment node
 import { expect, it } from 'vitest'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { ContentManager, withContentLock } from '../src/content-manager.ts'
@@ -139,10 +139,22 @@ it('rolls back one workflow, pins automatic updates, and initializes once per pa
   await f.manager.prepare(f.workspace, 'flow-a'); expect(readFileSync(join(f.workspace, 'init-count'), 'utf8')).toBe('3')
   await f.manager.sync('flow-a'); expect(f.manager.getStatus().workflows?.[0].pinned).toBe(false)
 })
-it('discovers a new catalog workflow without releasing the main plugin', async () => {
+it('does not reintroduce workflows omitted from shipped defaults through a newer catalog', async () => {
   const f = fixture(); await f.manager.sync(); f.newWorkflow('new-workflow'); await f.manager.sync()
   expect(f.manager.getStatus().catalogVersion).toBe('1.0.1')
-  expect(f.manager.getSource().catalog.plugins.map(item => item.id)).toContain('new-workflow')
+  expect(f.manager.getSource().catalog.plugins.map(item => item.id)).toEqual(['flow-a', 'flow-b'])
+  expect(f.manager.getStatus().workflows?.map(item => item.id)).toEqual(['flow-a', 'flow-b'])
+  await expect(f.manager.sync('new-workflow')).rejects.toThrow('Unknown workflow')
+  expect(f.extracted).toEqual([WORKFLOW_SCOPE + 'flow-a@1.0.0', WORKFLOW_SCOPE + 'flow-b@1.0.0'])
+})
+it('discovers and installs updates to shipped workflows when a newer catalog includes other entries', async () => {
+  const f = fixture(); await f.manager.sync(); f.newWorkflow('new-workflow'); f.add('flow-a', '1.1.0')
+  await f.manager.check()
+  expect(f.manager.getStatus().catalogVersion).toBe('1.0.1')
+  expect(f.manager.getStatus().workflows?.find(item => item.id === 'flow-a')).toMatchObject({ version: '1.0.0', latest: '1.1.0' })
+  await f.manager.sync('flow-a')
+  expect(f.manager.getStatus().workflows?.map(item => [item.id, item.version])).toEqual([['flow-a', '1.1.0'], ['flow-b', '1.0.0']])
+  expect(f.manager.getSource().catalog.plugins.map(item => item.id)).toEqual(['flow-a', 'flow-b'])
 })
 it('uses cached workflows offline and notices another profile updating the cache', async () => {
   const f = fixture(); await f.manager.sync()
@@ -212,4 +224,25 @@ it('preserves a published package if an error occurs after saving the index', as
   await expect(f.manager.sync('flow-a')).rejects.toThrow('after publication')
   const active = JSON.parse(readFileSync(join(f.cache, 'active.json'), 'utf8'))
   expect(readFileSync(join(f.cache, active.records['flow-a'].directory, 'workflow.json'), 'utf8')).toContain('1.1.0')
+})
+
+it('switches one active workflow, preserves code, and restores managed files when the new initializer fails', async () => {
+  const f = fixture()
+  writeFileSync(join(f.root, 'fixtures/flow-b/1.0.0/init.mjs'), "process.stderr.write('questionnaire failed');process.exit(1)")
+  await f.manager.sync(); await f.manager.prepare(f.workspace, 'flow-a')
+  mkdirSync(join(f.workspace, '.dsh/skills/flow-a'), { recursive: true })
+  writeFileSync(join(f.workspace, '.dsh/skills/flow-a/SKILL.md'), 'old workflow')
+  writeFileSync(join(f.workspace, 'source.cpp'), 'user code')
+  writeFileSync(join(f.workspace, 'AGENTS.md'), 'user notes\n<!-- cannbot:flow-a:start -->old flow<!-- cannbot:flow-a:end -->')
+  let active = 'flow-a'
+  await expect(f.manager.switchWorkflow(f.workspace, active, 'flow-b', async () => { active = 'flow-b' })).rejects.toThrow('已恢复')
+  expect(active).toBe('flow-a')
+  expect(readFileSync(join(f.workspace, '.dsh/skills/flow-a/SKILL.md'), 'utf8')).toBe('old workflow')
+  await f.manager.switchWorkflow(f.workspace, active, 'general', async () => { active = 'general' })
+  expect(active).toBe('general')
+  expect(existsSync(join(f.workspace, '.dsh/skills/flow-a'))).toBe(false)
+  expect(readFileSync(join(f.workspace, 'source.cpp'), 'utf8')).toBe('user code')
+  expect(readFileSync(join(f.workspace, 'AGENTS.md'), 'utf8')).toBe('user notes\n')
+  await f.manager.switchWorkflow(f.workspace, active, 'flow-a', async () => { active = 'flow-a' })
+  expect(readFileSync(join(f.workspace, 'init-count'), 'utf8')).toBe('2')
 })

@@ -1,7 +1,7 @@
 {
   "name": "@cannbot-plugin/cannbot-dsh-install",
   "version": "1.0.0",
-  "description": "Install official DSH Web and the latest CANNBot DSH workflows with one command on Linux and WSL",
+  "description": "Install the CANNBot Ascend/CANN development workbench and its DSH Web host on Linux and WSL",
   "type": "module",
   "license": "MIT",
   "bin": { "cannbot-dsh-install": "bin/install.mjs" },

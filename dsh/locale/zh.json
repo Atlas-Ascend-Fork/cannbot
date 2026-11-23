@@ -1,1 +1,7 @@
-{ "meta": { "title": "CANNBot DSH", "description": "品牌界面与独立工作流包，支持逐项更新、回退及工作区自动初始化。", "detail": "README.md" } }
+{
+  "meta": {
+    "title": "CANNBot DSH",
+    "description": "面向昇腾 / CANN 的开发工作台，支持算子工作流、空白昇腾工作区和内嵌远程开发。",
+    "detail": "README.md"
+  }
+}

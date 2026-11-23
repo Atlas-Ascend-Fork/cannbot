@@ -1,7 +1,7 @@
 {
   "name": "@cannbot-plugin/cannbot-dsh",
   "version": "1.0.0-alpha.1",
-  "description": "CANNBot DSH: Ascend development workbench with independently versioned workflow packages",
+  "description": "CANNBot: Ascend/CANN development workbench with operator workflows and embedded remote development",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "main": "lib/index.js",
@@ -14,6 +14,7 @@
   },
   "files": [
     "lib",
+    "remote",
     "workflow-defaults.json",
     "locale",
     "cordis.patch.yml",
@@ -66,6 +67,7 @@
     "@cannbot-plugin/workflow-catalog": "^1.0.4"
   },
   "devDependencies": {
+    "@xterm/xterm": "6.0.0",
     "yaml": "^2.4.2"
   },
   "peerDependenciesMeta": {

@@ -14,8 +14,9 @@ import type {} from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type { ContentManager } from './content-manager.ts'
 import { validVersion } from './npm-workflows.ts'
+import { WorkspaceModeError, type WorkspaceModes } from './workspace-mode.ts'
 
-export function registerContentRoutes(ctx: Context, content: ContentManager) {
+export function registerContentRoutes(ctx: Context, content: ContentManager, modes?: WorkspaceModes) {
   let workspaceFor: ((sessionId: string) => Promise<string>) | undefined
   ctx.inject(['sessionQuery', 'workingDirectory'], scoped => {
     workspaceFor = async sessionId => {
@@ -37,9 +38,14 @@ export function registerContentRoutes(ctx: Context, content: ContentManager) {
           if (body.action === 'update' && typeof body.id === 'string') { void content.sync(body.id, body.version).catch(() => {}); return Response.json({ started: true }, { status: 202 }) }
           if (body.action === 'rollback' && typeof body.id === 'string') { await content.rollback(body.id); return Response.json({ restored: true }) }
           if (body.action !== 'prepare' || typeof body.id !== 'string' || typeof body.sessionId !== 'string' || !workspaceFor) return Response.json({ error: 'invalid-request' }, { status: 400 })
-          await content.prepare(await workspaceFor(body.sessionId), body.id)
+          const cwd = await workspaceFor(body.sessionId)
+          await modes?.assertSessionWorkflow(body.sessionId, cwd, body.id)
+          await content.prepare(cwd, body.id)
           return Response.json({ ready: true })
-        } catch { return Response.json({ error: 'Content preparation failed. See content status and logs.' }, { status: 500 }) }
+        } catch (error) {
+          if (error instanceof WorkspaceModeError) return Response.json({ error: error.code, message: error.message }, { status: error.status })
+          return Response.json({ error: 'Content preparation failed. See content status and logs.' }, { status: 500 })
+        }
       },
     })
     // Baseline packages are mandatory npm dependencies and ready before apply completes.

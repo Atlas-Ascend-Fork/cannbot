@@ -10,6 +10,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ContentStore } from '../src/client/content-store.ts'
 import type { WorkflowSelection } from '../src/client/workflow-selection.ts'
@@ -18,6 +19,16 @@ import { createWorkbenchState } from '../src/client/workbench-state.ts'
 import { launchWorkbench } from '../src/client/workbench-launch.ts'
 import { WORKFLOWS } from '../src/workflows.ts'
 import { inheritedWorkspaceId } from '../src/client/workbench-workspace.ts'
+import type { WorkspaceModes } from '../src/client/workspace-modes.ts'
+
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
+  IconChevronDownOutlineRegular: () => null,
+  IconFolderCloseRegular: () => null,
+  IconPlusOutlineRegular: () => null,
+  IconProjectAddOutlineRegular: () => null,
+  IconSendOutlineRegular: () => null,
+  Menu: ({ anchor, open, items, onSelect }: { anchor: ReactNode; open: boolean; items: { id: string; type?: string; label?: ReactNode }[]; onSelect(id: string): void }) => <>{anchor}{open && <div role="menu">{items.map(item => item.type === 'separator' ? <hr key={item.id} /> : <button key={item.id} type="button" role="menuitem" onClick={() => onSelect(item.id)}>{item.label}</button>)}</div>}</>,
+}))
 
 afterEach(cleanup)
 Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.setAttribute('open', '') } })
@@ -42,6 +53,14 @@ function fixture() {
   } as unknown as Context
   return { ctx, store, content, selection, selectionSnapshot, input, submit, release, openSession }
 }
+function openDirectory() {
+  fireEvent.click(screen.getByRole('button', { name: '当前工作区' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: '选择其他目录…' }))
+}
+function cannModes(workspaces = [{ workspaceId: 'W', title: 'CANN 项目', path: '/project', pluginId: 'ops-registry-invoke', sessionIds: [], sharedWithDeepSeek: false }], selectedWorkspaceId = 'W') {
+  const snapshot = { mode: 'cannbot', ready: true, workspaces, sessions: [], selectedWorkspaceId, navigationError: '' }
+  return { getSnapshot: () => snapshot, subscribe: () => () => {}, selectWorkspace: vi.fn(), setCreating: vi.fn(), recordSession: vi.fn(async () => {}) } as unknown as WorkspaceModes
+}
 describe('CANNBot workbench', () => {
   it('browses and selects a workspace without invoking the native picker or starting a task', async () => {
     const f = fixture(), file = new File(['code'], 'input.cpp')
@@ -52,7 +71,7 @@ describe('CANNBot workbench', () => {
       return item
     })
     render(<Workbench {...f} />)
-    fireEvent.click(screen.getByRole('button', { name: '选择工作区' }))
+    openDirectory()
     await screen.findByRole('button', { name: /other/ })
     fireEvent.click(screen.getByRole('button', { name: /other/ }))
     await waitFor(() => expect((screen.getByRole('textbox', { name: '目录路径' }) as HTMLInputElement).value).toBe('/other'))
@@ -63,15 +82,15 @@ describe('CANNBot workbench', () => {
     expect(f.submit).not.toHaveBeenCalled()
     expect(f.store.getSnapshot()).toMatchObject({ prompt: '保留需求', files: [file], busy: false })
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(screen.getByText('/other')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '当前工作区' }).getAttribute('title')).toBe('/other')
   })
   it('reuses an existing workspace and keeps selection unchanged on cancel', async () => {
     const f = fixture(); render(<Workbench {...f} />)
-    fireEvent.click(screen.getByRole('button', { name: '选择工作区' }))
+    openDirectory()
     await screen.findByRole('button', { name: /other/ })
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     expect(f.store.getSnapshot().workspaceId).toBe('')
-    fireEvent.click(screen.getByRole('button', { name: '选择工作区' }))
+    openDirectory()
     await screen.findByRole('button', { name: /other/ })
     fireEvent.click(screen.getByRole('button', { name: '选择此目录' }))
     await waitFor(() => expect(f.store.getSnapshot().workspaceId).toBe('W'))
@@ -81,7 +100,7 @@ describe('CANNBot workbench', () => {
   it('keeps directory errors in the chooser and retries browsing without submitting', async () => {
     const f = fixture(); vi.mocked(f.ctx.uiWorkspace.listDirectory).mockRejectedValueOnce(Error('Permission denied'))
     render(<Workbench {...f} />)
-    fireEvent.click(screen.getByRole('button', { name: '选择工作区' }))
+    openDirectory()
     await screen.findByText('Permission denied')
     expect(screen.queryByText('暂时无法开始，需求和文件已保留。')).toBeNull()
     expect((screen.getByRole('button', { name: '选择此目录' }) as HTMLButtonElement).disabled).toBe(true)
@@ -91,21 +110,56 @@ describe('CANNBot workbench', () => {
     expect(f.submit).not.toHaveBeenCalled()
     expect(f.store.getSnapshot().error).toBe('')
   })
-  it('filters, selects and clears a workflow without changing or sending the requirement', () => {
+  it('shows the native-style hero and a read-only workflow without a home catalog or selector', () => {
     const f = fixture(); f.store.set({ prompt: '保留原来的需求' })
-    render(<Workbench {...f} />)
-    expect(screen.getByRole('group', { name: '工作流分类' }).querySelectorAll('button')).toHaveLength(2)
-    expect(screen.getByRole('button', { name: /ops-direct-invoke-flash.*快速生成/ }).getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: /ops-registry-invoke.*开发/ }))
-    expect(f.store.getSnapshot()).toMatchObject({ workflow: 'ops-registry-invoke', prompt: '保留原来的需求' })
+    const view = render(<Workbench {...f} modes={cannModes()} />)
+    expect(screen.getByRole('heading', { name: '现在，交给CANNBot' })).toBeTruthy()
+    expect(view.container.querySelector('[data-cannbot-dsh-logo]')?.getAttribute('width')).toBe('34')
+    expect(view.container.querySelector('header')).toBeNull()
+    expect(screen.queryByRole('region', { name: '工作流目录' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '搜索工作流' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /ops-/ })).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.queryByText(/preview/i)).toBeNull()
+    expect(screen.getByText('ops-registry-invoke').closest('button')).toBeNull()
+    expect(screen.queryByRole('button', { name: '取消工作流选择' })).toBeNull()
+    expect(f.store.getSnapshot().prompt).toBe('保留原来的需求')
     expect(f.submit).not.toHaveBeenCalled()
-    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '开发需求' }))
-    expect(screen.queryByText('可补充输入形状、数据类型和目标硬件。')).toBeNull()
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索工作流' }), { target: { value: 'registry' } })
-    expect(screen.getByRole('button', { name: /ops-registry-invoke.*开发/ })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /ops-direct-invoke.*开发/ })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '取消工作流选择' }))
-    expect(f.store.getSnapshot().workflow).toBe('')
+  })
+  it('offers only CANN workspaces through the native menu and delegates selection without sending a draft', () => {
+    const f = fixture(), modes = cannModes(), file = new File(['code'], 'draft.cpp')
+    f.store.set({ prompt: '未发送需求', files: [file] })
+    render(<Workbench {...f} modes={modes} />)
+    fireEvent.click(screen.getByRole('button', { name: '当前工作区' }))
+    expect(screen.getByRole('menuitem', { name: /CANN 项目\s*\/project/ })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /开发工作区/ })).toBeNull()
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+    fireEvent.click(screen.getByRole('menuitem', { name: /CANN 项目\s*\/project/ }))
+    expect(modes.selectWorkspace).toHaveBeenCalledExactlyOnceWith('W')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(f.store.getSnapshot()).toMatchObject({ prompt: '未发送需求', files: [file] })
+    expect(f.submit).not.toHaveBeenCalled()
+  })
+  it('routes creating a workspace to the existing directory and plugin flow, with no default workspace', () => {
+    const f = fixture(), modes = cannModes([], '')
+    f.store.set({ prompt: '保留到创建完成' })
+    render(<Workbench {...f} modes={modes} />)
+    expect(screen.getByRole('button', { name: '开始' })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByRole('button', { name: '当前工作区' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '创建工作区' }))
+    expect(modes.setCreating).toHaveBeenCalledExactlyOnceWith(true)
+    expect(f.ctx.workspaces.create).not.toHaveBeenCalled()
+    expect(f.store.getSnapshot().prompt).toBe('保留到创建完成')
+    expect(f.submit).not.toHaveBeenCalled()
+  })
+  it('uses the workspace-bound workflow even when an older draft has another workflow', async () => {
+    const f = fixture(), modes = cannModes()
+    f.store.set({ prompt: '使用绑定工作流', workflow: 'ops-direct-invoke-flash' })
+    render(<Workbench {...f} modes={modes} />)
+    fireEvent.click(screen.getByRole('button', { name: '开始' }))
+    await waitFor(() => expect(f.submit).toHaveBeenCalledOnce())
+    expect(f.selection.choose).toHaveBeenCalledExactlyOnceWith('S', 'ops-registry-invoke')
+    expect(modes.recordSession).toHaveBeenCalledExactlyOnceWith('W', 'S')
   })
   it('shows useful details and keeps the existing prompt when using an example', () => {
     const f = fixture(); f.store.set({ prompt: '用户自己的需求' })
@@ -179,10 +233,11 @@ describe('CANNBot workbench', () => {
   })
   it('shows the real inherited path, removes the management button and preserves a manual workspace choice', () => {
     const f = fixture(); render(<Workbench {...f} />)
-    expect(screen.getByText('/project')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '当前工作区' }).getAttribute('title')).toBe('/project')
     expect(screen.getByText('沿用当前对话')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '管理工作流' })).toBeNull()
-    fireEvent.change(screen.getByRole('combobox', { name: '当前工作区' }), { target: { value: 'W' } })
+    fireEvent.click(screen.getByRole('button', { name: '当前工作区' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /开发工作区\s*\/project/ }))
     expect(f.store.getSnapshot().workspaceId).toBe('W')
     expect(screen.queryByText('沿用当前对话')).toBeNull()
   })

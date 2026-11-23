@@ -14,4 +14,4 @@ import { resolve } from 'node:path'
 import { resolveSource } from './scripts/source.mjs'
 const source = resolveSource()
 const { clientBundle } = await import(pathToFileURL(resolve(source, 'packages/client/tsdown.client.ts')).href)
-export default clientBundle(import.meta.dirname, ['src/index.ts'])
+export default clientBundle(import.meta.dirname, ['src/index.ts', 'src/initialize-workspace.ts'])

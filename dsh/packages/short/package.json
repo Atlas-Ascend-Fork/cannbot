@@ -1,7 +1,7 @@
 {
   "name": "cannbot-dsh",
   "version": "1.0.0-alpha.1",
-  "description": "CANNBot DSH: Ascend development workbench with independently versioned workflow packages",
+  "description": "CANNBot: Ascend/CANN development workbench with operator workflows and embedded remote development",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "files": [

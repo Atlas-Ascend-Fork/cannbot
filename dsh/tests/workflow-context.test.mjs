@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { installWorkflowContext, Config } from '../src/workflow-context.ts'
 
-function setup(config, legacy = false, content) {
+function setup(config, legacy = false, content, modes) {
   let hook
   let legacyValue = config
   const skill = {
@@ -20,7 +20,7 @@ function setup(config, legacy = false, content) {
     skills: { get: async () => skill },
   }
   // The official Loader passes parsed Config, whose volatile fields expose get().
-  installWorkflowContext(ctx, Config(config), content)
+  installWorkflowContext(ctx, Config(config), content, modes)
   return { run: (sessionId, messages) => hook({ agent: { id: sessionId }, signal: new AbortController().signal }, async () => ({ kind: 'continue', messages })),
     setLegacy: value => { legacyValue = value }, ctx }
 }
@@ -79,4 +79,27 @@ test('selected workflow resolves its explicitly declared entry Skill name', asyn
   }
   const result = await app.run('A', [])
   assert.equal(result.messages.length, 1)
+})
+
+test('persisted CANNBot session workflow is used even when browser selection settings are absent', async () => {
+  const calls = []
+  const modes = {
+    async workflowForSession(id, requested) { assert.equal(id, 'bound'); assert.equal(requested, undefined); return 'ops-direct-invoke' },
+    async assertSessionWorkflow(...args) { calls.push(args) },
+  }
+  const app = setup({}, false, undefined, modes)
+  assert.equal((await app.run('bound', [])).messages[0].source.name, 'ops-direct-invoke')
+  assert.deepEqual(calls, [['bound', '/workspace', 'ops-direct-invoke']])
+})
+
+test('agent initialization rejects a changed CANNBot session workspace before content preparation', async () => {
+  let prepared = false
+  const content = { async prepare() { prepared = true } }
+  const modes = {
+    async workflowForSession() { return 'ops-direct-invoke' },
+    async assertSessionWorkflow() { throw new Error('session-workspace-mismatch') },
+  }
+  const app = setup({}, false, content, modes)
+  await assert.rejects(app.run('bound', []), /session-workspace-mismatch/)
+  assert.equal(prepared, false)
 })

@@ -39,11 +39,35 @@ test('timeout kills a child that ignores SIGTERM', async () => {
   assert.ok(Date.now() - start < 5000)
 })
 
-test('signal interruption cleans staging after terminating child', async () => {
+test('handled interruption cleans staging after terminating child', { timeout: 10_000 }, async () => {
   const module = new URL('../scripts/staging.mjs', import.meta.url).href
   const runner = new URL('../src/process-runner.mjs', import.meta.url).href
-  const child = spawn(process.execPath, ['--input-type=module', '-e', `import {withStaging} from ${JSON.stringify(module)};import {runProcess} from ${JSON.stringify(runner)};await withStaging('cannbot-signal-test-',async(dir,signal)=>{process.send(dir);await runProcess(process.execPath,['-e','setInterval(()=>{},1000)'],{signal,stdio:'ignore'})}).catch(()=>{});`], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
-  const [directory] = await once(child, 'message')
-  const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited
-  assert.equal(existsSync(directory), false)
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `import {withStaging} from ${JSON.stringify(module)};import {runProcess} from ${JSON.stringify(runner)};process.on('message',()=>process.emit('SIGTERM'));await withStaging('cannbot-signal-test-',async(dir,signal)=>{process.send(dir);await runProcess(process.execPath,['-e','setInterval(()=>{},1000)'],{signal,stdio:'ignore'})}).catch(()=>{});process.disconnect();`], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true })
+  try {
+    const [directory] = await once(child, 'message')
+    const exited = once(child, 'exit')
+    // Node's child.kill('SIGTERM') forcibly terminates Windows processes without
+    // delivering a JS signal. IPC exercises the same installed handler there.
+    if (process.platform === 'win32') child.send('terminate')
+    else child.kill('SIGTERM')
+    await exited
+    assert.equal(existsSync(directory), false)
+  } finally { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL') }
+})
+
+test('abort terminates the owned process tree before runProcess rejects', { timeout: 10_000 }, async () => {
+  const controller = new AbortController()
+  let descendant, output = ''
+  const script = `const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});console.log(child.pid);setInterval(()=>{},1000)`
+  try {
+    await assert.rejects(runProcess(process.execPath, ['-e', script], {
+      signal: controller.signal, timeoutMs: 5000, graceMs: 100,
+      stdio: ['ignore', 'pipe', 'pipe'], onData: chunk => {
+        output += chunk
+        if (!descendant && /^\d+\r?\n/.test(output)) { descendant = Number(output.trim()); controller.abort(new Error('cancelled by test')) }
+      },
+    }), /cancelled by test/)
+    assert(Number.isInteger(descendant))
+    assert.throws(() => process.kill(descendant, 0), error => error.code === 'ESRCH')
+  } finally { if (descendant) { try { process.kill(descendant, 'SIGKILL') } catch {} } }
 })

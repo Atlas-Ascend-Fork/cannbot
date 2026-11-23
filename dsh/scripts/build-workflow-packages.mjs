@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
+import { createPackageArtifact } from '../src/remote/artifact.js'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const options = Object.fromEntries(process.argv.slice(2).reduce((items, arg, i, all) => arg.startsWith('--') ? [...items, [arg.slice(2), all[i + 1]]] : items, []))
 const version = options.version ?? '1.0.0', catalogVersion = options['catalog-version'] ?? '1.0.0'
@@ -18,7 +19,7 @@ const assets = join(temporary, 'official')
 const built = spawnSync(process.execPath, [join(root, 'scripts/materialize-workflows.mjs'), source, assets], { stdio: 'inherit' })
 if (built.status !== 0) process.exit(built.status ?? 1)
 const catalog = JSON.parse(readFileSync(join(assets, 'catalog.json'), 'utf8'))
-const defaults = JSON.parse(readFileSync(join(root, 'workflow-defaults.json'), 'utf8'))
+const defaults = JSON.parse(readFileSync(resolve(options.defaults ?? join(root, 'workflow-defaults.json')), 'utf8'))
 // workflow-defaults.json is the source of truth for which workflows this build ships:
 // workflows absent from it are neither packaged nor listed in the catalog.
 const shipped = new Set(defaults.workflows.map(item => item.id))
@@ -30,8 +31,6 @@ const dist = resolve(options.output ?? join(root, 'dist/workflow-releases'))
 mkdirSync(dist, { recursive: true })
 writeFileSync(join(dist, 'source-catalog.json'), JSON.stringify(catalog, null, 2) + '\n')
 const workspace = resolve(options['build-root'] ?? join(root, 'dist/workflow-packages'))
-const npmCli = [process.env.npm_execpath, resolve(process.execPath,'../node_modules/npm/bin/npm-cli.js'), '/usr/share/nodejs/npm/bin/npm-cli.js', '/usr/lib/node_modules/npm/bin/npm-cli.js'].find(value=>value&&existsSync(value));
-if(!npmCli)throw new Error('Use a Node.js installation with npm to build workflow packages')
 const hashTree = path => {
   const hash = createHash('sha256')
   function walk(value) {
@@ -47,9 +46,8 @@ const reports = []
 function pack(directory, manifest) {
   if (options['no-pack'] === 'true') { reports.push({ name: manifest.name, version: manifest.version, directory }); return }
   const tarball = join(dist, `${manifest.name.replace(/^@/, '').replaceAll('/', '-')}-${manifest.version}.tgz`)
-  const result = spawnSync(process.execPath, [npmCli, 'pack', '--ignore-scripts', '--json', '--pack-destination', dist, '--loglevel=error', '--logs-max=0'], { cwd: directory, encoding: 'utf8', maxBuffer: 4e6 })
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout)
-  const bytes = readFileSync(tarball)
+  const { bytes } = createPackageArtifact(directory)
+  writeFileSync(tarball, bytes)
   const report = { name: manifest.name, version: manifest.version, directory, tarball, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: 'sha512-' + createHash('sha512').update(bytes).digest('base64') }
   reports.push(report); console.log(JSON.stringify(report))
 }

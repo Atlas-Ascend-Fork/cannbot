@@ -10,4 +10,5 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ContentManager } from './content-manager.ts'
-export function installNativeWorkflowTools(ctx: Context, content: ContentManager): void
+import type { WorkspaceModes } from './workspace-mode.ts'
+export function installNativeWorkflowTools(ctx: Context, content: ContentManager, modes?: WorkspaceModes): void

@@ -11,6 +11,7 @@ import { pythonBootstrap } from '../src/native-workflow-bootstrap.mjs'
 
 const scripts = fileURLToPath(new URL('../../harness/workflow-orchestrator/scripts/', import.meta.url))
 const runner = join(scripts, 'orchestrator.py')
+const posixOnly = process.platform === 'win32' ? 'Upstream Python orchestrator/workspace import POSIX fcntl; run this integration suite on Linux.' : false
 async function fixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), 'native-workflow-'))
   t.after(() => rm(cwd, { recursive: true, force: true }))
@@ -26,7 +27,7 @@ async function fixture(t) {
   return { runner, yaml, cwd, resources, prompt: 'test native workflow' }
 }
 
-test('ordinary CLI retains its provider interface without plugin-specific parameters', () => {
+test('ordinary CLI retains its provider interface without plugin-specific parameters', { skip: posixOnly }, () => {
   const help = execFileSync('python3', [runner, '--help'], { encoding: 'utf8' })
   assert(help.includes('--provider'))
   assert(!help.includes('--execution'))
@@ -34,13 +35,13 @@ test('ordinary CLI retains its provider interface without plugin-specific parame
   assert.equal(pluginHelp, help)
 })
 
-test('plugin bootstrap rejects a CLI provider before launching an executor', () => {
+test('plugin bootstrap rejects a CLI provider before launching an executor', { skip: posixOnly }, () => {
   assert.throws(() => execFileSync('python3', ['-c', pythonBootstrap, runner,
     '--yaml', 'unused.yaml', '--work-dir', '/unused', '--provider', 'codex'], { stdio: 'pipe' }),
   error => error.status !== 0 && error.stderr.toString().includes('plugin supplies its execution callback'))
 })
 
-test('Python schedules concurrent nodes, retries, verdicts and dependencies through native DSH activations', { timeout: 20000 }, async t => {
+test('Python schedules concurrent nodes, retries, verdicts and dependencies through native DSH activations', { timeout: 20000, skip: posixOnly }, async t => {
   const spec = await fixture(t), parent = { id: 'session-a' }, calls = [], finished = new Set()
   let active = 0, maxActive = 0, failed = false, disposed = 0
   const execution = new NativeWorkflow({ subagents: { async startActivation(options) {
@@ -78,7 +79,7 @@ test('Python schedules concurrent nodes, retries, verdicts and dependencies thro
   assert(Object.values(result.state.tasks).every(task => task.status === 'pass'))
 })
 
-test('goal pause stops Python and native children, then goal resume completes saved work', { timeout: 20000 }, async t => {
+test('goal pause stops Python and native children, then goal resume completes saved work', { timeout: 20000, skip: posixOnly }, async t => {
   const spec = await fixture(t), parent = { id: 'session-a' }
   parent.session = { id: parent.id, todos: [{ content: 'Agent plan', status: 'pending' }], append(type, data) {
     assert.equal(type, 'todo/write'); this.todos = data.todos
@@ -142,5 +143,6 @@ test('goal pause stops Python and native children, then goal resume completes sa
   assert(parent.session.todos.slice(1).every(todo => todo.status === 'completed'))
 })
 
-import '../../plugins-official/ops-direct-invoke/tests/dsh/native.test.mjs'
+if (posixOnly) test('direct-invoke frozen Python phase integration', { skip: posixOnly }, () => {})
+else await import('../../plugins-official/ops-direct-invoke/tests/dsh/native.test.mjs')
 import '../../plugins-official/ops-direct-invoke/tests/dsh/package.test.mjs'
