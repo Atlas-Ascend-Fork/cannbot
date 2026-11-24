@@ -30,7 +30,15 @@ permission:
 
 单点诉求（例如「只跑一次 FA 融合」「只做一次精度定位」「只看看 profiling」）由工具按 description 匹配路由到对应的 `recommend-*` 原子 skill，本 plugin 不承接；本 plugin 只处理「整网优化 / 全流程适配 / 在基线上持续榨性能」这类整链路请求。
 
-18 个原子 Skill 维护在 cannbot-skills 仓 `community/model/`（`model-recommend-*`），安装时由 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块装配到本工具的 `skills/` 目录。若运行时没有 Skill 调用能力，先定位 `skills/<skill-name>/SKILL.md`（或源仓 `cannbot-skills/community/model/<skill-name>/SKILL.md`）直接完整读取；读取完成前不得进入条目 1 或派发 subagent。
+14 个原子 Skill 维护在 cannbot-skills 仓 `community/model/`（`model-recommend-*`），安装时由 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块装配到本工具的 `skills/` 目录。若运行时没有 Skill 调用能力，先定位 `skills/<skill-name>/SKILL.md`（或源仓 `cannbot-skills/community/model/<skill-name>/SKILL.md`）直接完整读取；读取完成前不得进入条目 1 或派发 subagent。
+
+## 全局硬性约束（不可违背）
+
+> 先于一切工作流与单点 skill 执行；与任何条目或 skill 冲突时，以本节为准。
+
+1. **禁止主动修改原始模型图**：不得主动切分、删除、改写、算子替换原始模型图。分析/适配阶段可提出建议（含理由、影响、回退），但必须作为**分析优化后的独立问题，由用户本人单独确认**；未经确认不得静默修改，原模型保持完整。
+2. **禁止主动修改 GE_SESSION_DEMO 测试框架代码**：不得修改 `framework/GE_SESSION_DEMO/`（及工程根副本）的任何文件，包括 `run.sh`、`test.sh`、`src/`、`tools/`、配置及其他源码/脚本。**允许边界**：仅通过 `run.sh <id> ...` / `test.sh` 的传入参数与环境变量驱动框架，不得编辑脚本本身。需要框架侧能力时记录为「框架需求移交」，由用户本人单独确认；确认前不得实施。自定义优化优先以独立交付件（插件 `.so`、Pass `.so`、算子 `.run`）实现。
+3. **交付件完整并产出「模型交付说明书」**：每个自定义优化项必须有本地开发源码、安装包、README、开关与默认值、设置参数、精度模式、验收结论、回退方式；收口产出 `docs/{model_name}/{model_name}_model_delivery_manual.md`（模板见 `workflows/templates/model-delivery-manual-template.md`）。
 
 ## 强制工作流（入口意图分流）
 
@@ -47,16 +55,16 @@ permission:
 
 1. **单点诉求** → 直接调用对应原子 skill，不进整网流程：
    - 只做精度定位 → `model-recommend-precision-comparison`
-   - 只做某类算子/图 pass 适配 → `model-recommend-fusion-operator-adaptation` / `model-recommend-flash-attention-fusion`
-   - 只做 profiling 分析 → `model-recommend-performance-analysis` / `model-recommend-profiling-deep-analysis`
+   - 只做某类算子/图 pass 适配 → `model-recommend-fusion-pass-dev` / `model-recommend-plugin-dev`（选型见 `workflows/references/ge-custom-dev-routing.md`）
+   - 只做 profiling 分析 → `model-recommend-analysis`
    - 只修报错/卡死 → `model-recommend-runtime-debug`
-   - 只开发某个算子 → `model-recommend-kernel-generation` / `model-recommend-custom-op-development`（须确认已有条目 10 的开发清单或功能补齐前提）
+   - 只开发某个算子 → `model-recommend-custom-op-dev`（须确认已有条目 10 的开发清单或功能补齐前提）
 
 2. **整网优化诉求** → 检查目标模型目录的进度状态：
    - **无基线**（没有 `data/{model_name}/baseline/baseline_metadata.json` 且模型未跑通）
      → Read `workflows/model-recommend-infer-workflow.md`，从条目 0 起执行全流程。
    - **有基线、有 `loop_state.json` 且未 terminated**
-     → Read `workflows/model-recommend-infer-workflow.md` 与 `workflows/references/loop-rules.md`，从 `iteration + 1` 续跑循环（幂等，不重做已记录轮次）。
+     → Read `workflows/model-recommend-infer-workflow.md` 与 `workflows/references/rules.md`，从 `iteration + 1` 续跑循环（幂等，不重做已记录轮次）。
    - **有基线、无 `next_actions.json`**（首轮未收口）
      → 从条目 5 继续：性能分析 + 四项专项 → 生成初始动作表 → 进循环。
    - **有基线、有 `next_actions.json`、缺 `loop_state.json`**（首轮已收口但未建循环状态）
@@ -71,7 +79,7 @@ permission:
 
 - **只编排不替工**：不亲自跑采集、不亲自改模型、不亲自下判定；采集派 runner、分析派 analyzer、实施派 implementer、验收派 reviewer。
 - **交互在派发前**：subagent 不能与用户对话。所有需要用户拍板的事（基线决策清单、低精度授权、局部劣化换主指标、动作取舍）由 primary 在派发前问清，作为 spec 传下去。
-- **双门禁不让渡**：任何改动落地前必须过精度门禁与性能门禁，判定细则见 `workflows/references/gate-rules.md`；不因进度压力放行。
+- **双门禁不让渡**：任何改动落地前必须过精度门禁与性能门禁，判定细则见 `workflows/references/rules.md`；不因进度压力放行。
 - **状态文件独占写**：`loop_state.json`、`workflow_status.md`、`next_actions.json` 只由 primary 写；`perf_ledger.json` 由当轮执行者写入、reviewer 复核。
 - **一轮一动作**：循环内每轮只执行一个动作，保证归因唯一；组合动作在动作表登记为一条。
 - **产物当轮落盘**：台账实时写、每轮性能报告当轮产出、`workflow_status.md` 每轮更新；禁止事后批量补写。
@@ -80,18 +88,11 @@ permission:
 
 ## 前置依赖（进入流程前必须成立）
 
-本工作流不引用任何外部链接：执行框架已随插件内置，其余依赖为机器侧能力与用户数据。全量清单（25 项，含核对命令、获取方式、缺失处置）见 `workflows/references/external-dependencies.md`，进入条目 0 时逐项核对：
+本工作流不引用任何外部链接。全量清单（25 项，含核对命令、获取方式、缺失处置矩阵）与「阻塞项按输入格式判定」见 [`workflows/references/external-dependencies.md`](workflows/references/external-dependencies.md)，进入条目 0 时逐项核对；**阻塞项未清零不得进入条目 1**，禁止用「假设可用」替代自检结果。
 
-- **硬件**：Ascend910B 系列单卡可见（`npu-smi info`，Health OK）
-- **CANN 9.1.0**：`libge_runner_v2.so` 存在（onnx 路径直接使用；pytorch/HF 经 torchair 转入同一基座）；`atc` / `msopgen` / `msprof` 可用
-- **编译链路**：`g++`（C++17）+ `nlohmann/json.hpp`
-- **执行框架 GE_SESSION_DEMO**（**仅 onnx 路径需要**）：插件内置 `framework/GE_SESSION_DEMO/`。project 级 `init.sh` 自动复制到工程根；`global` 级与仓库统一安装器只放在插件目录（统一安装器为 `.cannbot/plugins/model-recommend-infer-optimize/framework/`），需手工复制后 `bash compile.sh` 产出 `GEsession_test_acl`；pytorch / HuggingFace 路径用模型自身脚本 + `torch_npu`，不需要它
-  缺失时：`cp -r <插件目录>/framework/GE_SESSION_DEMO <工程根>/GE_SESSION_DEMO && cd <工程根>/GE_SESSION_DEMO && bash compile.sh`
-- **Python 侧**：`python3` / `onnx` / `numpy`；golden 依赖 CPU `onnxruntime` 或用户提供 `reference/` 标杆
-- **算子开发**：A2/A3 走 AscendC（`msopgen`）；A5 的 `cannbot-dsl` 当前环境不可用
-- **数据资产**：模型文件、请求输入、精度标杆由用户提供
-
-**阻塞项按输入格式判定**：NPU / CANN / GE v2 / 无标杆的精度门禁对三条路径都阻塞；执行框架、`g++`、`nlohmann/json.hpp` 只阻塞 onnx 路径，`torch_npu` 只阻塞 pytorch/HF 路径。**未清零不得进入条目 1**；缺失项按依赖文档的处置矩阵标注「阻塞 / 能力受限 / 可继续」，禁止用「假设可用」替代自检结果。
+- 硬件：Ascend910B 系列单卡可见；CANN 9.1.0（`libge_runner_v2.so`）+ `atc`/`msopgen`/`msprof`。
+- onnx 路径另需 GE_SESSION_DEMO（插件内置 `framework/GE_SESSION_DEMO/`，需落到工程根并 `bash compile.sh`）与 `g++`/`nlohmann/json.hpp`；pytorch/HF 路径另需 `torch_npu`。
+- 数据资产（模型、输入、精度标杆）由用户提供；缺标杆时精度门禁阻塞。
 
 ## 边界
 
