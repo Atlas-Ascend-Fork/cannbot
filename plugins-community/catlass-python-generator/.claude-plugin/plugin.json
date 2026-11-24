@@ -1,0 +1,18 @@
+{
+  "name": "catlass-python-generator",
+  "description": "基于 Markdown 任务契约的精简 CATLASS Python 算子开发优化工作流。静态知识由 cannbot-knowledge 的 knowledge/ops/catlass-dsl 路由原位供给，项目经验按 OKF v0.2 learned 模型追加；6 个 Skill 由 cannbot-skills 仓 community/ops 维护，安装时经 plugin-sources.json 从 vendor/cannbot-skills 子模块链接。",
+  "version": "2.0.0",
+  "author": {
+    "name": "CANNBot"
+  },
+  "homepage": "https://gitcode.com/cann/cannbot",
+  "repository": "https://gitcode.com/cann/cannbot",
+  "license": "MIT",
+  "keywords": [
+    "catlass-python",
+    "catlass",
+    "ascend",
+    "npu",
+    "operator-generation"
+  ]
+}

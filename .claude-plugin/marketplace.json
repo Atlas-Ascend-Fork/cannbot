@@ -332,6 +332,23 @@
       "category": "development"
     },
     {
+      "name": "catlass-python-generator",
+      "source": "./plugins-community/catlass-python-generator",
+      "description": "基于 Markdown 任务契约的精简 CATLASS Python 算子开发优化工作流。Skill 由 cannbot-skills 的 community/ops 维护，静态知识由 cannbot-knowledge 的 knowledge/ops/catlass-dsl 原位供给。",
+      "version": "2.0.0",
+      "author": {
+        "name": "CANNBot"
+      },
+      "keywords": [
+        "catlass-python",
+        "catlass",
+        "ascend",
+        "npu",
+        "operator-generation"
+      ],
+      "category": "development"
+    },
+    {
       "name": "triton-op-generator-skills",
       "description": "Triton-Ascend 算子生成与优化 Skills（9 项）。覆盖任务构建、草图设计、代码生成、精度验证、性能优化、精度调试、simulator 诊断、MFU 分析与 NPU 架构知识。",
       "source": {

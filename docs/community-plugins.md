@@ -7,6 +7,7 @@
 | [`autoresearch`](../plugins-community/autoresearch/) | Triton Ascend / AscendC / AscendC CATLASS 算子自动优化工作区，保留 baseline、plan、edit、eval 与 keep/discard 状态机 |
 | [`ascendc-port-orchestrator`](../plugins-community/ascendc-port-orchestrator/) | AscendC 算子跨代际移植与反向算子生成 |
 | [`ascendc-ops-perf-evolution`](../plugins-community/ascendc-ops-perf-evolution/) | 已有 Ascend C 内核与 ops 仓库算子的多轮性能进化优化 |
+| [`catlass-python-generator`](../plugins-community/catlass-python-generator/) | CATLASS Python DSL 算子设计、开发、基准测试、优化与知识沉淀（门禁引导工作流） |
 | [`collaborative-agent-kernel-evolution` (CAKE2)](../plugins-community/collaborative-agent-kernel-evolution/) | AscendC 算子生成、评估与进化式性能优化 |
 | [`model-train-precision-diagnose`](../plugins-community/model-train-precision-diagnose/) | PyTorch on Ascend NPU 训练精度异常诊断 |
 | [`pypto-pro-op-orchestrator`](../plugins-community/pypto-pro-op-orchestrator/) | PyPTO-Pro 算子开发、验证与性能优化（主 agent 按需调度 6 个专职 subagent） |
@@ -60,6 +61,18 @@ npx @cannbot-plugin/cannbot@latest install model-train-precision-diagnose \
 ```
 
 源码安装与各客户端（OpenCode / Codex / Claude Code / TRAE / DSH）参数见 [quickstart.md](../plugins-community/model-train-precision-diagnose/quickstart.md)。
+
+## catlass-python-generator
+
+CATLASS Python DSL 算子开发工作流：设计 → 开发 → 全量测试与融合 → 优化 → 交付，由只读门禁 `gate.py` 按 `ITERATIONS.md` 中的真实执行记录逐阶段把关。6 个 Skill 由 cannbot-skills 仓 `community/ops/catlass-python-*` 维护，静态知识由 cannbot-knowledge 仓 `knowledge/ops/catlass-dsl/` 原位供给，项目经验写入 `.catlass-python/knowledge/learned/`。
+
+安装：
+
+```bash
+bash plugins-community/catlass-python-generator/init.sh project codex /path/to/workspace
+```
+
+各客户端参数、依赖布局与使用方式见 [quickstart.md](../plugins-community/catlass-python-generator/quickstart.md)。
 
 ## tilelang2ascendc-ops-generator
 

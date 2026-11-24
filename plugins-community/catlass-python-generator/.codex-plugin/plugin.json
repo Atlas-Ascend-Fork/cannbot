@@ -1,0 +1,21 @@
+{
+  "name": "catlass-python-generator",
+  "version": "2.0.0",
+  "description": "基于 Markdown 任务契约的精简 CATLASS Python 算子开发优化工作流。",
+  "author": {"name": "CANNBot"},
+  "license": "MIT",
+  "keywords": ["catlass-python", "catlass", "ascend", "npu", "operator-generation"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "CATLASS Python Operator Generator",
+    "shortDescription": "按 Markdown 任务契约开发 CATLASS Python 算子。",
+    "longDescription": "完成设计、实现、基准测试与性能优化闭环，静态知识来自 cannbot-knowledge，项目经验写入 .catlass-python/knowledge。",
+    "developerName": "CANNBot",
+    "category": "Productivity",
+    "capabilities": ["Write", "Code Review"],
+    "defaultPrompt": [
+      "使用 CATLASS Python 工作流开发算子。",
+      "查询 CATLASS Python 知识。"
+    ]
+  }
+}

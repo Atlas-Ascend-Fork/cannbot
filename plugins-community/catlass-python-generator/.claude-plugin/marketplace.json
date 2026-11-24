@@ -1,0 +1,14 @@
+{
+  "name": "catlass-python-generator-dev",
+  "description": "CATLASS Python 算子插件本地入口",
+  "owner": {"name": "CANNBot"},
+  "plugins": [
+    {
+      "name": "catlass-python-generator",
+      "description": "基于 Markdown 任务契约的精简 CATLASS Python 算子开发优化工作流。",
+      "version": "2.0.0",
+      "source": "./",
+      "author": {"name": "CANNBot"}
+    }
+  ]
+}

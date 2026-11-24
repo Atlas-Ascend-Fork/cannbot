@@ -1,0 +1,10 @@
+{
+  "name": "catlass-python-generator",
+  "displayName": "CATLASS Python Operator Generator",
+  "description": "基于 Markdown 任务契约的精简 CATLASS Python 算子开发优化工作流。",
+  "version": "2.0.0",
+  "author": {"name": "CANNBot"},
+  "license": "MIT",
+  "keywords": ["catlass-python", "catlass", "ascend", "npu", "operator-generation"],
+  "skills": "./skills/"
+}

@@ -1,0 +1,13 @@
+{
+  "skillsRepository": "vendor/cannbot-skills",
+  "skillInstallMode": "symlink",
+  "preserveSkillInvocationPolicy": true,
+  "skills": [
+    "community/ops/catlass-python-workflow",
+    "community/ops/catlass-python-design",
+    "community/ops/catlass-python-develop",
+    "community/ops/catlass-python-bench",
+    "community/ops/catlass-python-optimize",
+    "community/ops/catlass-python-knowledge"
+  ]
+}
