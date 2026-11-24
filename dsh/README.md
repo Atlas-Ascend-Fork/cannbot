@@ -1,6 +1,6 @@
 # CANNBot DSH
 
-[安装指南](INSTALL.md)
+[安装指南](INSTALL.md) | [使用教程](USAGE.md)
 
 Windows：单独下载 [CANNBot-Setup.cmd](CANNBot-Setup.cmd)，双击完成安装，无需本地代码仓。
 
