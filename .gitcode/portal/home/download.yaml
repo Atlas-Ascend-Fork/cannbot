@@ -30,10 +30,11 @@ note: 支持 OpenCode、DSH、Codex、Claude Code、TRAE 五种客户端，安�
 
 install:
   title: 本地部署
-  lede: 整包安装、插件安装、单一工作流安装，选择你喜欢的方式，把CANNBot部署在工作环境上。
+  lede: 整包安装、插件安装，选择你喜欢的方式，把CANNBot部署在工作环境上。
   methodsLabel: 安装方式
-  packageTitle: 整包下载
+  packageTitle: 整包安装
   packageDescription: 一键下载安装CANNBot插件和宿主harness
+  packageGuide: { text: 安装指南, href: /docs/workflows/cannbot-install.html }
   osLabel: 选择操作系统
   platformIcons: /portal/img/download-platforms.svg
   # packages 按显示顺序排列，下载地址见同目录 installer-links.yaml。
@@ -53,9 +54,19 @@ install:
       packages:
         - { arch: x86_64 }
         - { arch: aarch64 }
-  cliTitle: 独立安装工作流
-  cliDescription: 运行命令，一键安装指定工作流到趁手的harness框架
+  plugin:
+    hosts:
+      - tool: dsh
+        label: DSH
+        marketHint: 在 DSH 插件市场打开「添加插件」，粘贴以下包名。
+        tutorialLabel: DSH 插件安装教程
+        packageName: cannbot-dsh@1.0.0-alpha.4
+        tutorial: /docs/workflows/dsh-plugin-install.html
+  cliTitle: 插件安装
+  cliDescription: 安装CANNBot插件到宿主harness
   console:
+    steps: 安装步骤
+    guide: 安装指南
     category: 领域
     workflow: 工作流
     harness: Harness 框架

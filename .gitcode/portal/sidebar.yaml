@@ -12,6 +12,10 @@
 '/docs/':
   - text: "入门"
     items:
+      - text: "整包安装指南"
+        link: /docs/workflows/cannbot-install.html
+      - text: "DSH 插件安装教程"
+        link: /docs/workflows/dsh-plugin-install.html
       - text: "工作流安装与使用"
         link: /docs/workflows/index.html
   - text: "算子领域"
@@ -28,7 +32,7 @@
         link: /docs/workflows/triton-op-generator.html
       - text: "CATLASS 矩阵与注意力算子开发"
         link: /docs/workflows/catlass-op-generator.html
-      - text: "Ascend C 算子性能调优"
+      - text: "算子性能调优"
         link: /docs/workflows/ops-perf-optimize.html
       - text: "TileLang 算子开发与调优"
         link: /docs/workflows/tilelang-op-orchestrator.html
@@ -38,7 +42,7 @@
         link: /docs/workflows/ascendc-st-design.html
   - text: "模型领域"
     items:
-      - text: "PyTorch 图编译与优化"
+      - text: "Pytorch图编译与优化"
         link: /docs/workflows/torch-compile.html
       - text: "模型迁移与推理优化"
         link: /docs/workflows/model-infer-optimize.html

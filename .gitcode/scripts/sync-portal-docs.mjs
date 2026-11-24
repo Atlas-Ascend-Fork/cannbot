@@ -17,16 +17,23 @@ const portal = join(root, '.gitcode/portal');
 const output = join(portal, 'docs/workflows');
 const route = '/docs/workflows/';
 const cards = parseYamlLite(readFileSync(join(portal, 'home/workflows.yaml'), 'utf8')).cards;
+const aliases = parseYamlLite(readFileSync(join(portal, 'home/workflow-aliases.yaml'), 'utf8'));
 const official = readdirSync(join(root, 'plugins-official'), { withFileTypes: true })
   .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
 const byId = new Map(cards.map(card => [card.id, card]));
 const orderedIds = [...new Set([...cards.map(card => card.id), ...official])];
-const pages = new Map([['script/docs/cannbot-workflows.md', 'index']]);
+const pages = new Map([
+  ['script/docs/cannbot-workflows.md', 'index'],
+]);
+const guides = parseYamlLite(readFileSync(join(portal, 'docs/guide-sources.yaml'), 'utf8'));
+const guideLinks = new Map(Object.entries(guides).map(([page, source]) => [source, '/docs/' + page + '.html']));
 const groups = new Map();
 function addItem(group, text, id) {
   if (!groups.has(group)) groups.set(group, []);
   groups.get(group).push({ text, link: route + id + '.html' });
 }
+addItem('入门', '整包安装指南', 'cannbot-install');
+addItem('入门', 'DSH 插件安装教程', 'dsh-plugin-install');
 addItem('入门', '工作流安装与使用', 'index');
 for (const id of orderedIds.filter(id => official.includes(id))) {
   const dir = 'plugins-official/' + id;
@@ -34,7 +41,7 @@ for (const id of orderedIds.filter(id => official.includes(id))) {
   const name = files.find(name => name.toLowerCase() === 'quickstart.md') ?? 'README.md';
   pages.set(dir + '/' + name, id);
   const card = byId.get(id);
-  addItem(card?.category ?? '其他工作流', card?.title ?? id, id);
+  addItem(card?.category ?? '其他工作流', aliases[id] ?? id, id);
 }
 addItem('算子领域', '算子系统测试', 'ascendc-st-design');
 
@@ -54,8 +61,8 @@ function archive(source) {
       if (/^(?:[a-z][\w+.-]*:|#|\/)/i.test(url)) return match;
       const [, file, suffix] = /^([^?#]*)(.*)$/.exec(url);
       const target = posix.join(posix.dirname(source), file);
-      const page = pages.get(target);
-      const href = page ? route + page + '.html' : 'https://gitcode.com/cann/cannbot/blob/master/' + target;
+      const id = pages.get(target);
+      const href = id ? route + id + '.html' : guideLinks.get(target) ?? 'https://gitcode.com/cann/cannbot/blob/master/' + target;
       return '](' + href + suffix + ')';
     });
   }).join('\n').trimEnd() + '\n';
@@ -91,7 +98,10 @@ const sidebar = [
 for (const [group, items] of groups) {
   sidebar.push('  - text: ' + JSON.stringify(group), '    items:');
   for (const { text, link } of items) {
-    if (!existsSync(join(portal, link.slice(1).replace(/\.html$/, '.md')))) throw Error('缺少文档 ' + link);
+    const id = link.slice(route.length, -'.html'.length);
+    const source = guides['workflows/' + id];
+    const file = source ? join(root, source) : join(output, id + '.md');
+    if (!existsSync(file)) throw Error('缺少文档 ' + link);
     sidebar.push('      - text: ' + JSON.stringify(text), '        link: ' + link);
   }
 }

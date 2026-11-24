@@ -18,66 +18,55 @@ head:
 cards:
   - id: ops-direct-invoke
     category: 算子领域
-    title: <<<>>>直调算子开发
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/ops-direct-invoke
     desc: 编写 Ascend C 核函数，在调用端直接启动算子，并验证计算结果。
 
   - id: ops-direct-invoke-flash
     category: 算子领域
-    title: 快速Ascend C 算子开发
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/ops-direct-invoke-flash
     desc: 从 CPU 函数、公式或需求描述生成 Ascend C 核函数，并验证实现是否符合预期。
 
   - id: ops-registry-invoke
     category: 算子领域
-    title: aclnn注册算子开发
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/ops-registry-invoke
     desc: 实现并注册自定义算子，通过 ACLNN 接口调用，或通过 GEIR 接入计算图。
 
   - id: torch-compile
     category: 模型领域
-    title: PyTorch 图编译与优化
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/torch-compile
     desc: 将 PyTorch 脚本迁移到 torch.compile 图模式，配置 npugraph_ex，诊断编译故障并优化性能。
 
   - id: model-infer-optimize
     category: 模型领域
-    title: 模型迁移与推理优化
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/model-infer-optimize
     desc: 将模型迁移到昇腾 NPU，对齐推理结果的精度，定位并优化推理性能瓶颈。
 
   - id: hccl-op-generator
     category: 算子领域
-    title: HCCL 通信算子开发
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/hccl-op-generator
     desc: 面向 AICPU 和 CCU 两种执行方式，开发 HCCL 标准通信算子。
 
   - id: triton-op-generator
     category: 算子领域
-    title: Triton 算子开发与优化
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/triton-op-generator
     desc: 用 Triton 编写适配昇腾的算子，结合 CANNBot 知识库优化实现。
 
   - id: catlass-op-generator
     category: 算子领域
-    title: CATLASS 矩阵与注意力算子开发
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/catlass-op-generator
     desc: 组合 CATLASS 的 C++ 模板组件，实现矩阵计算或注意力算子，并验证精度与性能。
 
   - id: ops-perf-optimize
     category: 算子领域
-    title: Ascend C 算子性能调优
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/ops-perf-optimize
     desc: 测量已有算子的性能基线，定位瓶颈，逐个用例复测优化效果并检查精度。
 
   - id: tilelang-op-orchestrator
     category: 算子领域
-    title: TileLang 算子开发与调优
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/tilelang-op-orchestrator
     desc: 根据本机昇腾芯片选择开发流程，完成算子设计、代码生成、测试、性能调优与代码检视。
 
   - id: pypto-op-orchestrator
     category: 算子领域
-    title: PyPTO 算子开发与调优
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/pypto-op-orchestrator
     desc: 用 PyPTO 生成并调优新算子，也可从已有实现开始，单独进行性能调优。

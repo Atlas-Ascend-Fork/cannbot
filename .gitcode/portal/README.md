@@ -9,7 +9,7 @@
 |---|---|
 | `chrome.yaml` | 页面外壳：页脚版权、说明、分栏链接、联系方式 |
 | `legal/*.md` | 隐私政策、用户协议等页脚链接指向的站内页面 |
-| `docs/workflows/` | 开发者文档的安装指南、分工作流的快速入门及算子测试说明 |
+| `docs/workflows/` | 开发者文档的安装指南来源配置、分工作流的快速入门及算子测试说明 |
 | `sidebar.yaml` | 首页「开发者文档」和各文档页共用的工作流导航 |
 | `home/nav.yaml` | 首页第二行 tab 的站内锚点 |
 | `home/download.yaml` | 本地部署的文案、平台和架构按钮的显示顺序 |
@@ -17,6 +17,8 @@
 | `home/agent.yaml` | 首屏 Agent 回放、预设问题、播放状态 |
 | `home/hero.yaml` | 首屏（#hero）：主标题、导语、按钮，以及「分类 → 工作流 → 客户端」三层选择面板与安装命令 |
 | `home/repos.yaml` | 开源生态（#repo-catalog）的仓库卡片，以及加入生态（#repos）的入口 |
+| `home/workflow-aliases.yaml` | 官方工作流 ID 与显示名称的对应关系 |
+| `home/install-workflows.yaml` | 插件安装展示的工作流 ID，按显示顺序排列 |
 | `home/workflows.yaml` | 工作流屏（#workflows）：区块标题与导语 + 工作流卡片 |
 
 首页自上而下的屏顺序（改顺序需要官网维护方改框架仓，内容侧改不了）：
@@ -26,7 +28,9 @@
 
 提交到本目录后，官网在下一次构建时自动同步，无需改动其它文件。
 
-工作流说明更新后，在 CANNBot 仓库根目录运行 `node .gitcode/scripts/sync-portal-docs.mjs`。它将官方插件的快速入门（缺少时使用插件 README）和通用安装指南同步至 `docs/workflows/`，并按 `home/workflows.yaml` 的中文名和领域生成侧栏。将变化的归档文档和 `sidebar.yaml` 一起提交即可。「算子系统测试」是公共技能，其门户说明直接维护在此目录的 `ascendc-st-design.md`。
+安装指南在 [guide-sources.yaml](docs/guide-sources.yaml) 中引用仓库原文。更新 `dsh/INSTALL.md`、`dsh/USAGE.md` 或教程中的截图后，文档站下次构建会自动读取更新。
+
+工作流说明更新后，在 CANNBot 仓库根目录运行 `node .gitcode/scripts/sync-portal-docs.mjs`。它将官方插件的快速入门（缺少时使用插件 README）和通用工作流指南同步至 `docs/workflows/`，并按 `home/workflow-aliases.yaml` 的别名和 `home/workflows.yaml` 的领域生成侧栏。将变化的归档文档和 `sidebar.yaml` 一起提交即可。「算子系统测试」是公共技能，其门户说明直接维护在此目录的 `ascendc-st-design.md`。
 本目录不含站点工程，**本地无法独立预览**；需要预览效果请联系官网维护方。
 
 ## 字段说明
@@ -111,13 +115,12 @@ clients:                           # 客户端身份表：只写显示名与标�
   - label: OpenCode
     tool: opencode
 
-showCategories: true               # false 时隐藏分类，把所有工作流平铺成一条列表
+showCategories: false              # 安装区直接展示所选 Harness 支持的工作流
 
 categories:                        # 分类 → 工作流 → 客户端命令
-  - title: 算子领域
+  - title: 官方工作流
     workflows:
       - id: ops-direct-invoke
-        title: 算子生成
         clients:                   # 键是 clients 里的 tool；值是该客户端在此工作流下的完整命令
           opencode: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool opencode'
 ```
@@ -154,7 +157,6 @@ head:
 cards:                             # 写几条就渲染几张，顺序即显示顺序
   - id: ops-direct-invoke
     category: 算子领域
-    title: <<<>>>直调算子开发
     link: https://gitcode.com/cann/cannbot/tree/master/plugins-official/ops-direct-invoke
     desc: 编写 Ascend C 核函数，在调用端直接启动算子，并验证计算结果。
 ```
@@ -182,7 +184,7 @@ repos:
 
 ## 修改须知
 
-1. **两屏互不引用**：`hero.yaml` 管首屏的选择面板，`workflows.yaml` 管工作流屏的卡片。同一个工作流的标题与分类要在两处各写一份，改首屏不会带动第二屏。
+1. **工作流显示名称**统一取自 `home/workflow-aliases.yaml`，使用官方插件文件夹名作为 ID。
 2. **结构字段不要增删**：只改值、加减数组条目；需要新增字段或新板块，先联系官网维护方。
 3. **删文件不等于下线**：内容同步是覆盖式的，删掉某个文件后旧内容可能继续渲染。下线内容请同时通知官网维护方清理。
 4. **站内链接统一带 `.html`**：写成 `.md` 或省略后缀会导致死链。
@@ -190,11 +192,13 @@ repos:
    内容侧能做的是改每屏的文案、按钮、图片与卡片，**不能增删屏、不能调换屏的次序**。
    `nav.yaml` 里调整 tab 顺序是安全的（纯展示顺序），但要让 tab 顺序与屏顺序一致，否则读者会觉得跳转错位。
 
-## 扩展示例（可自行修改，用来试验）
+## 更新官方工作流
 
-本地部署面板的 `home/hero.yaml` 保留了 `xx-placeholder` 示例，可用于试验客户端安装命令。
+在 `home/workflow-aliases.yaml` 修改一个 ID 的别名，插件安装和能力全景会在下次构建时同时更新。
 
-「能力全景」在 `home/workflows.yaml` 单独维护。官方仓的 `plugins-official/` 新增插件时，在 `cards` 加入对应条目，用插件文件夹名作为 `id`，填写中文工作流名、GitCode 源码目录链接和简介；调整条目顺序即可调整卡片顺序。
+在 `home/install-workflows.yaml` 增删或移动工作流 ID，即可调整插件安装的选项和顺序。各工作流支持的客户端及命令在 `home/hero.yaml` 维护，DSH 插件市场包名在 `home/download.yaml` 维护。
+
+能力全景的卡片、顺序和介绍由 `home/workflows.yaml` 管理。新增官方插件时，在别名配置中填写中文名，在卡片配置中填写同一 ID 的源码链接与简介。
 
 ## 维护与反馈
 

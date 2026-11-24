@@ -16,7 +16,7 @@
 #   · 安装命令写在每个工作流的 clients 里，tool → 该工作流自己的完整命令：
 #     同一客户端在不同工作流下的命令可以完全不同，前端不做任何占位符替换。
 #   · 工作流 clients 里写了的 tool 才展示；写了但命令为空串 → 置灰、不可点击。
-#   · 新增工作流 = 在所属分类下加一段；新增客户端 = clients 段加一行 + 在工作流里给命令。
+#   · 新增工作流 = 在官方工作流列表加一段；新增客户端 = clients 段加一行 + 在工作流里给命令。
 
 hero:
   name: 现在，交给 CANNBot
@@ -32,11 +32,11 @@ hero:
 
 # 已适配的 Agent 客户端。这里只管显示名与标识，命令在各工作流下分别配置。
 clients:
-  - label: OpenCode
-    tool: opencode
-
   - label: DSH
     tool: dsh
+
+  - label: OpenCode
+    tool: opencode
 
   - label: Codex
     tool: codex
@@ -47,51 +47,93 @@ clients:
   - label: TRAE
     tool: trae
 
-# 是否显示分类：false 时隐藏分类，按原顺序平铺所有工作流。
-# true 或未填写时显示分类。
-showCategories: true
-
-# 分类 → 工作流 → 客户端。分类顺序即首屏一级 tab 顺序，工作流顺序即二级 tab 顺序。
+# 直接按列表展示可安装的官方工作流。
+showCategories: false
 categories:
-  - title: 算子领域
+  - title: 官方工作流
     workflows:
       - id: ops-direct-invoke
-        title: 算子生成
         clients:
-          opencode: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool opencode'
           dsh: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool opencode'
           codex: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool codex'
           claude: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool claude'
           trae: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke --tool trae'
 
-      - id: ascendc-st-design
-        title: 算子测试
+      - id: ops-direct-invoke-flash
         clients:
-          opencode: 'npx @cannbot-plugin/cannbot@latest install ascendc-st-design --tool opencode'
-          dsh: 'npx @cannbot-plugin/cannbot@latest install ascendc-st-design --tool dsh'
-          codex: 'npx @cannbot-plugin/cannbot@latest install ascendc-st-design --tool codex'
-          claude: 'npx @cannbot-plugin/cannbot@latest install ascendc-st-design --tool claude'
-          trae: 'npx @cannbot-plugin/cannbot@latest install ascendc-st-design --tool trae'
+          dsh: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke-flash --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke-flash --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke-flash --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke-flash --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install ops-direct-invoke-flash --tool trae'
 
-  - title: 模型领域
-    workflows:
-      - id: model-infer-optimize
-        title: 模型迁移与推理优化
+      - id: ops-registry-invoke
         clients:
-          opencode: 'npx @cannbot-plugin/cannbot@latest install model-infer-optimize --tool opencode'
+          opencode: 'npx skills add https://gitcode.com/cann/cannbot.git --skill ops-registry-invoke'
+          codex: 'npx skills add https://gitcode.com/cann/cannbot.git --skill ops-registry-invoke'
+          claude: 'npx skills add https://gitcode.com/cann/cannbot.git --skill ops-registry-invoke'
+
+      - id: torch-compile
+        clients:
+          dsh: 'npx @cannbot-plugin/cannbot@latest install torch-compile --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install torch-compile --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install torch-compile --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install torch-compile --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install torch-compile --tool trae'
+
+      - id: model-infer-optimize
+        clients:
           dsh: 'npx @cannbot-plugin/cannbot@latest install model-infer-optimize --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install model-infer-optimize --tool opencode'
           codex: 'npx @cannbot-plugin/cannbot@latest install model-infer-optimize --tool codex'
           claude: 'npx @cannbot-plugin/cannbot@latest install model-infer-optimize --tool claude'
           trae: 'npx @cannbot-plugin/cannbot@latest install model-infer-optimize --tool trae'
 
-  # 占位工作流：演示「新增工作流 = 在所属分类下加一段」，接入真实插件时替换本段。
-  - title: 扩展领域
-    workflows:
-      - id: xx-placeholder
-        title: xx插件
+      - id: hccl-op-generator
         clients:
-          opencode: 'npx @cannbot-plugin/cannbot@latest install xx-placeholder --tool opencode'
-          dsh: 'npx @cannbot-plugin/cannbot@latest install xx-placeholder --tool dsh'
-          codex: 'npx @cannbot-plugin/cannbot@latest install xx-placeholder --tool codex'
-          claude: 'npx @cannbot-plugin/cannbot@latest install xx-placeholder --tool claude'
-          trae: 'npx @cannbot-plugin/cannbot@latest install xx-placeholder --tool trae'
+          dsh: 'npx @cannbot-plugin/cannbot@latest install hccl-op-generator --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install hccl-op-generator --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install hccl-op-generator --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install hccl-op-generator --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install hccl-op-generator --tool trae'
+
+      - id: triton-op-generator
+        clients:
+          dsh: 'npx @cannbot-plugin/cannbot@latest install triton-op-generator --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install triton-op-generator --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install triton-op-generator --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install triton-op-generator --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install triton-op-generator --tool trae'
+
+      - id: catlass-op-generator
+        clients:
+          dsh: 'npx @cannbot-plugin/cannbot@latest install catlass-op-generator --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install catlass-op-generator --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install catlass-op-generator --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install catlass-op-generator --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install catlass-op-generator --tool trae'
+
+      - id: ops-perf-optimize
+        clients:
+          dsh: 'npx @cannbot-plugin/cannbot@latest install ops-perf-optimize --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install ops-perf-optimize --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install ops-perf-optimize --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install ops-perf-optimize --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install ops-perf-optimize --tool trae'
+
+      - id: tilelang-op-orchestrator
+        clients:
+          dsh: 'npx @cannbot-plugin/cannbot@latest install tilelang-op-orchestrator --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install tilelang-op-orchestrator --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install tilelang-op-orchestrator --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install tilelang-op-orchestrator --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install tilelang-op-orchestrator --tool trae'
+
+      - id: pypto-op-orchestrator
+        clients:
+          dsh: 'npx @cannbot-plugin/cannbot@latest install pypto-op-orchestrator --tool dsh'
+          opencode: 'npx @cannbot-plugin/cannbot@latest install pypto-op-orchestrator --tool opencode'
+          codex: 'npx @cannbot-plugin/cannbot@latest install pypto-op-orchestrator --tool codex'
+          claude: 'npx @cannbot-plugin/cannbot@latest install pypto-op-orchestrator --tool claude'
+          trae: 'npx @cannbot-plugin/cannbot@latest install pypto-op-orchestrator --tool trae'
