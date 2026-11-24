@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -70,11 +71,14 @@ _LEADING_PREFIX = (
     r"(?:&&\s+)*"                                     # 支持 && 链式连接
 )
 
-# 项目根目录：优先从环境变量获取，fallback 到 __file__ 计算
-# 避免 hook 被以相对路径调用时 __file__ 解析错误
-PROJECT_ROOT = os.environ.get("PROJECT_ROOT")
+# 项目根目录（被拦截命令的默认 cwd）：
+#   1. 显式设置的 PROJECT_ROOT
+#   2. Claude Code 传入的 CLAUDE_PROJECT_DIR（用户启动 claude 的目录）
+#   3. 插件根：hooks/ 的上一级
+# 注意不要多剥一层——再多一层会落到 plugins-community/，命令就会在错误目录执行。
+PROJECT_ROOT = os.environ.get("PROJECT_ROOT") or os.environ.get("CLAUDE_PROJECT_DIR")
 if not PROJECT_ROOT:
-    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def should_intercept(command: str) -> bool:
@@ -119,20 +123,101 @@ def truncate(text: str, limit: int = 8000) -> str:
     return f"{head}\n\n... [truncated {len(text) - limit} chars] ...\n\n{tail}"
 
 
-def _run_command(command: str, cwd: str):
-    """Execute a shell command and return (exit_code, stdout, stderr, duration_ms)."""
-    start_time = time.time()
+_INTERPRETER_RE = re.compile(r"^(?:python|python3|python3\.\d+|bash|sh)$")
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SHELL_META_CHARS = ("|", "&", ";", ">", "<")
+
+
+def _consume_command_prefixes(tokens):
+    """吃掉 cd / ENV=VAL / export 前缀，返回 (cd 目标, 环境变量, 剩余起始下标)。
+
+    只在下标越界等无法解析的情况下返回 None。
+    """
+    cwd = None
+    env = {}
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in ("export", "&&"):
+            index += 1
+            continue
+        if _ENV_ASSIGN_RE.match(token):
+            name, value = token.split("=", 1)
+            env[name] = value
+            index += 1
+            continue
+        if token == "cd":
+            if index + 1 >= len(tokens):
+                return None
+            cwd = os.path.expanduser(tokens[index + 1])
+            index += 2
+            continue
+        break
+    return cwd, env, index
+
+
+def _parse_intercepted_command(command: str):
+    """把 shell 命令拆成 (cd 目标, 环境变量, 真正的 argv)。
+
+    拦截正则允许 `cd <dir> &&` 和 `ENV=VAL` 前缀，但命令不能整条丢给
+    subprocess（shell=False 下 `cd` / `VAR=VAL` 会被当成可执行文件）。
+    这里把前缀解析出来，分别落到 cwd 和 env，剩下的才是要执行的 argv。
+
+    解析不了（含管道/重定向/复合命令等无法在 shell=False 下复刻的语法）时返回 None，
+    由调用方交还 harness 正常执行，避免执行成错误的子集。
+    """
+    # shlex.split 会把裸换行当成普通空白：`cmd1\ncmd2` 会被拼成一条命令，
+    # 第二条命令沦为第一条的参数。无法安全复刻时交还 harness。
+    if "\n" in command or "\r" in command:
+        return None
     try:
-        import shlex
-        cmd_parts = shlex.split(command)
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    # shlex.split 不做 shell 展开：`$VAR` / `${VAR}` / `$(...)` / 反引号会保留字面值，
+    # 当 cwd/argv 用会指到错误位置。保守起见交还 harness 由 shell 自行展开。
+    if any("$" in tok or "`" in tok for tok in tokens):
+        return None
+
+    prefix = _consume_command_prefixes(tokens)
+    if prefix is None:
+        return None
+    cwd, env, index = prefix
+
+    argv = tokens[index:]
+    if len(argv) < 2:
+        return None
+    if not _INTERPRETER_RE.match(os.path.basename(argv[0])):
+        return None
+    # 命令尾部还有 shell 语法（链式、管道、重定向）时不接管。
+    # 宁可保守回退（交还 harness 正常执行），也不要执行成错误的子集。
+    if any(ch in tok for tok in argv for ch in _SHELL_META_CHARS):
+        return None
+    return cwd, env, argv
+
+
+def _run_command(argv, cwd: str, env=None):
+    """Execute an argv list.
+
+    Returns (exit_code, stdout, stderr, duration_ms, started)：
+    started=False 表示进程根本没有启动（如解释器不存在），调用方不应把它当作
+    脚本的执行结果去更新门禁状态。
+    """
+    start_time = time.time()
+    started = False
+    try:
         proc = subprocess.run(
-            cmd_parts, shell=False, cwd=cwd,
+            argv, shell=False, cwd=cwd, env=env,
             capture_output=True, text=True, timeout=1800,
         )
+        started = True
         exit_code = proc.returncode
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""
     except subprocess.TimeoutExpired as e:
+        started = True          # 进程已启动，只是超时
         exit_code = 124
         stdout = (e.stdout if e.stdout else "")
         stderr = (e.stderr if e.stderr else "")
@@ -143,7 +228,7 @@ def _run_command(command: str, cwd: str):
         stderr = f"[HOOK] 执行异常: {type(e).__name__}: {e}"
 
     duration_ms = int((time.time() - start_time) * 1000)
-    return exit_code, stdout, stderr, duration_ms
+    return exit_code, stdout, stderr, duration_ms, started
 
 # ── Precision Gate (D-class enforcement) ────────────────────
 _PRECISION_GATE_STATE = os.path.join(
@@ -266,22 +351,61 @@ def _update_precision_gate(classification: str, stdout: str, output_dir: str) ->
         json.dump(state, fh)
 
 
-def execute_intercepted(command: str) -> None:
-    cwd = os.getcwd()
-    if os.path.isdir(PROJECT_ROOT):
-        cwd = PROJECT_ROOT
+_NOOP_COMMAND = (
+    "echo '[hook-noop] original command was intercepted and executed by skill_script_hook'"
+)
+_CLASS_LABELS = {"D": "D类-精度不匹配", "A": "A类-代码/编译错误", "PASS": "通过"}
 
-    exit_code, stdout, stderr, duration_ms = _run_command(command, cwd)
 
-    # Update precision gate state if this is an evaluate_ascendc.sh call
-    is_eval_ascendc = _is_evaluate_ascendc(command)
-    classification = None
-    if is_eval_ascendc:
-        classification = _classify_result(exit_code, stdout, stderr)
-        output_dir = _extract_output_dir(command)
-        _update_precision_gate(classification, stdout, output_dir)
+def _default_cwd() -> str:
+    """被拦截命令的默认工作目录。"""
+    return PROJECT_ROOT if os.path.isdir(PROJECT_ROOT) else os.getcwd()
 
-    additional_context = (
+
+def _resolve_cwd(cd_target) -> str:
+    """把 `cd` 目标解析成绝对路径；未指定时用默认工作目录。"""
+    if not cd_target:
+        return _default_cwd()
+    if os.path.isabs(cd_target):
+        return cd_target
+    return os.path.join(_default_cwd(), cd_target)
+
+
+def _run_parsed_command(argv, cwd: str, env_overrides: dict):
+    """按解析结果执行命令；cd 目标不存在时模拟 shell 的报错（脚本未启动）。"""
+    if not os.path.isdir(cwd):
+        # 与 shell 的行为对齐：cd 失败即命令失败；started=False 表示脚本没有执行
+        return 1, "", f"cd: {cwd}: No such file or directory", 0, False
+    env = os.environ.copy()
+    env.update(env_overrides)
+    return _run_command(argv, cwd, env)
+
+
+def _sync_precision_gate(command: str, exit_code: int, stdout: str, stderr: str):
+    """评测类命令：分类并同步精度门禁状态；非评测命令返回 None。"""
+    if not _is_evaluate_ascendc(command):
+        return None
+    classification = _classify_result(exit_code, stdout, stderr)
+    _update_precision_gate(classification, stdout, _extract_output_dir(command))
+    return classification
+
+
+def _format_class_note(classification) -> str:
+    """错误分类说明，附在 hook 提示语后面。"""
+    if not classification:
+        return ""
+    label = _CLASS_LABELS.get(classification, classification)
+    note = f" | 错误分类: {label}"
+    if classification == "D":
+        note += (
+            " | [precision_gate] kernel 编辑已锁定，修改代码前必须先调用 "
+            "ascendc-precision-debug 或 ascendc-precision-tuning Skill"
+        )
+    return note
+
+
+def _format_additional_context(command, cwd, exit_code, duration_ms, stdout, stderr) -> str:
+    return (
         f"[skill_script_hook intercepted execution]\n"
         f"command: {command}\n"
         f"cwd: {cwd}\n"
@@ -291,37 +415,61 @@ def execute_intercepted(command: str) -> None:
         f"--- stderr ---\n{truncate(stderr)}\n"
     )
 
+
+def _format_reason(exit_code: int, class_note: str) -> str:
     status = "成功" if exit_code == 0 else "失败"
-
-    class_note = ""
-    if is_eval_ascendc and classification:
-        class_labels = {"D": "D类-精度不匹配", "A": "A类-代码/编译错误", "PASS": "通过"}
-        label = class_labels.get(classification, classification)
-        class_note = f" | 错误分类: {label}"
-        if classification == "D":
-            class_note += (
-                " | [precision_gate] kernel 编辑已锁定，修改代码前必须先调用 "
-                "ascendc-precision-debug 或 ascendc-precision-tuning Skill"
-            )
-
-    reason = (
+    return (
         f"[Hook 拦截提示] 该命令命中 skill_script_hook 拦截规则，"
         f"已由 hook 代为执行（{status}，exit_code={exit_code}）。{class_note}"
         f"执行结果见下方 additionalContext，原命令已被替换为 no-op，不会重复执行。"
     )
 
-    output = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": reason,
-            "additionalContext": additional_context,
-            "updatedInput": {
-                "command": f"echo '[hook-noop] original command was intercepted and executed by skill_script_hook'"
+
+def _emit_intercepted_result(
+    command, cwd, exit_code, duration_ms, stdout, stderr, classification, started=True
+):
+    """按 PreToolUse 协议把代执行结果回给 harness。"""
+    class_note = _format_class_note(classification)
+    if not started:
+        class_note += " | [precision_gate] 命令未启动（cwd 不存在或解释器缺失），门禁状态未更新"
+    _protocol_logger.info(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": _format_reason(exit_code, class_note),
+                    "additionalContext": _format_additional_context(
+                        command, cwd, exit_code, duration_ms, stdout, stderr
+                    ),
+                    "updatedInput": {"command": _NOOP_COMMAND},
+                }
             },
-        }
-    }
-    _protocol_logger.info(json.dumps(output, ensure_ascii=False))
+            ensure_ascii=False,
+        )
+    )
+
+
+def execute_intercepted(command: str) -> None:
+    """接管命中拦截规则的命令：解析前缀 → 执行 → 分类 → 回传结果。"""
+    parsed = _parse_intercepted_command(command)
+    if parsed is None:
+        # 无法在 shell=False 下安全复刻（管道/重定向/复合命令）：不接管，
+        # 输出 allow 且不带 updatedInput，让 harness 按原命令正常执行。
+        emit_pretooluse("allow")
+        return
+
+    cd_target, env_overrides, argv = parsed
+    cwd = _resolve_cwd(cd_target)
+    exit_code, stdout, stderr, duration_ms, started = _run_parsed_command(
+        argv, cwd, env_overrides
+    )
+    # 脚本没有真正启动（cd 失败 / 解释器缺失）时不更新门禁状态：
+    # 否则会把"未执行"误当成一次失败评测，连带清掉已有的 D 类状态。
+    classification = _sync_precision_gate(command, exit_code, stdout, stderr) if started else None
+    _emit_intercepted_result(
+        command, cwd, exit_code, duration_ms, stdout, stderr, classification, started
+    )
 
 
 def read_stdin_command():
