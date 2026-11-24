@@ -37,7 +37,7 @@ primary 每次派 subagent 前，从本文件取对应模板，替换尖括号�
 执行要求：
 - 环境自检按 model-recommend-ascend-env-baseline（安装后 skills/ 下同名目录）逐项执行，异常项如实记录并停止下游。
 - 基线按 model-recommend-baseline-run（安装后 skills/ 下同名目录）执行；关键决策不得自行拍板，缺项回报 primary 索取。
-- 采集按 model-recommend-performance-analysis（安装后 skills/ 下同名目录）Step 2 执行，采集前确认卡空闲；完整 PROF_* 归档到 prof/{model_name}/{case}/ 并提取 kernel 汇总。
+- 采集按 model-recommend-analysis（安装后 skills/ 下同名目录）Step 2 执行，采集前确认卡空闲；完整 PROF_* 归档到 prof/{model_name}/{case}/ 并提取 kernel 汇总。
 - 精度验证只在串行单并发下做；并发只压测不 dump。
 - 产物写入约定目录，中间产物入 tmp/。
 
@@ -165,4 +165,4 @@ primary 每次派 subagent 前，从本文件取对应模板，替换尖括号�
 | 条目 6-12 实施 | implementer | action（单条）/ evidence_paths |
 | 条目 13 运行时诊断 | implementer | 故障现象 / error.log 与 plog 路径 |
 | 条目 14 收口核验 | reviewer | 全量台账 / 最终报告草稿 |
-| 循环 L1-L7 | 见 loop-rules 与上表组合 | round_no 必填 |
+| 循环 L1-L7 | 见 rules.md 与上表组合 | round_no 必填 |

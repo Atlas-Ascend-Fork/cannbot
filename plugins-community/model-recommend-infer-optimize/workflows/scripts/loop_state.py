@@ -50,7 +50,7 @@ def configure_logging():
 
 
 ROUND_PATTERN = re.compile(r"循环第\s*(\d+)\s*轮")
-# 连续无收益轮数上限（与 loop-rules.md §4 的 converged_no_gain 判定一致）
+# 连续无收益轮数上限（与 rules.md §4 的 converged_no_gain 判定一致）
 NO_GAIN_LIMIT = 3
 # loop_state.json 的 schema 版本；旧文件无该字段（视为 1），用 migrate 升级
 SCHEMA_VERSION = 2

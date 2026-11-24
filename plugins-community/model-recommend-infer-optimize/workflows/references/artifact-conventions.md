@@ -20,23 +20,13 @@
 
 ## 2. perf_ledger.json（逐条目强制）
 
-路径 `data/{model_name}/optimization_log/perf_ledger.json`，schema 见 `templates/perf-ledger-schema.json`。每条记录字段：
+路径 `data/{model_name}/optimization_log/perf_ledger.json`。**字段名、类型与枚举以 [`templates/perf-ledger-schema.json`](../templates/perf-ledger-schema.json) 为准**（本文件不重复定义，避免两处维护漂移）。
 
-| 字段 | 说明 |
-| --- | --- |
-| `step` | 工作流条目号 + 动作简述；循环轮次标注在 `note`（如「循环第 2 轮」） |
-| `timestamp` | ISO 8601 |
-| `action` | 具体改动（开关名/参数/文件/算子包），禁止空话 |
-| `type` | 手段类型（shape策略/编译选项/图融合pass/等价改写/并发限核/访存优化/自定义算子/精度模式/运行时修复/分析），供贡献分解归类 |
-| `perf_before` / `perf_after` | 同口径主指标；含时延与吞吐两组时用对象分列 |
-| `delta_pct` | 主指标变化百分比（正 = 变差，负 = 变快，需在报告中统一约定并声明） |
-| `noise_band_pct` | 本轮判定所用噪声带（典型 2.0～5.0），分析类动作填 `null` |
-| `precision` | `pass` / `fail` + 最大误差指标；分析类动作填 `null` |
-| `profiling` | 归档路径（`prof/{model_name}/{case}/`） |
-| `reverted` | 是否回退；`true` 时 `note` 必写原因 |
-| `note` | 归因说明、用户确认记录、重试条件 |
+写入时机：条目 2 写首基线；条目 6-12 每实施一项追加一条；条目 14 汇总收口。
 
-写入时机：条目 2 写首基线；条目 6-12 每实施一项追加一条；条目 14 汇总收口。分析类条目各性能字段填 `null` 并在 `note` 注明。
+- 每笔改动一条；`perf_before`/`perf_after` 必须同口径；`reverted` 如实标注（`true` 时 `note` 写原因）。
+- 分析类动作各性能字段填 `null`，并在 `note` 注明是分析动作。
+- 台账中不存在「未过门禁但已合入」的项；最终配置 = 台账中已验收项的组合。
 
 ## 3. next_actions.json（下一步动作表，循环唯一输入）
 
@@ -51,7 +41,7 @@
   "basis": "docs/M200/performance-analysis/report.md#kernel表 + prof/M200/serial-b1",
   "expected_gain": {"metric": "latency_avg_ms", "range": [-18, -10], "method": "A 项 3 因子累加：launch 开销 + GM 往返 + dtype 转换"},
   "confidence": "medium",
-  "workflow_entry": "条目7 / model-recommend-flash-attention-fusion",
+  "workflow_entry": "条目7 / model-recommend-fusion-pass-dev",
   "depends_on": ["自定义算子包已部署"],
   "status": "pending",
   "loop_status": "pending"
@@ -85,6 +75,21 @@
 7. 下一步动作表（与 next_actions.json 一致）
 8. 循环轨迹（每轮一行：轮次 / 动作 / 条目 / before / after / 收益 / 落地 / 计数 / 交付件指针）
 9. 环境信息（可复现：NPU 型号 + CANN 版本 + 框架 + 实测锚定）
+
+## 6.1 模型交付说明书（强制，收口产物）
+
+路径 `docs/{model_name}/{model_name}_model_delivery_manual.md`，模板见
+[`templates/model-delivery-manual-template.md`](../templates/model-delivery-manual-template.md)。条目 14 收口产出，
+作为全部 GE 自定义优化交付件的总结。必备章节：
+
+1. 基本信息：CANN 版本、芯片型号、驱动/固件版本、执行框架版本。
+2. 交付件清单：类型、功能、**本地开发源码路径（人工可访问）**、安装包、开关名称与默认值、设置参数、精度模式、验收结论、回退方式、依赖。
+3. 性能汇总（逐阶段）：开箱基线 / 优化项 1 / … / 最终；行列标签明确，具体数据由测试类 skill 后续补充。
+4. 逐项优化收益：类型、开关/参数、精度模式、时延与吞吐 before→after、增量、验收结论、是否落地。
+5. 安装与复现：安装包清单、部署路径、环境变量、复现命令。
+6. 遗留与风险。
+
+> 性能表当前为占位模板，不填具体数值；标签必须无歧义。
 
 ## 7. 状态文件写者分工
 
