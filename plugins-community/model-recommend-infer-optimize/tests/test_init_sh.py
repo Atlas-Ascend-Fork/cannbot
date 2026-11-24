@@ -13,7 +13,7 @@
 覆盖以下回归点：
   A --help 不依赖子模块         -> 0，输出 Usage
   B 只找到部分 Skill            -> 1，且不得出现 All checks passed（旧版会静默成功）
-  C 18 个 Skill 齐全            -> 0，配置根 skills/ 下 18 项
+  C 14 个 Skill 齐全            -> 0，配置根 skills/ 下 14 项
   D CANNBOT_SKILL_SRC_ROOT 指向仓根 -> 0（自动下沉到 community/model）
   E codex 安装                  -> 0，.codex/agents/ 下 TOML+MD 同级，且源仓文件不被搬走
 """
@@ -118,7 +118,7 @@ def case_partial(work, check):
 
 
 def case_full(work, full_root, check):
-    """C：18 个 Skill 齐全，全部链接到配置根。"""
+    """C：14 个 Skill 齐全，全部链接到配置根。"""
     full_dir = work / "case-full"
     full_dir.mkdir()
     res = run(
@@ -126,7 +126,7 @@ def case_full(work, full_root, check):
     )
     count = count_linked(full_dir / ".opencode")
     check(
-        "C 全量安装 18 个 Skill",
+        "C 全量安装 14 个 Skill",
         res.returncode == 0 and count == len(SKILLS),
         "exit=%d skills=%d" % (res.returncode, count),
     )

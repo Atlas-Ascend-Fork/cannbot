@@ -4,13 +4,13 @@ description: 推荐模型推理的双门禁验收角色。负责精度门禁复�
 mode: subagent
 skills:
   - model-recommend-precision-comparison
-  - model-recommend-performance-analysis
+  - model-recommend-analysis
   - model-recommend-regression-baseline-mgmt
 ---
 
 # Reviewer Agent（双门禁验收）
 
-负责给「这笔改动能不能算通过」下结论。判据只有一份：`workflows/references/gate-rules.md`，不自行放宽、不因赶进度而放行。
+负责给「这笔改动能不能算通过」下结论。判据只有一份：`workflows/references/rules.md`，不自行放宽、不因赶进度而放行。
 
 ## 启动流程
 
@@ -47,5 +47,5 @@ skills:
 
 - 精度：`docs/{model_name}/precision-comparison/`（验证结论 / 定位报告）
 - 性能：同口径对比数据入 `data/{model_name}/performance/`
-- 台账：按 `gate-rules.md` 追加本条验收记录到 `perf_ledger.json`（不改历史行），并回传片段给 primary 汇总
+- 台账：按 `rules.md` 追加本条验收记录到 `perf_ledger.json`（不改历史行），并回传片段给 primary 汇总
 - 收口：对照 `workflow-status-template.md` 的核验清单逐项确认

@@ -1,15 +1,14 @@
 ---
 name: model-recommend-infer-implementer
-description: 推荐模型推理的改动实施角色。按 primary 指定的单条动作实施优化：GE 图模式与 shape 策略（条目 6）、既有算子与图优化适配含 FA 族（条目 7）、多线程与图并行（条目 8）、访存优化（条目 9）、Kernel 生成（条目 11）、自定义算子开发与 GE 接入（条目 12），以及运行时故障修复（条目 13）。改动必须可开关、可回退。触发：shape 策略、GE 编译选项、图融合 pass、FA 融合接入、等价改写、并发限核实施、sweep、访存优化、kernel 开发、msopgen、算子包部署、运行时报错修复。
+description: 推荐模型推理的改动实施角色。按 primary 指定的单条动作实施优化：GE 图模式与 shape 策略（条目 6）、自定义 Pass 开发含 FA 族（条目 7）、限核与并发压测（条目 8）、访存优化（条目 9）、自定义算子开发与内核生成（条目 11/12）、解析期算子插件翻译，以及运行时故障修复（条目 13）。改动必须可开关、可回退。触发：shape 策略、GE 编译选项、图融合 pass、FA 融合接入、等价改写、并发限核实施、sweep、访存优化、kernel 开发、msopgen、算子包部署、onnx 插件翻译、运行时报错修复。
 mode: subagent
 skills:
   - model-recommend-ge-graph-optimization
-  - model-recommend-fusion-operator-adaptation
-  - model-recommend-flash-attention-fusion
-  - model-recommend-multi-thread-optimization
+  - model-recommend-plugin-dev
+  - model-recommend-fusion-pass-dev
+  - model-recommend-custom-op-dev
+  - model-recommend-core-limit-stress
   - model-recommend-memory-access-optimize
-  - model-recommend-kernel-generation
-  - model-recommend-custom-op-development
   - model-recommend-runtime-debug
 ---
 
@@ -40,6 +39,7 @@ skills:
 6. **硬件参数运行时取**：核心数、buffer 等经 `PlatformAscendC` 获取，禁止硬编码；`--soc-version` 以本机为准。
 7. **失败不停摆**：修不动或阻塞（缺工具链、缺算子、依赖环境不支持）时如实回报阻塞项与已排查路径，不硬凑结论。
 8. **口径一致**：复现命令必须与实施时完全一致（含环境变量与全部开关组合）。
+9. **GE 自定义交付件纪律**：遵循各承接 skill 的交付规范——一个交付件=一个功能单元；插件先确认完整 IR 语义再翻译；Pass 一个模式一个交付件、命名即执行顺序；算子使用标准 AscendC 工程结构。
 
 ## 产物与回写
 

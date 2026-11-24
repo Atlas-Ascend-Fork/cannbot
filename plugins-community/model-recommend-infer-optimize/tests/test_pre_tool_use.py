@@ -10,7 +10,8 @@
 # ----------------------------------------------------------------------------------------------------------
 """pre_tool_use.py 的行为回归测试。
 
-重点覆盖三条纪律的放行/阻断边界，以及已知可绕过路径：
+重点覆盖四条纪律的放行/阻断边界，以及已知可绕过路径：
+  - GE_SESSION_DEMO 框架目录（尤其是 src/）一律阻断；自定义优化走独立交付件
   - onnx 原图（含 tmp/../ 与 Windows 反斜杠写法）必须阻断；tmp/ 下副本放行
   - 状态文件只由 primary 写
   - 只读角色不得改模型/脚本类文件，但可写自己的产物
@@ -83,9 +84,39 @@ CASES = [
         0,
     ),
     (
-        "implementer 改 .cc",
+        "implementer 改框架 src（应阻断）",
         "model-recommend-infer-implementer",
         "/p/GE_SESSION_DEMO/src/graph_fusion_pass.cc",
+        2,
+    ),
+    (
+        "primary 改框架源码（应阻断）",
+        "",
+        "/p/GE_SESSION_DEMO/src/main.cc",
+        2,
+    ),
+    (
+        "implementer 改 run.sh（应阻断）",
+        "model-recommend-infer-implementer",
+        "/p/GE_SESSION_DEMO/run.sh",
+        2,
+    ),
+    (
+        "primary 改 test.sh（应阻断）",
+        "",
+        "/p/GE_SESSION_DEMO/test.sh",
+        2,
+    ),
+    (
+        "implementer 改 tools（应阻断）",
+        "model-recommend-infer-implementer",
+        "/p/GE_SESSION_DEMO/tools/verify.py",
+        2,
+    ),
+    (
+        "tmp 下交付件放行",
+        "model-recommend-infer-implementer",
+        "/p/tmp/M100/custom_pass.cc",
         0,
     ),
     (

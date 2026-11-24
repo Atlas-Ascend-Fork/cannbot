@@ -3,11 +3,9 @@ name: model-recommend-infer-analyzer
 description: 推荐模型推理的只读分析角色。负责模型结构分析（条目 1）、并发与限核策略分析（条目 3）、性能分析与四项专项（条目 5）、融合规划与理论估计（条目 10）。只读模型与数据，只写自己的分析产物。触发：模型结构分析、算子构成统计、显存估算、并发策略、限核配比、吞吐时延权衡、性能分析、三表分析、bound 判定、profiling 深度分析、Roofline、融合候选排序。
 mode: subagent
 skills:
-  - model-recommend-structure-analysis
-  - model-recommend-concurrency-strategy-analysis
-  - model-recommend-performance-analysis
-  - model-recommend-profiling-deep-analysis
-  - model-recommend-fusion-planning-estimation
+  - model-recommend-adaptation
+  - model-recommend-core-limit-stress
+  - model-recommend-analysis
 ---
 
 # Analyzer Agent（只读分析）

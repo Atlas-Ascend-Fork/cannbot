@@ -98,8 +98,8 @@ detect_trae_variant() {
 BRAND="cannbot"
 VERSION="1.0.0"
 
-# 18 个原子 skill（来自 cannbot-skills 的 community/model，安装时装配到 skills/）
-INCLUDED_SKILLS="model-recommend-ascend-env-baseline model-recommend-structure-analysis model-recommend-baseline-run model-recommend-concurrency-strategy-analysis model-recommend-precision-comparison model-recommend-performance-analysis model-recommend-profiling-deep-analysis model-recommend-optimization-loop model-recommend-ge-graph-optimization model-recommend-fusion-operator-adaptation model-recommend-flash-attention-fusion model-recommend-multi-thread-optimization model-recommend-memory-access-optimize model-recommend-fusion-planning-estimation model-recommend-kernel-generation model-recommend-custom-op-development model-recommend-runtime-debug model-recommend-regression-baseline-mgmt"
+# 14 个原子 skill（来自 cannbot-skills 的 community/model，安装时装配到 skills/）
+INCLUDED_SKILLS="model-recommend-adaptation model-recommend-ascend-env-baseline model-recommend-analysis model-recommend-baseline-run model-recommend-core-limit-stress model-recommend-fusion-pass-dev model-recommend-ge-graph-optimization model-recommend-memory-access-optimize model-recommend-optimization-loop model-recommend-custom-op-dev model-recommend-plugin-dev model-recommend-precision-comparison model-recommend-regression-baseline-mgmt model-recommend-runtime-debug"
 INCLUDED_AGENT_PATTERN="model-recommend-infer-*"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -165,7 +165,7 @@ if [ -n "$INSTALL_PATH" ] && [ ! -d "$INSTALL_PATH" ]; then
     exit 1
 fi
 
-# 18 个原子 Skill 来自 cannbot-skills 子模块的 community/model（见下方 SKILL_SRC_ROOT）。
+# 14 个原子 Skill 来自 cannbot-skills 子模块的 community/model（见下方 SKILL_SRC_ROOT）。
 # Skill 来源：cannbot-skills 子模块的 community/model（本插件不再自带 skills/）
 # 可用 CANNBOT_SKILL_SRC_ROOT 覆盖（便于同仓调试或离线副本）；
 # 该变量可指向 cannbot-skills 仓根，也可直接指向 community/model，两种写法都接受。

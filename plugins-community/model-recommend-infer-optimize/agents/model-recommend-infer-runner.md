@@ -5,7 +5,7 @@ mode: subagent
 skills:
   - model-recommend-ascend-env-baseline
   - model-recommend-baseline-run
-  - model-recommend-performance-analysis
+  - model-recommend-analysis
 ---
 
 # Runner Agent（采集执行）

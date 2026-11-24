@@ -7,8 +7,10 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
-"""PreToolUse hook: 三条纪律的前置防护（尽力拦截，不等同于沙箱）
+"""PreToolUse hook: 四条纪律的前置防护（尽力拦截，不等同于沙箱）
 
+0. GE_SESSION_DEMO 框架只读：编辑/写入框架目录（run.sh、test.sh、src/、tools/、配置等）一律阻断；
+   仅允许通过 run.sh / test.sh 的传入参数与环境变量驱动，框架需求记录移交并由用户本人确认。
 1. onnx 原图零改动：编辑/写入 .onnx 文件时阻断（规范化路径后位于 tmp/ 下的临时副本除外）
    改写只能发生在 GE 内存图（aclgrphParseONNX 之后、AddGraph 之前）。
 2. 状态文件独占写：loop_state.json / workflow_status.md / next_actions.json 只由 primary 写，
@@ -107,6 +109,14 @@ def is_scratch_copy(file_path):
     return "tmp" in parts[:-1]
 
 
+def is_framework_path(file_path):
+    """GE_SESSION_DEMO 框架目录只读：任何角色编辑/写入均阻断。"""
+    raw = file_path.replace("\\", "/")
+    norm = os.path.normpath(raw).replace("\\", "/")
+    parts = [seg for seg in norm.split("/") if seg not in ("", ".")]
+    return "GE_SESSION_DEMO" in parts
+
+
 def read_payload():
     """读取并解析 hook 载荷；解析失败返回 None（调用方按 fail-open 放行）。"""
     try:
@@ -131,6 +141,14 @@ def main():
 
     agent_type = data.get("agent_type", "") or ""
     basename = os.path.basename(file_path)
+
+    # 守卫 0：GE_SESSION_DEMO 框架只读（全角色）
+    if is_framework_path(file_path):
+        return block(
+            "[model-recommend-infer-optimize] 阻断：禁止修改 GE_SESSION_DEMO 框架文件（%s）。\n"
+            "run.sh / test.sh / src/ / tools/ / 配置一律只读，仅允许通过 run.sh / test.sh 的传入参数与环境变量驱动；"
+            "图融合 pass / 算子接入请以独立交付件（.so / .run）实现，框架需求记录移交并由用户本人确认。" % file_path
+        )
 
     # 守卫 1：onnx 原图零改动（全角色；tmp/ 下的临时副本除外）
     if basename.lower().endswith(".onnx") and not is_scratch_copy(file_path):

@@ -55,7 +55,7 @@
 | --- | --- | --- | --- | --- | --- |
 | F1 | AscendC 算子开发能力 | 经 `msopgen` 生成的算子工程；A2/A3 平台标准路径 | `which msopgen` | 条目 12 无法产出算子 | 随 CANN Toolkit |
 | F2 | `cannbot-dsl` | A5 平台推荐路径；**当前环境不可用**【实测】 | 按平台文档自检 | 仅影响 A5 平台的 DSL 写法；当前环境一律走 AscendC | 平台侧提供；不可用时按 F1 降级 |
-| F3 | 算子参考实现 | 同名 skill `model-recommend-custom-op-development`、`model-recommend-fusion-operator-adaptation`、`model-recommend-flash-attention-fusion` 的判定与实现要点；机器侧算子库随 CANN 提供 | 目录存在性检查 | 条目 7/11/12 只能凭经验实现，风险升高 | 随插件与 CANN 提供，无需外部获取 |
+| F3 | 算子参考实现 | 同名 skill `model-recommend-plugin-dev`、`model-recommend-fusion-pass-dev`、`model-recommend-custom-op-dev` 的判定与实现要点；机器侧算子库随 CANN 提供 | 目录存在性检查 | 条目 7/11/12 只能凭经验实现，风险升高 | 随插件与 CANN 提供，无需外部获取 |
 
 ### G. 用户提供的数据资产（非安装项）
 
@@ -99,13 +99,13 @@
 ├── docs/  data/  prof/  ops/  tmp/
 ```
 
-**边界纪律**：框架属「只读依赖 + 允许新增组件」。新增图融合 pass 等写在 `src/` 并保持开关默认关闭；不得改写框架既有行为与脚本入口（会破坏跨模型可比性）。工程内新增或修改的组件须回写插件 `framework/GE_SESSION_DEMO/` 后随插件提交——框架唯一真源在插件内，工程内的只是安装副本。
+**边界纪律**：框架属**只读依赖**，不得修改 `GE_SESSION_DEMO` 的任何文件，包括 `run.sh`、`test.sh`、`src/`、`tools/`、配置及其他源码/脚本，也不得向 `src/` 新增文件。**驱动方式仅限 `run.sh` / `test.sh` 的传入参数与环境变量**，不得编辑脚本本身。图融合 pass、算子接入等自定义优化一律以**独立交付件**实现（Pass `.so` → `custom_fusion_passes/`、插件 `.so`、算子 `.run`），不侵入框架既有文件。需要框架侧能力时记录为「框架需求移交」，由用户本人单独确认；确认前不得实施。工程内的框架只是安装副本，不得作为修改对象。
 
 **当前已知限制**
 
 | 差异 | 影响 | 处置 |
 | --- | --- | --- |
-| 框架当前未包含 `src/graph_fusion_pass.{h,cc}`（无 FA / GELU 图融合 pass 实现） | 条目 7 的 FA 族融合无可直接复用的实现 | 按 GE graph pass API 在 `src/` 新增，图构建集成参考 `src/graph_build.cc`；实现后回写插件 `framework/GE_SESSION_DEMO/src/` 并过双门禁 |
+| 框架当前未包含自定义图融合 Pass 实现 | 条目 7 的 FA 族融合无可直接复用的实现 | 以独立 Pass `.so` 交付件实现并部署到 `opp/vendors/<vendor>/custom_fusion_passes/`；**不得在 `src/` 新增或修改，不得改 `graph_build.cc`**；过双门禁后按交付规范归档 |
 | 手册为 `README.md` 与 `doc/README_EN.md`（无 `doc/DESIGN.md`） | 旧引用失效 | 统一引用 `GE_SESSION_DEMO/README.md`（运行环境第 10 章、能力表第 11 章） |
 | `models/` 仅含 `M001_sample` 样例 | 新模型需按 `M<id>` 自建工作区 | 用 `prepare_model.py` 生成配置，不手工拷贝样例 |
 
