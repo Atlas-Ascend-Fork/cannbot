@@ -10,7 +10,6 @@
 # ----------------------------------------------------------------------------------------------------------
 
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -24,8 +23,6 @@ logger = logging.getLogger(__name__)
 # 配置项
 AGENTS_DIR = "./agents"
 SKILLS_DIR = "./skills"
-NAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9\-]*$')  # 小写字母、数字、连字符
-MAX_NAME_LENGTH = 64
 
 
 def _check_skills_field(file_path: Path, skills) -> bool:
