@@ -1179,6 +1179,49 @@ else
 
     ok "Skills: $link_count discovery symlinks"
 
+    # ── Agent 定义渲染 ──────────────────────────────────────────
+    # 直接软链仓库内的 agent 定义会让其中的相对路径（workflows/…、
+    # .claude/skills/…）在用户项目里解析失败：安装后 workflows 与 skills
+    # 落在配置根下，而不是项目根。这里在安装时把路径替换成真实位置。
+    CANNBOT_RENDERED_MARKER="<!-- cannbot-rendered-agent -->"
+
+    sed_escape_replacement() {
+        printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
+    }
+
+    is_rendered_agent_file() {
+        [ -f "$1" ] && grep -qF "$CANNBOT_RENDERED_MARKER" "$1" 2>/dev/null
+    }
+
+    render_agent_definition() {
+        local src="$1" dest="$2" tmpdir tmp config_abs skill_abs hooks_abs
+        config_abs="$(sed_escape_replacement "$(realpath -m "$CONFIG_ROOT")")"
+        skill_abs="$(sed_escape_replacement "$(realpath -m "$SKILL_DISCOVERY_ROOT")")"
+        hooks_abs="$(sed_escape_replacement "$(realpath "$PLUGIN_ROOT/hooks")")"
+        tmpdir="$(dirname "$dest")"
+        mkdir -p "$tmpdir" || return 1
+        # 临时文件建在目标同目录：mv 即 rename，替换是原子的，也不会跨文件系统退化复制
+        tmp="$(mktemp "$tmpdir/.cannbot-render.XXXXXX")" || return 1
+        # workflows/ 只在后面紧跟路径段时替换，避免把说明性文字（如 "workflows/ 目录"）改坏
+        if ! sed \
+            -e "s|\.claude/skills/|${skill_abs}/|g" \
+            -e "s|\.claude/hooks/|${hooks_abs}/|g" \
+            -e "s|\.claude/settings\.json|${config_abs}/settings.json|g" \
+            -e "s|workflows/\([A-Za-z]\)|${config_abs}/workflows/\1|g" \
+            "$src" > "$tmp"; then
+            rm -f "$tmp"
+            return 1
+        fi
+        printf '\n%s\n' "$CANNBOT_RENDERED_MARKER" >> "$tmp"
+        # 发布前校验产物非空且带标记，避免把半截内容换上去
+        if [ ! -s "$tmp" ] || ! grep -qF "$CANNBOT_RENDERED_MARKER" "$tmp"; then
+            rm -f "$tmp"
+            return 1
+        fi
+        chmod 644 "$tmp"
+        mv -f "$tmp" "$dest"
+    }
+
     AGENT_DISCOVERY="$AGENT_DISCOVERY_ROOT"
 
     if [ "$TOOL" = "codex" ]; then
@@ -1195,23 +1238,48 @@ else
             target="$AGENT_DISCOVERY/$name"
             if [ -e "$target" ] || [ -L "$target" ]; then
                 if [ -L "$target" ] && [ ! -e "$target" ]; then
-                    rm -f "$target"            # 断链（clone 移动等）→ 重建
+                    :                              # 断链（clone 移动等）→ 直接原子替换
                 elif is_installer_generated_file "$target"; then
-                    rm -f "$target"
+                    :                              # 本安装器产物 → 直接原子替换
                 else
                     warn "保留已存在的 Agent 文件（非本安装器生成）: $target"
                     agent_skipped=$((agent_skipped + 1)); continue
                 fi
             fi
-            canonical="$(realpath "$LOCAL_AGENT_ROOT/$base.md" 2>/dev/null || echo "$LOCAL_AGENT_ROOT/$base.md")"
+            # 角色定义同样要渲染后再引用，否则 Codex 侧读到的仍是相对路径。
+            # 与 .toml 一致做归属检查：用户自建的同名 .md 不得被覆盖。
+            canonical="$AGENT_DISCOVERY/$base.md"
+            if [ -e "$canonical" ] && ! is_rendered_agent_file "$canonical"; then
+                warn "保留已存在的 Agent 定义（非本安装器生成）: $canonical"
+                agent_skipped=$((agent_skipped + 1)); continue
+            fi
+            if ! render_agent_definition "$LOCAL_AGENT_ROOT/$base.md" "$canonical"; then
+                warn "渲染失败，保留原 Agent 定义: $canonical"
+                agent_skipped=$((agent_skipped + 1)); continue
+            fi
+            canonical="$(realpath "$canonical")"
             escaped_agent="$(echo "$canonical" | sed 's/[&|\\]/\\&/g')"
-            tmpfile=$(mktemp)
-            sed "s|__CANNBOT_AGENT_SOURCE__|$escaped_agent|g" "$agent_entry" > "$tmpfile"
-            mv "$tmpfile" "$AGENT_DISCOVERY/$name"
-            chmod 644 "$AGENT_DISCOVERY/$name"
+            tmpfile="$(mktemp "$AGENT_DISCOVERY/.cannbot-toml.XXXXXX")" || {
+                warn "无法创建 TOML 临时文件，跳过: $target"
+                agent_skipped=$((agent_skipped + 1)); continue
+            }
+            if ! sed "s|__CANNBOT_AGENT_SOURCE__|$escaped_agent|g" "$agent_entry" > "$tmpfile"; then
+                rm -f "$tmpfile"
+                warn "渲染 TOML 失败，保留原文件: $target"
+                agent_skipped=$((agent_skipped + 1)); continue
+            fi
+            chmod 644 "$tmpfile"
+            mv -f "$tmpfile" "$AGENT_DISCOVERY/$name"
             agent_link_count=$((agent_link_count + 1))
         done
         [ "$agent_skipped" -gt 0 ] && warn "保留 ${agent_skipped} 个非本安装器生成的 Agent 条目"
+        # 清理已移除角色的旧渲染定义（只动带本安装器标记的文件）
+        for existing in "$AGENT_DISCOVERY"/*.md; do
+            is_rendered_agent_file "$existing" || continue
+            existing_base=$(basename "$existing")
+            existing_base="${existing_base%.md}"
+            [[ "$existing_base" == $INCLUDED_AGENT_PATTERN ]] || rm -f "$existing"
+        done
         ok "Agents: $agent_link_count Codex TOML custom agent(s)"
     else
         agent_link_count=0
@@ -1223,26 +1291,36 @@ else
             [[ "$base" != $INCLUDED_AGENT_PATTERN ]] && continue
             target="$AGENT_DISCOVERY/$name"
             if [ -e "$target" ] || [ -L "$target" ]; then
-                if is_installer_link "$target"; then
-                    rm -f "$target"
-                else
+                if ! { is_installer_link "$target" || is_rendered_agent_file "$target"; }; then
                     warn "保留已存在条目（非本安装器创建）: $target"
                     agent_skipped=$((agent_skipped + 1)); continue
                 fi
             fi
-            ln -sfn "$(realpath "$agent_entry")" "$target"
+            # 渲染成真实文件（含安装后的绝对路径），不再软链仓库源文件；
+            # 同目录临时文件 + mv 原子替换，渲染失败时旧定义保持可读
+            if ! render_agent_definition "$agent_entry" "$target"; then
+                warn "渲染失败，保留原 Agent 定义: $target"
+                agent_skipped=$((agent_skipped + 1)); continue
+            fi
             agent_link_count=$((agent_link_count + 1))
         done
 
         for link in "$AGENT_DISCOVERY"/*; do
             [ -L "$link" ] && [ ! -e "$link" ] && is_installer_link "$link" && rm -f "$link"
         done
+        # 清理已移除 agent 的旧渲染产物（只动带本安装器标记的文件）
+        for existing in "$AGENT_DISCOVERY"/*; do
+            is_rendered_agent_file "$existing" || continue
+            existing_base=$(basename "$existing")
+            existing_base="${existing_base%.md}"
+            [[ "$existing_base" == $INCLUDED_AGENT_PATTERN ]] || rm -f "$existing"
+        done
         [ "$agent_skipped" -gt 0 ] && warn "保留 ${agent_skipped} 个非本安装器创建的 agent 条目"
 
         if [ "$TOOL" = "dsh" ]; then
-            ok "Agents: $agent_link_count role reference file(s) (DSH subagents are prompt-driven)"
+            ok "Agents: $agent_link_count rendered role definition(s) (DSH subagents are prompt-driven)"
         else
-            ok "Agents: $agent_link_count discovery symlinks"
+            ok "Agents: $agent_link_count rendered definition(s)"
         fi
     fi
 

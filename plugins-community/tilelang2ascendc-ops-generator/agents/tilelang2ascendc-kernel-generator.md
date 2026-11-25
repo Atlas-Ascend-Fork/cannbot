@@ -414,7 +414,23 @@ mkdir -p {output_dir}/kernel/op_host
 mkdir -p {output_dir}/kernel/op_kernel
 mkdir -p {output_dir}/kernel/utils
 # 从模板复制固定工具文件（不生成，内容固定）
-cp community/ops/tilelang2ascend-operator-project-init/templates/ascend-kernel/csrc/utils/torch_kernel_helper.h {output_dir}/kernel/utils/
+# skills 装在各工具的配置根下（项目级/全局不同），仓库内直跑时回退到 vendor 源码
+HELPER_REL="tilelang2ascend-operator-project-init/templates/ascend-kernel/csrc/utils/torch_kernel_helper.h"
+HELPER=""
+for base in \
+    ".claude/skills/" "$HOME/.claude/skills" \
+    .opencode/skills "$HOME/.config/opencode/skills" \
+    .agents/skills "$HOME/.agents/skills" \
+    .dsh/skills "${DSH_HOME:-$HOME/.dsh}/skills" \
+    .trae/skills .cursor/skills .github/skills .codeartsdoer/skills \
+    vendor/cannbot-skills/community/ops; do
+    if [ -f "$base/$HELPER_REL" ]; then HELPER="$base/$HELPER_REL"; break; fi
+done
+if [ -z "$HELPER" ]; then
+    echo "未找到 torch_kernel_helper.h：请确认已执行 init.sh 安装，或 vendor/cannbot-skills 子模块已初始化" >&2
+    exit 1
+fi
+cp "$HELPER" {output_dir}/kernel/utils/
 ```
 
 kernel 目录结构（后续 Phase 4 由 Developer / translator skill 填充）：
@@ -628,7 +644,7 @@ while tl_iteration < max_tl_iterations:
     ── 3.2 AST 退化预检查 ────────────────────────────
     执行 validate_tilelang_impl.py 检测 PyTorch 退化
 
-    python .claude/skills/tilelang2ascend-tilelang-designer/scripts/validate_tilelang_impl.py \
+    python ".claude/skills/"tilelang2ascend-tilelang-designer/scripts/validate_tilelang_impl.py \
         {output_dir}/model_new_tilelang.py
 
     退化 (exit code != 0):
@@ -641,7 +657,7 @@ while tl_iteration < max_tl_iterations:
     ── 3.3 功能验证 ──────────────────────────────────
     调用 tilelang2ascend-tilelang-designer skill 自带的 evaluate_tilelang.sh
 
-    bash .claude/skills/tilelang2ascend-tilelang-designer/scripts/evaluate_tilelang.sh \
+    bash ".claude/skills/"tilelang2ascend-tilelang-designer/scripts/evaluate_tilelang.sh \
         {output_dir}
 
     验证通过:
@@ -820,7 +836,7 @@ elif op_type == "complex":
 #### 4.2 AST 退化预检查
 
 ```
-python .claude/skills/tilelang2ascend-translator/scripts/validate_ascendc_impl.py \
+python ".claude/skills/"tilelang2ascend-translator/scripts/validate_ascendc_impl.py \
     {output_dir}/model_new_ascendc.py
 ```
 
@@ -832,7 +848,7 @@ python .claude/skills/tilelang2ascend-translator/scripts/validate_ascendc_impl.p
 #### 4.3 功能验证
 
 ```
-bash .claude/skills/tilelang2ascend-translator/scripts/evaluate_ascendc.sh {output_dir}
+bash ".claude/skills/"tilelang2ascend-translator/scripts/evaluate_ascendc.sh {output_dir}
 ```
 
 - **PASS** → Phase 4 成功，进入 Phase 5
