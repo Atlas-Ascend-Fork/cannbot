@@ -21,6 +21,8 @@ import csv
 import io
 import json
 import logging
+import ast
+import operator
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -1925,6 +1927,36 @@ _SIZEOF = {
 }
 
 
+_ARITH_BINOPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+}
+_ARITH_UNARYOPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+
+def _safe_eval_arith(expr: str):
+    """Safely evaluate a pure numeric arithmetic expression without eval()."""
+    def _eval_node(node):
+        if isinstance(node, ast.Expression):
+            return _eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in _ARITH_BINOPS:
+            return _ARITH_BINOPS[type(node.op)](_eval_node(node.left), _eval_node(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _ARITH_UNARYOPS:
+            return _ARITH_UNARYOPS[type(node.op)](_eval_node(node.operand))
+        raise ValueError(f"Unsupported arithmetic node: {type(node).__name__}")
+
+    return _eval_node(ast.parse(expr, mode="eval"))
+
+
 def _eval_size_expr(expr: str, consts: dict) -> int:
     """Evaluate simple InitBuffer size expression like 'tileElements * sizeof(float)'."""
     # Replace sizeof(type) → integer
@@ -1942,7 +1974,7 @@ def _eval_size_expr(expr: str, consts: dict) -> int:
     # Only evaluate pure arithmetic
     try:
         if re.fullmatch(r"[\d\s\*\+\-\/\(\)]+", expr2.strip()):
-            return int(eval(expr2))
+            return int(_safe_eval_arith(expr2))
     except Exception as e:
         logger.debug("size 表达式求值失败，返回 0 (%r): %s", expr, e)
     return 0
