@@ -58,10 +58,30 @@ Phase 6: 会话导出          (session.jsonl + session.md)
 
 ---
 
+## 阶段闸门记录（按交付契约启用）
+
+阶段之间用 **`{工作目录}/dev/gates.log`** 作为"确实跑过闸门"的唯一证据：每过一道门，把命令与结论**追加一行**
+（`phase | 命令 | 结论`）。**已适用的闸门没有记录 = 该阶段未完成**：不得进入下一阶段，最终判定按
+`delivery_path_violation` 处理，不得用 `contract_conflict` 掩盖。
+
+**适用范围（先看 `single_launch_required`）**：
+- `single_launch_required=true`（单 launch 硬约束）：**G1–G5 全部强制**，缺一即未完成。
+- `single_launch_required=false`（按 `multi_kernel_best` 交付，launch 数不限）：**只强制 G1、G2**；
+  G3–G5 属于单 launch 交付路径，**不适用**，不得因缺它们判违规；若主动做了融合，记录 G4 仅作过程证据，不作为交付前提。
+
+| 门 | 必跑命令 | 记录 | 启用条件 |
+|---|---|---|---|
+| G1 Phase 2 退出 | `check_launch_path.py --op-dir {工作目录} --phase precheck` | `G1 precheck pass_precheck` | **全部任务** |
+| G2 基线验证 | `verify.py`（`iter_0`，要求必测用例全过） | `G2 iter_0 14/14 sha=<前12位>` | **全部任务** |
+| G3 交付路径 | `check_launch_path.py --phase iteration --baseline dev/<基线>` | `G3 iteration pass_iteration` | 仅 `single_launch_required=true` |
+| **G3.5 多 kernel 性能门** | `check_launch_path.py --phase fusion …`（内部先校验**最新一轮基线 `iter_N`** 的 `perf_result.json` per-case 下限） | `G3.5 perf min=<case>=<x>` | 仅 `single_launch_required=true`（**进入融合的前置**） |
+| G4 融合 | `check_launch_path.py --phase fusion --fused-epilogue dev/fused_epilogue.py` | `G4 fusion pass_baseline_verify` | 仅 `single_launch_required=true`（**单 kernel 尝试的前置**） |
+| G5 终检 | `check_launch_path.py --phase final ...`（或 `--fallback` + attempts） | `G5 final <verdict>` | 仅 `single_launch_required=true` |
+
 ## 多 kernel 基线（通用，single_launch_required=true 时为硬门）
 
 - **`single_launch_required=true` 的强制路径**：Phase 3 必须先交付 multi-kernel 基线（>=2 个 `@triton.jit` / >=2 次 launch）并通过全部必测用例的正式精度验证；Phase 4 在该基线上做 stage-level fused epilogue；Phase 4 迭代内实现并验证 1 个 `@triton.jit` / 1 次 launch 的候选，Phase 5 归档已验收的候选。
-- **过程基线 ≠ 交付物**：prompt 里“只允许单个 Triton kernel / 不得拆分为多个 kernel 串联”约束的是**最终交付物**（`output/` 下参与 verify/benchmark 的实现）。Phase 3/4 的 multi-kernel 基线是**过程证据**，只写在 `{工作目录}/dev/`（如 `dev/k1_<stage>.py`、`dev/fused_epilogue.py`、`dev/baseline_note.md`），不进 `output/`、不计入 launch 数；两者不冲突，不得以 prompt 的单 kernel 约束为由跳过基线。
+- **过程基线 ≠ 交付物**：prompt 里“只允许单个 Triton kernel / 不得拆分为多个 kernel 串联”约束的是**最终交付物**（`output/` 下参与 verify/benchmark 的实现）。Phase 3/4 的 multi-kernel 基线是**过程证据**，规范位置在 `{工作目录}/dev/`（如 `dev/k1_<stage>.py`、`dev/fused_epilogue.py`、`dev/baseline_note.md`）；Phase 3 运行时把同一份内容复制到 `output/iter_{n}/generated_code.py` 供 `verify.py` / `benchmark.py` 使用，**两处 sha256 必须一致**，`output/` 下那份只是被验证的副本、不计入最终交付物的 launch 数。两者不冲突，不得以 prompt 的单 kernel 约束为由跳过基线。
 - **不允许**跳过 multi-kernel 基线直接写单 kernel；直接单 kernel 视为 `delivery_path_violation`，不得进入 benchmark。`contract_conflict` 只用于 Phase 4 取证后仍无精度全过且满足 launch 契约的候选，**不得**用于豁免基线缺失或 launch 路径违规。
 - Phase 2 precheck 必须记录 `delivery_path=multi-kernel baseline -> fused epilogue -> single launch`；sketch 必须写出三阶段（三阶段的代码落点见 Phase 3 的 `dev/` 约定）。
 - 生成代码后必须按 3.2c 用 `check_launch_path.py --phase iteration` 检查 sketch 声明的基线；没有 multi-kernel 基线证据、或直接单 kernel，直接 fail。
@@ -70,13 +90,96 @@ Phase 6: 会话导出          (session.jsonl + session.md)
 
 ## 单 launch 可行性与回退（条件性，仅 single_launch_required=true）
 
+方法与判据必须按**主题检索**知识库后确定，**不要写死卡路径或卡名**（知识仓会重构，卡名/章节会变）。
+要求是**逐类尝试检索并分析卡的内容**，不要求命中多少张卡：
+① 单 launch / 单 kernel 可行性（阶段推进与判据）② 跨 program（跨核）GM 交接与可见性 / 屏障层次
+③ 失败归因（同构最小探针、误差或错读来源定位）④ 并行度下限（grid、行块归属与核数）
+⑤ UB 预算与多 phase 驻留 ⑥ launch 计数与交付形态取证（静态 jit 数 + 运行时 launch 数）⑦ 融合税分解。
+
+每一类都要在 `dev/kb_notes.md` 写三行：
+`主题` → 检索词与返回的卡（含"未命中"）→ **卡里的结论是什么、对本次设计/取舍的具体影响**（引用章节即可，不必贴全文）。
+"检索过但没分析"不算完成；"没命中"必须显式记录，并说明改用本文件的哪条阶段门或清单兜底。
+卡内容与实测冲突时以实测为准，但要在 `dev/kb_notes.md` 写明冲突点与验证方式。
+
 - 若一个输出精确、另一个只在边缘块错（或 `max_error_cap` 持续超限），先做 failing consumer 的 standalone 测试、交换 consumer 顺序或 dummy dot；最多 2 次。
-- 2 次仍不收敛：**先按“可融合重构”方向检索知识库并尝试一次结构改造**（检索方向：阶段边界归属、中间量布局、屏障形式）。记录命中的卡、实际结构变更及逐阶段验证结果。混合 cube/vector 交接至少区分 program 到达与数据可见性，覆盖尾块和工作区复用；只改轮询、cache modifier 或 delay 不计作结构改造。若故障集中在 scatter 后的首个消费者，优先尝试由中间量 tile 的生产者合并该 tile 的索引更新并整块写出，兼顾重复索引、舍入和尾块；先用满核重复探针核对交接，再进行全用例验收。重构后仍失败再记 `contract_conflict`，交付多 kernel 版本（显式标注 fallback），性能目标单独报告。
+- 2 次仍不收敛：**按可行性卡的分阶段门逐步加**：阶段 1 只做 2 phase（一个交接边）、阶段 2 做 3 phase（两条边）、阶段 3 才是全 phase；
+  每阶段都要逐 case 精度全过并记录运行时 launch 计数，失败时只调该阶段的边或归属，不得整体回退。
+  检索方向：阶段边界归属、中间量布局、交接形态（见卡的形态谱）。记录命中的卡、实际结构变更及逐阶段验证结果。混合 cube/vector 交接至少区分 program 到达与数据可见性，覆盖尾块和工作区复用；只改轮询、cache modifier 或 delay 不计作结构改造。若故障集中在 scatter 后的首个消费者，优先尝试由中间量 tile 的生产者合并该 tile 的索引更新并整块写出，兼顾重复索引、舍入和尾块；先用满核重复探针核对交接，再进行全用例验收。重构后仍失败再记 `contract_conflict`，交付多 kernel 版本（显式标注 fallback），性能目标单独报告。
+
+**回退前必做清单（强制，逐项记录后才能写 `contract_conflict`）**：
+1. **跨 program 交接**：**强制检索**"屏障层次 / 跨核 GM 交接与可见性"主题的知识卡，按检索到的卡实现并逐轮取证；
+   仅改变单一屏障的参数（事件 id、同步次数、cache modifier）**不计为尝试过本项**。记录工作区规模、写读形态与逐轮正确性。
+2. **写者=消费者重构**：把稀疏写（scatter / atomic）合并进消费它的 program（或让写出发生在消费者所在 program），
+   使其不再跨 program 交接；记录重构前后的依赖图与验证结果。
+3. **核边界拆分**：稀疏写独立成一个 kernel、由稠密 phase 在下一次启动消费；按交付契约判断该形态是否可交付，
+   不可交付时记录原因。
+
+4. **单 launch 候选必须可执行、在融合之后推进、并分阶段留痕（强制）**：`single_launch_required=true` 时，
+   回退取证必须包含 `dev/single_launch.py`（**宿主恰好 1 处 kernel launch 调用**；允许 `@triton.jit` 辅助函数被内联，
+   但不得有第二个宿主侧入口），**且该候选须在融合阶段正式验证全过（必测用例 14/14）并由脚本记录之后再开始推进**
+   （融合验证未通过、或候选早于该验证落盘，均视为越序）。单 launch 候选本身**必须至少跑过一次 `verify.py`**
+   （即使失败），并把该 `verify_result*.json` 作为尝试记录的引用证据。
+   单 launch 的尝试必须**分阶段推进并逐次留痕**：先用最小可验证子集取得实测结论，再扩到全量；每一步的
+   阶段、变更点、实测结果与证据文件路径写入 `dev/single_launch_attempts.md`（≥2 条带数值的记录）。
+   **已记录的候选与取证文件不得删除**；每个变体都要有独立文件与实测。`--fallback` 会校验候选存在、
+   尝试记录、引用证据可解析、结构变体数、单 launch verify 轮次与 `dev/next_actions.md`。
+
+5. **跨 program 交接必须按知识库执行（强制）**：按"跨核 GM 交接与可见性 / 屏障层次"主题**强制检索**知识卡，
+   按检索到的卡实现并逐轮取证。仅调整单一屏障参数、交换相位顺序、追加同义屏障**不计为尝试过该项**。
+   失败时必须记录"同一实现下错误是否随相位顺序转移"——该现象用于区分可见性问题与逻辑错误。
+
+6. **性能测量不得跳过（强制）**：不得以机器负载、profiler 耗时等理由跳过 benchmark 或把性能门记为
+   `BLOCKED`；必须给出实测数据（或明确的测量失败证据）。
+   **性能要求以 min(case) 为准：每个验收 case 的加速比必须 ≥ 1.0**（允许 5% 的性能测量误差，即有效下限 0.95；测量协议需与既有基线一致）。**进入融合（G3.5/G4）前，min(case) 与 geomean 都必须达到有效下限**；任一项不达标必须继续优化
+   多 kernel，**不得通过放宽 `--perf-floor` 进入融合**（放宽只允许用于最终回退/记录真实水平，并须写
+   `dev/perf_floor_relaxation.md` 说明放宽值与理由，且不得据此声称达标）。
+7. **`dev/gates.log` 只登记脚本原样输出**：该文件不接受手写判定/状态行（如 `BLOCKED`、`FINAL`），
+   门禁状态以 `check_launch_path.py` 写入的 `output/launch_path.json` 为准；手写行不作为交付依据。
+
+8. **取证只认"产物路径 + 实测数值"（强制）**：`dev/feasibility_attempts.md`、`dev/single_launch_attempts.md`
+   的每一行必须给出可解析的产物路径与实测数值；**不允许写"未越序""验证通过"这类无产物支撑的合规声明**
+   （脚本会按文件 mtime 与验证报告核对，声明与产物不符即判违规）。
+
+9. **G5 必须由脚本判定（强制）**：交付前的最终判定只能由 `check_launch_path.py --phase final` 产生
+   （多 kernel 回退时加 `--fallback`）；**未由脚本判定即视为未交付**，不得只写 `report.md`/`summary.json` 便结束。
+
+10. **性能下限未达成时的终态（强制）**：`min(case) < 1.0` 时（即使放宽下限并记录），必须写
+    `target_reached=false` 并在 `report.md` 列出破线 case；**不得声称 `contract_conflict`**（性能门未过时
+    G5 不可达），也不得把多 kernel 交付描述为"已达成目标"。
+- 每项都要给出"机制 / 工作区规模 / 写读形态 / 正确性 / 是否可复核"五列；**只改屏障参数、cache modifier、轮询或 delay 不计入上述三项**。
+- **失败证据必须与最小可复核探针同构**（同写读形态、同消费者数量、同规模）；若最小探针在同等条件下通过，
+  说明失败不来自"规模"或"屏障本身"，必须继续找结构，不得回退。
+- **per-case 下限（强制）**：`target_policy=each_required_case` 时，交付前必须核对**每个必测 case 的加速比**：
+  `min(case) ≥ 1.0` 才允许把 `target_reached` 记为 `true`；只要有 case 低于 1.0，必须记 `target_reached=false`、
+  在 `report.md` 列出破线 case 及数值，并继续优化或说明放弃原因。**不得用 geomean 达标掩盖单 case 回退。**
+- **回退不等于交付（强制）**：`single_launch_required=true` 时，多 kernel 版本只是过程基线与性能证据，
+  不是交付物。只有 G5 单 launch 通过才算交付；`--fallback` 的语义是"**记录当前未达成 + 继续排障的检查点**"，
+  脚本会输出 `delivery_status=not_delivered`、`target_reached=false`（即使性能已达标），并以独立退出码提示"需继续"。
+- **回退前的结构尝试必须"实现级"**：`dev/feasibility_attempts.md` 的三项（稠密交接 / 写者=消费者 / 核边界拆分）
+  每一项都必须引用**已实现的 `dev/*.py` 文件**并给出实测数值；只有分析或推算不计为尝试过该项。
+- **回退前的最低尝试义务**（脚本逐项校验，缺一即判 `delivery_path_violation`）：
+  1. `dev/single_launch*.py` 中**互不相同（内容 hash 不同）的变体 ≥3 个**，且每个都在尝试记录中留痕；
+  2. 单 launch 的**全量 verify 至少 2 轮**（不同变体各一轮，结果文件保留）；
+  3. 若**最小同构探针已通过**，必须记录"探针与全量为何不同构"的具体差异（program/tile/消费者数或 shape，带数值），
+     否则不得回退；
+  4. 必须给出**失败 case 的 shape 聚类**，并针对该组做至少 1 个定向变体（带实测）；
+  5. 必须写 `dev/next_actions.md`：列出下一步可执行的具体尝试（用于后续续跑）。
+- **回退之后不得视为完成**：回退后 agent **只有两种合法走向**——继续做（新增结构变体 + 实测），
+  或给出**可复核的"本栈不可行"反证**（同构最小探针在同等条件下也失败，或编译不可用并附报错原文）；
+  两者都没有不得结束。结束时必须写 `delivery_status=not_delivered` 与 `next_actions`，
+  **不得声称 `success=true` 或 `target_reached=true`**。
+- **回退产物的命名**：多 kernel 回退文件必须命名为 `*_fallback.py` 并在 `report.md` 标注"单 launch 未交付"；
+  禁止把多 kernel 版本命名为正式交付文件。
+- **续跑接口**：若本轮以 `not_delivered` 结束，必须保留 workdir、尝试记录、失败 case 聚类与 `dev/next_actions.md`，
+  使下一轮可直接接续。
+- **launch 计数取证**：交付前给出**宿主侧 launch 调用点数**（静态，`name[(grid,)]`）与**每 case 的运行时 launch 数**
+  （包装计数或 profiler），两者都为 1 才满足单 launch 契约；只有静态 `@triton.jit` 函数个数不算取证
+  （辅助函数会被内联，jit 个数可以大于 1）。
 - 不要继续缩 tile 或盲调；单 kernel 是交付目标，不是无限调试许可证。
 
 ## 单 kernel 定义（条件性，仅 single_launch_required=true）
 
-- 最终实现只允许 **1 个 `@triton.jit` 定义**；helper/barrier 必须 inline；静态 verify 按定义计数。
+- 最终实现只允许 **1 次 kernel launch**：判别看**宿主侧 launch 调用点**（`name[(grid,)]` 恰好 1 处）与运行时 launch 计数；`@triton.jit` 辅助函数（如舍入/换算）只要被 kernel 内联调用即允许，**jit 函数个数不等于 launch 次数**。
 - 该定义只针对 `output/` 下的交付实现；`dev/` 下的阶段基线（`dev/k*.py`、`dev/fused_epilogue.py`）是过程证据，不计入该定义，不参与 launch 数校验。
 - 多 kernel fallback 必须显式标注，不得静默通过。
 
@@ -89,7 +192,11 @@ Phase 6: 会话导出          (session.jsonl + session.md)
 
 ## 标杆设置（Phase 1/2，通用）
 
-- 标杆优先用**用户原始** `topk_log_probs_backward.py`；只有缺少用户标杆、且任务允许构造参考时，才选用 auto-built。**`golden_source` 由 Phase 1 冻结模式决定**：原始标杆逐字节复制（副本 sha 与源一致）→ `--mode=user --source_path <用户文件>`，记 `user`；经 `triton-task-extractor` 重建/扩 case 改写了内容（副本 sha ≠ 源 sha，`--mode user` 会 exit 5）→ 用 `--mode auto`，记 `auto`。
+- 标杆优先用**用户原始**标杆文件（按原样逐字节复制）；只有缺少用户标杆、且任务允许构造参考时，才选用 auto-built。**`golden_source` 由 Phase 1 冻结模式决定**：原始标杆逐字节复制（副本 sha 与源一致）→ `--mode=user --source_path <用户文件>`，记 `user`；经 `triton-task-extractor` 重建/扩 case 改写了内容（副本 sha ≠ 源 sha，`--mode user` 会 exit 5）→ 用 `--mode auto`，记 `auto`。
+
+**一致性校验（强制）**：`precheck.json` 的 `golden_source` 必须等于 `output/.baseline_anchor.json` 的 `source_mode`。
+prompt 提供了用户标杆文件时，若用户文件未被改写而记录却是 `auto`（或反之），判 `delivery_path_violation`：
+先确认副本 sha 是否等于源 sha，再决定 `user`/`auto`，不得凭默认值填写。
 - 默认 `golden_device=npu`（Ascend 算子）；用户代码/提示词明确 CPU 时用 CPU；NPU 不可用回退 CPU 并记录原因。
 - precheck/sketch 必须写 `golden_device`（npu/cpu）与 `golden_source`（user/auto）。
 - verifier 读 `CANNBOT_VERIFY_GOLDEN_DEVICE`；CPU/NPU 同一代码结果可能差 1-ulp，CPU golden 失败先判 golden device，再判 kernel。
@@ -402,6 +509,13 @@ python3 skills/triton-op-verifier/scripts/freeze_baseline.py \
 
 ---
 
+### Phase 2 退出闸门（强制）
+
+进入 Phase 3 前**必须**执行 `check_launch_path.py --op-dir {工作目录} --phase precheck` 并把结果追加到
+`dev/gates.log`（`G1 ...`）。该闸门**对所有任务生效**（与 `single_launch_required` 无关）。
+**未记录 G1 或结论不是 `pass_precheck` 时，禁止写任何 `dev/` 代码、禁止写 `output/iter_*/`**。
+缺 `precheck.json` / `sketch.txt` 时先回 Phase 2 补齐，不得边写代码边补。
+
 ## Phase 3: 代码生成与验证（迭代循环）
 
 当前会话自身维护迭代状态，编排 **生成 → 验证 → Conductor 分析** 的循环。
@@ -433,6 +547,32 @@ while iteration < max_iterations:
 ---
 
 ### 3.1 代码生成
+
+**入口断言（强制）**：进入本步骤前必须已存在 `precheck.json` 与 `sketch.txt`，且
+`check_launch_path.py --op-dir {工作目录} --phase precheck` 通过；缺失或未通过时禁止生成代码，先回到 Phase 2 补齐。
+
+**3.1 执行顺序（强制，逐条记录到 `dev/gates.log`）**：
+1. 写 `dev/<基线>.py`（多 kernel 过程基线）；
+2. **立刻**把同一份内容复制到 `output/iter_0/generated_code.py`（两处 sha256 必须一致）；
+3. **立刻**跑 `verify.py`（`iter_0`）：**必测用例未全过前，禁止任何 benchmark、禁止 `.scratch/` 性能脚本**；
+   若 `single_launch_required=true` 并计划融合，**同时禁止在此之前写 `dev/fused_epilogue.py`**；
+4. 验证通过后记 `G2 iter_0 <通过数>/<总数> sha=<前12位>`，再跑 `check_launch_path.py --phase iteration` 记 `G3`。
+
+**只写基线不验证就去做融合或调优 = 顺序违规**：即使最终 14 例全过，也按 `delivery_path_violation` 记录（无法区分基线错误与融合错误）。
+
+**G3.5 多 kernel 性能门（强制）**：`single_launch_required=true` 时，**在写 `dev/fused_epilogue.py` 或进入融合阶段之前**，
+多 kernel 基线必须先在 `output/iter_0/perf_result.json` 上过 per-case 下限（`min(case) ≥ --perf-floor`，默认 1.0）。
+未过下限时，**继续优化多 kernel 版**（tile/面板/并行度/访存），不得进入融合；`check_launch_path.py --phase fusion`
+会直接以 `delivery_path_violation` 拒绝，并指出最差 case 与数值。
+
+**融合后不得回退（强制）**：一旦开始融合（写了 `dev/fused_epilogue.py` 或 `opt_iter_*`），后续优化**只能在融合候选上继续做**
+（调 tile/流水/面板），**不得退回多 kernel 版调优**再重做融合。需要改回多 kernel 结构时，必须显式记 `delivery_path_violation`
+并在 `report.md` 说明原因，不能静默回退。
+
+**G4 前置（强制）**：`single_launch_required=true` 时，**在写 `dev/single_launch.py` 或任何单 kernel 融合候选之前**，
+必须已完成 stage-level 融合：`dev/fused_epilogue.py` 存在、其 `opt_iter_0` 有 `verify_result`（必测用例全过）与
+`optimized_perf_result.json`，并把 `G4` 记入 `dev/gates.log`。缺 G4 就写单 kernel = `delivery_path_violation`
+（否则无法区分"融合本身不成立"与"单 kernel 才不成立"）。
 
 **调用 Skill**：`triton-op-coding`
 
@@ -495,6 +635,10 @@ while iteration < max_iterations:
 ---
 
 ### 3.2c 交付路径断言（强制，仅 single_launch_required=true）
+
+**仅 `single_launch_required=true` 启用**。启用时必须**实际执行**（不能只在文档里声称）：跑完把 `stage/verdict`
+追加到 `dev/gates.log`（`G3 ...`）；**未执行或 verdict 不是 `pass_iteration` 时，禁止进入 3.3 与 benchmark。**
+`single_launch_required=false` 时不跑本步骤，也不因此判违规。
 
 **执行工具**：`check_launch_path.py`。按 sketch 中的基线文件传参；若基线分多个文件，每个文件各传一次 `--baseline`。
 
@@ -583,6 +727,9 @@ python3 skills/triton-op-verifier/scripts/check_launch_path.py --op-dir {工作�
 ---
 
 ### 3.5 性能测试（基线）
+
+**产物断言（强制）**：本步骤必须产出 `output/iter_{iteration}/perf_result.json`，且其记录的实现 sha256 与同轮
+`generated_code.py` 一致；缺失或不一致时禁止进入 Phase 4。
 
 **前置断言（强制）**：
 
@@ -686,7 +833,7 @@ python3 skills/triton-op-verifier/scripts/check_launch_path.py --op-dir {工作�
 
 ⚠️ **Phase 4 是必须执行的阶段，禁止跳过。** Phase 3 验证通过后，无论性能数据如何，都必须进入 Phase 4 尝试优化。
 
-单 launch 任务优先完成 stage-level fused epilogue 和首个全融合候选，再继续调单阶段 tile。先用代表性小 shape、尾块或多 chunk shape 验证阶段交接，通过后再跑全量 verify；按剩余运行时间预留完整精度、逐 case launch 和端到端性能验收。多 kernel 基线耗时和性能仅用于对照，不作为进入单 launch 尝试的性能阈值。
+单 launch 任务**先完成 stage-level fused epilogue 的验证与逐 case benchmark（记录 fusion tax），再实现首个全融合候选**，之后才调单阶段 tile；跳过 fused epilogue 的阶段证据直接上单 launch 视为交付路径违规。先用代表性小 shape、尾块或多 chunk shape 验证阶段交接，通过后再跑全量 verify；按剩余运行时间预留完整精度、逐 case launch 和端到端性能验收。多 kernel 基线耗时和性能仅用于对照，不作为进入单 launch 尝试的性能阈值。
 
 ⚠️ **本阶段优化目标由 metric_mode 决定，且是该模式下唯一的优化目标、采纳判定与退出判据：**
 - **speedup 模式**：几何平均加速比，4.3.A 用 benchmark.py 测定。
@@ -742,7 +889,7 @@ simulator_attempted = false                         # triton-simulator-optimizer
 在执行 4.1 之前，必须打开 `{工作目录}/output/iter_{phase3_last_iter}/verify/verify_result.json`
 读取数值字段，确认 `passed_cases == total_cases > 0`。
 
-- 断言通过 → 保留 3.2c 的全部 `--baseline` 参数，执行 `check_launch_path.py --op-dir {工作目录} --phase fusion --baseline dev/multi_kernel_baseline.py --baseline-verify output/iter_{phase3_last_iter}/verify/verify_result.json`，核对完整精度结果与所测基线源码哈希（`single_launch_required=true` 时强制）：PASS 才进入 4.1；FAIL 记 `delivery_path_violation`，C 类终止，不得调用 benchmark。
+- 断言通过 → 保留 3.2c 的全部 `--baseline` 参数，执行 `check_launch_path.py --op-dir {工作目录} --phase fusion --baseline dev/multi_kernel_baseline.py --fused-epilogue dev/fused_epilogue.py --baseline-verify output/iter_{phase3_last_iter}/verify/verify_result.json`，核对完整精度结果与所测基线源码哈希（`single_launch_required=true` 时强制）：PASS 才进入 4.1；FAIL 记 `delivery_path_violation`，C 类终止，不得调用 benchmark。
 - 断言失败 → **C 类终止整个任务**。此时意味着 Phase 3 的闸门被违反但流程仍走到了
   Phase 4，这是流程级 bug，禁止继续优化也禁止退回 Phase 3（退回只会再次误判）。
   写 summary.json：
