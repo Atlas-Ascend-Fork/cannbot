@@ -264,7 +264,7 @@ class RepoDiscovery:
 
             # 按已知符号集合分类，而非依赖出现顺序
             if markers_found:
-                implemented_symbols = {"✓", "✅", "√", "✔", "√", "&check;", "Y", "y"}
+                implemented_symbols = {"✓", "✅", "√", "✔", "&check;", "Y", "y"}
                 not_implemented_symbols = {
                     "✗",
                     "×",
