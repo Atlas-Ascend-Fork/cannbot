@@ -109,7 +109,8 @@ def test_history_ranking_is_connected_to_candidate_planning(tmp_path):
     args = options(tmp_path)
     args.history_state, args.soc, args.top_k = [run.state], "Ascend950", 1
     result = search_round.run(args)
-    acquisition = json.loads(open(result["acquisition"]).read())
+    with open(result["acquisition"]) as fp:
+        acquisition = json.load(fp)
     assert acquisition["ranking"] and acquisition["history"]
     # A tiny prior budget cannot delete the mandatory open/type coverage.
     assert acquisition["pruned"] == []
@@ -128,7 +129,8 @@ def test_combo_progression_uses_existing_round_numbers(tmp_path, round_name, exp
     args.combo_stage, args.round = "auto", round_name
     result = search_round.run(args)
     assert result["combo_stage"]["stage"] == expected
-    frontier = json.loads(open(result["frontier"]).read())
+    with open(result["frontier"]) as fp:
+        frontier = json.load(fp)
     assert frontier["base_factors"] == {"m": 64, "n": 64, "buffers": 1}
     assert any(node["explore_tag"] == "open" for node in frontier["nodes"])
 
@@ -166,18 +168,21 @@ def test_slow_implementation_is_not_a_mechanism_refutation():
 def test_small_real_gain_stays_eligible_when_prediction_is_missed(tmp_path):
     args = options(tmp_path)
     planned = search_round.run(args)
-    frontier = json.loads(open(planned["frontier"]).read())
+    with open(planned["frontier"]) as fp:
+        frontier = json.load(fp)
     values = {node["scheme_id"]: [99.9, 99.9] for node in frontier["nodes"]}
     args.evidence_index = make_index(tmp_path / "tuning", values)
     args.attribution, args.dry_run = True, False
     result = search_round.run(args)
-    report = json.loads(open(result["attribution"]).read())
+    with open(result["attribution"]) as fp:
+        report = json.load(fp)
     by_scheme = {item["scheme_id"]: item for item in report["candidates"]}
     assert all(
         by_scheme[node["scheme_id"]]["reason"] == "implementation_imperfect"
         for node in frontier["nodes"]
         if node["expected_gain_range"][0] > 0.001
     )
-    observation = json.loads(open(result["observation"]).read())
+    with open(result["observation"]) as fp:
+        observation = json.load(fp)
     assert observation["eligible_for_confirmation"] is True
     assert observation["no_go"] == []
