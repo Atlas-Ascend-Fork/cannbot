@@ -12,7 +12,6 @@
     "ops/triton-simulator-optimizer",
     "ops/triton-mfu-analyzer",
     "ops/npu-arch",
-    "plugins-community/cannbot-knowledge/skills/knowledge-query",
-    "plugins-community/cannbot-knowledge/skills/ops-knowledge-ingest"
+    "infra/knowledge-ingest"
   ]
 }

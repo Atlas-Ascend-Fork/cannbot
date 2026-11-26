@@ -30,8 +30,8 @@ bash init.sh project claude          # 安装到当前项目；--tool 可选 ope
 
 安装会自动完成：
 
-1. **Skills 安装**：从 `vendor/cannbot-skills` submodule 软链 8 个 triton 系列 Skill + `knowledge-query` / `ops-knowledge-ingest` 到目标项目的工具 skills 目录（npm 安装为复制）；
-2. **知识库自举**：浅克隆 cannbot-knowledge 到 `<项目>/.cannbot/dependencies/triton-op-generator/cannbot-knowledge`（断网/离线时告警跳过，agent 以骨架模式运行）；重装时 `git pull --ff-only` 刷新。检索索引 `knowledge/search/okf.index.json` 不在安装期构建，而是在**第一次 `knowledge-query` 检索时惰性构建**（约 50s、7000+ 张卡、约 313MB），建成后即为就绪状态；
+1. **Skills 安装**：从 `vendor/cannbot-skills` submodule 软链 10 个 Skill（8 个 `triton-*` + `npu-arch` + `knowledge-ingest`）到目标项目的工具 skills 目录（npm 安装为复制）；`knowledge-query` 与两个 API 查询 Skill 由 cannbot-knowledge 依赖仓的 consumer 安装；
+2. **知识库自举**：浅克隆 cannbot-knowledge 到 `<项目>/.cannbot/dependencies/triton-op-generator/cannbot-knowledge`（断网/离线时告警跳过，agent 以骨架模式运行）；重装时 `git pull --ff-only` 刷新。检索索引 `artifacts/indexes/knowledge.sqlite3` 不在安装期构建，而是在**第一次 `knowledge-query` 检索时惰性构建**（约 50s、7000+ 张卡、约 313MB），建成后即为就绪状态；
 3. **guard hook 注册**（仅 claude 工具）：向 `.claude/settings.json` 注册 PreToolUse 基线保护 hook；
 4. **主提示词写入**：AGENTS.md 内容以标记块写入项目 `CLAUDE.md`（claude）或 `AGENTS.md`（其他工具）。
 

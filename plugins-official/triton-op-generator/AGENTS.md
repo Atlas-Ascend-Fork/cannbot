@@ -13,7 +13,7 @@ skills:
   - triton-simulator-optimizer
   - npu-arch
   - knowledge-query
-  - ops-knowledge-ingest
+  - knowledge-ingest
   - triton-mfu-analyzer
 permission:
   edit: allow
@@ -1581,7 +1581,7 @@ L1 闸门由 benchmark.py 在 Phase 3.5 / 4.3 启动时执行，不通过即 **e
 - 卡已存在：仅**追加/更新** Layer 1-3 中本次验证过的条目，禁止整体覆盖；与存量条目矛盾时并存并标 `> ⚠️ 矛盾标记`。
 - `new_category`（卡不存在）：新建约束卡，frontmatter 遵循 okf.v1（`type: Guide`、`title`、`description`、`tags`、`status: stable`、`platforms`、`created_at`/`updated_at`），结构参照同类卡（如 `flash_attention_constraints.md`），并在 `$KB_ROOT/ops/triton/guides/constraints/index.md` 追加索引行。
 - 性能类实测数据（最优配置、加速比、对照档位）写入 `$KB_ROOT/ops/triton/runbooks/performance/` 下对应 runbook 卡（无则新建，`type: Runbook`），并维护该目录 `index.md`。
-- 写入规范以 `ops-knowledge-ingest` skill 的红线为准（一概念一卡、蒸馏非照搬、snake_case 命名、逐层 index.md 同步）。
+- 写入规范以 `knowledge-ingest` skill 的红线为准（一概念一卡、蒸馏非照搬、snake_case 命名、逐层 index.md 同步）。
 
 ⚠️ 写入的是**项目内 KB 克隆的本地草稿**；向知识库上游合入由人工走贡献流程，Agent 禁止自行 git push。
 
