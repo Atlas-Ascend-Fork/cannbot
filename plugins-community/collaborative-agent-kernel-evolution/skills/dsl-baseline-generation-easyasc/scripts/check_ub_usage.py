@@ -161,7 +161,8 @@ def detect_var_tile(dsl_path: str | None) -> Tuple[bool, str]:
     if not dsl_path:
         return (False, "no --dsl provided")
     try:
-        text = open(dsl_path, encoding="utf-8").read()
+        with open(dsl_path, encoding="utf-8") as fp:
+            text = fp.read()
     except OSError:
         return (False, f"could not read DSL file: {dsl_path}")
     for pat in _VAR_TILE_PATTERNS:
