@@ -10,8 +10,7 @@
         ],
         "max_tokens": 200000,
         "distractor_skills": [
-          "model-recommend-flash-attention-fusion",
-          "model-recommend-kernel-generation",
+          "model-recommend-fusion-pass-dev",
           "model-recommend-runtime-debug"
         ],
         "timeout": 900,
@@ -53,7 +52,7 @@
         "eval_mode": "text"
       },
       "prompt": "模型 M200 已经有单卡基线了，data/M200/optimization_log/loop_state.json 存在且 terminated 为 false，iteration 是 2。用户说「继续压性能，目标 QPS 到 1500」。请说明 primary 应该怎么接着做，哪些事不能重做，哪些前置条件必须先确认。",
-      "expected_output": "1. 应判定走续跑路径：读主工作流与 references/loop-rules.md，从 iteration + 1（即第 3 轮）继续，不重做已记录的 1、2 轮（幂等）。\n2. 应先确认性能目标已由用户指定且写入 loop_state.target（QPS >= 1500，confirmed_by_user=true），并确认噪声带已测定。\n3. 应从 next_actions.json 取优先级最高且前置依赖满足的单个动作，完成必要的用户确认后再派 implementer（一轮一动作）。\n4. 应说明每轮：实施 → 采集 → 四项专项分析 → 收益判定 → 终止检查 → 台账/报告/状态矩阵/动作表同步更新；回退轮计入 no_gain_streak，纯分析轮不计。\n5. 应说明状态文件只由 primary 写，loop_state 与 perf_ledger 必须对账一致。",
+      "expected_output": "1. 应判定走续跑路径：读主工作流与 references/rules.md，从 iteration + 1（即第 3 轮）继续，不重做已记录的 1、2 轮（幂等）。\n2. 应先确认性能目标已由用户指定且写入 loop_state.target（QPS >= 1500，confirmed_by_user=true），并确认噪声带已测定。\n3. 应从 next_actions.json 取优先级最高且前置依赖满足的单个动作，完成必要的用户确认后再派 implementer（一轮一动作）。\n4. 应说明每轮：实施 → 采集 → 四项专项分析 → 收益判定 → 终止检查 → 台账/报告/状态矩阵/动作表同步更新；回退轮计入 no_gain_streak，纯分析轮不计。\n5. 应说明状态文件只由 primary 写，loop_state 与 perf_ledger 必须对账一致。",
       "files": [],
       "expectations": []
     },
@@ -85,7 +84,7 @@
         "eval_mode": "text"
       },
       "prompt": "用户说：「我只想让 attention 链换成 FlashAttention 融合，别给我搞整套流程。」请说明该走哪条路径、由哪个角色承接、以及这个改动要满足哪些约束。",
-      "expected_output": "1. 应判定为单点诉求，直接调用 model-recommend-flash-attention-fusion 原子 skill，不加载整网工作流、不建全套产物目录、不派全套 subagent。\n2. 应说明承接角色与边界：改动由 model-recommend-infer-implementer 实施（若在整网流程内），或直接按该 skill 流程执行；analysis 侧可参考条目 5 的热点证据判断 attention 链是否为热点。\n3. 应说明约束：onnx 输入禁止改原图，融合通过 GE 内存图 pass（aclgrphParseONNX 之后、AddGraph 之前）替换；开关独立默认关闭、可回退；FA 族需先做功能确认（序列长/头数/头维/dtype/布局/mask/scale 参数矩阵验证）。\n4. 应说明验收：仍需过双门禁（串行 verify + 同口径端到端性能双口径对比），算子/图级收益必须补整图对比；已知风险如低核数下 FA pass 可能出现 NaN 或挂死须提示。",
+      "expected_output": "1. 应判定为单点诉求，直接调用 model-recommend-fusion-pass-dev 原子 skill，不加载整网工作流、不建全套产物目录、不派全套 subagent。\n2. 应说明承接角色与边界：改动由 model-recommend-infer-implementer 实施（若在整网流程内），或直接按该 skill 流程执行；analysis 侧可参考条目 5 的热点证据判断 attention 链是否为热点。\n3. 应说明约束：onnx 输入禁止改原图，融合通过 GE 内存图 pass（aclgrphParseONNX 之后、AddGraph 之前）替换；开关独立默认关闭、可回退；FA 族需先做功能确认（序列长/头数/头维/dtype/布局/mask/scale 参数矩阵验证）。\n4. 应说明验收：仍需过双门禁（串行 verify + 同口径端到端性能双口径对比），算子/图级收益必须补整图对比；已知风险如低核数下 FA pass 可能出现 NaN 或挂死须提示。",
       "files": [],
       "expectations": []
     },

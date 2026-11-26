@@ -5,11 +5,45 @@
 `model-recommend-infer-optimize` 是推荐模型（搜索/推荐/排序/视觉编码类网络）昇腾 NPU 推理整网优化 plugin。以 **GE 图模式为核心优化基座**（onnx 直接进入；pytorch/HF 经 torchair 转入），先把模型跑通到可复现精度的单卡基线，再在基线上按「性能分析 → 分层优化 → 双门禁验收 → 动作表更新」持续循环收敛。
 
 - **主工作流**：`workflows/model-recommend-infer-workflow.md`，编排条目 0-14 与持续优化循环，调度 4 个 subagent（runner / analyzer / implementer / reviewer）。
-- **原子 skills**：18 个 `model-recommend-*` skill 维护在 cannbot-skills 仓 `community/model/`，安装时装配到 `skills/`；按条目承接具体技术与判定标准。
+- **原子 skills**：14 个 `model-recommend-*` skill 维护在 cannbot-skills 仓 `community/model/`，安装时装配到 `skills/`；按条目承接具体技术与判定标准。
 
-> **安装器说明**：本插件的 `init.sh` 为自带实现（需在安装时把内置执行框架复制到工程根），与仓内共享安装器 `script/bin/source-plugin-init.sh` 的行为差异仅此一项；支持的客户端与安装级别以 `bash init.sh --help` 为准（`--help` 不依赖子模块，未初始化时也可查看）。**18 个 Skill 不在本插件仓库内**：它们由 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块的 `community/model/` 装配——`init.sh` 安装时链接到配置根的 `skills/`，npm 分发包由 `script/lib/plugin-bundle.js` 打包进 `skills/`；Marketplace 一键安装则通过依赖包 `model-recommend-skills` 提供（见下文 Claude Code 段）。因此安装前需先 `git submodule update --init --depth 1 vendor/cannbot-skills`（或设置 `CANNBOT_SKILL_SRC_ROOT` 指向该仓）。
+> **安装器说明**：本插件的 `init.sh` 为自带实现（需在安装时把内置执行框架复制到工程根），与仓内共享安装器 `script/bin/source-plugin-init.sh` 的行为差异仅此一项；支持的客户端与安装级别以 `bash init.sh --help` 为准（`--help` 不依赖子模块，未初始化时也可查看）。**14 个 Skill 不在本插件仓库内**：它们由 `plugin-sources.json` 从 `vendor/cannbot-skills` 子模块的 `community/model/` 装配——`init.sh` 安装时链接到配置根的 `skills/`，npm 分发包由 `script/lib/plugin-bundle.js` 打包进 `skills/`；Marketplace 一键安装则通过依赖包 `model-recommend-skills` 提供（见下文 Claude Code 段）。因此安装前需先 `git submodule update --init --depth 1 vendor/cannbot-skills`（或设置 `CANNBOT_SKILL_SRC_ROOT` 指向该仓）。
 
-## 一、环境搭建
+## 一、快速上手（5 分钟）
+
+### 我要做什么？
+
+| 诉求 | 走向 |
+| --- | --- |
+| 从零优化一个新模型 | 整网流程：条目 0 → 14，再进持续优化循环 |
+| 已有基线、继续压性能 | 循环段：条目 5 起（性能分析 + 四项专项 → 循环） |
+| 只做某专项（FA 融合 / 精度定位 / profiling / 修报错） | 直接调对应原子 skill，不进整网流程 |
+
+### 最小可跑通示例（内置 M001_sample）
+
+```bash
+cd GE_SESSION_DEMO
+bash prepare.sh M001_sample
+bash compile.sh
+bash run.sh M001_sample
+bash run.sh M001_sample --verify     # 应输出 [verify] PASS
+```
+
+看到 `[GE RESULT] inference finished: success` 与 `[verify] PASS` 即跑通。随后即可提出需求，例如：
+
+```text
+优化 M001_sample 的推理性能，目标是单并发 avg ≤ X ms
+```
+
+### 三条典型用法
+
+| 场景 | 说法示例 | 走向 |
+| --- | --- | --- |
+| 从零优化一个新模型 | 「优化 XX 模型的推理性能」 | 条目 0 → 14 全流程，再进循环 |
+| 已有基线继续压 | 「XX 已经有基线了，继续压 QPS 到 1500」 | 条目 5 → 循环 |
+| 只做某专项 | 「只对 attention 链做 FA 融合」「帮我定位一下精度」 | 直接调对应原子 skill |
+
+## 二、环境搭建
 
 ### 前置条件
 
@@ -67,7 +101,7 @@ opencode agent list
 
 安装后新开会话，或在当前会话执行 `/clear` 触发插件上下文加载。`model-recommend-infer-optimize` 是主对话入口，会把 AGENTS.md 注入上下文，并按强制规则读取 `workflows/model-recommend-infer-workflow.md`。
 
-> **Skill 由依赖包一并安装**：插件声明 `dependencies: ["model-recommend-skills"]`，该 skills 包在 marketplace 中登记为 `git-subdir`（`cannbot-skills` 仓 `community/model`，pin 与 `vendor/cannbot-skills` 同一 sha）。支持依赖解析的渠道一键装完即有 18 个 Skill；若所在渠道不支持依赖，退回下面的 `init.sh` 路径。
+> **Skill 由依赖包一并安装**：插件声明 `dependencies: ["model-recommend-skills"]`，该 skills 包在 marketplace 中登记为 `git-subdir`（`cannbot-skills` 仓 `community/model`，pin 与 `vendor/cannbot-skills` 同一 sha）。支持依赖解析的渠道一键装完即有 14 个 Skill；若所在渠道不支持依赖，退回下面的 `init.sh` 路径。
 
 验证：
 
@@ -167,29 +201,11 @@ claude plugin list           # 应看到 model-recommend-infer-optimize@cannbot 
 ls .trae/ .cursor/           # skills/ agents/ workflows/ AGENTS.md cannbot-manifest.json
 ```
 
-## 二、快速上手
-
-在目标模型仓中提出需求：
-
-```text
-帮我优化 M200 这个视觉编码器模型的 NPU 推理性能，目标是单并发 avg 降到 6ms 以内
-```
-
-primary 会按 AGENTS.md 的强制规则分流：无基线 → 从条目 0 起走全流程；有基线 → 续跑循环或做单点专项。
-
-### 三条典型用法
-
-| 场景 | 说法示例 | 走向 |
-| --- | --- | --- |
-| 从零优化一个新模型 | 「优化 XX 模型的推理性能」 | 条目 0 → 14 全流程，再进循环 |
-| 已有基线继续压 | 「XX 已经有基线了，继续压 QPS 到 1500」 | 条目 5 → 循环 |
-| 只做某专项 | 「只对 attention 链做 FA 融合」「帮我定位一下精度」 | 直接调对应原子 skill |
-
 ## 三、安装内容
 
 | 内容 | 说明 |
 | --- | --- |
-| 原子 skills（18 个） | `model-recommend-*`（源仓 cannbot-skills `community/model/`），覆盖环境、模型分析、基线、并发、精度、性能、图模式、算子适配、FA、多线程、访存、融合规划、kernel、自定义算子、运行时、回归与循环编排 |
+| 原子 skills（14 个） | `model-recommend-*`（源仓 cannbot-skills `community/model/`），覆盖环境、适配、基线、分析、限核压测、图模式、自定义交付件开发、访存、精度、运行时、回归交付与循环编排 |
 | workflow 文档 | `workflows/model-recommend-infer-workflow.md` + `references/` 细则 + `templates/` 强制交付件模板 |
 | Subagents | `agents/model-recommend-infer-{runner,analyzer,implementer,reviewer}.md` |
 | hooks | 阶段提醒 + 角色越界保护（前置防护，非沙箱；只挂 Edit/Write/MultiEdit，Bash 写入不受控） |
@@ -216,23 +232,19 @@ primary 会按 AGENTS.md 的强制规则分流：无基线 → 从条目 0 起�
 | Skill | 用途 |
 | --- | --- |
 | `model-recommend-ascend-env-baseline` | 环境自检、输入格式路由、产物目录约定 |
-| `model-recommend-structure-analysis` | 结构档案、算子构成、显存估算、可执行判定 |
+| `model-recommend-adaptation` | 入库/形态/边界/覆盖矩阵/IO/可执行判定 |
 | `model-recommend-baseline-run` | 首基线采集（时延 / QPS / HBM / profile / 精度） |
-| `model-recommend-concurrency-strategy-analysis` | `THREAD_NUM` / `CORE_NUM` / batch 推荐（只分析） |
-| `model-recommend-precision-comparison` | golden 标杆、精度门禁、分节点定位 |
-| `model-recommend-performance-analysis` | 三表分析、bound 判定、性能门禁执行 |
-| `model-recommend-profiling-deep-analysis` | 四项专项（算子执行 / 多流 / H2D-D2H / host） |
-| `model-recommend-optimization-loop` | 持续优化循环编排与终止判定 |
+| `model-recommend-analysis` | 三表 + bound + 四项专项 + 规划（Roofline/收益排序） |
+| `model-recommend-core-limit-stress` | 限核/并发压测、HF32 前置门禁、CPU 绑核、QPS 摸高 |
 | `model-recommend-ge-graph-optimization` | shape 策略、GE 编译选项、torchair / torch.compile |
-| `model-recommend-fusion-operator-adaptation` | 算子替换、图融合 pass、等价改写 |
-| `model-recommend-flash-attention-fusion` | FA 族融合确认与接入 |
-| `model-recommend-multi-thread-optimization` | 并发与限核实施、sweep 验收 |
-| `model-recommend-memory-access-optimize` | 访存优化：布局/等价改写、搬运与计算重叠（memory-bound 热点） |
-| `model-recommend-fusion-planning-estimation` | 融合候选清单、Roofline bound、收益排序 |
-| `model-recommend-kernel-generation` | AscendC / cannbot-dsl 融合 kernel 开发 |
-| `model-recommend-custom-op-development` | 功能补齐向算子开发与 GE 接入 |
+| `model-recommend-plugin-dev` | ONNX 插件（解析期算子翻译）+ 工程模板 |
+| `model-recommend-fusion-pass-dev` | 自定义图融合 Pass（含 FA/GELU 实战）+ 工程模板 |
+| `model-recommend-custom-op-dev` | AscendC 自定义算子开发与内核生成 + 完整工程模板 |
+| `model-recommend-memory-access-optimize` | 访存优化：布局/等价改写、搬运与计算重叠 |
+| `model-recommend-precision-comparison` | golden 标杆、精度门禁、分节点定位 |
 | `model-recommend-runtime-debug` | 报错 / 卡死定界与修复路径 |
-| `model-recommend-regression-baseline-mgmt` | 台账、双门禁验收、收口报告与动作表 |
+| `model-recommend-regression-baseline-mgmt` | 台账、双门禁验收、收口报告、交付说明书与动作表 |
+| `model-recommend-optimization-loop` | 持续优化循环编排与终止判定 |
 
 端到端流程由 `workflows/model-recommend-infer-workflow.md` 承载，不作为可独立调用的 skill 暴露。
 
@@ -255,7 +267,7 @@ bash init.sh --help
 
 ### Q: 循环什么时候停？
 
-四种终止原因：`target_reached`（目标连续 2 次复测达标）、`converged_no_gain`（连续 3 轮无收益）、`no_actionable`（无可执行动作）、`budget_exhausted`（默认 10 轮上限）。判据见 `workflows/references/loop-rules.md`。
+四种终止原因：`target_reached`（目标连续 2 次复测达标）、`converged_no_gain`（连续 3 轮无收益）、`no_actionable`（无可执行动作）、`budget_exhausted`（默认 10 轮上限）。判据见 `workflows/references/rules.md`。
 
 ### Q: 为什么每轮只改一个动作？
 
