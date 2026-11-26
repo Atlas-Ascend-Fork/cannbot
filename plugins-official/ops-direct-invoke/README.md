@@ -102,6 +102,12 @@ PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装�
 
 子仓可在统一 CLI 命令后添加 `--override-skills /absolute/overrides`，用该目录下的同名实现替换 `ops-direct-invoke-requirement`、`ops-direct-invoke-repo-guide`。入口及调度 Skill 不允许覆盖。此参数用于替换仓库知识，`--skills` 用于选择公共 cannbot-skills 仓，两者用途不同。
 
+### 共享依赖仓与运行快照
+
+性能插件的外部依赖（`cannbot-knowledge`、`asc-devkit`、`cann-samples`）在 `plugin-install.json` 中声明为 `shared`：安装器在 `.cannbot/dependencies/<插件>/.shared/<依赖>/rev-<提交>/` 保留每份不可变检出，依赖路径是指向具体修订的软链；仓库有新提交时新增修订并原子切换软链，旧修订保持不变。正在运行或挂起的任务继续使用准备时钉住的修订。已有真实检出在下次安装时原地迁移为修订，不重新下载。
+
+`workspace.py prepare` 只复制性能插件本体（约 30M），依赖目录以软链进入 `.context`；Skill 与外部链接仍会在冻结副本内实体化，因此验收与身份校验不受影响。修订目录不自动清理，需要回收磁盘时删除 `.shared/<依赖>/` 下不再使用的 `rev-*`。
+
 ### 任务输入与恢复
 
 任务请求提供已确认的开发语言、目标平台和相关资料。PM 先生成并读取 workflow 引导，再按模板的 `use_when` 选择流程并准备输入；具体方法见 [流程编排入口](skills/orchestrator/SKILL.md#从生成的引导选择模板)。

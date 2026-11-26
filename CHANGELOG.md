@@ -6,6 +6,8 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 
 ### Fixed
 
+- `ops-direct-invoke` no longer copies shared performance dependencies into each run: `ops-perf-optimize` installs `cannbot-knowledge`, `asc-devkit` and `cann-samples` once per revision under `.cannbot/dependencies/ops-perf-optimize/.shared/` and links them into the prepared context, with the frozen copy pinning the revision it prepared with. This removes the multi-gigabyte copy that dominated workflow start-up.
+
 - `tilelang2ascendc-ops-generator` now maps the resolved SoC to a registered `cannbot-knowledge`
   platform ID before querying (for example Ascend910B → `a2`), and validates `--knowledge-platform`
   during installation instead of writing an unknown value into `knowledge.env` and failing later at
@@ -16,6 +18,8 @@ This file records notable changes to the CANNBot plugin orchestration and delive
 - TileLang source installation now defaults to the plugin directory instead of the CANNBot repository root, preserving its AGENTS.md on repeated installs. Explicit project paths remain supported.
 
 ### Added
+
+- The unified installer supports `"shared": true` dependency declarations: every revision keeps an immutable checkout, updates create a new revision and switch the dependency link atomically, and linked checkouts are never updated in place. `ops-perf-optimize` uses this for `cannbot-knowledge`, `asc-devkit` and `cann-samples`.
 
 - Migrated `torch-compile` orchestration, its npugraph_ex Agent, SessionStart Hook and evaluations from cannbot-skills. The unified installer links seven shared `graph/` Skills through `plugin-sources.json`; npm builds bundle them, and the Claude marketplace resolves the Skill pack from cannbot-skills. Shared Skill source remains in cannbot-skills.
 

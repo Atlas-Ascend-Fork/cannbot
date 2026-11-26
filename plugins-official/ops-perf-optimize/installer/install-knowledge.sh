@@ -61,7 +61,11 @@ normalize_repository() {
   printf '%s' "${url%.git}"
 }
 
-if [[ -e "$DESTINATION" ]]; then
+if [[ -L "$DESTINATION" ]]; then
+  # Shared revision checkouts are updated by the installer; only the consumer
+  # side (index, resources, project links) runs here.
+  echo "  knowledge consumer: shared revision checkout; repository updates are owned by the installer"
+elif [[ -e "$DESTINATION" ]]; then
   if [[ ! -d "${DESTINATION}/.git" ]]; then
     echo "cannbot: ${DESTINATION} exists but is not a Git checkout; knowledge setup skipped" >&2
     exit 0

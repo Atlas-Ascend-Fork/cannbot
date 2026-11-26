@@ -78,6 +78,12 @@ def digest(directory):
     for path in sorted(Path(directory).rglob("*")):
         if "__pycache__" in path.parts or path.suffix == ".pyc":
             continue
+        if path.is_symlink():
+            result.update(str(path.relative_to(directory)).encode())
+            result.update(b"\0link\0")
+            result.update(os.readlink(path).encode())
+            result.update(b"\0")
+            continue
         if not path.is_file():
             continue
         result.update(str(path.relative_to(directory)).encode())
@@ -94,10 +100,47 @@ def copy_resources(source, destination):
                     ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
 
 
+def copy_performance(source, destination, final=None):
+    """Copy the performance snapshot while sharing pinned dependency revisions.
+
+    The installer keeps every dependency revision under ``.shared/`` and links
+    the dependency path to it. Those links are re-pinned here so a later
+    installer update cannot change an existing run, while execution assets
+    (skills) and external resources stay materialized inside the frozen copy.
+    Links that do not resolve to a pinned revision are materialized as before.
+    References to a revision path are retargeted to the frozen dependency link.
+    """
+    source = Path(source)
+    shutil.copytree(source, destination, symlinks=True,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", ".shared"))
+    root = Path(os.path.realpath(source))
+    replacements = {}
+    for alias in Path(destination).rglob("*"):
+        if not alias.is_symlink():
+            continue
+        original = source / alias.relative_to(destination)
+        target = Path(os.path.realpath(original))
+        if not target.exists():
+            raise ValueError(f"frozen resource link is missing: {original} -> {target}; run init first")
+        alias.unlink()
+        pinned = target.is_relative_to(root) and ".shared" in target.parts
+        if "skills" in original.parts or not pinned:
+            if target.is_dir():
+                shutil.copytree(target, alias, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            else:
+                shutil.copy2(target, alias)
+            continue
+        alias.symlink_to(target, target_is_directory=target.is_dir())
+        if final is not None:
+            replacements.setdefault(str(target), str(Path(final) / alias.relative_to(destination)))
+    for old, new in replacements.items():
+        relocate_text(destination, old, new)
+
+
 def relocate_text(root, old, new):
     """Relocate installer-generated absolute references in a private frozen copy."""
     for path in root.rglob("*"):
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
             continue
         with path.open("rb") as stream:
             if b"\0" in stream.read(8192):
@@ -251,7 +294,7 @@ def prepare(config_path, work, language, task, engineering, code_dir, provider=N
         for relative in ["agents", "docs", "orchestrations", "tools", "skills/custom-skills"]:
             copy_resources(source / relative, plugin / relative)
         copy_resources(external, stage / "external-skills")
-        copy_resources(performance, stage / "performance")
+        copy_performance(performance, stage / "performance", final / "performance")
         relocate_text(stage / "performance", str(performance), str(final / "performance"))
         overrides = config.get("skill_overrides", {})
         available = register_snapshot_skills(stage, final, source, selected, overrides)

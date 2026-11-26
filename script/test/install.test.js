@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, delimiter, dirname, join, resolve } from "node:path";
+import { isAbsolute, basename, delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -1756,3 +1756,68 @@ for (const mode of ["relative escape", "absolute path", "symlink escape", "missi
     assert.equal(existsSync(join(target, ".dsh/cannbot-plugin.json")), false);
   });
 }
+
+test("shared dependencies keep one immutable revision per commit", () => {
+  const sandbox = createSandbox("cannbot-shared-dependency-");
+  const remote = createDependencyRepository(sandbox, "shared-remote", { "value.txt": "one\n" });
+  const first = dependencyRefGit(remote, "rev-parse", "HEAD").slice(0, 12);
+  const bundle = createAssetsPluginBundle(sandbox, [{
+    name: "shared-dependency",
+    repository: remote,
+    shared: true,
+  }]);
+  mkdirSync(join(bundle, "plugins-official", "asset-fixture", "skills"), { recursive: true });
+  const target = join(sandbox, "project");
+  const install = () => installAssetsFixture(bundle, target, sandbox, "dsh");
+  let result = install();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const dependencyRoot = join(target, ".cannbot", "dependencies", "asset-fixture");
+  const live = join(dependencyRoot, "shared-dependency");
+  const sharedRoot = join(dependencyRoot, ".shared", "shared-dependency");
+  assert.equal(lstatSync(live).isSymbolicLink(), true);
+  assert.equal(basename(realpathSync(live)), `rev-${first}`);
+  assert.equal(readFileSync(join(live, "value.txt"), "utf8"), "one\n");
+
+  result = install();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.deepEqual(readdirSync(sharedRoot).filter((name) => name.startsWith("rev-")), [`rev-${first}`]);
+
+  writeFileSync(join(remote, "value.txt"), "two\n");
+  dependencyRefGit(remote, "add", "value.txt");
+  dependencyRefGit(remote, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "two");
+  const second = dependencyRefGit(remote, "rev-parse", "HEAD").slice(0, 12);
+  result = install();
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(basename(realpathSync(live)), `rev-${second}`);
+  assert.equal(readFileSync(join(live, "value.txt"), "utf8"), "two\n");
+  assert.equal(readFileSync(join(sharedRoot, `rev-${first}`, "value.txt"), "utf8"), "one\n");
+});
+
+test("shared dependencies pin an existing checkout without cloning it again", () => {
+  const sandbox = createSandbox("cannbot-shared-migrate-");
+  const remote = createDependencyRepository(sandbox, "shared-remote", { "value.txt": "one\n" });
+  const first = dependencyRefGit(remote, "rev-parse", "HEAD").slice(0, 12);
+  const bundle = createAssetsPluginBundle(sandbox, [{
+    name: "shared-dependency",
+    repository: remote,
+    shared: true,
+  }]);
+  mkdirSync(join(bundle, "plugins-official", "asset-fixture", "skills"), { recursive: true });
+  const target = join(sandbox, "project");
+  const dependencyRoot = join(target, ".cannbot", "dependencies", "asset-fixture");
+  const live = join(dependencyRoot, "shared-dependency");
+  mkdirSync(dependencyRoot, { recursive: true });
+  const cloned = spawnSync("git", ["clone", "--quiet", remote, live], {
+    encoding: "utf8",
+    env: { ...process.env, GIT_ALLOW_PROTOCOL: "file" },
+  });
+  assert.equal(cloned.status, 0, cloned.stderr || cloned.stdout);
+  writeFileSync(join(live, "local.txt"), "kept\n");
+  const result = installAssetsFixture(bundle, target, sandbox, "dsh");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(lstatSync(live).isSymbolicLink(), true);
+  assert.equal(readFileSync(join(live, "value.txt"), "utf8"), "one\n");
+  assert.equal(readFileSync(join(live, "local.txt"), "utf8"), "kept\n");
+  const revision = join(dependencyRoot, ".shared", "shared-dependency", `rev-${first}`);
+  assert.equal(readFileSync(join(revision, "local.txt"), "utf8"), "kept\n");
+});

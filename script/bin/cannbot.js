@@ -604,6 +604,91 @@ function updateDependencyRef(destination, reference, target) {
     && tryRun("git", ["-C", destination, "checkout", "--detach", "FETCH_HEAD"], target);
 }
 
+function isSymbolicLink(path) {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function runMarkdownCleaner(dependency, skills, directory, target) {
+  if (!dependency.cleanMarkdownWithSkill) return;
+  const cleanerSkill = skills.find((skill) => skill.name === dependency.cleanMarkdownWithSkill);
+  const cleaner = cleanerSkill
+    ? join(cleanerSkill.source, "scripts", "clean_markdown.py")
+    : null;
+  if (cleaner && existsSync(cleaner)) {
+    const cleaned = tryRun("python3", [cleaner, "--dir", directory, "--no-backup", "--quiet"], target);
+    if (!cleaned) console.warn(`cannbot: markdown cleanup failed for ${dependency.name}`);
+  } else {
+    console.warn(`cannbot: cleanup Skill is unavailable: ${dependency.cleanMarkdownWithSkill}`);
+  }
+}
+
+function dependencyLinkTarget(dependencyRoot, revision) {
+  return process.platform === "win32" ? resolve(revision) : relative(dependencyRoot, revision);
+}
+
+// Shared dependencies keep one immutable checkout per revision next to the
+// installed dependency; the dependency path links to the revision checkout so
+// a running workflow keeps the revision it was prepared with.
+function prepareSharedDependency(dependency, dependencyRoot, skills, target) {
+  const live = join(dependencyRoot, dependency.name);
+  const sharedRoot = join(dependencyRoot, ".shared", dependency.name);
+  mkdirSync(sharedRoot, { recursive: true });
+  if (pathExists(live) && !isSymbolicLink(live)) {
+    // Pin the existing checkout as a revision instead of downloading it again.
+    const head = spawnSync("git", ["-C", live, "rev-parse", "--short=12", "HEAD"], { encoding: "utf8" });
+    const sha = head.status === 0 ? head.stdout.trim() : "";
+    if (!sha) {
+      console.warn(`cannbot: ${dependency.name} is not a Git checkout; shared setup skipped`);
+      return false;
+    }
+    let revision = join(sharedRoot, "rev-" + sha);
+    if (pathExists(revision)) revision = join(sharedRoot, `rev-${sha}-${Date.now()}`);
+    renameSync(live, revision);
+    symlinkSync(dependencyLinkTarget(dependencyRoot, revision), live, process.platform === "win32" ? "junction" : "dir");
+  }
+  const temporary = join(sharedRoot, `.tmp-${process.pid}-${Date.now()}`);
+  const args = ["clone", "--depth", "1"];
+  if (dependency.ref) args.push("--branch", dependency.ref);
+  if (dependency.recursive) args.push("--recurse-submodules", "--shallow-submodules");
+  args.push(dependency.repository, temporary);
+  if (!tryRun("git", args, target)) {
+    rmSync(temporary, { recursive: true, force: true });
+    return isSymbolicLink(live) && existsSync(join(live, ".git"));
+  }
+  const head = spawnSync("git", ["-C", temporary, "rev-parse", "--short=12", "HEAD"], { encoding: "utf8" });
+  const sha = head.status === 0 ? head.stdout.trim() : "";
+  if (!sha) {
+    rmSync(temporary, { recursive: true, force: true });
+    console.warn(`cannbot: ${dependency.name} clone has no revision; shared setup skipped`);
+    return isSymbolicLink(live) && existsSync(join(live, ".git"));
+  }
+  const revision = join(sharedRoot, "rev-" + sha);
+  if (pathExists(revision)) {
+    rmSync(temporary, { recursive: true, force: true });
+  } else {
+    if (dependency.recursive) {
+      const updated = tryRun("git", ["-C", temporary, "submodule", "update", "--init", "--recursive", "--depth", "1"], target);
+      if (!updated) console.warn(`cannbot: ${dependency.name} submodule update was incomplete`);
+    }
+    runMarkdownCleaner(dependency, skills, temporary, target);
+    renameSync(temporary, revision);
+  }
+  const link = join(dependencyRoot, `.${dependency.name}.link`);
+  rmSync(link, { force: true });
+  symlinkSync(dependencyLinkTarget(dependencyRoot, revision), link, process.platform === "win32" ? "junction" : "dir");
+  try {
+    renameSync(link, live);
+  } catch {
+    rmSync(live, { force: true });
+    renameSync(link, live);
+  }
+  return true;
+}
+
 function provisionDependencies(pluginDir, plugin, target, skills) {
   const definitionPath = join(pluginDir, "plugin-install.json");
   if (!existsSync(definitionPath)) return [];
@@ -631,8 +716,15 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
       ? dependencyExposePath(target, dependency.expose, definitionPath)
       : null;
     const destination = join(dependencyRoot, dependency.name);
+    const linked = isSymbolicLink(destination);
+    const shared = dependency.shared === true;
     let available = existsSync(join(destination, ".git"));
-    if (available) {
+    if (shared) {
+      available = prepareSharedDependency(dependency, dependencyRoot, skills, target);
+    } else if (linked) {
+      // A link prepared by another plugin or by a shared revision owns the
+      // checkout; updating it in place would change an already frozen run.
+    } else if (available) {
       const remote = spawnSync("git", ["-C", destination, "remote", "get-url", "origin"], { encoding: "utf8" });
       if (remote.status !== 0 || repositoryIdentity(remote.stdout.trim()) !== repositoryIdentity(dependency.repository)) {
         console.warn(`cannbot: ${dependency.name} has an unexpected origin; update skipped`);
@@ -657,7 +749,7 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
       if (dependency.required) fail(`required dependency ${dependency.name} is unavailable`);
       continue;
     }
-    if (dependency.recursive) {
+    if (!shared && !linked && dependency.recursive) {
       const updated = tryRun("git", ["-C", destination, "submodule", "update", "--init", "--recursive", "--depth", "1"], target);
       if (!updated) console.warn(`cannbot: ${dependency.name} submodule update was incomplete`);
       if (!updated && dependency.required) fail(`required dependency ${dependency.name} submodule update failed`);
@@ -668,17 +760,8 @@ function provisionDependencies(pluginDir, plugin, target, skills) {
         fail(`required dependency ${dependency.name} is missing required file: ${requiredPath}`);
       }
     }
-    if (dependency.cleanMarkdownWithSkill) {
-      const cleanerSkill = skills.find((skill) => skill.name === dependency.cleanMarkdownWithSkill);
-      const cleaner = cleanerSkill
-        ? join(cleanerSkill.source, "scripts", "clean_markdown.py")
-        : null;
-      if (cleaner && existsSync(cleaner)) {
-        const cleaned = tryRun("python3", [cleaner, "--dir", destination, "--no-backup", "--quiet"], target);
-        if (!cleaned) console.warn(`cannbot: markdown cleanup failed for ${dependency.name}`);
-      } else {
-        console.warn(`cannbot: cleanup Skill is unavailable: ${dependency.cleanMarkdownWithSkill}`);
-      }
+    if (!shared && !linked) {
+      runMarkdownCleaner(dependency, skills, destination, target);
     }
     if (exposedPath) exposeDependency(destination, exposedPath);
     installed.push({

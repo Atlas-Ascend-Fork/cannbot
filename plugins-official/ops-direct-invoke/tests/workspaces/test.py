@@ -391,6 +391,50 @@ class WorkspaceTests(unittest.TestCase):
         verifier = prepare_phase(self.entry("verify"), self.work)
         self.assertNotIn("ops-perf-optimize-workflow", verifier["skills"])
 
+    def test_shared_dependency_revisions_are_linked_not_copied(self):
+        performance = self.root / "performance"
+        dependency = performance / ".cannbot/dependencies/ops-perf-optimize/cannbot-knowledge"
+        revision = performance / ".cannbot/dependencies/ops-perf-optimize/.shared/cannbot-knowledge/rev-abc123"
+        skill(revision / ".agents/skills/knowledge-query", "knowledge-query")
+        (revision / "knowledge").mkdir()
+        (revision / "knowledge/card.md").write_text("card\n")
+        dependency.parent.mkdir(parents=True, exist_ok=True)
+        dependency.symlink_to(".shared/cannbot-knowledge/rev-abc123", target_is_directory=True)
+        visible = performance / ".agents/skills/knowledge-query"
+        shutil.rmtree(visible)
+        visible.symlink_to(revision / ".agents/skills/knowledge-query", target_is_directory=True)
+        (performance / ".cannbot/knowledge.env").write_text(f"CANNBOT_KNOWLEDGE_ROOT={revision}\n")
+        legacy = performance / "legacy-docs"
+        (performance / ".cannbot/legacy").mkdir(parents=True)
+        (performance / ".cannbot/legacy/file.md").write_text("legacy\n")
+        legacy.symlink_to(".cannbot/legacy", target_is_directory=True)
+        context = self.freeze()
+        frozen = self.work / ".context/performance/.cannbot/dependencies/ops-perf-optimize/cannbot-knowledge"
+        self.assertTrue(frozen.is_symlink())
+        self.assertEqual(frozen.resolve(), revision.resolve())
+        self.assertFalse(
+            (self.work / ".context/performance/.cannbot/dependencies/ops-perf-optimize/.shared").exists())
+        frozen_skill = self.work / ".context/performance/.agents/skills/knowledge-query"
+        self.assertFalse(frozen_skill.is_symlink())
+        self.assertTrue((frozen_skill / "SKILL.md").is_file())
+        frozen_legacy = self.work / ".context/performance/legacy-docs"
+        self.assertFalse(frozen_legacy.is_symlink())
+        self.assertEqual((frozen_legacy / "file.md").read_text(), "legacy\n")
+        frozen_env = (self.work / ".context/performance/.cannbot/knowledge.env").read_text()
+        self.assertIn(str(self.work / ".context/performance/.cannbot/dependencies/ops-perf-optimize/cannbot-knowledge"),
+                      frozen_env)
+        self.assertNotIn(".shared", frozen_env)
+        self.assertEqual(load_context(self.work), context)
+        frozen.unlink()
+        frozen.symlink_to(self.root / "elsewhere", target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "frozen resources changed"):
+            load_context(self.work)
+        dependency.unlink()
+        dependency.symlink_to(".shared/cannbot-knowledge/rev-missing", target_is_directory=True)
+        self.work = self.root / "dangling" / "workflow1"
+        with self.assertRaisesRegex(ValueError, "frozen resource link is missing"):
+            self.freeze()
+
     def test_refuse_unknown_skills_role_traversal_and_user_file_overwrite(self):
         self.freeze()
         with self.assertRaisesRegex(ValueError, "not available"):
