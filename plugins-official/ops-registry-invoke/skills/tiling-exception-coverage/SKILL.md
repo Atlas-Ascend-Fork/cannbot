@@ -53,7 +53,7 @@ A items apply to nearly every operator; an N/A here needs correspondingly strong
 | B1 | Auxiliary-input dtype semantic error | Has index/group/mask/offset-style auxiliary inputs | Change the auxiliary input to a type other than required (e.g. requires INT64 → pass FLOAT) | FAILED |
 | B2 | Fixed-dim relation broken | Aligned dims exist across inputs (e.g. detection-style boxes-scores alignment, elementwise all-inputs-equal-shape) | Break the dim equality relation | FAILED |
 | B3 | Wrong layout | Layout/axis-order-sensitive operator (e.g. a (B,3,N) convention, reduction axis-order convention) | Swap/alter the layout-convention dims | FAILED |
-| B4 | storageShape ≠ originShape | Supports dynamic shape / layout conversion | Tamper with the storage dim of each IO one by one | FAILED |
+| B4 | Origin/storage shape relation | Supports scalars or a runtime layout whose origin and storage representations can differ | Construct origin and storage shapes independently from the runtime contract. For each applicable IO, test a supported representation and any documented relation violation assigned to the layer under test. | Supported representation → success; documented violation at that layer → FAILED |
 | B5 | Dynamic-shape unknown dims | Supports dynamic shape | Set key dims to -1/-2; legal per spec → degraded-success assertion, illegal → FAILED | Spec-dependent |
 | B6 | attr contradicts shape | attr is axis-order-dependent (data_format/axes style) | Make the attr contradict the actual shape's axis order | FAILED |
 | B7 | Illegal attr combination | Multiple attrs have combination/exclusion constraints | One case per opposite of each legal combination | FAILED |
@@ -73,6 +73,8 @@ A items apply to nearly every operator; an N/A here needs correspondingly strong
 | B21 | compile_info parse failure | Uses JSON compile_info | One case each of missing field / wrong type / empty object | FAILED |
 
 > Boundary: a negative-value case on a sign-sensitive param (axis/padding/stride) counts once, under B11 — not also under A7.
+
+For B4, cite the runtime/API representation contract as well as the operator spec. A supported logical scalar can have a non-scalar storage representation. Build the two shapes independently and include a true one-dimensional tensor as a control when scalars are supported. Assert the legal case's specified tiling outputs. For a rejection test, cite the violated relation and the layer responsible for rejecting it. If the evidence does not establish that a constructed relation reaches that layer and must be rejected there, record the gap in the test notes and retain the supported representation test.
 
 ## Assertion playbook
 
