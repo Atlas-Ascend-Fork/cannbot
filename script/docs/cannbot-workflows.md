@@ -4,12 +4,13 @@
 
 安装 `ops-direct-invoke` 时，统一安装器按其 `plugin-install.json` 的 `initializeBefore` 声明，先完整初始化 `ops-perf-optimize`，再初始化直调。源码与 npm 安装使用相同顺序、客户端和目标目录；源码两次安装复用同一个已选公共 Skill checkout。性能插件维护自身的 Skill、角色、hooks 和知识依赖，安装记录保留两个插件。
 
-普通用户在目标项目中执行各插件下方的 `npx` 命令。源码安装进入对应插件目录执行：
+普通用户在目标项目中执行各插件下方的 `npx` 命令。使用通用入口的插件可从源码安装，例如从 CANNBot 仓库根目录执行：
 
 ```bash
-cd plugins-official/<plugin>
-bash init.sh
+bash plugins-official/ops-direct-invoke/init.sh project codex "/absolute/path/to/your-project"
 ```
+
+将 `codex` 换成你的客户端，将示例路径换成目标项目的绝对路径。省略客户端和安装路径时，通用入口分别使用 OpenCode 和 CANNBot 源码仓根目录。
 
 对声明公共 Skill 依赖的源码插件，统一安装器会初始化 `vendor/cannbot-skills`，每次安装从其 `origin` 获取与 CANNBot 当前分支同名分支的最新提交；远端没有同名分支时回退到 `master`。CANNBot 处于 detached HEAD 时也使用 `master`。Skill 软链接到目标项目，不需要先手动初始化子模块。此操作不更新 CANNBot 主仓；主仓更新仍由用户执行。
 

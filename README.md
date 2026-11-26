@@ -23,12 +23,12 @@ npx @cannbot-plugin/cannbot@latest install ${plugin} --tool ${tool}
 ```bash
 git clone --recurse-submodules --shallow-submodules https://gitcode.com/cann/cannbot.git
 cd cannbot/plugins-official/${plugin}
-bash init.sh
+bash init.sh project "${tool}" "/absolute/path/to/your-project"
 ```
 
 `${plugin}`：插件名称，见[官方插件](#官方插件)，例如 `ops-direct-invoke`。
 
-`${tool}`：客户端，可选 `opencode`、`codex`、`claude`、`trae`、`dsh`、`codearts`。
+`${tool}`：客户端，可选 `opencode`、`codex`、`claude`、`trae`、`dsh`、`codearts`。 源码安装时，将示例路径换成目标项目的绝对路径。对于使用通用 `init.sh` 入口的插件，省略客户端和路径时默认安装到 CANNBot 源码仓根目录，客户端为 OpenCode。
 
 ## 📦 官方插件
 
