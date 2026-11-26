@@ -10,7 +10,6 @@
 # ----------------------------------------------------------------------------------------------------------
 
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -28,8 +27,6 @@ SKILL_FILENAME = "SKILL.md"
 MAX_DESCRIPTION_TOKENS = 150  # SKILL.md frontmatter description token 数量限制
 # 指定模型编码（主流模型：gpt-3.5-turbo/gpt-4 均用 cl100k_base）
 ENCODING_NAME = "cl100k_base"
-NAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9\-]*$')  # 小写字母、数字、连字符
-MAX_NAME_LENGTH = 64
 
 
 def count_tokens(text: str, encoding_name: str = ENCODING_NAME) -> int:
