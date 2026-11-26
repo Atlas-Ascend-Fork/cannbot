@@ -5,7 +5,7 @@ description: 为需求对齐提供 conda/Python 与 CANN 候选，检查用户�
 
 # Ascend / AscendC 环境检查
 
-遵循[环境选择、检查与复用](references/environment-policy.md)。首次检查或缓存缺项时执行相应项目；结果及原始日志放在 `.cannbot/环境检查/`，按 [环境信息](references/环境信息.md) 记录真实结论。
+遵循[环境选择、检查与复用](../../references/environment-policy.md)。首次检查或缓存缺项时执行相应项目；结果及原始日志放在 `.cannbot/环境检查/`，按 [环境信息](../../references/环境信息.md) 记录真实结论。
 
 | 检查项 | 方法与通过依据 |
 |--------|----------------|
