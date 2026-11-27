@@ -14,8 +14,8 @@ import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-const installer = fileURLToPath(new URL('../../scripts/windows/install-all.ps1', import.meta.url))
-const provision = fileURLToPath(new URL('../../scripts/windows/provision.ps1', import.meta.url))
+const installer = fileURLToPath(new URL('../../installers/windows/install-all.ps1', import.meta.url))
+const provision = fileURLToPath(new URL('../../installers/windows/provision.ps1', import.meta.url))
 const windowsOnly = { skip: process.platform !== 'win32' && 'requires Windows PowerShell 5.1' }
 
 function check(t, { bom = false, complete = true, profileExists = true } = {}) {

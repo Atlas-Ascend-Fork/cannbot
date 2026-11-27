@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Readable } from 'node:stream'
-import { ACCOUNT_RECORD_KEY, MAX_CREDENTIAL_BYTES, syncCredentials } from '../../src/remote/credentials-sync.js'
+import { ACCOUNT_RECORD_KEY, MAX_CREDENTIAL_BYTES, syncCredentials } from '../../plugin/backend/ssh/credentials-sync.js'
 import { loadDshDependencies, mergeAccountGrant, runRemoteSync, supportsDefaultStore } from '../../remote/sync-credentials.mjs'
 
 const fakeToken = 'TEST_ONLY_PRIVATE_GRANT_6f11d519'

@@ -1,20 +1,8 @@
 # 源码结构与开发
 
-当前主插件和短包版本为 **1.0.0-alpha.1**；一键安装器为 **1.0.0**。
+当前两版插件和短包版本为 **1.0.0-alpha.5**，一键安装器为 **1.0.0**。
 
-## 目录
-
-| 路径 | 内容 |
-| --- | --- |
-| `src/` | 插件 Host、工作台、品牌界面、工作流管理与更新 |
-| `runtime/` | 初始化兼容层 |
-| `scripts/` | 构建、打包、工作流子包构建工具 |
-| `tests/` | 主插件的前后端测试 |
-| `packages/short/` | `cannbot-dsh` 短包入口，精确依赖完整包 |
-| `packages/install/` | `@cannbot-plugin/cannbot-dsh-install` 一键安装器源码及测试 |
-
-这里不包含 DSH 核心源码。插件使用官方扩展接口，构建时复用官方源码仓的客户端构建预设。
-不提交 `node_modules`、构建产物、个人工作区、凭据、运行日志及临时测试环境。
+目录布局见 [README.md](README.md)。
 
 ## 模式界面边界
 
@@ -29,12 +17,12 @@ Mod+K / Mod+O 继续使用 DSH 原有动作，插件不为 CANNBot 重定向或�
 在 `dsh/` 目录使用 Node.js **24.9.0 或更高版本**：
 
 ```sh
-node scripts/build-current.mjs
-node scripts/package.mjs
-node scripts/package.mjs --short
+node tools/build-current.mjs
+node tools/package.mjs
+node tools/package.mjs --short
 ```
 
-Windows 一键安装入口调用 `build-current.mjs`，先核对本仓源码和编译结果。输入指纹包含 `src/`（含 CSS）、`remote/`、语言资源、构建脚本和配置、包声明，以及 Host 导入的安装辅助文件；输出指纹覆盖整个 `lib/`。只有两者与 `lib/.cannbot-build.json` 一致才复用产物。修改源码、删除或损坏 bundle、缺少构建凭据都会触发重建，不能直接安装旧 `lib`。
+插件发行打包工具调用 `build-current.mjs`，先核对本仓源码和编译结果。输入指纹包含 `plugin/`（含 CSS）、`remote/`、语言资源、构建脚本和配置、包声明，以及 Host 导入的安装辅助文件；输出指纹覆盖整个 `lib/`。只有两者与 `lib/.cannbot-build.json` 一致才复用产物。修改源码、删除或损坏 bundle、缺少构建凭据都会触发重建，不能直接安装旧 `lib`。
 
 构建预设固定使用官方 **DSH 0.2.1-rc.3**，准确 tag 为 `dsh-v0.2.1-rc.3`；它是构建依赖，运行兼容范围仍见 `package.json`。查找顺序为 `DSH_SOURCE`、本地 `.dsh-source.json`、相邻的 `deepseek-harness/`。没有可用目录时，从官方 GitHub codeload 下载该固定 tag 到 `.build-cache/`，检查根包名和版本，再准备隔离构建工具。ZIP 中的 POSIX 测试符号链接不参与构建，不要求 Windows 创建符号链接的权限。
 
@@ -43,20 +31,20 @@ Windows 一键安装入口调用 `build-current.mjs`，先核对本仓源码和�
 已有官方源码和构建依赖时，可以继续显式配置：
 
 ```sh
-node scripts/prepare-dev.mjs /path/to/deepseek-harness --build-only
-node scripts/build-current.mjs
+node tools/prepare-dev.mjs /path/to/deepseek-harness --build-only
+node tools/build-current.mjs
 ```
 
 `prepare-dev.mjs` 只建立本地依赖链接并写入忽略的 `.dsh-source.json`；Windows 使用目录 junction。省略 `--build-only` 时保留完整开发模式，要求源码目录已有测试相关依赖。也可通过 `DSH_SOURCE` 指向官方目录；显式指定错误版本会报错，不会悄悄切换来源。
 
 ```sh
-node scripts/build-current.mjs --check  # 只读：0 表示一致，1 表示需要构建
-node scripts/build-current.mjs --force  # 强制重新编译
+node tools/build-current.mjs --check  # 只读：0 表示一致，1 表示需要构建
+node tools/build-current.mjs --force  # 强制重新编译
 ```
 
 重建期间保留旧 `lib`，编译失败会恢复旧文件并返回失败，一键安装随即停止。源码在编译期间被修改也会报错，保存编辑后重试即可。构建凭据只有版本和内容哈希，没有时间或本机绝对路径。预构建源码 ZIP 应保留完整 `lib/`（含 `.cannbot-build.json`）；拷贝到新路径后仍可核验并离线复用。普通 npm 安装包不带这些构建脚本，安装时不执行源码构建。
 
-主包打包会先执行上述源码检查/构建，再使用与远程部署相同的确定性 tar 生成器；短包打包不需要 DSH 源码或编译工具。产物位于 `dist/`，重复打包相同输入得到相同哈希；`dist/SHA256SUMS` 更新当前包的行并保留其他包的校验和。打包只读取 `package.json` 的发布白名单，许可证取仓库根 `LICENSE`，不复制本地缓存、凭据或开发依赖。
+主包打包会先执行上述源码检查/构建，再使用与远程部署相同的确定性 tar 生成器；短包打包不需要 DSH 源码或编译工具。产物位于 `dist/`，重复打包相同输入得到相同哈希。打包只读取 `package.json` 的发布白名单，许可证取仓库根 `LICENSE`，不复制本地缓存、凭据或开发依赖。
 
 运行检查：
 
@@ -70,19 +58,13 @@ node node_modules/vitest/vitest.mjs run
 
 正式 `vitest.config.mts` 包含全部 `tests/**/*.spec.ts` / `.spec.tsx`，无需 `_scratch` 配置。先用上述完整开发模式配置官方 DSH `0.2.1-rc.3` 源码和测试依赖；也可设置 `DSH_SOURCE`。StateDot、Toast、菜单、弹窗和布局测试读取该源码的真实组件与 CSS，slot 授权测试使用已安装的官方 SDK。仓库不复制 DSH 原生 UI 模块，测试不读取本机 DSH 安装或用户 profile。
 
-## Windows 单文件安装包
-
-在 Windows 的 `dsh/` 下运行 `node scripts/package-windows.mjs`，生成 `CANNBot-Setup.cmd`。提交或发布此文件供用户单独下载。它内置当前已构建主插件、仓库许可证及安装脚本，不包含开发依赖或凭据；安装时无需代码仓、Git 或编译工具。修改发布文件或 Windows 安装脚本后重新生成，并运行 `node --test tests/windows-setup.test.mjs`。
-
-安装器使用系统 PowerShell/.NET 解包，校验内置内容 SHA-256，再执行完整安装流程。DSH 桌面程序与运行依赖按需联网获取。安装日志位于 `%LOCALAPPDATA%\CANNBot\Installer\<本次编号>\installation.log`。
-
 ## 官方资源及 Host 集成测试
 
 官方资源直接来自指定 CANNBot 工作区及其 `vendor/cannbot-skills`。每次构建都在系统临时目录重新装配，完成后清理；不读取或维护 `assets/` 快照。实际提交和内容散列写入生成包的 `workflow.json`，许可证保留在包的 `resources/` 中。
 准备满足声明依赖的源码目录后，生成测试使用的工作流包：
 
 ```sh
-node scripts/build-workflow-packages.mjs --source /absolute/path/to/cannbot --version 1.0.0 --catalog-version 1.0.0
+node tools/build-workflow-packages.mjs --source /absolute/path/to/cannbot --version 1.0.0 --catalog-version 1.0.0
 node --import tsx --test tests/host.test.mjs tests/workflow-context.test.mjs
 ```
 
@@ -92,7 +74,7 @@ Host 集成测试读取生成的 `dist/workflow-releases/release-1.0.0-report.js
 也可以验证当前主插件与**已发布工作流包**的兼容性，省去从 master 重新装配全部资源：
 
 ```powershell
-node scripts/prepare-host-fixture.mjs --installed-package C:\path\to\installed\cannbot-dsh
+node tools/prepare-host-fixture.mjs --installed-package C:\path\to\installed\cannbot-dsh
 $env:CANNBOT_TEST_HOST_PACKAGE = '上一步输出的 host 路径'
 node --test tests/host.test.mjs
 ```
@@ -101,10 +83,11 @@ node --test tests/host.test.mjs
 
 ## 短包与一键安装器
 
-短包无编译步骤。发布完整包的新正式版后，同步修改 `packages/short/package.json` 的版本和完整包精确依赖，在 `dsh/` 目录打包：
+短包无编译步骤。同步修改 `packages/short/package.json` 和 `packages/short-server/package.json` 的版本及完整包精确依赖，在 `dsh/` 目录打包：
 
 ```sh
-node scripts/package.mjs --short
+node tools/package.mjs --short
+node tools/package.mjs --short-server
 ```
 
 一键安装器的 `lib/` 是手写源码，必须纳入版本控制。在其目录执行：
@@ -123,10 +106,28 @@ npm pack --ignore-scripts
 Windows 上，目录删除后立即复制可能因目录尚未释放而产生 `EIO`。兼容层只在官方初始化器的子进程中对受管目录执行有限重试，不修改 DSH 核心或上游安装器源码。
 初始化前备份相关 Skills、agents、工作流资源和配置；失败时尝试恢复，进程中断时下次先恢复。持久性权限错误仍会报告，并保留恢复所需备份。
 
-## 本地安装
 
-运行 `npm run install:source` 会从父目录当前源码装配 `workflow-defaults.json` 声明的工作流（当前为 3 个）、构建并安装主插件，然后原子切换工作流缓存。未列入 `workflow-defaults.json` 的工作流不参与打包，也不会出现在目录包中。使用 `--source` 指定其他本地仓库，`--repository` 在临时目录获取远端 HEAD。缓存刷新包含同版本内容修改；所有工作流校验完成前不会切换旧缓存。详见 README 的源码安装说明。
+## 安装器与发布
 
-Windows 图形安装窗口由 `scripts/windows/setup-window.cs` 实现，使用系统 .NET Framework / Windows Forms；下载与安装在独立进程执行，通过完整 JSON 快照更新进度。`setup-logo.png` 由 `src/client/logo.svg` 转换，`setup-icon.ico` 使用同一 PNG；窗口和生成的安装程序均使用 CANNBot 图标。双击 CMD 启动图形模式，`--no-pause` 保留控制台安装供诊断使用。下载进度及取消、中断检查：`node --test tests/windows/install-progress.test.js`。
+三端安装器构建与插件发布清单见 [发布指南](RELEASE.md)。
 
-公开发布前运行 `node --test tests/release-notices.test.mjs tests/windows-setup.test.mjs`。检查内联模块清单、完整第三方许可、原仓 CANN-2.0 LICENSE，以及 CMD 解包后的声明和产物一致性。升级构建依赖或出现新增内联模块时，同步核对 `THIRD_PARTY_NOTICES.md`；不得以第三方组件的许可替换根许可证。公开文案定位为昇腾 / CANN 开发工具，工作流默认留空且必须手动选择；“空白工作区”不预装工作流，供用户手动配置昇腾项目。
+## 从本仓库安装（实时读取源码）
+
+该入口面向当前用户的 DSH Web profile，默认是 `web`。在仓库根目录执行（Node.js >=24.9，先按 DEVELOPMENT.md 配置构建与工作流资源依赖）：
+
+```sh
+npm --prefix dsh run install:source
+```
+
+每次安装直接读取当前仓库的 `plugins-official/`、`harness/` 和 `vendor/cannbot-skills/`，包含未提交的内容修改。`dsh/` 不保存这些目录的资源副本。工作流在系统临时目录装配、校验后复制到 `$DSH_HOME/cannbot-dsh-workflows`（默认 `~/.dsh/cannbot-dsh-workflows`），临时文件随后清理。
+
+更新源码后重新执行此命令即可，不需要手工同步资源或发布工作流 npm 包。内容散列决定是否刷新缓存及工作区初始化；同版本内容修改也会生效。明确执行源码安装会替换对应工作流的旧缓存及回退固定状态，全部资源校验成功后一次切换；缺少依赖则报错并保留原工作流。
+
+也可以指定其他本地源码，或在安装时获取远端仓库当前 HEAD 及其声明的子模块：
+
+```sh
+node dsh/tools/install-source.mjs --source /path/to/cannbot
+node dsh/tools/install-source.mjs --repository https://gitcode.com/cann/cannbot.git
+```
+
+本地安装要求共享 Skills 已满足源码声明；不会切换用户工作区的子模块版本。安装后重启 DSH。Windows Desktop profile 由桌面应用管理，请使用下方 Windows 入口，不要将本命令直接改为 `--profile desktop`。直接安装主插件 `.tgz` 或 npm 包使用已发布工作流依赖，不会读取本地源码。

@@ -8,90 +8,39 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // ----------------------------------------------------------------------------------------------------------
 
-import { afterEach, expect, it, vi } from 'vitest'
-import { createHostUpdater, registerHostUpdater, type UpdateManager } from '../src/update-host.ts'
-import { updateOnHost } from '../src/client/host-update.ts'
+import { expect, it, vi } from 'vitest'
+import { createHostUpdater } from '../plugin/backend/update-host.ts'
 
-afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })
-function manager() {
-  let installed = true
-  const api: UpdateManager = {
-    listBundles: vi.fn(async () => installed ? [{ name: 'cannbot-dsh', version: '1.0.0-alpha.1', installed: true, removable: true, enabled: true }] : []),
-    removeBundle: vi.fn(async () => { installed = false; return { application: 'applied' } }),
-    installBundle: vi.fn(async () => { installed = true; return { application: 'applied' } }).mockResolvedValueOnce({ application: 'failed', error: { code: 'already-installed' } }),
-  }
-  return api
+const installed = {
+  version: '1.0.0', buildId: 'build-1', hostVersion: '0.2.1',
+  receipt: { schemaVersion: 1, edition: 'client', version: '1.0.0', buildId: 'build-1', acceptedAt: '2026-11-11T00:00:00Z', legalVersion: '1' },
 }
-it('uses only official APIs to remove and install the exact target', async () => {
-  const api = manager()
-  const answer = await createHostUpdater(api, async () => true)('cannbot-dsh', '1.0.0')
-  expect(answer.result.application).toBe('applied')
-  expect(api.removeBundle).toHaveBeenCalledExactlyOnceWith('cannbot-dsh')
-  expect(api.installBundle).toHaveBeenLastCalledWith('cannbot-dsh@1.0.0', { saveExact: true, enabled: true, registry: 'https://registry.npmjs.org/' })
+const release = {
+  manifest: { version: '1.0.1', buildId: 'build-2', dshRange: '>=0.2.0 <0.3.0', legal: { version: '1' }, packages: { client: { url: 'https://example.test/client.tgz' } } },
+}
+
+it('checks without mutation and binds confirmation to the exact current published build', async () => {
+  const activate = vi.fn(async () => ({ application: 'restart-required' }))
+  const update = createHostUpdater({ current: async () => installed, release: async () => release, activate })
+  expect(await update()).toMatchObject({ status: 'available', current: '1.0.0', targetBuildId: 'build-2' })
+  expect((await update({ buildId: 'yesterday', version: '1.0.1' })).status).toBe('stale')
+  expect(activate).not.toHaveBeenCalled()
+  expect((await update(release.manifest)).status).toBe('restart')
+  expect(activate).toHaveBeenCalledOnce()
 })
-it('restores the previous exact version after a failed install', async () => {
-  const api = manager()
-  vi.mocked(api.installBundle).mockRejectedValueOnce(new Error('network'))
-  const answer = await createHostUpdater(api, async () => true)('cannbot-dsh', '1.0.0')
-  expect(answer.result.application).toBe('failed')
-  expect(answer.restore?.application).toBe('applied')
-  expect(api.installBundle).toHaveBeenLastCalledWith('cannbot-dsh@1.0.0-alpha.1', expect.objectContaining({ enabled: true }))
-})
-it('does not uninstall when the target is unavailable or foreign', async () => {
-  const api = manager(), update = createHostUpdater(api, async () => true)
-  await update('unrelated', '1.0.0'); await update('cannbot-dsh', '1.0.0-alpha.1')
-  await createHostUpdater(api, async () => false)('cannbot-dsh', '1.0.0')
-  expect(api.removeBundle).not.toHaveBeenCalled()
-})
-it('does not install after an official removal refusal', async () => {
-  const api = manager()
-  vi.mocked(api.removeBundle).mockResolvedValue({ application: 'failed', error: { code: 'stop-profile' } })
-  const answer = await createHostUpdater(api, async () => true)('cannbot-dsh', '1.0.0')
-  expect(answer.result.error?.code).toBe('stop-profile')
-  expect(api.installBundle).toHaveBeenCalledTimes(1)
-})
-it('prefers the native official update transaction', async () => {
-  const api = { ...manager(), updateBundle: vi.fn(async () => ({ result: { application: 'applied' } })) }
-  await createHostUpdater(api, async () => true)('cannbot-dsh', '1.0.0')
-  expect(api.updateBundle).toHaveBeenCalledOnce()
-  expect(api.removeBundle).not.toHaveBeenCalled()
-})
-it('updates in place when the Host requests only a restart', async () => {
-  const api = manager()
-  vi.mocked(api.installBundle).mockReset().mockResolvedValue({ application: 'restart-required' })
-  const answer = await createHostUpdater(api, async () => true)('cannbot-dsh', '1.0.0')
-  expect(answer.result.application).toBe('restart-required')
-  expect(api.removeBundle).not.toHaveBeenCalled()
-})
-it('reports failed recovery instead of claiming the update succeeded', async () => {
-  const api = manager()
-  vi.mocked(api.installBundle).mockResolvedValueOnce({ application: 'failed' }).mockResolvedValueOnce({ application: 'failed' })
-  const answer = await createHostUpdater(api, async () => true)('cannbot-dsh', '1.0.0')
-  expect(answer.result.application).toBe('failed')
-  expect(answer.restore?.application).toBe('failed')
-})
-it('rejects concurrent requests while an update is running', async () => {
-  const api = manager()
-  let release!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
-  const update = createHostUpdater(api, async () => { await gate; return true }), first = update('cannbot-dsh', '1.0.0')
-  expect((await update('cannbot-dsh', '1.0.0')).result.error?.code).toBe('update-in-progress')
-  release(); await first
-  expect(api.removeBundle).toHaveBeenCalledOnce()
-})
-it('keeps the server transaction alive after its plugin route is withdrawn', async () => {
-  const api = manager()
-  let route: { fetch(request: Request): Promise<Response> } | undefined
-  const scoped = { pluginManager: api, connection: { fetch: { register: (value: typeof route) => { route = value } } } }
-  registerHostUpdater({ inject: (_: unknown, use: (ctx: unknown) => void) => use(scoped) } as never)
-  api.updateBundle = async () => { route = undefined; return { result: { application: 'applied' } } }
-  const response = await route!.fetch(new Request('http://localhost/api/cannbot-dsh/update', { method: 'POST', body: JSON.stringify({ name: 'cannbot-dsh', version: '1.0.0' }) }))
-  expect((await response.json()).result.application).toBe('applied')
-  expect(route).toBeUndefined()
-})
-it('keeps a visible result after the React plugin has unloaded', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ result: { application: 'applied' } }) })))
-  await updateOnHost('cannbot-dsh', '1.0.0')
-  expect(document.querySelector('[data-cannbot-update]')?.textContent).toContain('1.0.0')
-  expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ method: 'POST', credentials: 'same-origin' }))
+
+it('requires the installer for new legal text and refuses same-version replacements or downgrades', async () => {
+  const activate = vi.fn(async () => ({ application: 'applied' }))
+  for (const [patch, expected] of [
+    [{ version: '0.9.0' }, 'latest'], [{ version: '1.0.0' }, 'error'], [{ buildId: 'build-1' }, 'error'],
+    [{ legal: { version: '2' } }, 'agreement-required'],
+    [{ dshRange: '>=1.0.0 <2.0.0' }, 'incompatible'],
+  ] as const) {
+    const manifest = { ...release.manifest, ...patch }
+    const update = createHostUpdater({ current: async () => installed, release: async () => ({ ...release, manifest }), activate })
+    expect((await update(manifest)).status).toBe(expected)
+  }
+  const unconfigured = createHostUpdater({ current: async () => installed, release: async () => undefined, activate })
+  expect((await unconfigured()).status).toBe('unconfigured')
+  expect(activate).not.toHaveBeenCalled()
 })

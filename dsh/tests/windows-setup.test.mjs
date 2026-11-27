@@ -8,63 +8,47 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
-test('standalone CMD extracts without a checkout and rejects a damaged payload', { skip: process.platform !== 'win32' }, () => {
-  const root = mkdtempSync(join(tmpdir(), 'cannbot-setup-test-'))
+test('standalone EXE extracts the current package without a checkout; refuses overwrites and silent installation', { skip: process.platform !== 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'cannbot-exe-test-'))
   try {
-    const file = join(root, "安装 包 & user's.cmd")
-    const source = readFileSync(new URL('../CANNBot-Setup.cmd', import.meta.url), 'utf8')
-    writeFileSync(file, source)
-    const run = () => spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '& $env:CANNBOT_TEST_INSTALLER --extract-only; exit $LASTEXITCODE'], {
-      cwd: root, encoding: 'utf8', windowsHide: true,
-      env: { ...process.env, LOCALAPPDATA: root, CANNBOT_TEST_INSTALLER: file, DSH_SOURCE: '' },
-    })
-    const result = run()
-    assert.equal(result.status, 0, result.stdout + result.stderr)
-    const runs = join(root, 'CANNBot', 'Installer')
-    const packageRoot = join(runs, readdirSync(runs)[0], 'package')
-    for (const part of ['lib/index.js', 'lib/client.js', 'lib/initialize-workspace.js', 'release-policy.json', 'scripts/windows/provision.ps1', 'src/remote/artifact.js', 'remote/deploy-package.mjs']) assert.ok(existsSync(join(packageRoot, part)), part)
-    for (const part of ['node_modules', '.git', '.dsh-source.json', 'scripts/build-current.mjs']) assert.equal(existsSync(join(packageRoot, part)), false, part)
-    for (const part of ['lib/index.js', 'lib/client.js', 'README.md', 'THIRD_PARTY_NOTICES.md', 'scripts/windows/install-all.ps1', 'scripts/windows/provision.ps1', 'scripts/windows/ensure-workbench.mjs', 'scripts/windows/setup-window.cs', 'scripts/windows/setup-window.ps1']) {
+    const file = join(root, "安装 包 & user's.exe")
+    copyFileSync(new URL('../dist/CANNBot-Setup.exe', import.meta.url), file)
+    const destination = join(root, '独立 解包')
+    // NSIS options quote the value, not the /NAME= prefix.
+    const run = args => spawnSync(file, args, { argv0: `"${file}"`, cwd: root, windowsHide: true, windowsVerbatimArguments: true, timeout: 30000, encoding: 'utf8' })
+    const result = run(['/S', `/EXTRACTONLY="${destination}"`])
+    assert.equal(result.status, 0, result.error?.message || result.stdout + result.stderr)
+    const packageRoot = join(destination, 'package')
+    for (const part of ['installers/common/release-source.json', 'installers/common/release.mjs', 'installers/windows/provision.ps1']) assert.ok(existsSync(join(packageRoot, part)), part)
+    for (const part of ['node_modules', '.git', '.dsh-source.json', 'tools/build-current.mjs', 'installation-documents', 'INSTALLATION_NOTICES.html', 'INSTALLATION_NOTICES.txt']) assert.equal(existsSync(join(packageRoot, part)), false, part)
+    for (const part of ['installers/common/release.mjs','installers/windows/release.ps1', 'THIRD_PARTY_NOTICES.md', 'installers/windows/install-all.ps1', 'installers/windows/provision.ps1', 'installers/windows/ensure-workbench.mjs', 'installers/windows/setup-worker.ps1']) {
       const normalized = bytes => bytes.toString('utf8').replaceAll('\r\n', '\n')
       assert.equal(normalized(readFileSync(join(packageRoot, part))), normalized(readFileSync(new URL('../' + part, import.meta.url))), `Regenerate the installer: ${part}`)
     }
     assert.deepEqual(readFileSync(join(packageRoot, 'LICENSE')), readFileSync(new URL('../../LICENSE', import.meta.url)))
-    assert.deepEqual(JSON.parse(readFileSync(join(packageRoot, 'release-policy.json'))), JSON.parse(readFileSync(new URL('../release-policy.json', import.meta.url))))
-    assert.deepEqual(readFileSync(join(packageRoot, 'scripts/windows/setup-logo.png')), readFileSync(new URL('../scripts/windows/setup-logo.png', import.meta.url)))
-    assert.deepEqual(readFileSync(join(packageRoot, 'scripts/windows/setup-icon.ico')), readFileSync(new URL('../scripts/windows/setup-icon.ico', import.meta.url)))
-    // Compile the packaged GUI with Windows PowerShell 5.1, without launching
-    // installation. Exercise the real compile statements, including the icon.
-    const compile = String.raw`
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-$tokens = $null; $errors = $null
-$TestScriptRoot = Join-Path $env:CANNBOT_TEST_PACKAGE 'scripts/windows'
-$RunRoot = $env:CANNBOT_TEST_ROOT
-$ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $TestScriptRoot 'setup-window.ps1'), [ref]$tokens, [ref]$errors)
-if ($errors.Count) { throw 'Invalid GUI launcher' }
-foreach ($statement in $ast.EndBlock.Statements) {
-    if ($statement.Extent.Text.StartsWith('$info =')) { break }
-    Invoke-Expression ($statement.Extent.Text.Replace('$PSScriptRoot', '$TestScriptRoot'))
-}
-if (-not (Test-Path -LiteralPath $application)) { throw 'GUI executable missing' }
-[void][Reflection.AssemblyName]::GetAssemblyName($application)
-`
-    const compiled = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(compile, 'utf16le').toString('base64')], {
-      windowsHide: true, encoding: 'utf8', timeout: 30000,
-      env: { ...process.env, CANNBOT_TEST_PACKAGE: packageRoot, CANNBOT_TEST_ROOT: root },
-    })
-    assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr)
-    const marker = '::CANNBOT_PAYLOAD\r\n', at = source.indexOf(marker) + marker.length
-    writeFileSync(file, source.slice(0, at) + (source[at] === 'A' ? 'B' : 'A') + source.slice(at + 1))
-    const damaged = run()
-    assert.notEqual(damaged.status, 0)
-    assert.match(damaged.stdout, /checksum mismatch/)
-    assert.equal(readdirSync(runs).length, 1)
+    const source = JSON.parse(readFileSync(join(packageRoot, 'installers/common/release-source.json')))
+    assert.equal(source.manifestUrl, 'https://api.gitcode.com/api/v5/repos/cann/cannbot/raw/dsh/release/manifest.json?ref=master')
+    const icon = readFileSync(join(packageRoot, 'installers/windows/setup-icon.ico'))
+    assert.equal(icon.readUInt16LE(2), 1, 'desktop shortcut uses an ICO image')
+    assert.equal(icon.readUInt16LE(4), 1)
+    const image = icon.subarray(icon.readUInt32LE(18))
+    assert.deepEqual([...image.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10])
+    assert.equal(image.readUInt32BE(16), 128)
+    assert.equal(image.readUInt32BE(20), 128)
+    assert.equal(existsSync(join(packageRoot, 'artwork')), false, 'SVG renderer is build-only')
+    const notices = readFileSync(join(packageRoot, 'THIRD_PARTY_NOTICES.md'), 'utf8')
+    assert.match(notices, /Copyright Eemeli Aro/)
+    assert.match(notices, /NSIS 3\.0\.4\.1/)
+    assert.match(notices, /Copyright \(C\) 1999-2018 Contributors/)
+    writeFileSync(join(destination, 'keep.txt'), 'user data')
+    assert.equal(run(['/S', `/EXTRACTONLY="${destination}"`]).status, 2)
+    assert.equal(readFileSync(join(destination, 'keep.txt'), 'utf8'), 'user data')
+    assert.equal(run(['/S']).status, 2, 'normal install cannot bypass disclosure')
   } finally {
     assert.equal(dirname(resolve(root)), resolve(tmpdir()))
     rmSync(root, { recursive: true, force: true })

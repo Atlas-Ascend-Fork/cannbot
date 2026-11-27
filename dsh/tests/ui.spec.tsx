@@ -11,15 +11,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode, ReactElement } from 'react'
-import { WorkflowSelector, type WorkflowProps } from '../src/client/WorkflowSelector.tsx'
-import { zh } from '../src/client/locales.ts'
-import { apply } from '../src/client/index.ts'
+import { WorkflowSelector, type WorkflowProps } from '../plugin/frontend/WorkflowSelector.tsx'
+import { zh } from '../plugin/frontend/locales.ts'
+import { apply } from '../plugin/frontend/index.ts'
 import type { Context } from '@deepseek-ai/cordis'
-import { WORKFLOWS } from '../src/workflows.ts'
-import type { WorkspaceModes } from '../src/client/workspace-modes.ts'
-import { createWorkflowSelection, connectWorkflowSelection } from '../src/client/workflow-selection.ts'
-import { WorkflowCompat } from '../src/client/WorkflowCompat.tsx'
-import { SessionWorkflow, type SessionWorkflowProps } from '../src/client/SessionWorkflow.tsx'
+import { WORKFLOWS } from '../plugin/contracts/workflows.ts'
+import type { WorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
+import { createWorkflowSelection, connectWorkflowSelection } from '../plugin/frontend/workflow-selection.ts'
+import { WorkflowCompat } from '../plugin/frontend/WorkflowCompat.tsx'
+import { SessionWorkflow, type SessionWorkflowProps } from '../plugin/frontend/SessionWorkflow.tsx'
 
 const compatibility = vi.hoisted(() => ({ legacy: false }))
 

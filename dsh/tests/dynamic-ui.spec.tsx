@@ -11,10 +11,10 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { WorkflowSelector, type WorkflowProps } from '../src/client/WorkflowSelector.tsx'
-import { createWorkflowSelection } from '../src/client/workflow-selection.ts'
-import { zh } from '../src/client/locales.ts'
-import type { ContentStore } from '../src/client/content-store.ts'
+import { WorkflowSelector, type WorkflowProps } from '../plugin/frontend/WorkflowSelector.tsx'
+import { createWorkflowSelection } from '../plugin/frontend/workflow-selection.ts'
+import { zh } from '../plugin/frontend/locales.ts'
+import type { ContentStore } from '../plugin/frontend/content-store.ts'
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   IconAgentPresetOutlineRegular: () => null,
   IconChevronDownOutlineRegular: () => null,

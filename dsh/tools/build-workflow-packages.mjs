@@ -1,0 +1,131 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+/** Build one or all independent, resource-only workflow packages from a verified source snapshot. */
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
+import { createPackageArtifact } from './package-archive.mjs'
+const root = fileURLToPath(new URL('..', import.meta.url))
+const options = Object.fromEntries(process.argv.slice(2).reduce((items, arg, i, all) => arg.startsWith('--') ? [...items, [arg.slice(2), all[i + 1]]] : items, []))
+const version = options.version ?? '1.0.0', catalogVersion = options['catalog-version'] ?? '1.0.0'
+if (!/^\d+\.\d+\.\d+$/.test(version) || !/^\d+\.\d+\.\d+$/.test(catalogVersion)) throw new Error('Use a stable x.y.z version')
+const source = resolve(options.source ?? join(root, '..'))
+// Always assemble current source; resource copies never live in the adapter repository.
+const temporary = mkdtempSync(join(tmpdir(), 'cannbot-workflows-'))
+process.on('exit', () => rmSync(temporary, { recursive: true, force: true }))
+const assets = join(temporary, 'official')
+const built = spawnSync(process.execPath, [join(root, 'tools/materialize-workflows.mjs'), source, assets], { stdio: 'inherit' })
+if (built.status !== 0) process.exit(built.status ?? 1)
+const catalog = JSON.parse(readFileSync(join(assets, 'catalog.json'), 'utf8'))
+const defaults = JSON.parse(readFileSync(resolve(options.defaults ?? join(root, 'workflow-defaults.json')), 'utf8'))
+// workflow-defaults.json is the source of truth for which workflows this build ships:
+// workflows absent from it are neither packaged nor listed in the catalog.
+const shipped = new Set(defaults.workflows.map(item => item.id))
+for (const id of shipped) if (!catalog.plugins.some(item => item.id === id)) throw new Error(`Default workflow is not available in source: ${id}`)
+catalog.plugins = catalog.plugins.filter(item => shipped.has(item.id))
+const require = createRequire(import.meta.url)
+const { parse } = (()=>{try{return require('yaml')}catch{return createRequire(require.resolve('@deepseek-ai/dsh-skill-filesystem/package.json'))('yaml')}})()
+const dist = resolve(options.output ?? join(root, 'dist/workflow-releases'))
+mkdirSync(dist, { recursive: true })
+writeFileSync(join(dist, 'source-catalog.json'), JSON.stringify(catalog, null, 2) + '\n')
+const workspace = resolve(options['build-root'] ?? join(root, 'dist/workflow-packages'))
+const hashTree = path => {
+  const hash = createHash('sha256')
+  function walk(value) {
+    for (const item of readdirSync(value, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
+      const file = join(value, item.name)
+      if (item.isDirectory()) walk(file)
+      else { hash.update(relative(path, file).split('\\').join('/')); hash.update('\0'); hash.update(readFileSync(file)); hash.update('\0') }
+    }
+  }
+  walk(path); return hash.digest('hex')
+}
+const reports = []
+function pack(directory, manifest) {
+  if (options['no-pack'] === 'true') { reports.push({ name: manifest.name, version: manifest.version, directory }); return }
+  const tarball = join(dist, `${manifest.name.replace(/^@/, '').replaceAll('/', '-')}-${manifest.version}.tgz`)
+  const { bytes } = createPackageArtifact(directory)
+  writeFileSync(tarball, bytes)
+  const report = { name: manifest.name, version: manifest.version, directory, tarball, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: 'sha512-' + createHash('sha512').update(bytes).digest('base64') }
+  reports.push(report); console.log(JSON.stringify(report))
+}
+for (const plugin of catalog.plugins) {
+  if (options['catalog-only'] === 'true') continue
+  if (options.id && options.id !== plugin.id) continue
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(plugin.id)) throw new Error('Invalid workflow id')
+  const name = `@cannbot-plugin/workflow-${plugin.id}`
+  const directory = join(workspace, 'packages', plugin.id, version)
+  if (existsSync(directory)) throw new Error(`Build directory exists; preserve the previous artifact: ${directory}`)
+  mkdirSync(directory, { recursive: true })
+  const resources = join(directory, 'resources')
+  cpSync(join(assets, plugin.id), resources, { recursive: true })
+  const installationFile = join(resources, 'plugin-install.json')
+  const installation = existsSync(installationFile) ? JSON.parse(readFileSync(installationFile, 'utf8')) : {}
+  const directories = installation.initializer
+    ? JSON.parse(readFileSync(join(resources, '.claude-plugin/plugin.json'), 'utf8')).skills ?? []
+    : readdirSync(join(resources, 'skills'), { withFileTypes: true }).filter(item => item.isDirectory() && existsSync(join(resources, 'skills', item.name, 'SKILL.md'))).map(item => 'skills/' + item.name)
+  const entrySkill = catalog.exposedSkills.find(skill => skill.pluginId === plugin.id && skill.entry)?.originalName
+  const skills = directories.map(path => {
+    const content = readFileSync(join(resources, path, 'SKILL.md'), 'utf8')
+    const frontmatter = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(content)
+    if (!frontmatter) throw new Error(`Missing Skill metadata: ${path}`)
+    const info = parse(frontmatter[1])
+    return { name: info.name, path: join(path, 'SKILL.md').split('\\').join('/'), hash: hashTree(join(resources, path)), entry: info.name === entrySkill }
+  })
+  const upstreamManifest = join(resources, '.claude-plugin/plugin.json')
+  const initialization = existsSync(upstreamManifest) ? { kind: 'cannbot-cli', entry: 'upstream/bin/cannbot.js' } : { kind: 'skill-native' }
+  if (existsSync(upstreamManifest)) {
+    const manifest = JSON.parse(readFileSync(upstreamManifest, 'utf8'))
+    manifest.skills = skills.map(item => './' + dirname(item.path).split('\\').join('/'))
+    delete manifest.dependencies
+    writeFileSync(upstreamManifest, JSON.stringify(manifest, null, 2) + '\n')
+    // Like the upstream npm assembler, sealed packages use packaged resources,
+    // not source-only Git/submodule definitions. The installer itself is unchanged.
+    const sourceDefinition = join(resources, 'plugin-sources.json')
+    if (existsSync(sourceDefinition)) unlinkSync(sourceDefinition)
+    mkdirSync(join(directory, 'upstream/bin'), { recursive: true })
+    cpSync(join(source, 'script/bin/cannbot.js'), join(directory, 'upstream/bin/cannbot.js'))
+    cpSync(join(source, 'script/lib'), join(directory, 'upstream/lib'), { recursive: true })
+    writeFileSync(join(directory, 'upstream/package.json'), JSON.stringify({ name, version, type: 'module', license: 'MIT' }, null, 2) + '\n')
+    cpSync(join(source, 'script/LICENSE'), join(directory, 'upstream/LICENSE'))
+    if (installation.nativeWorkflow) {
+      if (typeof installation.nativeWorkflow !== 'string' || isAbsolute(installation.nativeWorkflow)) throw new Error('Invalid workflow adapter')
+      const adapter = realpathSync(resolve(resources, installation.nativeWorkflow))
+      const path = relative(resources, adapter)
+      if (path === '..' || path.startsWith('../') || path.startsWith('..\\') || isAbsolute(path)) throw new Error('Workflow adapter escapes its package')
+      const module = await import(pathToFileURL(adapter).href)
+      await module.bundleResources?.({ assets, directory, resources })
+    }
+  }
+  const contentHash = hashTree(directory)
+  const descriptor = { contentHash, schemaVersion: 1, id: plugin.id, title: plugin.title, version, initialization, skills, source: { repository: catalog.repository, commit: catalog.commit, skillsCommit: catalog.skillsCommit } }
+  const manifest = { name, version, description: `CANNBot ${plugin.title}: independently versioned workflow resources for CANNBot DSH`, type: 'module', license: 'SEE LICENSE IN resources/LICENSE', files: ['resources', 'workflow.json', 'README.md', ...initialization.kind === 'cannbot-cli' ? ['upstream'] : []], engines: { node: '>=24.9.0' }, publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' }, cannbotWorkflow: { schemaVersion: 1, id: plugin.id }, repository: { type: 'git', url: catalog.repository, directory: `plugins-official/${plugin.id}` } }
+  writeFileSync(join(directory, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
+  writeFileSync(join(directory, 'workflow.json'), JSON.stringify(descriptor, null, 2) + '\n')
+  writeFileSync(join(directory, 'README.md'), `# ${plugin.title}\n\nIndependent workflow package: \`${name}@${version}\`.\n\nInstall and update it from CANNBot DSH workflow management. The source CANNBot installer is preserved and invoked with its DSH target; npm lifecycle scripts are not used.\n\nSource: ${catalog.repository}\nCANNBot: ${catalog.commit}\nSkills: ${catalog.skillsCommit}\n`)
+  pack(directory, manifest)
+}
+if (options.id && !reports.length) throw new Error('Workflow was not found')
+if (!options.id || options.catalog === 'true') {
+  const directory = join(workspace, 'catalog', catalogVersion)
+  if (existsSync(directory)) throw new Error(`Catalog build directory exists: ${directory}`)
+  mkdirSync(directory, { recursive: true })
+  const workflows = catalog.plugins.map(plugin => ({ id: plugin.id, title: plugin.title, package: `@cannbot-plugin/workflow-${plugin.id}`, default: defaults.workflows.find(item => item.id === plugin.id)?.default ?? true }))
+  const manifest = { name: '@cannbot-plugin/workflow-catalog', version: catalogVersion, description: 'Discover and install independently versioned CANNBot DSH workflows', license: 'MIT', files: ['catalog.json', 'README.md', 'LICENSE'], dependencies: Object.fromEntries(workflows.filter(item => item.default).map(item => [item.package, '>=1.0.0'])), publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' }, cannbotWorkflowCatalog: { schemaVersion: 1, workflows } }
+  writeFileSync(join(directory, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
+  writeFileSync(join(directory, 'catalog.json'), JSON.stringify(manifest.cannbotWorkflowCatalog, null, 2) + '\n')
+  writeFileSync(join(directory, 'README.md'), '# CANNBot workflow catalog\n\nOnly republish this small catalog when workflows are added or discovery metadata changes. Updating an existing workflow requires publishing only that workflow package.\n')
+  writeFileSync(join(directory, 'LICENSE'), readFileSync(join(source, 'script/LICENSE')))
+  pack(directory, manifest)
+}
+writeFileSync(join(dist, options.id ? `${options.id}-${version}-report.json` : `release-${version}-report.json`), JSON.stringify(reports, null, 2) + '\n')

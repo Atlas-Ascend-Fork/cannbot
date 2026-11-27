@@ -14,8 +14,8 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { createManager as createProductionManager } from '../../src/remote/manager.js'
-import { createRouter, ROUTE } from '../../src/remote/routes.js'
+import { createManager as createProductionManager } from '../../plugin/backend/ssh/manager.js'
+import { createRouter, ROUTE } from '../../plugin/backend/ssh/routes.js'
 import { createNodeHandler } from './helpers/http-adapter.js'
 
 // Network-free adapter: deployment behavior has its own transfer/lifecycle tests.
@@ -115,7 +115,7 @@ test('GET /state returns servers over real HTTP', async () => {
     assert.equal(body.ok, true)
     assert.equal(body.servers.length, 1)
     assert.equal(body.servers[0].alias, 'npu-01')
-    assert.equal(body.catalog.entries[0].package, '@cannbot-plugin/cannbot-dsh')
+    assert.equal(body.catalog.entries[0].package, '@cannbot-plugin/cannbot-dsh-server')
   } finally {
     server.close()
   }

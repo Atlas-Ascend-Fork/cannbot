@@ -1,12 +1,12 @@
 # CANNBot DSH
 
-`cannbot-dsh@1.0.0-alpha.1` 是 `@cannbot-plugin/cannbot-dsh@1.0.0-alpha.1` 的短包名入口，为昇腾 / CANN 项目提供开发工作台，作为插件运行在 DSH 宿主中。
+`cannbot-dsh@1.0.0-alpha.5` 是 `@cannbot-plugin/cannbot-dsh@1.0.0-alpha.5` 的短包名入口，为昇腾 / CANN 项目提供开发工作台，作为插件运行在 DSH 宿主中。
 
-在 **插件 → 添加插件** 中输入 `cannbot-dsh@1.0.0-alpha.1`。新版本受安装源同步及发布时间观察期影响时，请明确指定版本号。
+在 **插件 → 添加插件** 中输入 `cannbot-dsh@1.0.0-alpha.5`。新版本受安装源同步及发布时间观察期影响时，请明确指定版本号。
 Linux 也可执行：
 
 ```sh
-dsh plugin --profile web add cannbot-dsh@1.0.0-alpha.1
+dsh plugin --profile web add cannbot-dsh@1.0.0-alpha.5
 dsh web
 ```
 
@@ -18,7 +18,7 @@ DeepSeek 模式使用原生侧栏列表、工作区下拉、主页、主会话�
 
 服务器连接图标在悬停或键盘聚焦时显示，已连接后点击即可断开本机 SSH 隧道，远端 DSH 和任务保留。首次工作区读取显示加载状态并自动重试暂时失败的读取，持续失败后才显示错误；连接及读取重试不会重复提交工作区修改。
 
-Windows 桌面端可通过 SSH 在 DSH 内打开远端工作区与会话，默认可同步受支持的本机 DeepSeek 平台登录，保留已有远端登录。Windows 一键安装请下载并双击 [CANNBot-Setup.cmd](../../CANNBot-Setup.cmd)，见 [主说明](../../README.md)；本短包入口使用其精确依赖的已发布主包，不会读取本地未发布改动。
+Windows 桌面端可通过 SSH 在 DSH 内打开远端工作区与会话，默认可同步受支持的本机 DeepSeek 平台登录，保留已有远端登录。Windows 一键安装请下载并双击 [CANNBot-Setup.exe](../../CANNBot-Setup.exe)，见 [主说明](../../README.md)；本短包入口使用其精确依赖的已发布主包，不会读取本地未发布改动。
 
 当前源码的本机及远端侧栏按原生位置显示工作区 **⋯、新会话** 和会话 **⋯、归档、置顶** 操作，支持重命名、删除工作区、分叉会话及复制 Session ID。删除工作区保留文件和历史会话，原会话显示在“未分组”；顶部 **视图选项** 可筛选已归档会话并恢复。服务器菜单支持编辑备注，清空备注恢复 SSH 别名。
 

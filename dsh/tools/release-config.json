@@ -1,0 +1,16 @@
+{
+  "packageRegistry": "https://registry.npmjs.org/",
+  "assetBaseUrl": "https://api.gitcode.com/api/v5/repos/cann/cannbot/raw/dsh/release/?ref=master",
+  "documentBaseUrl": "https://api.gitcode.com/api/v5/repos/cann/cannbot/raw/dsh/legal/?ref=master",
+  "documentPageBaseUrl": "https://gitcode.com/cann/cannbot/blob/master/dsh/legal/",
+  "hosts": {
+    "win32-x64": {
+      "version": "0.2.2-rc.2",
+      "url": "https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe"
+    },
+    "linux-x64": { "version": "0.2.2-rc.2" },
+    "linux-arm64": { "version": "0.2.2-rc.2" },
+    "darwin-x64": { "version": "0.2.2-rc.2" },
+    "darwin-arm64": { "version": "0.2.2-rc.2" }
+  }
+}

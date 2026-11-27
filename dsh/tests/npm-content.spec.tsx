@@ -13,8 +13,8 @@ import { expect, it } from 'vitest'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { ContentManager, withContentLock } from '../src/content-manager.ts'
-import { CATALOG_PACKAGE, WORKFLOW_SCOPE, REGISTRY, MIRROR, type NpmFetcher, type PackageManifest } from '../src/npm-workflows.ts'
+import { ContentManager, withContentLock } from '../plugin/backend/content-manager.ts'
+import { CATALOG_PACKAGE, WORKFLOW_SCOPE, REGISTRY, MIRROR, type NpmFetcher, type PackageManifest } from '../plugin/backend/npm-workflows.ts'
 function fixture() {
   mkdirSync('.acceptance-workflow-tests', { recursive: true })
   const root = mkdtempSync(resolve('.acceptance-workflow-tests/npm-')), workspace = join(root, 'workspace')

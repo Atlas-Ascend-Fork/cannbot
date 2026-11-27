@@ -9,7 +9,7 @@
 // ----------------------------------------------------------------------------------------------------------
 
 import { afterEach, expect, it, vi } from 'vitest'
-import { createContentStore } from '../src/client/content-store.ts'
+import { createContentStore } from '../plugin/frontend/content-store.ts'
 
 afterEach(() => vi.unstubAllGlobals())
 it('does not publish an older polling response after an operation refresh', async () => {

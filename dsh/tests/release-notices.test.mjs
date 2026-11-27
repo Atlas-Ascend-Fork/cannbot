@@ -14,12 +14,18 @@ import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-import { createArtifact } from '../src/remote/artifact.js'
-import { resolveSource } from '../scripts/source.mjs'
+import { buildEditionArchives } from '../tools/package-editions.mjs'
+import { resolveSource } from '../tools/source.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const read = file => readFileSync(file, 'utf8').replaceAll('\r\n', '\n').trimEnd()
 const require = createRequire(import.meta.url)
+
+test('the installer open-source notice includes the repository license and bundled third-party notices', () => {
+  const notice = read(join(root, 'legal/open-source-notices.txt'))
+  assert.ok(notice.includes(read(join(root, 'LICENSE'))))
+  assert.ok(notice.includes(read(join(root, 'THIRD_PARTY_NOTICES.md'))))
+})
 
 test('notices preserve complete licenses for code actually included in the release', () => {
   const notices = read(join(root, 'THIRD_PARTY_NOTICES.md'))
@@ -40,8 +46,8 @@ test('notices preserve complete licenses for code actually included in the relea
   assert.equal(createHash('sha256').update(oxc).digest('hex'), '5b0650b078309ba2772569bb419e40e6883874af64d21bd9c27b44cc1a8e46ff')
 })
 
-test('built module inventory contains no unaudited inline third-party source', () => {
-  const host = readdirSync(join(root, 'lib')).filter(name => name.endsWith('.js') && !name.startsWith('client')).map(name => read(join(root, 'lib', name))).join('\n')
+for (const output of ['lib', 'lib/server']) test(output + ': built module inventory contains no unaudited inline third-party source', () => {
+  const host = readdirSync(join(root, output)).filter(name => name.endsWith('.js') && !name.startsWith('client')).map(name => read(join(root, output, name))).join('\n')
   const markers = [...host.matchAll(/^\/\/ (.+\.(?:js|mjs|ts|tsx))$/gm)].map(match => match[1])
   assert.ok(markers.some(value => value.includes('node_modules/yaml/')))
   assert.ok(markers.includes('\\0rolldown/runtime.js'))
@@ -49,19 +55,19 @@ test('built module inventory contains no unaudited inline third-party source', (
   const oxcRuntime = '\\0@oxc-project+runtime@0.156.0/helpers/esm/usingCtx.js'
   assert.ok(markers.includes(oxcRuntime))
   for (const marker of markers) {
-    assert.ok(marker.startsWith('src/') || marker === 'packages/install/lib/file-lock.mjs' || marker === '\\0rolldown/runtime.js' || marker === oxcRuntime || /node_modules\/yaml\/dist\//.test(marker), `Audit bundled module: ${marker}`)
+    assert.ok(marker.startsWith('plugin/') || marker === 'installers/common/release.mjs' || marker === 'packages/install/lib/file-lock.mjs' || marker === '\\0rolldown/runtime.js' || marker === oxcRuntime || /node_modules\/yaml\/dist\//.test(marker), `Audit bundled module: ${marker}`)
   }
-  const client = read(join(root, 'lib/client.js'))
-  const map = JSON.parse(read(join(root, 'lib/client.js.map')))
+  const client = read(join(root, output, 'client.js'))
+  const map = JSON.parse(read(join(root, output, 'client.js.map')))
   assert.ok(map.sources.length > 0)
-  for (const source of map.sources) assert.ok(source.startsWith('../src/') && !source.includes('node_modules') || /node_modules\/@xterm\/xterm\//.test(source), `Audit client input: ${source}`)
+  for (const source of map.sources) assert.ok(/^(?:\.\.\/)+plugin\//.test(source) && !source.includes('node_modules') || /node_modules\/@xterm\/xterm\//.test(source), `Audit client input: ${source}`)
   assert.ok(client.includes('window.__ModuleLoader__.load('), 'audited generated host wrapper')
   assert.ok(client.includes('require("react")'), 'React stays host-provided')
   assert.ok(client.includes('require("@deepseek-ai/dsh-client-ui-primitives")'), 'native UI stays host-provided')
 })
 
-test('main release archive distributes the unchanged root license and full notices', () => {
-  const archive = gunzipSync(createArtifact(root).bytes), entries = new Map()
+function unpack(bytes) {
+  const archive = gunzipSync(bytes), entries = new Map()
   for (let offset = 0; offset + 512 <= archive.length && archive[offset];) {
     const header = archive.subarray(offset, offset + 512)
     const field = (start, size) => header.subarray(start, start + size).toString().replace(/\0.*$/s, '')
@@ -70,7 +76,27 @@ test('main release archive distributes the unchanged root license and full notic
     entries.set(name, archive.subarray(offset + 512, offset + 512 + size))
     offset += 512 + Math.ceil(size / 512) * 512
   }
-  assert.deepEqual(entries.get('package/LICENSE'), readFileSync(join(root, '../LICENSE')))
-  assert.deepEqual(entries.get('package/THIRD_PARTY_NOTICES.md'), readFileSync(join(root, 'THIRD_PARTY_NOTICES.md')))
-  assert.ok(![...entries.keys()].some(name => name.includes('node_modules/') || name.endsWith('.exe')))
+  return entries
+}
+
+test('both editions carry license and notices, and the client embeds the exact matching Linux server', async () => {
+  const { client, server, buildId } = await buildEditionArchives(root)
+  for (const pkg of [client, server]) {
+    const entries = unpack(pkg.bytes)
+    const manifest = JSON.parse(entries.get('package/package.json'))
+    assert.equal(manifest.cannbotBuildId, buildId)
+    assert.equal(manifest.cannbotEdition, pkg === client ? 'client' : 'server')
+    assert.deepEqual(entries.get('package/LICENSE'), readFileSync(join(root, 'LICENSE')))
+    assert.deepEqual(entries.get('package/THIRD_PARTY_NOTICES.md'), readFileSync(join(root, 'THIRD_PARTY_NOTICES.md')))
+    assert.ok(![...entries.keys()].some(name => name.includes('node_modules/') || name.endsWith('.exe')))
+    if (pkg === client) {
+      assert.deepEqual(entries.get('package/remote/server.tgz'), server.bytes)
+      assert.deepEqual(JSON.parse(entries.get('package/remote/server.json')), { name: server.name, version: server.version, buildId })
+    } else {
+      assert.deepEqual(manifest.os, ['linux'])
+      assert(![...entries.keys()].some(name => name.startsWith('package/remote/')))
+      assert(!entries.get('package/lib/index.js').includes('bootstrap-remote.sh'))
+      assert(!entries.get('package/lib/client.js').includes('dshDesktop.browser.open'))
+    }
+  }
 })

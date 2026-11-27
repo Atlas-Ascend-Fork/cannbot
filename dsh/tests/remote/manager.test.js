@@ -10,8 +10,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { createManager as createProductionManager } from '../../src/remote/manager.js'
-import { createRouter, ROUTE } from '../../src/remote/routes.js'
+import { createManager as createProductionManager } from '../../plugin/backend/ssh/manager.js'
+import { createRouter, ROUTE } from '../../plugin/backend/ssh/routes.js'
 
 // Network-free adapter: deployment behavior has its own transfer/lifecycle tests.
 function createManager(deps) { return createProductionManager({ deployPackage: async () => ({}), ...deps }) }
@@ -143,7 +143,7 @@ test('current source deployment precedes credential sync and exposes connection 
   const paths = setup('current-source-deployment'), order = []
   const { exec } = fakeExecFactory({ probe: PROBE_OK, bootstrap: BOOTSTRAP_OK })
   const manager = createManager({ ...paths, exec, config: { syncLogin: false }, tunnel: fakeTunnel({ onEnsure() { order.push('tunnel') } }),
-    deployPackage: async params => { order.push('deploy'); assert.equal(params.server.id, 'npu-01'); return { token: 'deployed-token', remotePort: 17640, sourceHash: 'a'.repeat(64), pluginVersion: '1.0.0-alpha.1' } },
+    deployPackage: async params => { order.push('deploy'); assert.equal(params.server.id, 'npu-01'); return { token: 'deployed-token', remotePort: 17640, buildId: 'a'.repeat(64), pluginVersion: '1.0.0-alpha.1' } },
   })
   assert.equal(manager.getConnection('npu-01'), null)
   const result = await manager.connect('npu-01')
@@ -151,7 +151,7 @@ test('current source deployment precedes credential sync and exposes connection 
   assert.deepEqual(order, ['deploy', 'tunnel'])
   assert.equal(result.remotePort, 17640)
   assert.equal(manager.getConnection('npu-01').token, 'deployed-token')
-  assert.equal(JSON.parse(readFileSync(paths.stateFile, 'utf8')).connections['npu-01'].sourceHash, 'a'.repeat(64))
+  assert.equal(JSON.parse(readFileSync(paths.stateFile, 'utf8')).connections['npu-01'].buildId, 'a'.repeat(64))
   manager.disconnect('npu-01')
   assert.equal(manager.getConnection('npu-01'), null)
 })

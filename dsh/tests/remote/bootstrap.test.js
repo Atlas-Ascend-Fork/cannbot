@@ -20,8 +20,8 @@ import {
   sshArgs,
   stateProbeCommand,
   failureHint,
-} from '../../src/remote/bootstrap.js'
-import { installArgs, installCommandLine, loadCatalog, normalizeCatalog, registryArgs } from '../../src/remote/catalog.js'
+} from '../../plugin/backend/ssh/bootstrap.js'
+import { installArgs, installCommandLine, loadCatalog, normalizeCatalog, registryArgs } from '../../plugin/backend/ssh/catalog.js'
 
 const SHARED_SERVER = {
   alias: 'npu-01',
@@ -197,6 +197,6 @@ test('catalog install args forward to dsh plugin', () => {
 test('loadCatalog falls back to the built-in catalog', () => {
   const catalog = loadCatalog('')
   assert.equal(catalog.entries.length, 1)
-  assert.equal(catalog.entries[0].package, '@cannbot-plugin/cannbot-dsh')
+  assert.equal(catalog.entries[0].package, '@cannbot-plugin/cannbot-dsh-server')
   assert.equal(catalog.entries[0].required, true)
 })

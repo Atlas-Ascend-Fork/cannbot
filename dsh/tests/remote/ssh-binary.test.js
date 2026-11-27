@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseVsCodeSshPath, resolveSshBinary, vsCodeSettingsPath } from '../../src/remote/ssh-binary.js'
+import { parseVsCodeSshPath, resolveSshBinary, vsCodeSettingsPath } from '../../plugin/backend/ssh/ssh-binary.js'
 
 const SCRATCH = join(process.cwd(), '_scratch', 'ssh-binary')
 

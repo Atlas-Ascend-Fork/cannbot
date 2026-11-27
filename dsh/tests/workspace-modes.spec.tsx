@@ -8,8 +8,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { createWorkspaceModes, CANNBOT_HOME } from '../src/client/workspace-modes.ts'
-import { cannTheme } from '../src/client/theme.ts'
+import { createWorkspaceModes, CANNBOT_HOME } from '../plugin/frontend/workspace-modes.ts'
+import { cannTheme } from '../plugin/frontend/theme.ts'
 
 function observable<T>(value: T) {
   const listeners = new Set<() => void>()
@@ -42,6 +42,17 @@ function fixture() {
 }
 beforeEach(() => { localStorage.clear(); history.replaceState(null, '', '/') })
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it('holds the server profile in CANNBot and preserves the desktop mode preference', () => {
+  const clientKey = 'cannbot.ui.modes.v1'
+  localStorage.setItem(clientKey, JSON.stringify({ mode: 'deepseek' }))
+  const { ctx } = fixture()
+  const server = createWorkspaceModes(ctx, 'server')
+  server.setMode('deepseek')
+  expect(server.getSnapshot().mode).toBe('cannbot')
+  expect(JSON.parse(localStorage.getItem(clientKey)!)).toEqual({ mode: 'deepseek' })
+  server.dispose()
+})
 
 describe('mode membership and navigation', () => {
   it('opens an explicitly created workspace immediately and invalidates native startup restore', async () => {

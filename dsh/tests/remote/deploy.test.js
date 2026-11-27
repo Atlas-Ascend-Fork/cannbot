@@ -13,9 +13,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { spawnSync } from 'node:child_process'
-import { createArtifact } from '../../src/remote/artifact.js'
-import { deployCurrentPackage } from '../../src/remote/deploy.js'
-import { processIdentity, stopOwned, existingWeb, installCurrentPackage } from '../../remote/deploy-package.mjs'
+import { createPackageArtifact } from '../../tools/package-archive.mjs'
+import { deployCurrentPackage, pairedServer } from '../../plugin/backend/ssh/deploy.js'
+import { processIdentity, availablePort, existingWeb, readyServer, preinstalledArchive, installCurrentPackage } from '../../remote/deploy-package.mjs'
 
 function source(t) {
   const root = mkdtempSync(join(tmpdir(), 'cannbot-artifact-'))
@@ -27,8 +27,8 @@ function source(t) {
 }
 
 test('release archive is deterministic, excludes non-release state, and changes with same-version source', t => {
-  const root = source(t), first = createArtifact(root)
-  assert.deepEqual(createArtifact(root).bytes, first.bytes)
+  const root = source(t), first = createPackageArtifact(root)
+  assert.deepEqual(createPackageArtifact(root).bytes, first.bytes)
   const archive = join(root, 'verify.tgz')
   writeFileSync(archive, first.bytes)
   const listed = spawnSync(process.platform === 'win32' ? 'tar.exe' : 'tar', ['-tzf', archive], { encoding: 'utf8' })
@@ -37,37 +37,73 @@ test('release archive is deterministic, excludes non-release state, and changes 
   assert.ok(gunzipSync(first.bytes).includes(Buffer.from('package/lib/client.js')))
   assert.ok(!gunzipSync(first.bytes).includes(Buffer.from('fixture-secret-excluded')))
   writeFileSync(join(root, 'lib/client.js'), 'new source, same version')
-  const second = createArtifact(root)
+  const second = createPackageArtifact(root)
   assert.equal(second.version, first.version)
   assert.notEqual(second.hash, first.hash)
 })
 
-test('unbuilt source and unsafe package whitelists cannot be deployed', t => {
+test('unsafe package whitelists are rejected', t => {
   const root = source(t)
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@cannbot-plugin/cannbot-dsh', files: ['../private'] }))
-  assert.throws(() => createArtifact(root), /whitelist/)
-  rmSync(join(root, 'lib/client.js'))
-  assert.throws(() => createArtifact(root), /尚未构建/)
+  assert.throws(() => createPackageArtifact(root), /whitelist/)
 })
 
-test('deployment transfers the exact archive only over SSH stdin and requires a ready authenticated result', async () => {
-  const artifact = { hash: 'a'.repeat(64), bytes: Buffer.from('source-payload-only-in-stdin'), version: '1.0.0-alpha.1' }
-  const calls = [], progress = []
-  const params = { artifact, server: { alias: 'fixture', inSshConfig: true }, binary: 'ssh', profile: 'web', remotePort: 17633, progress: message => progress.push(message) }
-  const result = await deployCurrentPackage({ ...params, exec: async (command, args, options) => {
-    calls.push({ command, args, options })
-    options.onLine('CANNBOT_STEP=Preparing source build')
-    options.onLine('CANNBOT_TOKEN=private-fixture-token')
-    return { code: 0, stdout: 'CANNBOT_OK=1\nCANNBOT_REMOTE_PORT=17633\nCANNBOT_TOKEN=private-fixture-token\n', stderr: '' }
-  } })
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].options.input, artifact.bytes)
-  assert.ok(!calls[0].args.join(' ').includes(artifact.bytes.toString()))
-  assert.deepEqual(progress, ['Preparing source build'])
-  assert.equal(result.token, 'private-fixture-token')
-  assert.equal(result.sourceHash, artifact.hash)
-  await assert.rejects(deployCurrentPackage({ ...params, exec: async () => ({ code: 0, stdout: 'CANNBOT_OK=1\n', stderr: '' }) }), /同步失败/)
-  await assert.rejects(deployCurrentPackage({ ...params, exec: async () => ({ code: 1, stdout: 'CANNBOT_ERROR=Stop the original server\n', stderr: '' }) }), /Stop the original server/)
+test('pairing uses the matching server edition, buildId and version', t => {
+  const root = source(t), pkgPath = join(root, 'package.json')
+  const client = { ...JSON.parse(readFileSync(pkgPath)), cannbotEdition: 'client', cannbotBuildId: 'build-1' }
+  writeFileSync(pkgPath, JSON.stringify(client))
+  const bytes = Buffer.from('server only')
+  const file = join(root, 'remote/server.json'), metadata = { name: '@cannbot-plugin/cannbot-dsh-server', version: client.version, buildId: 'build-1' }
+  writeFileSync(file, JSON.stringify(metadata)); writeFileSync(join(root, 'remote/server.tgz'), bytes)
+  assert.deepEqual(pairedServer(root), { bytes, version: client.version, buildId: 'build-1' })
+  for (const override of [{ buildId: 'build-2' }, { name: client.name }, { version: '2.0.0' }]) {
+    writeFileSync(file, JSON.stringify({ ...metadata, ...override })); assert.throws(() => pairedServer(root))
+  }
+})
+
+test('deployment uploads only on cache miss and accepts only a matching authenticated server', async () => {
+  const artifact = { bytes: Buffer.from('only-in-stdin'), version: '1.0.0', buildId: 'build-1' }
+  const params = { artifact, server: { alias: 'fixture', inSshConfig: true }, binary: 'ssh', remotePort: 17633 }
+  const ready = 'CANNBOT_OK=1\nCANNBOT_REMOTE_PORT=17633\nCANNBOT_TOKEN=fixture\nCANNBOT_PLUGIN_VERSION=1.0.0\nCANNBOT_BUILD_ID=build-1\n'
+  for (const cached of [true, false]) {
+    const calls = []
+    const result = await deployCurrentPackage({ ...params, exec: async (command, args, options) => {
+      assert.ok(!args.join(' ').includes(artifact.bytes.toString()))
+      calls.push(options.input)
+      return { code: 0, stdout: cached || calls.length > 1 ? ready : 'CANNBOT_NEED_ARCHIVE=1\n' }
+    } })
+    assert.deepEqual(calls, cached ? [Buffer.alloc(0)] : [Buffer.alloc(0), artifact.bytes])
+    assert.equal(result.profile, 'cannbot-server-' + artifact.buildId)
+    assert.equal(result.buildId, artifact.buildId)
+  }
+  for (const output of [ready.replace('build-1', 'other'), ready.replace('1.0.0', '0.2.0'), ready.replace('TOKEN=fixture', 'TOKEN=')]) {
+    await assert.rejects(deployCurrentPackage({ ...params, exec: async () => ({ code: 0, stdout: output }) }), /同步失败/)
+  }
+})
+
+test('manual Linux installation reuses only its matching preinstalled build', t => {
+  const root = source(t), home = join(root, '.dsh')
+  const profile = join(home, 'profiles', 'cannbot-server'), releases = join(root, '.local/share/cannbot/releases/b1')
+  mkdirSync(profile, { recursive: true }); mkdirSync(releases, { recursive: true })
+  const bytes = Buffer.from('preinstalled')
+  const receipt = { schemaVersion: 1, edition: 'server', version: '1.0.0', buildId: 'b1' }
+  writeFileSync(join(releases, 'server.tgz'), bytes)
+  const check = () => preinstalledArchive(home, root, '1.0.0', 'b1')
+  for (const patch of [{ edition: 'client' }, { buildId: 'b2' }, { version: '1.0.1' }]) {
+    writeFileSync(join(profile, '.cannbot-install.json'), JSON.stringify({ ...receipt, ...patch })); assert.equal(check(), null)
+  }
+  writeFileSync(join(profile, '.cannbot-install.json'), JSON.stringify(receipt)); assert.deepEqual(check(), bytes)
+})
+
+test('a listening DSH Web counts as ready only when the paired server plugin answers', async () => {
+  for (const [edition, version, buildId, ready] of [['server', '1.0.0', 'b1', true], ['client', '1.0.0', 'b1', false], ['server', '1.0.1', 'b1', false], ['server', '1.0.0', 'b2', false]]) {
+    const fetcher = async (url, options) => {
+      if (url.endsWith('/?token=login')) return new Response(null, { status: 303, headers: { 'set-cookie': 'auth=fixture; HttpOnly' } })
+      assert.equal(url, 'http://127.0.0.1:17634/api/cannbot-dsh/server'); assert.equal(options.headers.cookie, 'auth=fixture')
+      return Response.json({ edition, version, buildId })
+    }
+    assert.equal(await readyServer(17634, 'login', '1.0.0', 'b1', fetcher), ready)
+  }
 })
 
 test('remote installation avoids mirror tarball rewriting and honors custom registries', () => {
@@ -120,25 +156,14 @@ test('legacy service adoption requires the exact user, DSH command, profile, loo
     { args: ['/opt/other/dsh.mjs', 'web', '--host', '127.0.0.1', '--port', '17633'] },
     { args: [expected.executable, 'web', '--host', '0.0.0.0', '--port', '17633'] },
     { args: [expected.executable, 'web', '--host', '127.0.0.1', '--port', '17634'] },
-    { args: [expected.executable, 'web', '--host', '127.0.0.1', '--port', '17633', '--profile', 'another'] },
+    { args: [expected.executable, '--profile', 'another', '--host', '127.0.0.1', '--port', '17633'] },
   ]) assert.equal(processIdentity(42, expected, identitySystem(changes)), null)
 })
 
-test('service shutdown only terminates a validated main PID and refuses ambiguous or changed ownership', async () => {
-  const owner = { ...expected, pid: 42, start: '777' }, killed = []
-  const operations = { readOwner: () => owner, identify: () => owner, candidates: () => [], kill: (pid, signal) => killed.push([pid, signal]), busy: async () => false, wait: async () => {} }
-  await stopOwned('unused', expected, operations)
-  assert.deepEqual(killed, [[42, 'SIGTERM']])
-  await assert.rejects(stopOwned('unused', expected, { ...operations, readOwner: () => null, candidates: () => [owner, { ...owner, pid: 43 }] }), /safely identify/)
-  let reads = 0
-  await assert.rejects(stopOwned('unused', expected, { ...operations, identify: () => ++reads === 1 ? owner : { ...owner, start: '999' } }), /changed before shutdown/)
-  assert.equal(killed.length, 1)
-})
-
-test('an uncooperative verified service is never escalated to a force kill', async () => {
-  const owner = { ...expected, pid: 42, start: '777' }, signals = []
-  await assert.rejects(stopOwned('unused', expected, { readOwner: () => owner, identify: () => owner, kill: (_pid, signal) => signals.push(signal), busy: async () => true, wait: async () => {} }), /did not exit/)
-  assert.deepEqual(signals, ['SIGTERM'])
+test('new builds select a free port without stopping other profiles or users', async () => {
+  assert.equal(await availablePort(18888, async () => false), 18888)
+  assert.equal(await availablePort(17633, async p => p < 17635), 17635)
+  await assert.rejects(availablePort(17633, async () => true), /No loopback port/)
 })
 
 test('discovery follows an existing owned port and refuses a second instance in the same data directory', () => {
@@ -149,6 +174,7 @@ test('discovery follows an existing owned port and refuses a second instance in 
     read: path => path.endsWith('/environ') ? '' : [expected.executable, 'web', '--host', '127.0.0.1', '--port', '17650'].join('\0'),
     identify: (pid, value) => ({ ...value, pid, start: '777' }),
   }
+  assert.equal(existingWeb(home, expected.executable, 'cannbot-server-other', operations), null)
   assert.equal(existingWeb(home, expected.executable, 'web', operations).port, 17650)
   assert.throws(() => existingWeb(home, expected.executable, 'web', { ...operations, identify: () => null }), /ownership cannot be verified/)
   assert.throws(() => existingWeb(home, expected.executable, 'web', { ...operations, list: () => ['42', '43'] }), /Multiple DSH/)

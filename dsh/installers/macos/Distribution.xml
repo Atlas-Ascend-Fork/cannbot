@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright (c) 2026 Huawei Technologies Co., Ltd.
+    This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+    CANN Open Software License Agreement Version 2.0 (the "License").
+    Please refer to the License for details. You may not use this file except in compliance with the License.
+    THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+    INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+    See LICENSE in the root of the software repository for the full text of the License.
+-->
+
+<installer-gui-script minSpecVersion="2">
+  <title>CANNBot开发工作台</title>
+  <options customize="never" require-scripts="false"/>
+  <domains enable_localSystem="false" enable_anywhere="false" enable_currentUserHome="true"/>
+  <welcome file="welcome.html" mime-type="text/html"/>
+  <choices-outline><line choice="client"/></choices-outline>
+  <choice id="client" visible="false"><pkg-ref id="org.cannbot.workbench.client"/></choice>
+  <pkg-ref id="org.cannbot.workbench.client" version="1.0.0">client.pkg</pkg-ref>
+</installer-gui-script>

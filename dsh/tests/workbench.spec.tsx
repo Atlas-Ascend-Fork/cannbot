@@ -12,14 +12,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ContentStore } from '../src/client/content-store.ts'
-import type { WorkflowSelection } from '../src/client/workflow-selection.ts'
-import { Workbench, HOME_PANEL } from '../src/client/Workbench.tsx'
-import { createWorkbenchState } from '../src/client/workbench-state.ts'
-import { launchWorkbench } from '../src/client/workbench-launch.ts'
-import { WORKFLOWS } from '../src/workflows.ts'
-import { inheritedWorkspaceId } from '../src/client/workbench-workspace.ts'
-import type { WorkspaceModes } from '../src/client/workspace-modes.ts'
+import type { ContentStore } from '../plugin/frontend/content-store.ts'
+import type { WorkflowSelection } from '../plugin/frontend/workflow-selection.ts'
+import { Workbench, HOME_PANEL } from '../plugin/frontend/Workbench.tsx'
+import { createWorkbenchState } from '../plugin/frontend/workbench-state.ts'
+import { launchWorkbench } from '../plugin/frontend/workbench-launch.ts'
+import { WORKFLOWS } from '../plugin/contracts/workflows.ts'
+import { inheritedWorkspaceId } from '../plugin/frontend/workbench-workspace.ts'
+import type { WorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   IconChevronDownOutlineRegular: () => null,

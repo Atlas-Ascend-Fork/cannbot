@@ -1,39 +1,42 @@
-# 发布配置
+# 发行 CANNBot 开发工作台
 
-修改 `dsh/release-policy.json`：
+## 下载入口
 
-| 配置 | 内容 |
+在 GitCode 发行版上传 Windows、Linux 和 macOS 安装包，社区主页「整包安装」链接到对应附件。三个安装包共用 `master` 分支的 [发布清单](https://api.gitcode.com/api/v5/repos/cann/cannbot/raw/dsh/release/manifest.json?ref=master)。Windows 缺少 DeepSeek Harness 时从官方地址下载安装。
+
+## 协议与声明
+
+在 `master` 中替换以下 UTF-8 文本，安装器下次打开时会读取新正文。社区下载页也应提供这三个文件及软件来源说明。
+
+| 安装器显示 | 替换文件 |
 | --- | --- |
-| `userAgreementUrl` | 法务审定的 CANNBot 用户协议 HTTPS 地址 |
-| `privacyPolicyUrl` | 法务审定的 CANNBot 隐私政策 HTTPS 地址 |
-| `hostSourceUrl` / `hostLicenseUrl` | 宿主官方源码与 MIT 许可证地址 |
-| `hostTermsUrl` / `hostPrivacyUrl` | 宿主官方用户协议与隐私政策地址 |
-| `channel` | `development`（测试）或 `public`（公开发布） |
+| 用户协议 | [user-agreement.txt](legal/user-agreement.txt) |
+| 隐私政策 | [privacy-policy.txt](legal/privacy-policy.txt) |
+| 开源软件声明 | [open-source-notices.txt](legal/open-source-notices.txt) |
 
-在 `dsh/` 目录构建：
+首次公开下载前填入正式协议和隐私政策。开源软件声明中保留 CANN-2.0 和随包第三方软件的完整许可文本。
 
-```sh
-node scripts/package-windows.mjs          # 开发测试包
-node scripts/package-windows.mjs --public # 公开发布包；正式协议链接不可为空
-node --test tests/windows-setup.test.mjs tests/release-notices.test.mjs tests/release-policy.test.mjs
-```
+## 构建安装器
 
-产物为单文件 `CANNBot-Setup.cmd`。告知页默认不勾选确认项；宿主从官方地址下载，官方安装向导交由用户操作。当前正式协议尚未配置，仅供开发测试。
-
-下载页须在下载前提供 CANNBot 用户协议、隐私政策、第三方软件声明和来源说明。隐私政策应说明模型服务的接收方、SSH 密码的临时处理、可选账号同步后在远端保存的凭据、撤销方式，以及实际的数据采集行为。以法务审定版本为准。
-
-固定开发规则：CANNBot 界面与图标使用 CANNBot 品牌，返回入口保持通用箭头和“返回原生工作台”；原生工作台不改写、不删除，新增扩展退出后还原；宿主名称只用于必要的纯文字来源、兼容要求与许可告知，不暗示官方合作。
-
-根目录 `LICENSE` 保持 CANN-2.0，打包时完整复制。每次变更打包依赖，核对产物中的第三方代码并更新 `THIRD_PARTY_NOTICES.md`；发布前运行解包和许可检查。
-
-## Linux 启动前问卷
-
-新版安装器与主插件发布后，可执行：
+从本目录运行。Windows EXE 在 Windows 构建，macOS PKG 在 macOS 构建。安装器输出到 `dist/`。
 
 ```sh
-npx @cannbot-plugin/cannbot-dsh-install@latest --workspace /path/to/new-workspace --workflow ops-direct-invoke-flash
+npm run package:windows
+npm run package:linux
+npm run package:macos
 ```
 
-`--workspace` 与 `--workflow` 必须同时提供，目录须为空；在当前终端回答初始化问卷，成功后才启动工作台，取消或失败会停止启动。开发时可使用 `node packages/install/bin/install.mjs --help` 查看入口参数；安装器仍安装 npm 已发布主插件，不会自动使用本地未发布源码。
+三个交付文件分别是 `CANNBot-Setup.exe`、`CANNBot-Setup.sh` 和 `CANNBot-Setup.pkg`。
 
-已打开的工作台在创建或切换工作流时显示内嵌交互终端。切换前停止该工作区运行中的任务；成功后旧会话冻结，切回同一工作流也不解冻。用户代码与依赖仓库保留，旧工作流受管配置备份在工作流缓存的 `initialized/<工作区哈希>/retired/` 中。
+## 更新插件
+
+1. 同步更新 `package.json`、`packages/short/package.json`、`packages/short-server/package.json` 的版本，以及两个短包对插件本体的精确版本依赖。
+2. 运行 `npm run pack:plugin`、`node tools/package.mjs --short` 和 `node tools/package.mjs --short-server`。在 `dist/` 中取本次生成的四个归档。
+3. 用 `npm publish <归档路径> --access public --tag next` 先发布两个 `@cannbot-plugin/` 插件本体，再发布 `cannbot-dsh` 和 `cannbot-dsh-server` 短包。
+4. 确认四个固定版本均可下载后，运行 `npm run release:feed`。将生成的 `release/manifest.json` 通过 PR 合入 `master`，现有安装器就会从 npm 下载指定版本。安装验证完成后可单独切换 npm 的 `latest` 标签。
+
+客户端在用户点击更新后安装。下次连接 SSH 时，使用当前客户端自带的 Linux 服务器版。兼容的历史 npm 包入口仍可单独使用。
+
+## 品牌与许可证
+
+CANNBot 使用自有标识。客户端的返回入口使用通用左箭头和“返回原生工作台”。软件来源、版本要求和条款可使用 DSH 名称。保留仓库原有 CANN-2.0 许可证和完整第三方声明。

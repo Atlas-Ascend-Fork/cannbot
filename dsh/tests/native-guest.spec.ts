@@ -8,7 +8,7 @@
 
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createNativeGuest } from '../src/client/remote/native-guest.mjs'
+import { createNativeGuest } from '../plugin/frontend/remote/native-guest.mjs'
 
 const target = 'http://127.0.0.1:17633/?token=TEST_ONLY_TUNNEL_SECRET#cannEmbed=1&cannMode=cannbot&cannWorkspace=W1&cannSession=S1'
 const guests: ReturnType<typeof createNativeGuest>[] = []

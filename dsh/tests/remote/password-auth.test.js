@@ -1,11 +1,17 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// Licensed under CANN Open Software License Agreement Version 2.0. See LICENSE.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { createPasswordAuth } from '../../src/remote/password-auth.js'
-import { run } from '../../src/remote/exec.js'
+import { createPasswordAuth } from '../../plugin/backend/ssh/password-auth.js'
+import { run } from '../../plugin/backend/ssh/exec.js'
 
 test('native askpass reuses credentials per identity, retries and disposes without writing the password', { timeout: 30000 }, async () => {
   const events = [], secret = 'test-only-密碼 $ & " 123'

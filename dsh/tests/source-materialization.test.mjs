@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
@@ -34,7 +42,7 @@ test('assembly reads current files and changed symlinks without a stored asset s
     git('init', '--quiet')
     git('add', '.')
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'fixture')
-    const script = fileURLToPath(new URL('../scripts/materialize-workflows.mjs', import.meta.url))
+    const script = fileURLToPath(new URL('../tools/materialize-workflows.mjs', import.meta.url))
     execFileSync(process.execPath, [script, source, join(root, 'first')])
     const first = JSON.parse(readFileSync(join(root, 'first/catalog.json')))
     write('plugins-official/ops-direct-invoke/skills/ops-direct-invoke/SKILL.md', '---\nname: ops-direct-invoke\ndescription: source test\n---\nchanged without committing\n')
@@ -49,13 +57,13 @@ test('assembly reads current files and changed symlinks without a stored asset s
     assert.equal(readFileSync(join(root, 'second/ops-direct-invoke/reference/content.txt'), 'utf8'), 'new link target')
     assert.match(readFileSync(join(root, 'second/ops-direct-invoke/skills/ops-direct-invoke/SKILL.md'), 'utf8'), /changed without committing/)
     assert.equal(readFileSync(join(root, 'second/ops-direct-invoke/LICENSE'), 'utf8'), 'plugin license')
-    const builder = fileURLToPath(new URL('../scripts/build-workflow-packages.mjs', import.meta.url))
+    const builder = fileURLToPath(new URL('../tools/build-workflow-packages.mjs', import.meta.url))
     const output = join(root, 'reports')
     const defaults = join(root, 'defaults.json')
     writeFileSync(defaults, JSON.stringify({ workflows: ['ops-direct-invoke-flash', 'ops-direct-invoke', 'ops-registry-invoke'].map(id => ({ id, title: id, package: `@cannbot-plugin/workflow-${id}`, default: true })) }))
     execFileSync(process.execPath, [builder, '--source', source, '--build-root', join(root, 'packages'), '--output', output, '--defaults', defaults, '--no-pack', 'true'])
     const cache = join(root, 'cache')
-    execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/activate-source.ts', import.meta.url)), join(output, 'release-1.0.0-report.json'), defaults, cache])
+    execFileSync(process.execPath, [fileURLToPath(new URL('../tools/activate-source.ts', import.meta.url)), join(output, 'release-1.0.0-report.json'), defaults, cache])
     const active = JSON.parse(readFileSync(join(cache, 'active.json')))
     assert.match(active.records['ops-direct-invoke'].integrity, /^source:/)
     const installed = join(cache, active.records['ops-direct-invoke'].directory)
@@ -79,7 +87,7 @@ for (const id of ['ops-registry-invoke']) test(`${id} rejects dependency IDs esc
     const git = (...args) => execFileSync('git', args, { cwd: source, stdio: 'pipe' })
     git('init', '--quiet'); git('add', '.'); git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'fixture')
     writeFileSync(join(root, 'README.md'), 'must remain unchanged')
-    assert.throws(() => execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/materialize-workflows.mjs', import.meta.url)), source, join(root, 'stage')], { stdio: 'pipe' }), /Invalid Skill ID/)
+    assert.throws(() => execFileSync(process.execPath, [fileURLToPath(new URL('../tools/materialize-workflows.mjs', import.meta.url)), source, join(root, 'stage')], { stdio: 'pipe' }), /Invalid Skill ID/)
     assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), 'must remain unchanged')
   } finally { rmSync(root, { recursive: true, force: true }) }
 })

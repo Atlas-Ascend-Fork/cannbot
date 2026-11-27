@@ -9,10 +9,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { createRemoteClient } from '../src/client/remote/index.tsx'
+import { createRemoteClient } from '../plugin/frontend/remote/index.tsx'
 
 const native = vi.hoisted(() => ({ create: vi.fn(), dispose: vi.fn(), reload: vi.fn() }))
-vi.mock('../src/client/remote/native-guest.mjs', async original => ({
+vi.mock('../plugin/frontend/remote/native-guest.mjs', async original => ({
   ...await original<object>(),
   createNativeGuest: native.create,
 }))

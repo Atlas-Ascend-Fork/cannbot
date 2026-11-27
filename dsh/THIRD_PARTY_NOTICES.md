@@ -26,6 +26,7 @@ CANNBot's plugin and installer use the CANNBot logo from this repository.
 
 | Component | Included code | License |
 | --- | --- | --- |
+| NSIS 3.0.4.1 (electron-builder distribution) | Windows installer stub, Modern UI 2, nsDialogs, nsExec, System and zlib decompressor | zlib/libpng |
 | @xterm/xterm 6.0.0 | Embedded initialization terminal in lib/client.js | MIT |
 | yaml 2.9.1 | YAML parser/stringifier in lib/index.js | ISC |
 | Rolldown 1.2.19 | Generated runtime helpers in lib/index.js | MIT; inherited upstream notices retained below |
@@ -36,11 +37,12 @@ CANNBot's plugin and installer use the CANNBot logo from this repository.
 The client source map contains CANNBot sources, assets and xterm.js, not bundled React,
 React DOM or DSH UI implementations. Those frameworks, Cordis, Schemastery,
 pacote and workflow catalog/packages are separately installed dependencies and
-retain their own licenses. The Windows graphical installer uses Windows-provided
-.NET Framework / Windows Forms; those assemblies are not embedded in the CMD.
-The CMD embeds CANNBot's built package, installer sources, logo and notices. It
-obtains the DSH desktop installer separately; it contains no DSH executable or
-server runtime. Generated workflow packages retain their own resource notices
+retain their own licenses. The Windows EXE uses NSIS Modern UI 2, its standard
+nsDialogs, nsExec and System plug-ins, and the zlib compression module.
+The EXE includes CANNBot's installer scripts, logo and notices. At installation
+time it downloads the CANNBot client package from the release feed. It obtains
+the DSH desktop installer from its official source when needed. Generated
+workflow packages retain their own resource notices
 as described above. Audit after dependency or build-preset changes.
 
 ## yaml 2.9.1 — ISC
@@ -252,4 +254,25 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+## NSIS 3.0.4.1 — zlib/libpng
+
+Source: https://github.com/electron-userland/electron-builder-binaries/releases/tag/nsis-3.0.4.1
+
+Only the zlib compression module is used in the installer. The build tools
+are not distributed in the EXE.
+
+```text
+Copyright (C) 1999-2018 Contributors
+
+This software is provided 'as-is', without any express or implied warranty. In no event will the authors be held liable for any damages arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and redistribute it freely, subject to the following restrictions:
+
+      1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
+
+      2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
+
+      3. This notice may not be removed or altered from any source distribution.
 ```

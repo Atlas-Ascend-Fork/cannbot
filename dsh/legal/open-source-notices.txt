@@ -1,0 +1,330 @@
+开源软件声明
+
+CANNBot开发工作台使用开源 DeepSeek Harness，权利人为 DeepSeek，其源码采用 MIT 许可证。首次安装时，安装器从官方渠道获取 DeepSeek Harness。已安装兼容版本时，安装器在所选 profile 中添加 CANNBot。Windows 官方安装向导如有协议确认，由您自行阅读并确认。
+
+官方源码：https://github.com/deepseek-ai/deepseek-harness
+MIT 许可证：https://github.com/deepseek-ai/deepseek-harness/blob/main/LICENSE
+官方用户协议：https://www.deepseek.com/en/harness/terms-of-use/
+官方隐私政策：https://www.deepseek.com/en/harness/privacy/
+
+安装过程中会访问 GitCode、Node.js、npm 或 DeepSeek 的下载服务以获取所需软件。模型输入将发送至您本人登录或自行配置的模型服务商。向远程服务器同步账号凭据需要单独确认。
+
+CANNBot 软件许可证
+
+CANN Open Software License Agreement Version 2.0
+
+This CANN Open Software License Agreement Version 2.0 (hereinafter referred to as this "Agreement") is a legal agreement between you and Huawei, and it governs your use, modification, or distribution of CANN Open Software (hereinafter referred to as "Software"). Please read this Agreement carefully.
+
+If you are entering into this Agreement on behalf of a company or other legal entity, you represent that you have the legal authority to bind that entity to this Agreement, in which case "you" will mean the entity you represent.
+
+BY DOWNLOADING, INSTALLING, OR USING THE SOFTWARE, YOU AGREE YOU HAVE FULLY UNDERSTOOD AND ACCEPTED THE TERMS CONTAINED HEREIN. IF YOU DO NOT AGREE TO ANY OF THE TERMS OF THIS AGREEMENT, OR IF YOU DO NOT QUALIFY FOR AGREEING TO THIS AGREEMENT, YOU ARE NOT AUTHORIZED TO AND SHALL NOT DOWNLOAD, INSTALL, OR MAKE ANY USE OF THE SOFTWARE.
+
+1. Definition
+
+1.1   Software means the APIs, source code files, binaries, and related documents of Compute Architecture for Neural Networks("CANN") that are licensable by Huawei, and provided and licensed under this Agreement.
+
+1.2   Huawei AI Processors mean AI chipsets (i) branded with "Ascend", "Kirin"," Yueying" or other brands owned or controlled by Huawei; or (ii) manufactured (including have manufactured), supplied (including have supplied) or designed (including have designed) by Huawei.
+
+2.  Grant of Intellectual Property Rights
+2.1 Subject to the terms and conditions of this Agreement, including your full compliance thereof, Huawei hereby grants you a limited, worldwide, royalty-free, non-transferable, non-sublicensable, and revocable license for you to (i) download, use, modify, integrate, and distribute the Software or its derivative works for the purpose of developing software solely for use in systems with Huawei AI Processors and/or Software, and (ii) distribute any software developed based upon Software and/or its derivative works solely for use in systems with Huawei AI Processors and/or Software.
+
+3.  Restrictions
+3.1 You are not authorized to, and shall not use, modify, or distribute this Software or its derivative works for any other purposes than those expressly permitted by this Agreement. You shall not make any use of the Software or its derivative works to develop or distribute any software for use in systems with processors other than Huawei AI Processors. All rights not expressly granted herein are expressly reserved by Huawei.
+
+3.2 You are not authorized to, and shall not remove, obscure, or alter any copyright or other notices in this Software or any part of it.
+
+3.3 Distribution Restrictions
+You may distribute the Software or its derivative works in any medium, whether in source or executable forms, for the purpose stipulated in Section 2; provided that you provide recipients with a copy of this Agreement, and retain all notices in the Software.
+
+4. Disclaimer of Warranty and Limitation of Liability
+THE SOFTWARE IS PROVIDED WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED. IN NO EVENT SHALL HUAWEI OR ANY OTHER COPYRIGHT HOLDER BE LIABLE TO YOU FOR ANY DAMAGES, INCLUDING, BUT NOT LIMITED TO ANY DIRECT, OR INDIRECT, SPECIAL OR CONSEQUENTIAL DAMAGES ARISING FROM YOUR USE OR INABILITY TO USE THE SOFTWARE, IN WHOLE OR IN PART, NO MATTER HOW IT IS CAUSED OR THE LEGAL THEORY IT IS BASED ON, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+5. Termination
+5.1 This Agreement will continue to apply until terminated by either you or Huawei as described below:
+a．You may terminate this Agreement by ceasing your use of the Software;
+b.  Huawei may at any time, terminate this Agreement if: (i) you fail to comply with any term of this Agreement; or (ii) you directly or indirectly initiate any legal proceeding against any individual or entity by alleging that the Software or any part of it infringes your intellectual property rights.
+5.2 By termination, all the rights granted to you under this Agreement are terminated, and you shall cease to use and delete this Software or any derivative works immediately. All rights granted to you under this Agreement shall hereby be void ab initio in the event of termination in accordance with Section 5.1. b above. Huawei reserves the right to pursue any and all legal remedies available to enforce the terms and conditions of this Agreement or to protect Huawei’s intellectual property rights for such breach or violation. All provisions shall survive the termination of this Agreement except for Section 2 and Section 3.3.
+
+6. MISCELLANEOUS
+If the application of any provision of this Agreement to any particular facts or circumstances is held to be invalid or unenforceable by a court of competent jurisdiction, then (a) the validity and enforceability of such provision as applied to any other particular facts or circumstances and the validity of other provisions of this Agreement shall not in any way be affected or impaired thereby and (b) such provision shall be enforced to the maximum extent possible so as to affect the intent of the you and Huawei and reformed without further action by you and Huawei to the extent necessary to make such provision valid and enforceable.
+
+END OF THE TERMS AND CONDITIONS
+
+# Third-party notices
+
+CANNBot DSH contains the DSH adapter and installation code. Official workflow
+resources are copied from the selected CANNBot source and its declared shared
+Skills during source installation or workflow-package construction. This source
+tree does not retain copies of those resources.
+Each generated workflow package retains its CANN Open Software License Agreement
+Version 2.0 and shared Skill license in resources/LICENSE and SKILLS_LICENSE.
+Its workflow.json records the actual source revisions and content hashes.
+Local uncommitted changes are included; revision identifiers alone do not identify
+those changes. Published npm installations obtain resources from workflow packages.
+
+Source-declared symlinks are materialized for portable installation. The upstream
+bundler's model-invocation normalization is retained unless the plugin declares
+preserveSkillInvocationPolicy. DSH entry Skill adapters are added for official
+plugins whose primary instructions are AGENTS.md rather than a same-named Skill.
+The original instructions, agents, scripts, hooks and templates are retained.
+
+CANNBot's application code remains under the repository's CANN Open Software
+License Agreement Version 2.0. The repository-root LICENSE is copied unchanged
+into the main package and the single-file Windows installer. The component
+notices below supplement it; they do not replace the repository license.
+CANNBot's plugin and installer use the CANNBot logo from this repository.
+
+## Code included in the current release
+
+| Component | Included code | License |
+| --- | --- | --- |
+| NSIS 3.0.4.1 (electron-builder distribution) | Windows installer stub, Modern UI 2, nsDialogs, nsExec, System and zlib decompressor | zlib/libpng |
+| @xterm/xterm 6.0.0 | Embedded initialization terminal in lib/client.js | MIT |
+| yaml 2.9.1 | YAML parser/stringifier in lib/index.js | ISC |
+| Rolldown 1.2.19 | Generated runtime helpers in lib/index.js | MIT; inherited upstream notices retained below |
+| @oxc-project/runtime 0.156.0 | Generated usingCtx disposal helper in lib/index.js | MIT |
+| DSH client build preset | Generated module-loader wrapper and CSS injection glue in lib/client.js | MIT |
+| @cannbot-plugin/cannbot-dsh-install 1.0.0 | packages/install/lib/file-lock.mjs in lib/index.js | Existing component MIT license |
+
+The client source map contains CANNBot sources, assets and xterm.js, not bundled React,
+React DOM or DSH UI implementations. Those frameworks, Cordis, Schemastery,
+pacote and workflow catalog/packages are separately installed dependencies and
+retain their own licenses. The Windows EXE uses NSIS Modern UI 2, its standard
+nsDialogs, nsExec and System plug-ins, and the zlib compression module.
+The EXE includes CANNBot's installer scripts, logo and notices. At installation
+time it downloads the CANNBot client package from the release feed. It obtains
+the DSH desktop installer from its official source when needed. Generated
+workflow packages retain their own resource notices
+as described above. Audit after dependency or build-preset changes.
+
+## yaml 2.9.1 — ISC
+
+Source: https://github.com/eemeli/yaml/tree/v2.9.1
+License: https://raw.githubusercontent.com/eemeli/yaml/v2.9.1/LICENSE
+
+```text
+Copyright Eemeli Aro <eemeli@gmail.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+```
+
+## Rolldown 1.2.19 — MIT
+
+Source: https://github.com/rolldown/rolldown/tree/v1.2.19
+The generated runtime helpers are included, not the compiler itself. The
+compiler's accompanying inherited notices are reproduced without alteration.
+
+```text
+MIT License
+
+Copyright (c) 2024-present VoidZero Inc. & Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+end of terms and conditions
+
+The licenses of externally maintained libraries from which parts of the Software is derived are listed [here](https://github.com/rolldown/rolldown/blob/main/THIRD-PARTY-LICENSE).
+```
+
+### Rolldown upstream third-party notices
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2017 [these people](https://github.com/rollup/rollup/graphs/contributors)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+MIT License
+
+Copyright (c) 2020 Evan Wallace
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## DSH client build preset — MIT
+
+Only the emitted module registration and style-injection glue is covered here;
+the DSH application and UI modules remain host-provided. License text from the
+official build-source checkout used by this release:
+
+```text
+MIT License
+
+Copyright (c) 2026 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## CANNBot installer file-lock helper — MIT
+
+The pre-existing installer subpackage has its own license. Its file-lock helper
+is included in the main bundle; this notice preserves that component's terms.
+
+```text
+MIT License
+
+Copyright (c) 2026 CANNBot contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @oxc-project/runtime 0.156.0 — MIT
+
+Source: https://www.npmjs.com/package/@oxc-project/runtime/v/0.156.0
+Only the generated usingCtx helper is present in the host bundle. The complete
+license below is taken from the versioned npm package.
+
+```text
+MIT License
+
+Copyright (c) 2024-present VoidZero Inc. & Contributors
+Copyright (c) 2023 Boshen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @xterm/xterm 6.0.0 — MIT
+
+Source: https://github.com/xtermjs/xterm.js/tree/6.0.0
+
+```text
+Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com)
+Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj/)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+## NSIS 3.0.4.1 — zlib/libpng
+
+Source: https://github.com/electron-userland/electron-builder-binaries/releases/tag/nsis-3.0.4.1
+
+Only the zlib compression module is used in the installer. The build tools
+are not distributed in the EXE.
+
+```text
+Copyright (C) 1999-2018 Contributors
+
+This software is provided 'as-is', without any express or implied warranty. In no event will the authors be held liable for any damages arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and redistribute it freely, subject to the following restrictions:
+
+      1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.
+
+      2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
+
+      3. This notice may not be removed or altered from any source distribution.
+```

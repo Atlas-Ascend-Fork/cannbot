@@ -10,7 +10,7 @@
 // HTTP test bridge is deliberately not involved in this contract test.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createRouter, registerRoutes, ROUTE } from '../../src/remote/routes.js'
+import { createRouter, registerRoutes, ROUTE } from '../../plugin/backend/ssh/routes.js'
 
 function captureRoutes(manager) {
   const registered = []

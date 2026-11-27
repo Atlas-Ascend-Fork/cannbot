@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
@@ -6,7 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { acquireFileLock } from '../packages/install/lib/file-lock.mjs'
-import { runProcess } from '../src/process-runner.mjs'
+import { runProcess } from '../plugin/backend/process-runner.mjs'
 
 test('exclusive locks serialize contenders and release after owner crashes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'cannbot-lock-test-')), path = join(directory, 'lock')
@@ -40,8 +48,8 @@ test('timeout kills a child that ignores SIGTERM', async () => {
 })
 
 test('handled interruption cleans staging after terminating child', { timeout: 10_000 }, async () => {
-  const module = new URL('../scripts/staging.mjs', import.meta.url).href
-  const runner = new URL('../src/process-runner.mjs', import.meta.url).href
+  const module = new URL('../tools/staging.mjs', import.meta.url).href
+  const runner = new URL('../plugin/backend/process-runner.mjs', import.meta.url).href
   const child = spawn(process.execPath, ['--input-type=module', '-e', `import {withStaging} from ${JSON.stringify(module)};import {runProcess} from ${JSON.stringify(runner)};process.on('message',()=>process.emit('SIGTERM'));await withStaging('cannbot-signal-test-',async(dir,signal)=>{process.send(dir);await runProcess(process.execPath,['-e','setInterval(()=>{},1000)'],{signal,stdio:'ignore'})}).catch(()=>{});process.disconnect();`], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true })
   try {
     const [directory] = await once(child, 'message')

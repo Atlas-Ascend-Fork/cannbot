@@ -10,14 +10,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import { ModeBrandMark, ModeWorkspaceTree, ModeWorkspaceCreation } from '../src/client/ModeSidebar.tsx'
-import { BoundWorkspaceWorkflow } from '../src/client/BoundWorkspaceWorkflow.tsx'
-import { createWorkspaceModes } from '../src/client/workspace-modes.ts'
-import { Workbench } from '../src/client/Workbench.tsx'
-import type { ContentStore } from '../src/client/content-store.ts'
-import type { RemoteClient, RemoteSnapshot } from '../src/client/remote/types.ts'
-import type { WorkflowSelection } from '../src/client/workflow-selection.ts'
-import { WORKFLOWS } from '../src/workflows.ts'
+import { ModeBrandMark, ModeWorkspaceTree, ModeWorkspaceCreation } from '../plugin/frontend/ModeSidebar.tsx'
+import { BoundWorkspaceWorkflow } from '../plugin/frontend/BoundWorkspaceWorkflow.tsx'
+import { createWorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
+import { Workbench } from '../plugin/frontend/Workbench.tsx'
+import type { ContentStore } from '../plugin/frontend/content-store.ts'
+import type { RemoteClient, RemoteSnapshot } from '../plugin/frontend/remote/types.ts'
+import type { WorkflowSelection } from '../plugin/frontend/workflow-selection.ts'
+import { WORKFLOWS } from '../plugin/contracts/workflows.ts'
 
 vi.mock('@xterm/xterm', () => ({ Terminal: class { options = {}; open() {} onData() { return { dispose() {} } } write() {} writeln() {} reset() {} dispose() {} } }))
 

@@ -12,9 +12,9 @@
 import { expect, it } from 'vitest'
 import { mkdir, mkdtemp, readFile, writeFile, access, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { initializeTransaction, recoverInitialization } from '../src/initializer-transaction.ts'
-import { workflowRetirement } from '../src/workflow-retirement.ts'
-import type { WorkflowDescriptor } from '../src/content-types.ts'
+import { initializeTransaction, recoverInitialization } from '../plugin/backend/initializer-transaction.ts'
+import { workflowRetirement } from '../plugin/backend/workflow-retirement.ts'
+import type { WorkflowDescriptor } from '../plugin/contracts/content-types.ts'
 
 async function fixture() {
   await mkdir('.acceptance-workflow-tests', { recursive: true })

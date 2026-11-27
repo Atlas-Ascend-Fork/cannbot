@@ -1,7 +1,15 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { createRequire } from 'node:module'
-import { ContentManager } from '../src/content-manager.ts'
+import { ContentManager } from '../plugin/backend/content-manager.ts'
 const pacote = createRequire(import.meta.url)('pacote')
 export async function createVerifiedWorkflowCache() {
   mkdirSync('.acceptance-workflow-tests', { recursive: true })

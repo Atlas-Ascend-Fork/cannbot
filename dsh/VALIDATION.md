@@ -1,6 +1,10 @@
 # 验证摘要
 
-## 已验证结果
+## 历史版本验收记录
+
+- Windows EXE 进度条增加完整浅灰底槽和原生凹边框，独立于 NSIS 按脚本指令推进的默认进度，按后端阶段显示填充。隔离后端实窗检查了 5%、35%、85% 及自动进入完成页；完成页两项默认勾选。日志目录创建失败会立即给出具体目录提示，不再以空路径启动后端。最终 EXE 解包和下载进度相关 5 项回归通过；未重装本机 DSH。
+
+- Windows EXE 的协议选择页已实测：默认显示安装告知，上方下拉框切换文件，下方显示对应正文，确认框位于正文外的灰底区域且默认不勾选。界面统一使用“CANNBot开发工作台”。已有 DeepSeek Harness 时显示原路径，未勾选插件扩展确认不能安装；首次安装页在禁用安装操作的隔离预览中检查了说明、目标路径和浏览目录窗口。15 项相关回归通过，EXE 独立解包核对每份 UTF-16 文档、随包 HTML、完整第三方声明及原仓 LICENSE；正式协议仍待提供，本次未执行真实重装。
 
 - 本次工作区布局更新：CANNBot 侧栏按工作区展示会话，空白工作区省略类型前缀，远端文件夹带地球角标；服务器管理移至“更多”下方入口，保留连接、断开、备注、排序和删除。创建窗口要求新文件夹名、父目录和显式类型，本机禁止选择工作流，远端 Host 再次校验 Linux。275 项界面回归、40 项工作区/远端接口测试、类型检查以及 4 项 CMD/许可检查通过。
 - Windows DSH 0.2.2-rc.2 实机确认服务器管理页、新建窗口、本机工作流限制提示和空白名称；DevEnv950 连接后工作区直接出现在同级列表，文件夹地球角标正常，远端会话继续内嵌打开。内嵌页的创建入口打开统一窗口并选中对应服务器，父目录默认为 `/`，类型默认留空；切回宿主后，原生工作区、搜索、视图选项及添加按钮完整保留。创建窗口检查后取消，未新增用户工作区。
@@ -37,7 +41,7 @@
 先按 [DEVELOPMENT.md](DEVELOPMENT.md) 准备官方 SDK、测试依赖及当前构建。在 `dsh/` 执行：
 
 ```sh
-node scripts/build-current.mjs --check
+node tools/build-current.mjs --check
 node --test tests/build-current.test.mjs tests/package-current.test.mjs tests/workspace-mode.test.mjs tests/remote-tree.test.mjs
 node node_modules/typescript/bin/tsc --noEmit
 node node_modules/vitest/vitest.mjs run
@@ -46,7 +50,7 @@ node node_modules/vitest/vitest.mjs run
 Windows 安装与远端模块的隔离回归：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/verify.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/verify.ps1
 ```
 
 Host 工作流集成测试需要先生成工作流夹具；准备方式见开发文档。原生组件测试使用已配置的官方源码和 SDK 依赖，仓库不复制 DSH 原生 UI 模块，正式界面测试不依赖临时验收目录。

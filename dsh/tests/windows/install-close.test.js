@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const installer = fileURLToPath(new URL('../../scripts/windows/install-all.ps1', import.meta.url))
+const installer = fileURLToPath(new URL('../../installers/windows/install-all.ps1', import.meta.url))
 const executable = 'D:\\Test DSH\\DeepSeek Harness.exe'
 const windowsOnly = { skip: process.platform !== 'win32' && 'requires Windows PowerShell 5.1' }
 

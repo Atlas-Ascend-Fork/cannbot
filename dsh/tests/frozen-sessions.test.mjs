@@ -8,7 +8,7 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { freezeSessionInputs } from '../src/client/frozen-sessions.ts'
+import { freezeSessionInputs } from '../plugin/frontend/frozen-sessions.ts'
 
 test('native composer blocks frozen sessions without replacing other extensions or ordinary sessions', () => {
   let sessions = [{ sessionId: 'old', frozen: true }, { sessionId: 'other', frozen: true }, { sessionId: 'normal' }], notify

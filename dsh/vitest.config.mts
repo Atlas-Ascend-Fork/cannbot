@@ -8,11 +8,14 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // ----------------------------------------------------------------------------------------------------------
 
+import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
-import { resolveSource } from './scripts/source.mjs'
+import { resolveSource } from './tools/source.mjs'
 
 const local = (path: string) => fileURLToPath(new URL(path, import.meta.url))
+
+const sdk = process.env.DSH_TEST_SDK_MODULES || local('./node_modules')
 
 export default defineConfig({
   root: local('./'),
@@ -22,9 +25,9 @@ export default defineConfig({
     // Execute the real StateDot/Toast CSS in jsdom. Individual suites may mock
     // this facade, while native integration suites import public source directly.
     { find: '@deepseek-ai/dsh-client-ui-primitives', replacement: local('./tests/fixtures/ui-primitives.ts') },
-    { find: '@deepseek-ai/dsh-client-ui-slots', replacement: local('./node_modules/@deepseek-ai/dsh-client-ui-slots/lib/index.js') },
-    { find: '@deepseek-ai/dsh-client-store', replacement: local('./node_modules/@deepseek-ai/dsh-client-store/lib/index.js') },
-    { find: '@deepseek-ai/cordis', replacement: local('./node_modules/@deepseek-ai/cordis/lib/index.js') },
+    { find: '@deepseek-ai/dsh-client-ui-slots', replacement: resolve(sdk, '@deepseek-ai/dsh-client-ui-slots/lib/index.js') },
+    { find: '@deepseek-ai/dsh-client-store', replacement: resolve(sdk, '@deepseek-ai/dsh-client-store/lib/index.js') },
+    { find: '@deepseek-ai/cordis', replacement: resolve(sdk, '@deepseek-ai/cordis/lib/index.js') },
   ] },
   test: {
     environment: 'jsdom', include: ['tests/**/*.spec.{ts,tsx}'], maxWorkers: 2,

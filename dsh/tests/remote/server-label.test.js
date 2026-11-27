@@ -12,10 +12,10 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync
 import { join, dirname, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
-import { setServerLabel } from '../../src/remote/server-label.js'
-import { addServerRecord, ServerInputError } from '../../src/remote/add-server.js'
-import { createManager } from '../../src/remote/manager.js'
-import { createRouter, registerRoutes, ROUTE } from '../../src/remote/routes.js'
+import { setServerLabel } from '../../plugin/backend/ssh/server-label.js'
+import { addServerRecord, ServerInputError } from '../../plugin/backend/ssh/add-server.js'
+import { createManager } from '../../plugin/backend/ssh/manager.js'
+import { createRouter, registerRoutes, ROUTE } from '../../plugin/backend/ssh/routes.js'
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cannbot-label-'))
@@ -115,8 +115,8 @@ test('corrupt inventory and another writer lock cause a conflict without losing 
 
 test('concurrent separate-process adds and remarks preserve all successful writes', { timeout: 20000 }, async t => {
   const f = fixture(t)
-  const source = `import {addServerRecord} from ${JSON.stringify(new URL('../../src/remote/add-server.js', import.meta.url).href)};
-    import {setServerLabel} from ${JSON.stringify(new URL('../../src/remote/server-label.js', import.meta.url).href)};
+  const source = `import {addServerRecord} from ${JSON.stringify(new URL('../../plugin/backend/ssh/add-server.js', import.meta.url).href)};
+    import {setServerLabel} from ${JSON.stringify(new URL('../../plugin/backend/ssh/server-label.js', import.meta.url).href)};
     const [configPath,serversPath,index]=process.argv.slice(1); const paths={configPath,serversPath};
     async function retry(run){for(let i=0;i<300;i++){try{return run()}catch(error){if(error.status!==409)throw error;await new Promise(r=>setTimeout(r,5))}}throw Error('lock timeout')}
     for(let n=0;n<5;n++){const entry=await retry(()=>addServerRecord({command:'ssh user@server-'+index+'-'+n+'.example'},paths));await retry(()=>setServerLabel({id:entry.alias,label:'worker '+index+' '+n},paths))}`

@@ -1,12 +1,20 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { crc32, deflateRawSync } from 'node:zlib'
 import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { buildCurrent, buildInputHash, BUILD_RECEIPT, currentBuildStatus } from '../scripts/build-current.mjs'
-import { buildCache, DSH_BUILD_TAG, DSH_BUILD_VERSION, DSH_SOURCE_URL, ensureMinimalToolchain, inside, minimalToolManifest, resolveBuildSource } from '../scripts/build-bootstrap.mjs'
-import { extractSourceZip } from '../scripts/build-archive.mjs'
+import { buildCurrent, buildInputHash, BUILD_RECEIPT, currentBuildStatus } from '../tools/build-current.mjs'
+import { buildCache, DSH_BUILD_TAG, DSH_BUILD_VERSION, DSH_SOURCE_URL, ensureMinimalToolchain, inside, minimalToolManifest, resolveBuildSource } from '../tools/build-bootstrap.mjs'
+import { extractSourceZip } from '../tools/build-archive.mjs'
 
 const testRoot = resolve('.acceptance-build-current-tests')
 const put = async (root, path, content) => { const file = join(root, path); await mkdir(dirname(file), { recursive: true }); await writeFile(file, content); return file }
@@ -17,9 +25,9 @@ async function fixture(t) {
   const root = await mkdtemp(join(testRoot, 'case-'))
   t.after(async () => { assert(inside(testRoot, root)); await rm(root, { recursive: true, force: true }) })
   await put(root, 'package.json', JSON.stringify({ name: 'plugin', version: '1.0.0', type: 'module', devDependencies: { yaml: '^2.4.2', '@xterm/xterm': '6.0.0' } }))
-  for (const path of ['src/index.ts', 'src/client/index.ts', 'src/client/theme.css', 'remote/bootstrap.sh', 'scripts/build.mjs', 'packages/install/lib/file-lock.mjs', 'tsdown.config.ts', 'tsconfig.json', 'locale/zh-CN.json']) await put(root, path, '// initial')
+  for (const path of ['plugin/editions/client/host.ts', 'plugin/editions/client/ui.ts', 'plugin/editions/server/host.ts', 'plugin/editions/server/ui.ts', 'plugin/backend/index.ts', 'plugin/frontend/index.ts', 'plugin/frontend/theme.css', 'remote/bootstrap.sh', 'tools/build.mjs', 'packages/install/lib/file-lock.mjs', 'tsdown.config.ts', 'tsconfig.json', 'locale/zh-CN.json']) await put(root, path, '// initial')
   let builds = 0, tools = 0
-  const run = async () => { builds++; await put(root, 'lib/index.js', `export const version = ${builds}`); await put(root, 'lib/client.js', `window.__ModuleLoader__.load({version:${builds}})`); await put(root, 'lib/chunk.js', 'chunk') }
+  const run = async () => { builds++; await put(root, 'lib/index.js', `export const version = ${builds}`); await put(root, 'lib/client.js', `window.__ModuleLoader__.load({version:${builds}})`); await put(root, 'lib/chunk.js', 'chunk'); await put(root, 'lib/server/index.js', 'host'); await put(root, 'lib/server/client.js', 'client') }
   return { root, run, builds: () => builds, tools: () => tools, options: { root, run, log: quiet, ensureTools: async () => { tools++; return 'fixed-source' } } }
 }
 
@@ -36,7 +44,7 @@ test('builds unstamped source once and reuses only matching source and output ha
 test('source, CSS, remote scripts, build configuration and imported install helper all invalidate receipt', async t => {
   const f = await fixture(t)
   await buildCurrent(f.options)
-  for (const path of ['src/index.ts', 'src/client/theme.css', 'remote/bootstrap.sh', 'scripts/build.mjs', 'tsdown.config.ts', 'packages/install/lib/file-lock.mjs', 'package.json']) {
+  for (const path of ['plugin/backend/index.ts', 'plugin/frontend/theme.css', 'remote/bootstrap.sh', 'tools/build.mjs', 'tsdown.config.ts', 'packages/install/lib/file-lock.mjs', 'package.json']) {
     const before = await buildInputHash(f.root)
     await put(f.root, path, await readFile(join(f.root, path), 'utf8') + ' ')
     assert.notEqual(await buildInputHash(f.root), before, path)
@@ -87,7 +95,7 @@ test('incomplete output and edits during a build cannot receive a successful rec
   const f = await fixture(t)
   await assert.rejects(buildCurrent({ ...f.options, run: () => put(f.root, 'lib/index.js', 'only host') }), /both Host and Client/)
   assert.equal(await exists(join(f.root, BUILD_RECEIPT)), false)
-  await assert.rejects(buildCurrent({ ...f.options, run: async () => { await f.run(); await put(f.root, 'src/index.ts', '// edited during build') } }), /changed during/)
+  await assert.rejects(buildCurrent({ ...f.options, run: async () => { await f.run(); await put(f.root, 'plugin/backend/index.ts', '// edited during build') } }), /changed during/)
   assert.equal(await exists(join(f.root, BUILD_RECEIPT)), false)
 })
 
@@ -187,7 +195,7 @@ test('fresh minimal tool bootstrap verifies pnpm integrity and confines install 
       const manifest = JSON.parse(await readFile(join(options.cwd, 'package.json'), 'utf8'))
       for (const name of Object.keys(manifest.dependencies)) await put(options.cwd, `node_modules/${name}/package.json`, JSON.stringify({ name, version: '1.0.0', exports: { '.': './index.js' } }))
     } else {
-      assert.equal(args[0], join(f.root, 'scripts/prepare-dev.mjs'))
+      assert.equal(args[0], join(f.root, 'tools/prepare-dev.mjs'))
       assert.equal(args[2], '--build-only')
     }
   }

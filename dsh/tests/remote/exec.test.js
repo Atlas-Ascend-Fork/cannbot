@@ -9,7 +9,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { run } from '../../src/remote/exec.js'
+import { run } from '../../plugin/backend/ssh/exec.js'
 
 const privateMarker = 'PRIVATE_STDIN_TEST_ONLY_321cb8'
 const largeInput = Buffer.alloc(8 * 1024 * 1024, privateMarker)

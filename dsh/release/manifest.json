@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "version": "1.0.0-alpha.5",
+  "buildId": "4d59d47fec97f29908511f481e4705d799e93db3935fdaea216db13e26755c97",
+  "minInstallerVersion": "1.0.0",
+  "dshRange": ">=0.1.1-rc.1 <0.3.0",
+  "hosts": {
+    "win32-x64": {
+      "version": "0.2.2-rc.2",
+      "url": "https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe"
+    },
+    "linux-x64": {
+      "version": "0.2.2-rc.2"
+    },
+    "linux-arm64": {
+      "version": "0.2.2-rc.2"
+    },
+    "darwin-x64": {
+      "version": "0.2.2-rc.2"
+    },
+    "darwin-arm64": {
+      "version": "0.2.2-rc.2"
+    }
+  },
+  "packages": {
+    "client": {
+      "name": "@cannbot-plugin/cannbot-dsh",
+      "url": "https://registry.npmjs.org/@cannbot-plugin/cannbot-dsh/-/cannbot-dsh-1.0.0-alpha.5.tgz"
+    },
+    "server": {
+      "name": "@cannbot-plugin/cannbot-dsh-server",
+      "url": "https://registry.npmjs.org/@cannbot-plugin/cannbot-dsh-server/-/cannbot-dsh-server-1.0.0-alpha.5.tgz"
+    }
+  },
+  "legal": {
+    "version": "1",
+    "documents": [
+      {
+        "id": "user-agreement",
+        "title": "用户协议",
+        "url": "https://api.gitcode.com/api/v5/repos/cann/cannbot/raw/dsh/legal/user-agreement.txt?ref=master",
+        "viewUrl": "https://gitcode.com/cann/cannbot/blob/master/dsh/legal/user-agreement.txt"
+      },
+      {
+        "id": "privacy-policy",
+        "title": "隐私政策",
+        "url": "https://api.gitcode.com/api/v5/repos/cann/cannbot/raw/dsh/legal/privacy-policy.txt?ref=master",
+        "viewUrl": "https://gitcode.com/cann/cannbot/blob/master/dsh/legal/privacy-policy.txt"
+      },
+      {
+        "id": "open-source-notices",
+        "title": "开源软件声明",
+        "url": "https://api.gitcode.com/api/v5/repos/cann/cannbot/raw/dsh/legal/open-source-notices.txt?ref=master",
+        "viewUrl": "https://gitcode.com/cann/cannbot/blob/master/dsh/legal/open-source-notices.txt"
+      }
+    ]
+  }
+}

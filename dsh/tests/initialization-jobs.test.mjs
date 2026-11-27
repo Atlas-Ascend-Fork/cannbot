@@ -10,10 +10,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { randomUUID } from 'node:crypto'
-import { InitializationJobs, initializationIO, runInitializationTerminal } from '../src/initialization-jobs.ts'
-import { initializationRequest } from '../src/initialization-contract.ts'
-import { validateReleasePolicy } from '../scripts/release-policy.mjs'
-import { readFileSync } from 'node:fs'
+import { InitializationJobs, initializationIO, runInitializationTerminal } from '../plugin/backend/initialization-jobs.ts'
+import { initializationRequest } from '../plugin/contracts/initialization-contract.ts'
 
 const status = jobId => ({ action: 'initialization-status', jobId, offset: 0 })
 const turn = () => new Promise(done => setImmediate(done))
@@ -42,12 +40,7 @@ test('terminal cancellation waits for owned process cleanup before job settles',
   for (let n = 0; n < 10; n++) { await turn(); value = await jobs.handle(status(job.jobId)); if (value.phase !== 'running') break }
   assert.equal(value.phase, 'error'); assert.equal(cleaned, true); assert.match(value.message, /取消/)
 })
-test('initialization requests cannot forward arbitrary commands and public builds require both formal legal URLs', () => {
+test('initialization requests cannot forward arbitrary commands', () => {
   assert.equal(initializationRequest({ action: 'start-initialization', requestId: randomUUID(), operation: { action: 'exec', command: 'anything' } }), undefined)
   assert.equal(initializationRequest({ action: 'initialization-input', jobId: randomUUID(), sequence: -1, data: 'bad' }), undefined)
-  const policy = JSON.parse(readFileSync(new URL('../release-policy.json', import.meta.url)))
-  assert.equal(validateReleasePolicy(policy).channel, 'development')
-  assert.throws(() => validateReleasePolicy(policy, true), /userAgreementUrl/)
-  assert.throws(() => validateReleasePolicy({ ...policy, userAgreementUrl: 'https://cannbot.test/terms' }, true), /privacyPolicyUrl/)
-  assert.equal(validateReleasePolicy({ ...policy, userAgreementUrl: 'https://cannbot.test/terms', privacyPolicyUrl: 'https://cannbot.test/privacy' }, true).channel, 'public')
 })

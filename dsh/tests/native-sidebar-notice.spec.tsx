@@ -10,7 +10,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createSidebarNotices, SidebarNotice } from '../src/client/SidebarNotice.tsx'
+import { createSidebarNotices, SidebarNotice } from '../plugin/frontend/SidebarNotice.tsx'
 
 // The test-only facade exports upstream Toast source unchanged, including
 // its CSS, portal, action buttons and timers. No primitive mock in this suite.

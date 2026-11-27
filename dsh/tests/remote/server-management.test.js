@@ -12,11 +12,11 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
-import { reorderServers, removeServerRecord } from '../../src/remote/server-management.js'
-import { addServerRecord, ServerInputError } from '../../src/remote/add-server.js'
-import { setServerLabel } from '../../src/remote/server-label.js'
-import { createManager } from '../../src/remote/manager.js'
-import { createRouter, ROUTE } from '../../src/remote/routes.js'
+import { reorderServers, removeServerRecord } from '../../plugin/backend/ssh/server-management.js'
+import { addServerRecord, ServerInputError } from '../../plugin/backend/ssh/add-server.js'
+import { setServerLabel } from '../../plugin/backend/ssh/server-label.js'
+import { createManager } from '../../plugin/backend/ssh/manager.js'
+import { createRouter, ROUTE } from '../../plugin/backend/ssh/routes.js'
 
 function fixture(t, deps = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cannbot-servers-'))
@@ -180,9 +180,9 @@ test('authenticated order/remove routes return safe summaries and method/body er
 
 test('concurrent process add, label, reorder and remove transactions preserve all successful writes', { timeout: 20000 }, async t => {
   const f = fixture(t)
-  const source = `import {addServerRecord} from ${JSON.stringify(new URL('../../src/remote/add-server.js', import.meta.url).href)};
-    import {setServerLabel} from ${JSON.stringify(new URL('../../src/remote/server-label.js', import.meta.url).href)};
-    import {reorderServers,removeServerRecord} from ${JSON.stringify(new URL('../../src/remote/server-management.js', import.meta.url).href)};
+  const source = `import {addServerRecord} from ${JSON.stringify(new URL('../../plugin/backend/ssh/add-server.js', import.meta.url).href)};
+    import {setServerLabel} from ${JSON.stringify(new URL('../../plugin/backend/ssh/server-label.js', import.meta.url).href)};
+    import {reorderServers,removeServerRecord} from ${JSON.stringify(new URL('../../plugin/backend/ssh/server-management.js', import.meta.url).href)};
     const [configPath,serversPath,index]=process.argv.slice(1);const paths={configPath,serversPath};
     async function retry(fn){for(let n=0;n<300;n++){try{return fn()}catch(e){if(e.status!==409)throw e;await new Promise(r=>setTimeout(r,5))}}throw Error('timeout')}
     for(let n=0;n<4;n++){const row=await retry(()=>addServerRecord({command:'ssh user@parallel-'+index+'-'+n+'.example'},paths));await retry(()=>setServerLabel({id:row.alias,label:'worker '+index+' '+n},paths));await retry(()=>reorderServers({ids:[]},paths));await retry(()=>removeServerRecord({id:row.alias},paths))}`

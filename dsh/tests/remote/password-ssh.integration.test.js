@@ -1,5 +1,11 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// Licensed under CANN Open Software License Agreement Version 2.0. See LICENSE.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 // Optional real OpenSSH test: CANNBOT_TEST_SSH2 points to a separately installed
 // ssh2 module. The test server only accepts loopback and synthetic credentials.
 import { test } from 'node:test'
@@ -9,10 +15,10 @@ import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createManager } from '../../src/remote/manager.js'
-import { TunnelSupervisor } from '../../src/remote/tunnel.js'
-import { run } from '../../src/remote/exec.js'
-import { sshArgs } from '../../src/remote/bootstrap.js'
+import { createManager } from '../../plugin/backend/ssh/manager.js'
+import { TunnelSupervisor } from '../../plugin/backend/ssh/tunnel.js'
+import { run } from '../../plugin/backend/ssh/exec.js'
+import { sshArgs } from '../../plugin/backend/ssh/bootstrap.js'
 
 test('system OpenSSH authenticates, retries, transfers stdin and opens a tunnel using one password dialog', { skip: !process.env.CANNBOT_TEST_SSH2, timeout: 60000 }, async () => {
   const { Server, utils } = createRequire(import.meta.url)(process.env.CANNBOT_TEST_SSH2)

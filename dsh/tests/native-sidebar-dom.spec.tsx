@@ -18,15 +18,17 @@ import * as ReactDOM from 'react-dom'
 import * as ReactDOMClient from 'react-dom/client'
 import * as jsxRuntime from 'react/jsx-runtime'
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { ReactNode } from 'react'
 import { SidebarRoot } from '@dsh-test-source/packages/client/ui-sidebar/src/client/SidebarRoot.tsx'
 import { AppFrame } from '@dsh-test-source/packages/client/ui-layout/src/client/AppFrame.tsx'
-import { ModeBrandMark } from '../src/client/ModeSidebar.tsx'
-import { mountEmbeddedShell } from '../src/client/embedded-shell.ts'
-import { WorkspaceTreeBridge } from '../src/client/WorkspaceTreeBridge.tsx'
-import { NativeWorkbench, NativeWorkbenchEmpty } from '../src/client/NativeWorkbench.tsx'
-import { CANNBOT_HOME } from '../src/client/workspace-modes.ts'
-import type { WorkspaceModes } from '../src/client/workspace-modes.ts'
+import { ModeBrandMark } from '../plugin/frontend/ModeSidebar.tsx'
+import { mountEmbeddedShell } from '../plugin/frontend/embedded-shell.ts'
+import { WorkspaceTreeBridge } from '../plugin/frontend/WorkspaceTreeBridge.tsx'
+import { NativeWorkbench, NativeWorkbenchEmpty } from '../plugin/frontend/NativeWorkbench.tsx'
+import { CANNBOT_HOME } from '../plugin/frontend/workspace-modes.ts'
+import type { WorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => ({
   ...(await import('@dsh-test-source/packages/client/ui-primitives/src/BrandWordmark.tsx')),
@@ -39,12 +41,13 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => ({
 vi.mock('@dsh-test-source/packages/client/ui-sidebar/src/client/panel-pins.ts', () => ({ FIXED_PANEL_ID: 'plugins' }))
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 const moduleURL = import.meta.url
+const sdk = process.env.DSH_TEST_SDK_MODULES || fileURLToPath(new URL('../node_modules/', moduleURL))
 function createSlotsContext(currentSession?: string) {
   // Execute the installed SDK dependency through its real module-loader contract.
   // It includes the upstream selector shim, avoiding unrelated test-only network installs.
   const dependencies: Record<string, unknown> = { react: React, 'react-dom': ReactDOM, 'react-dom/client': ReactDOMClient, 'react/jsx-runtime': jsxRuntime, '@deepseek-ai/cordis': cordis, '@deepseek-ai/dsh-client-ui-slots': slotCore }
   let renderer: { apply(ctx: Context): void } | undefined
-  new Function('window', readFileSync(new URL('../node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js', moduleURL), 'utf8'))({ __ModuleLoader__: { load(entry: { factory(require: (id: string) => unknown): typeof renderer }) { renderer = entry.factory(id => { if (!(id in dependencies)) throw new Error('Missing renderer dependency: ' + id); return dependencies[id] }) } } })
+  new Function('window', readFileSync(resolve(sdk, '@deepseek-ai/dsh-client-ui-renderer/lib/client.js'), 'utf8'))({ __ModuleLoader__: { load(entry: { factory(require: (id: string) => unknown): typeof renderer }) { renderer = entry.factory(id => { if (!(id in dependencies)) throw new Error('Missing renderer dependency: ' + id); return dependencies[id] }) } } })
   const ctx = new Context(); renderer!.apply(ctx)
   const absent = { key: undefined, hooks: {}, keyedHooks: {}, props: {} }
   const current = currentSession ? { ...absent, key: currentSession } : absent
@@ -175,7 +178,7 @@ it.each([0, 280])('reclaims the embedded sidebar with official source AppFrame D
   register({ name: 'main', key: 'conversation' }, () => <main>remote session</main>)
   register({ name: 'rightbar' }, () => <aside>remote tools</aside>)
   register({ name: 'shell.overlay', id: 'creation' }, () => <dialog open aria-label="create workspace">modal</dialog>)
-  const style = document.createElement('style'); style.textContent = readFileSync(new URL('../src/client/modes.css', moduleURL), 'utf8'); document.head.append(style)
+  const style = document.createElement('style'); style.textContent = readFileSync(new URL('../plugin/frontend/modes.css', moduleURL), 'utf8'); document.head.append(style)
   const stop = mountEmbeddedShell(document)
   const view = render(ctx.slots.renderSlot('root', {}))
   await act(async () => {})

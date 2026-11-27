@@ -14,7 +14,7 @@ import {
   decidePluginVersion,
   parseVersion,
   satisfiesRange,
-} from '../../src/remote/version.js'
+} from '../../plugin/backend/ssh/version.js'
 
 test('parseVersion accepts v-prefix and prerelease suffixes', () => {
   assert.deepEqual(parseVersion('0.2.2-rc.1'), { major: 0, minor: 2, patch: 2, prerelease: ['rc', '1'] })

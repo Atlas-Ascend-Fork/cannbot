@@ -8,9 +8,9 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { createNativeWorkbenchSession } from '../src/client/native-workbench-session.ts'
-import { CANNBOT_HOME, type WorkspaceModes } from '../src/client/workspace-modes.ts'
-import type { SelectionSnapshot, WorkflowSelection } from '../src/client/workflow-selection.ts'
+import { createNativeWorkbenchSession } from '../plugin/frontend/native-workbench-session.ts'
+import { CANNBOT_HOME, type WorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
+import type { SelectionSnapshot, WorkflowSelection } from '../plugin/frontend/workflow-selection.ts'
 
 function store<T>(value: T) {
   const listeners = new Set<() => void>()

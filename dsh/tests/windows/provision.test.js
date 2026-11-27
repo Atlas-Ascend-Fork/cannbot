@@ -13,9 +13,8 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync,
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createArtifact } from '../../src/remote/artifact.js'
 
-const provision = fileURLToPath(new URL('../../scripts/windows/provision.ps1', import.meta.url))
+const provision = fileURLToPath(new URL('../../installers/windows/provision.ps1', import.meta.url))
 const packageName = '@cannbot-plugin/cannbot-dsh'
 const workbenchName = '@cannbot-plugin/cannbot-dsh'
 const windowsOnly = { skip: process.platform !== 'win32' && 'requires Windows PowerShell 5.1' }
@@ -36,17 +35,19 @@ function fixture(t, manifest = original) {
   writeFileSync(profile, JSON.stringify(manifest), 'utf8')
   const source = join(home, 'source')
   mkdirSync(source)
-  const manifestSource = { name: packageName, version: '1.0.0-alpha.1', files: ['lib', 'remote', 'cordis.patch.yml'] }
+  const manifestSource = { name: packageName, cannbotEdition: "client", cannbotBuildId: "build-test", version: '1.0.0-alpha.1', files: ['lib', 'remote', 'cordis.patch.yml'] }
   writeFileSync(join(source, 'package.json'), JSON.stringify(manifestSource))
   for (const file of ['lib/index.js','lib/client.js','remote/sync-credentials.mjs','remote/deploy-package.mjs','cordis.patch.yml']) { mkdirSync(dirname(join(source,file)), { recursive:true }); writeFileSync(join(source,file),'// built fixture') }
-  const artifact = createArtifact(source)
-  const store = join(dirname(profile), '.cannbot-workbench', artifact.hash)
+  const bytes = Buffer.from('preinstalled fixture archive')
+  const archive = join(home, 'fixture.tgz')
+  writeFileSync(archive, bytes)
+  const store = join(dirname(profile), '.cannbot-workbench', 'build-test')
   mkdirSync(store, {recursive:true})
   writeFileSync(join(store, 'package.json'), '{}')
-  writeFileSync(join(store, 'complete.json'), JSON.stringify({hash:artifact.hash}))
+  writeFileSync(join(store, 'complete.json'), JSON.stringify({buildId:'build-test'}))
   const packageTarget = join(store, 'node_modules', ...packageName.split('/'))
   cpSync(source, packageTarget, {recursive:true})
-  return { home, profile, target, source }
+  return { home, profile, target, source, archive }
 
 }
 
@@ -59,9 +60,9 @@ function runProvision(fixture, mode = '', expectedStatus = 0) {
     'if ($PSVersionTable.PSEdition -ne "Desktop" -or $PSVersionTable.PSVersion.Major -ne 5) { throw "Windows PowerShell 5.1 required" }',
     'function Get-Process { param($Name, $ErrorAction) return $null }',
     'if ($env:CANNBOT_TEST_CLEAN_PATH -and (Get-Command node -ErrorAction SilentlyContinue)) { throw "Test PATH must not contain Node" }',
-    '& $env:CANNBOT_TEST_PROVISION -PackageRoot $env:CANNBOT_TEST_PACKAGE -DshExecutable $env:CANNBOT_TEST_DSH ' + mode,
+    '& $env:CANNBOT_TEST_PROVISION -PluginArchive $env:CANNBOT_TEST_ARCHIVE -PluginVersion 1.0.0-alpha.1 -BuildId build-test -DshExecutable $env:CANNBOT_TEST_DSH ' + mode,
   ].join('; ')
-  const env = { ...process.env, DSH_HOME: fixture.home, CANNBOT_TEST_PROVISION: provision, CANNBOT_TEST_PACKAGE: fixture.source, CANNBOT_TEST_DSH: fixture.executable || '' }
+  const env = { ...process.env, DSH_HOME: fixture.home, CANNBOT_TEST_PROVISION: provision, CANNBOT_TEST_ARCHIVE: fixture.archive, CANNBOT_TEST_DSH: fixture.executable || '' }
   if (fixture.cleanPath) {
     for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') delete env[key]
     env.PATH = join(process.env.SystemRoot, 'System32'); env.CANNBOT_TEST_CLEAN_PATH = '1'

@@ -10,8 +10,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ReactElement } from 'react'
 import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
-import { apply } from '../src/client/index.ts'
-import type { WorkspaceModes } from '../src/client/workspace-modes.ts'
+import { apply } from '../plugin/editions/client/ui.ts'
+import { apply as applyServer } from '../plugin/editions/server/ui.ts'
+import { SidebarMark } from '../plugin/frontend/Brand.tsx'
+import type { WorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ FishLogo: () => null, Menu: () => null, StateDot: () => null }))
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
@@ -63,6 +65,21 @@ function fixture() {
 }
 
 describe('real DSH SlotCore lifecycle', () => {
+  it('registers only local workspaces and the fixed CANNBot brand in a server profile', async () => {
+    localStorage.setItem('cannbot.ui.modes.v1', JSON.stringify({ mode: 'deepseek' }))
+    const f = fixture()
+    try {
+      applyServer(f.ctx as unknown as Context)
+      const brand = f.core.entriesOfSlot('sidebar.brand.mark')[0]!
+      expect((brand.component as (props: object) => ReactElement)({ size: 24 }).type).toBe(SidebarMark)
+      expect(f.core.entriesOfSlot('shell.overlay').map(entry => entry.options.id)).not.toContain('cannbot-add-server')
+      expect(f.core.entriesOfSlot('main').map(entry => entry.options.key)).not.toContain('cannbot-servers')
+      await vi.waitFor(() => expect(f.ctx.layout.panelInfo.getSnapshot().activePanelId).toBe('cannbot-dsh-workbench'))
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('api/cannbot-remote/'))).toBe(false)
+    } finally { f.dispose() }
+    expect(f.core.entriesOfSlot('sidebar.brand.mark')).toHaveLength(0)
+    expect(f.ctx.uiWorkspace.startSession).toBe(f.originalStart)
+  })
   it('preserves the exact native DeepSeek sidebar, picker, main, dock and header registrations', async () => {
     localStorage.setItem('cannbot.ui.modes.v1', JSON.stringify({ mode: 'deepseek' }))
     const f = fixture()

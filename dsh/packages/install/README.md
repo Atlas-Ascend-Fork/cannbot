@@ -8,7 +8,7 @@ npx @cannbot-plugin/cannbot-dsh-install@latest
 
 安装面向昇腾 / CANN 开发的 CANNBot、所需的 **DSH Web** 宿主和默认算子工作流，核验完整后启动 Web 界面。本工具不安装 Windows Electron 桌面客户端，不修改 DSH 核心，不需要管理员权限，也不改动已有 Desktop 或其他 DSH 安装。
 
-Windows 桌面安装请下载并双击 [CANNBot-Setup.cmd](../../CANNBot-Setup.cmd)，见 [Windows 安装说明](../../scripts/windows/README.md)。本 npm 安装器继续使用所选安装源的发布版本，不读取当前仓库未发布的源码改动；工作流源码安装见 [主说明](../../README.md)。
+Windows 桌面安装请下载并双击 Windows 图形安装器，见 [Windows 安装说明](../../installers/windows/README.md)。本 npm 安装器继续使用所选安装源的发布版本，不读取当前仓库未发布的源码改动；工作流源码安装见 [主说明](../../README.md)。
 
 本工具使用经过 CANNBot 验证的官方 `@deepseek-ai/dsh@0.2.1-rc.3` 与 `pnpm@11.28.5`。主插件、目录和默认工作流在每次安装时查询所选 registry 的 `latest`，再使用查询得到的确切版本安装；逐项核对实际版本与资源文件。短包与主包发布尚未同步、版本不兼容、网络失败或文件缺失时会报错，不会把旧版或不完整安装报告为成功。
 

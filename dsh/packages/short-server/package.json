@@ -1,0 +1,17 @@
+{
+  "name": "cannbot-dsh-server",
+  "version": "1.0.0-alpha.5",
+  "description": "CANNBot workbench for a dedicated Linux DSH server profile",
+  "license": "SEE LICENSE IN LICENSE",
+  "files": ["cordis.patch.yml", "icon.svg", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "exports": {
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "icon": "./icon.svg",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "os": ["linux"],
+  "engines": { "node": ">=24.9.0", "dsh": ">=0.1.1-rc.1 <0.3.0" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "dependencies": { "@cannbot-plugin/cannbot-dsh-server": "1.0.0-alpha.5" }
+}

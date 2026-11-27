@@ -1,9 +1,0 @@
-{
-  "channel": "development",
-  "userAgreementUrl": "",
-  "privacyPolicyUrl": "",
-  "hostSourceUrl": "https://github.com/deepseek-ai/deepseek-harness",
-  "hostLicenseUrl": "https://github.com/deepseek-ai/deepseek-harness/blob/main/LICENSE",
-  "hostTermsUrl": "https://www.deepseek.com/en/harness/terms-of-use/",
-  "hostPrivacyUrl": "https://www.deepseek.com/en/harness/privacy/"
-}

@@ -8,7 +8,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createSidebarNotices, SidebarNotice } from '../src/client/SidebarNotice.tsx'
+import { createSidebarNotices, SidebarNotice } from '../plugin/frontend/SidebarNotice.tsx'
 
 const observed = vi.hoisted(() => ({ holdMs: undefined as number | undefined, onDone: () => {} }))
 // The public component owns layout and fade timing. These tests isolate our

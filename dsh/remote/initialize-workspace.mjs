@@ -6,7 +6,5 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-import { initializeBeforeLaunch } from '../lib/initialize-workspace.js'
-const [directory, workflow, ...extra] = process.argv.slice(2)
-if (!directory || !workflow || extra.length) throw new Error('Usage: initialize-workspace.mjs <new-empty-directory> <workflow-id>')
-await initializeBeforeLaunch(directory, workflow)
+// Compatibility entry for existing Linux initialization scripts.
+import '../bin/initialize-workspace.mjs'

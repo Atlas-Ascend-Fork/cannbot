@@ -1,6 +1,6 @@
 {
   "name": "cannbot-dsh",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.5",
   "description": "CANNBot: Ascend/CANN development workbench with operator workflows and embedded remote development",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
@@ -37,8 +37,8 @@
     "workbench",
     "ascend"
   ],
-  "scripts": { "pack:plugin": "node ../../scripts/package.mjs --short" },
+  "scripts": { "pack:plugin": "node ../../tools/package.mjs --short" },
   "dependencies": {
-    "@cannbot-plugin/cannbot-dsh": "1.0.0-alpha.1"
+    "@cannbot-plugin/cannbot-dsh": "1.0.0-alpha.5"
   }
 }

@@ -10,11 +10,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import { NativeWorkbench, NativeWorkbenchEmpty, NativeWorkspacePicker, WorkflowPermissionDialog } from '../src/client/NativeWorkbench.tsx'
-import { NativeWorkflowPlaceholder, adaptNativePlaceholder } from '../src/client/NativeWorkflowPlaceholder.tsx'
-import { CANNBOT_HOME, type WorkspaceModes } from '../src/client/workspace-modes.ts'
-import type { WorkflowSelection } from '../src/client/workflow-selection.ts'
-import type { NativeWorkbenchSessionSnapshot } from '../src/client/native-workbench-session.ts'
+import { NativeWorkbench, NativeWorkbenchEmpty, NativeWorkspacePicker, WorkflowPermissionDialog } from '../plugin/frontend/NativeWorkbench.tsx'
+import { NativeWorkflowPlaceholder, adaptNativePlaceholder } from '../plugin/frontend/NativeWorkflowPlaceholder.tsx'
+import { CANNBOT_HOME, type WorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
+import type { WorkflowSelection } from '../plugin/frontend/workflow-selection.ts'
+import type { NativeWorkbenchSessionSnapshot } from '../plugin/frontend/native-workbench-session.ts'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
   IconFolderCloseRegular: () => <svg />, IconProjectAddOutlineRegular: () => <svg />,

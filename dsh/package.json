@@ -1,10 +1,11 @@
 {
   "name": "@cannbot-plugin/cannbot-dsh",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.5",
   "description": "CANNBot: Ascend/CANN development workbench with operator workflows and embedded remote development",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "main": "lib/index.js",
+  "bin": { "cannbot-init-workspace": "bin/initialize-workspace.mjs" },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
@@ -15,11 +16,15 @@
   "files": [
     "lib",
     "remote",
+    "bin",
     "workflow-defaults.json",
     "locale",
     "cordis.patch.yml",
     "icon.svg",
     "README.md",
+    "INSTALL.md",
+    "docs",
+    "RELEASE.md",
     "WORKFLOW_PUBLISHING.md",
     "THIRD_PARTY_NOTICES.md",
     "LICENSE",
@@ -88,10 +93,14 @@
     }
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node tools/build-current.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "pack:plugin": "node scripts/package.mjs",
-    "install:source": "node scripts/install-source.mjs"
+    "package:windows": "node tools/package-windows.mjs",
+    "package:linux": "node tools/package-unix.mjs linux",
+    "package:macos": "node tools/package-unix.mjs macos",
+    "release:feed": "node tools/release.mjs",
+    "pack:plugin": "node tools/package.mjs",
+    "install:source": "node tools/install-source.mjs"
   }
 }

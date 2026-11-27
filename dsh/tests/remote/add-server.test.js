@@ -11,10 +11,10 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { addServerRecord, parseServerCommand, ServerInputError } from '../../src/remote/add-server.js'
-import { createManager } from '../../src/remote/manager.js'
-import { createRouter, registerRoutes, ROUTE } from '../../src/remote/routes.js'
-import { listAliases } from '../../src/remote/ssh-config.js'
+import { addServerRecord, parseServerCommand, ServerInputError } from '../../plugin/backend/ssh/add-server.js'
+import { createManager } from '../../plugin/backend/ssh/manager.js'
+import { createRouter, registerRoutes, ROUTE } from '../../plugin/backend/ssh/routes.js'
+import { listAliases } from '../../plugin/backend/ssh/ssh-config.js'
 
 function fixture(t, content = 'Host DevEnv950\r\n  HostName 10.0.0.20\r\n  User existing\r\n  Port 22\r\n') {
   const root = mkdtempSync(join(tmpdir(), 'cannbot-add-server-'))

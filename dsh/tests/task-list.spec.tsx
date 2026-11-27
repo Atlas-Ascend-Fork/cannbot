@@ -8,10 +8,10 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 // ----------------------------------------------------------------------------------------------------------
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
-import { TaskList } from '../src/client/TaskList.tsx'
-import { zh } from '../src/client/locales.ts'
+import { TaskList } from '../plugin/frontend/TaskList.tsx'
+import { zh } from '../plugin/frontend/locales.ts'
 
 afterEach(cleanup)
 const t = ((key: keyof typeof zh) => zh[key]) as Parameters<typeof TaskList>[0]['t']
@@ -27,23 +27,26 @@ it('always displays zero completed tasks', () => {
   expect(screen.queryByRole('list')).toBeNull()
 })
 it('counts all completions while showing the latest two and expands the full list', () => {
-  const todos = [
-    { content: '实现', status: 'in_progress' as const },
-    ...['设计', '测试工程', '白盒测试', '代码检视'].map(content => ({ content, status: 'completed' as const })),
-  ]
-  const view = render(<TaskList t={t} todos={todos} />)
-  expect(screen.getByRole('status').textContent).toBe('已完成 4 / 5')
-  expect(screen.queryByRole('list')).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: /任务列表/ }))
-  expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['✓代码检视', '✓白盒测试', '实现'])
-  expect(screen.queryByText('设计')).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '查看全部任务' }))
-  expect(screen.getAllByRole('listitem')).toHaveLength(5)
-  expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['✓代码检视', '✓白盒测试', '✓测试工程', '✓设计', '实现'])
-  fireEvent.click(screen.getByRole('button', { name: '仅显示最近完成' }))
-  view.rerender(<TaskList t={t} todos={[...todos.slice(1), { content: '实现', status: 'completed' }]} />)
-  expect(screen.getByRole('status').textContent).toBe('已完成 5 / 5')
-  expect(screen.getAllByRole('listitem').map(item => item.textContent)).toEqual(['✓实现', '✓代码检视'])
+  const completed = ['设计', '测试工程', '白盒测试', '代码检视'].map(content => ({ content, status: 'completed' as const }))
+  const current = { content: '实现', status: 'in_progress' as const }
+  const { rerender } = render(<TaskList t={t} todos={[current, ...completed]} />)
+  const panel = within(screen.getByRole('region', { name: '任务列表' }))
+  const visibleTasks = () => within(panel.getByRole('list')).getAllByRole('listitem').map(row => row.textContent)
+
+  expect(panel.getByRole('status').textContent).toBe('已完成 4 / 5')
+  expect(panel.queryByRole('list')).toBeNull()
+  fireEvent.click(panel.getByRole('button', { name: /任务列表/, expanded: false }))
+  const recent = ['✓代码检视', '✓白盒测试', '实现']
+  expect(visibleTasks()).toEqual(recent)
+
+  fireEvent.click(panel.getByRole('button', { name: '查看全部任务' }))
+  expect(visibleTasks()).toEqual(['✓代码检视', '✓白盒测试', '✓测试工程', '✓设计', '实现'])
+  fireEvent.click(panel.getByRole('button', { name: '仅显示最近完成' }))
+  expect(visibleTasks()).toEqual(recent)
+
+  rerender(<TaskList t={t} todos={[...completed, { ...current, status: 'completed' }]} />)
+  expect(panel.getByRole('status').textContent).toBe('已完成 5 / 5')
+  expect(visibleTasks()).toEqual(['✓实现', '✓代码检视'])
 })
 it('renders no panel for an empty native todo list', () => {
   const { container } = render(<TaskList t={t} todos={[]} />)

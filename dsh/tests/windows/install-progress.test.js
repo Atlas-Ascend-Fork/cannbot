@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const installer = fileURLToPath(new URL('../../scripts/windows/install-all.ps1', import.meta.url))
+const installer = fileURLToPath(new URL('../../installers/windows/install-all.ps1', import.meta.url))
 const windows = { skip: process.platform !== 'win32' }
 async function exercise(t, { unknown = false, cancel = false, broken = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'cannbot-download-test-'))

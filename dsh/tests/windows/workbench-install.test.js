@@ -9,11 +9,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, symlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { ensureWorkbench as installWorkbench, inspectWorkbench, packageManager, WORKBENCH, SHORT, VERSION } from '../../scripts/windows/ensure-workbench.mjs'
+import { ensureWorkbench as installWorkbench, inspectWorkbench, packageManager, WORKBENCH, SHORT } from '../../installers/windows/ensure-workbench.mjs'
 
-const ARTIFACT = { hash: 'a'.repeat(64), bytes: Buffer.from('current-source-archive') }
+const VERSION = "1.0.0-test"
+const ARTIFACT = { buildId: 'build-a', bytes: Buffer.from('current-source-archive') }
 const ensureWorkbench = (profile, options = {}) => installWorkbench(profile, { artifact: ARTIFACT, ...options })
 
 function fixture(t, manifest = {}) {
@@ -22,10 +23,10 @@ function fixture(t, manifest = {}) {
   writeFileSync(join(root, 'package.json'), JSON.stringify(manifest))
   return root
 }
-function official(root, name = WORKBENCH, dependencies) {
+function official(root, name = WORKBENCH, dependencies, buildId = basename(root)) {
   const dir = join(root, 'node_modules', ...name.split('/'))
   mkdirSync(join(dir, 'lib'), { recursive: true })
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: VERSION, dependencies }))
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: VERSION, dependencies, cannbotEdition:'client', cannbotBuildId:buildId }))
   for (const file of ['lib/index.js', 'lib/client.js', 'cordis.patch.yml']) writeFileSync(join(dir, file), '')
   return dir
 }
@@ -46,7 +47,7 @@ test('installs into an isolated store and links the official package without cha
   const installed = ensureWorkbench(root, { install(store) { installations++; official(store) } })
   assert.equal(installed.bundle, WORKBENCH)
   assert.equal(installed.reused, false)
-  assert.equal(realpathSync(installed.directory), realpathSync(join(root, '.cannbot-workbench', ARTIFACT.hash, 'node_modules', ...WORKBENCH.split('/'))))
+  assert.equal(realpathSync(installed.directory), realpathSync(join(root, '.cannbot-workbench', ARTIFACT.buildId, 'node_modules', ...WORKBENCH.split('/'))))
   assert.deepEqual(readFileSync(join(root, 'package.json')), before)
   assert.equal(ensureWorkbench(root, { install() { throw new Error('must reuse') } }).reused, true)
   assert.equal(installations, 1)
@@ -62,11 +63,11 @@ test('source deployment replaces an old short installation with the current main
   assert.equal(inspectWorkbench(root).bundle,SHORT,'profile registration changes are owned by provisioning')
 })
 
-test('a same-version source hash change installs a new store and keeps the previous source recoverable', (t) => {
+test('a same-version build change installs a new store and keeps the previous source recoverable', (t) => {
   const root=fixture(t)
   const first=ensureWorkbench(root,{install: store=>official(store)})
   const previous=realpathSync(first.directory)
-  const second=ensureWorkbench(root,{artifact:{...ARTIFACT,hash:'b'.repeat(64)},install:store=>official(store)})
+  const second=ensureWorkbench(root,{artifact:{...ARTIFACT,buildId:'build-b'},install:store=>official(store)})
   assert.notEqual(realpathSync(second.directory),previous)
   assert.ok(existsSync(join(previous,'lib/client.js')))
 })
@@ -75,7 +76,7 @@ test('validates pnpm junctions using the real package directory for dependency r
   const root = fixture(t)
   const installed = ensureWorkbench(root, { install(store) {
     const versionRoot = join(store, 'node_modules', '.pnpm', 'cannbot-dsh@1')
-    const core = official(versionRoot, WORKBENCH, { 'private-catalog': '1' })
+    const core = official(versionRoot, WORKBENCH, { 'private-catalog': '1' }, ARTIFACT.buildId)
     const dependency = join(versionRoot, 'node_modules', 'private-catalog')
     mkdirSync(dependency, { recursive: true })
     writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'private-catalog', version: '1' }))

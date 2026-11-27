@@ -9,7 +9,7 @@
 先在 CANNBot 源码仓修改内容，准备该源码仓声明的共享 Skills。构建器每次直接读取指定工作区（包含未提交修改），在系统临时目录装配，不维护 `dsh/assets` 副本。正式发布前应提交源码以便追溯。只构建目标工作流：
 
 ```sh
-node scripts/build-workflow-packages.mjs --source /path/to/cannbot --id ops-direct-invoke --version 1.0.1
+node tools/build-workflow-packages.mjs --source /path/to/cannbot --id ops-direct-invoke --version 1.0.1
 npm publish dist/workflow-releases/cannbot-plugin-workflow-ops-direct-invoke-1.0.1.tgz --access public
 ```
 
@@ -20,7 +20,7 @@ npm publish dist/workflow-releases/cannbot-plugin-workflow-ops-direct-invoke-1.0
 工作流目录、清单与 Skill 需符合现有 CANNBot 结构。先将新工作流加入主插件的 `workflow-defaults.json`；构建器和运行时都以该文件作为允许的工作流集合，仅发布目录包不能让旧主插件发现未声明的工作流。准备好资源及默认集合后，构建新内容包和新版本目录包：
 
 ```sh
-node scripts/build-workflow-packages.mjs --source /path/to/cannbot --id new-workflow --version 1.0.0 --catalog true --catalog-version 1.0.5
+node tools/build-workflow-packages.mjs --source /path/to/cannbot --id new-workflow --version 1.0.0 --catalog true --catalog-version 1.0.5
 ```
 
 该命令会分别产生新工作流包和目录包；目录版本应高于当前已发布版本。按“内容包、目录包、主插件”的顺序发布，主插件必须包含更新后的 `workflow-defaults.json`，并将目录依赖的最低版本设为包含新增项的版本。同步更新短包对主插件的精确依赖。用户升级主插件后才能发现新增工作流。
@@ -58,12 +58,7 @@ node <工作流包>/upstream/bin/cannbot.js install <ID> --tool dsh --target <�
 
 ## 发布主程序
 
-```sh
-npm publish dist/cannbot-plugin-cannbot-dsh-1.0.0-alpha.1.tgz
-npm publish dist/cannbot-dsh-1.0.0-alpha.1.tgz
-```
-
-发布顺序为完整包、短包、一键安装器：短包精确依赖完整包，完整包未公开时短包安装必然失败。
+客户端、服务器版和各自的 npm 短包按[插件发行步骤](RELEASE.md#更新插件)发布。
 
 ## 无需发布的源码安装
 

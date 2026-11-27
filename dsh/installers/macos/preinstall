@@ -1,0 +1,25 @@
+#!/bin/sh
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+set -eu
+scripts=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+user=$(/usr/bin/stat -f %Su /dev/console)
+case "$user" in root|loginwindow|_mbsetupuser|'') echo '请从已登录的 macOS 桌面打开安装包。' >&2; exit 1 ;; esac
+uid=$(/usr/bin/id -u "$user")
+if [ "$(/usr/bin/id -u)" = "$uid" ]; then
+    exec /bin/sh "$scripts/install.sh" --mac-dialog
+fi
+[ "$(/usr/bin/id -u)" = 0 ] || exit 1
+# PackageKit may stage script resources under an installer-only directory.
+# Give the desktop user read access to exactly the immutable bootstrap.
+stage=$(/usr/bin/mktemp -d /private/tmp/cannbot-bootstrap.XXXXXXXX)
+trap '/bin/rm -rf -- "$stage"' EXIT
+/bin/cp "$scripts/install.sh" "$stage/install.sh"
+/bin/chmod 0555 "$stage" "$stage/install.sh"
+/bin/launchctl asuser "$uid" /usr/bin/sudo -H -u "$user" /usr/bin/env TMPDIR=/tmp /bin/sh "$stage/install.sh" --mac-dialog

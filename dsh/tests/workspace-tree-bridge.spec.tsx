@@ -9,8 +9,8 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { WorkspaceTreeBridge } from '../src/client/WorkspaceTreeBridge.tsx'
-import type { WorkspaceModes } from '../src/client/workspace-modes.ts'
+import { WorkspaceTreeBridge } from '../plugin/frontend/WorkspaceTreeBridge.tsx'
+import type { WorkspaceModes } from '../plugin/frontend/workspace-modes.ts'
 
 afterEach(cleanup)
 function PublicFrame({ children, bridge, collapsed }: { children: ReactNode; bridge: ReactNode; collapsed?: string }) {

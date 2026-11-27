@@ -1,0 +1,20 @@
+{
+  "version": "1",
+  "documents": [
+    {
+      "id": "user-agreement",
+      "title": "用户协议",
+      "path": "user-agreement.txt"
+    },
+    {
+      "id": "privacy-policy",
+      "title": "隐私政策",
+      "path": "privacy-policy.txt"
+    },
+    {
+      "id": "open-source-notices",
+      "title": "开源软件声明",
+      "path": "open-source-notices.txt"
+    }
+  ]
+}

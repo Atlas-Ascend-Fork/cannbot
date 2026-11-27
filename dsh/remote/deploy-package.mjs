@@ -1,12 +1,20 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 // Executed with node -e over SSH; stdin is exactly the locally built npm tgz.
-import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, lstatSync, renameSync, symlinkSync, openSync, closeSync, statSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync, lstatSync, mkdtempSync, rmSync, renameSync, symlinkSync, openSync, closeSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import net from 'node:net'
 
-const PACKAGE = '@cannbot-plugin/cannbot-dsh'
+const PACKAGE = '@cannbot-plugin/cannbot-dsh-server'
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 function fail(message) { throw new Error(message) }
 function json(file) { return JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) }
@@ -38,6 +46,13 @@ export function installCurrentPackage(store, archive, registry = '', operations 
 }
 function portBusy(port) { return new Promise(resolve => { const socket = net.createConnection({ host: '127.0.0.1', port }); const end = value => { socket.destroy(); resolve(value) }; socket.setTimeout(800, () => end(false)); socket.once('connect', () => end(true)); socket.once('error', () => end(false)) }) }
 
+// Launcher options precede all Web-app options; "dsh web" is shorthand for the web profile.
+function selectedProfile(args, executableAt) {
+  if (executableAt < 0) return null
+  const next = args[executableAt + 1]
+  return next === '--profile' ? args[executableAt + 2] : next
+}
+
 export function processIdentity(pid, { executable, port, log, profile, runtime = process.execPath }, system = {}) {
   const read = system.read || readFileSync
   const stat = system.stat || statSync
@@ -51,39 +66,13 @@ export function processIdentity(pid, { executable, port, log, profile, runtime =
     const args = read(directory + '/cmdline', 'utf8').split('\0').filter(Boolean)
     const entry = args.find(arg => { try { return realpath(arg) === executable } catch { return false } })
     const option = name => { const at = args.indexOf(name); return at < 0 ? undefined : args[at + 1] }
-    if (!entry || !args.includes('web') || option('--host') !== '127.0.0.1' || option('--port') !== String(port)) return null
-    if ((option('--profile') || 'web') !== profile) return null
+    if (!entry || option('--host') !== '127.0.0.1' || option('--port') !== String(port)) return null
+    if (selectedProfile(args, args.indexOf(entry)) !== profile) return null
     if (realpath(directory + '/fd/1') !== realpath(log)) return null
     const status = read(directory + '/stat', 'utf8')
     const start = status.slice(status.lastIndexOf(')') + 2).split(' ')[19]
     return { pid, start, executable, port, log, profile, uid }
   } catch { return null }
-}
-
-export async function stopOwned(ownerFile, expected, operations = {}) {
-  const identify = operations.identify || processIdentity
-  const busy = operations.busy || portBusy
-  const wait = operations.wait || sleep
-  const kill = operations.kill || process.kill
-  const readOwner = operations.readOwner || (() => existsSync(ownerFile) ? json(ownerFile) : null)
-  const candidatesFor = operations.candidates || (() => readdirSync('/proc').filter(name => /^\d+$/.test(name)).map(name => identify(Number(name), expected)).filter(Boolean))
-  let owner = readOwner()
-  if (owner) {
-    const actual = identify(owner.pid, expected)
-    if (!actual || actual.start !== owner.start) owner = null
-  }
-  if (!owner) {
-    // Adopt an earlier CANNBot bootstrap only when UID, exact DSH entrypoint,
-    // Web arguments, loopback port and stdout logfile all identify it.
-    const candidates = candidatesFor()
-    if (candidates.length !== 1) fail('Cannot safely identify the existing DSH Web process. Stop that server in its original terminal, then reconnect.')
-    owner = candidates[0]
-  }
-  const current = identify(owner.pid, expected)
-  if (!current || current.start !== owner.start) fail('DSH process changed before shutdown; reconnect after stopping the original server.')
-  kill(owner.pid, 'SIGTERM')
-  for (let attempt = 0; attempt < 80; attempt++) { if (!(await busy(expected.port))) return; await wait(250) }
-  fail('DSH Web did not exit after graceful shutdown. Stop it in its original terminal, then reconnect.')
 }
 
 export function existingWeb(home, executable, profile, operations = {}) {
@@ -99,7 +88,8 @@ export function existingWeb(home, executable, profile, operations = {}) {
     try {
       if (stat(directory).uid !== uid) continue
       args = read(directory + '/cmdline', 'utf8').split('\0').filter(Boolean)
-      if (!args.includes('web') || !args.some(arg => { try { return realpath(arg) === executable } catch { return false } })) continue
+      const at = args.findIndex(arg => { try { return realpath(arg) === executable } catch { return false } })
+      if (selectedProfile(args, at) !== profile) continue
     } catch { continue }
     let environment
     try { environment = read(directory + '/environ', 'utf8').split('\0') }
@@ -115,102 +105,154 @@ export function existingWeb(home, executable, profile, operations = {}) {
   return found[0] || null
 }
 
-export async function runDeployment(args = process.argv.slice(1)) {
-const [hash, profile = 'web', requestedPort, registry] = args
-try {
-  if (!/^[a-f0-9]{64}$/.test(hash || '') || !/^[A-Za-z0-9._-]+$/.test(profile)) fail('Invalid deployment identity')
-  if (registry && new URL(registry).protocol !== 'https:') fail('Registry must use HTTPS')
-  const home = resolve(process.env.DSH_HOME || join(homedir(), '.dsh'))
-  const state = join(home, 'cannbot-remote'), builds = join(state, 'builds'), store = join(builds, hash)
-  mkdirSync(builds, { recursive: true, mode: 0o700 })
-  if (lstatSync(builds).isSymbolicLink() || !realpathSync(builds).startsWith(realpathSync(home) + '/')) fail('Unsafe deployment directory')
-  mkdirSync(store, { mode: 0o700, recursive: true })
-  if (lstatSync(store).isSymbolicLink()) fail('Unsafe package store')
-  const input = []
-  let length = 0
-  for await (const chunk of process.stdin) { length += chunk.length; if (length > 128 * 1024 * 1024) fail('Package archive too large'); input.push(chunk) }
-  const archiveBytes = Buffer.concat(input)
-  if (createHash('sha256').update(archiveBytes).digest('hex') !== hash) fail('Package checksum did not match')
-  const archive = join(store, 'source.tgz')
-  writeFileSync(archive, archiveBytes, { mode: 0o600 })
-  const target = join(store, 'node_modules', ...PACKAGE.split('/'))
-  if (!existsSync(join(store, 'complete.json'))) {
-    console.log('CANNBOT_STEP=Installing the current CANNBot build and workflow dependencies')
-    atomic(join(store, 'package.json'), { name: 'cannbot-remote-build', private: true })
-    installCurrentPackage(store, archive, registry)
-    if (json(join(target, 'package.json')).name !== PACKAGE || !existsSync(join(target, 'lib/client.js')) || !existsSync(join(target, 'lib/index.js'))) fail('Installed CANNBot package is incomplete')
-    atomic(join(store, 'complete.json'), { hash })
-  }
-  const dshCommand = run('sh', ['-c', 'command -v dsh'])
-  const executable = realpathSync(dshCommand)
-  const profileDir = join(home, 'profiles', profile), profileFile = join(profileDir, 'package.json')
-  const installedFile = join(state, 'deployed-' + profile + '.json')
-  const installed = existsSync(installedFile) ? json(installedFile) : null
-  const remembered = existsSync(join(state, 'port')) ? Number(readFileSync(join(state, 'port'), 'utf8')) : 0
-  const existing = existingWeb(home, executable, profile)
-  let port = existing?.port || remembered || Number(requestedPort) || 17633
-  if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) fail('Invalid Web port')
-  const log = join(home, 'web-' + port + '.log'), ownerFile = join(state, 'web-' + port + '.owner.json')
-  const busy = await portBusy(port)
-  if (existing && !busy) fail('An existing DSH Web process is still starting or stopping. Wait for it to exit or become ready, then reconnect.')
-  const recordedOwner = existsSync(ownerFile) ? json(ownerFile) : null
-  const currentOwner = recordedOwner && processIdentity(recordedOwner.pid, { executable, port, log, profile })
-  let reused = Boolean(busy && installed?.hash === hash && installed?.port === port && currentOwner?.start === recordedOwner?.start)
-  if (busy && !reused) await stopOwned(ownerFile, { executable, port, log, profile })
-  if (!reused) {
-    console.log('CANNBOT_STEP=Activating the current CANNBot build')
-    if (!existsSync(profileFile)) run(dshCommand, ['plugin', '--profile', profile, 'install'], { env: { ...process.env, DSH_HOME: home } })
-    const manifest = json(profileFile)
-    const profileTarget = join(profileDir, 'node_modules', ...PACKAGE.split('/'))
-    mkdirSync(dirname(profileTarget), { recursive: true })
-    if (!realpathSync(dirname(profileTarget)).startsWith(realpathSync(profileDir) + '/')) fail('Package directory escaped the DSH profile')
-    const temporaryLink = profileTarget + '.new-' + process.pid
-    symlinkSync(target, temporaryLink, 'dir')
-    let previous
-    try { lstatSync(profileTarget); previous = profileTarget + '.before-source-' + Date.now(); renameSync(profileTarget, previous) } catch (error) { if (error.code !== 'ENOENT') throw error }
-    try {
-      renameSync(temporaryLink, profileTarget)
-      writeFileSync(profileFile + '.before-source-' + Date.now() + '.bak', readFileSync(profileFile), { mode: 0o600 })
-      manifest.dependencies ||= {}
-      delete manifest.dependencies['cannbot-dsh']; delete manifest.dependencies['@cannbot-plugin/cannbot-remote']
-      manifest.dependencies[PACKAGE] = 'file:' + target
-      manifest.dsh ||= {}; manifest.dsh.profile ||= {}
-      manifest.dsh.profile.bundles = [...(manifest.dsh.profile.bundles || []).filter(name => !['cannbot-dsh', PACKAGE, '@cannbot-plugin/cannbot-remote'].includes(name)), PACKAGE]
-      atomic(profileFile, manifest)
-    } catch (error) { if (previous && !existsSync(profileTarget)) renameSync(previous, profileTarget); throw error }
-    const output = openSync(log, 'w', 0o600)
-    const serviceEnv = { ...process.env, DSH_HOME: home }
-    delete serviceEnv.CANNBOT_CONNECT_ATTEMPT
-    const child = spawn(dshCommand, ['web', '--host', '127.0.0.1', '--port', String(port), ...(profile === 'web' ? [] : ['--profile', profile]), '--no-open'], { cwd: homedir(), env: serviceEnv, detached: true, stdio: ['ignore', output, output] })
-    closeSync(output)
-    let spawnFailure
-    child.on('error', error => { spawnFailure = error })
-    child.unref()
-    let identity
-    for (let attempt = 0; attempt < 40; attempt++) { if (spawnFailure) fail('Unable to start DSH Web'); identity = processIdentity(child.pid, { executable, port, log, profile }); if (identity) break; await sleep(100) }
-    if (!identity) fail('Unable to verify the started DSH Web process; check its log before retrying')
-    atomic(ownerFile, identity)
-    atomic(installedFile, { hash, port, profile })
-    writeFileSync(join(state, 'port'), String(port), { mode: 0o600 })
-  }
-  let token = ''
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const matches = existsSync(log) ? [...readFileSync(log, 'utf8').matchAll(/token=([A-Za-z0-9._-]+)/g)] : []
-    token = matches.at(-1)?.[1] || ''
-    if (token && await portBusy(port)) break
-    await sleep(500)
-  }
-  if (!token || !(await portBusy(port))) fail('DSH Web did not become ready; inspect its startup log and reconnect')
-  console.log('CANNBOT_REMOTE_PORT=' + port)
-  console.log('CANNBOT_WEB_LOG=' + log)
-  console.log('CANNBOT_TOKEN=' + token)
-  console.log('CANNBOT_REUSE=' + (reused ? '1' : '0'))
-  console.log('CANNBOT_PLUGIN_VERSION=' + json(join(target, 'package.json')).version)
-  console.log('CANNBOT_OK=1')
-} catch (error) {
-  console.log('CANNBOT_ERROR=' + (error?.message || 'Remote package deployment failed').replace(/[\r\n]/g, ' '))
-  process.exitCode = 1
+function installedServer(target, version, buildId) {
+  try {
+    const pkg = json(join(target, 'package.json'))
+    return pkg.name === PACKAGE && pkg.cannbotEdition === 'server' && pkg.version === version && pkg.cannbotBuildId === buildId &&
+      ['lib/client.js', 'lib/index.js', 'cordis.patch.yml'].every(file => existsSync(join(target, file)))
+  } catch { return false }
 }
 
+function cachedArchive(path) {
+  try { return readFileSync(path) } catch (error) { if (error.code === 'ENOENT') return null; throw error }
 }
-if (/^[a-f0-9]{64}$/.test(process.argv[1] || '')) await runDeployment()
+
+export function preinstalledArchive(home, userHome, version, buildId) {
+  const manual = join(home, 'profiles/cannbot-server/.cannbot-install.json')
+  let receipt
+  try { receipt = json(manual) } catch { return null }
+  if (receipt.schemaVersion !== 1 || receipt.edition !== 'server' || receipt.buildId !== buildId || receipt.version !== version) return null
+  return cachedArchive(join(userHome, '.local/share/cannbot/releases', buildId, 'server.tgz'))
+}
+
+export async function readyServer(port, token, version, buildId, fetcher = fetch) {
+  const origin = 'http://127.0.0.1:' + port
+  try {
+    const signal = AbortSignal.timeout(2000)
+    const handshake = await fetcher(origin + '/?token=' + encodeURIComponent(token), { redirect: 'manual', signal })
+    const cookies = handshake.headers.getSetCookie().map(cookie => cookie.split(';', 1)[0]).join('; ')
+    await handshake.body?.cancel()
+    if (handshake.status !== 303 || !cookies) return false
+    const response = await fetcher(origin + '/api/cannbot-dsh/server', { headers: { cookie: cookies }, redirect: 'error', signal })
+    if (!response.ok) { await response.body?.cancel(); return false }
+    const actual = await response.json()
+    return actual.edition === 'server' && actual.buildId === buildId && actual.version === version
+  } catch { return false }
+}
+
+export async function availablePort(preferred, busy = portBusy) {
+  if (!Number.isSafeInteger(preferred) || preferred < 1024 || preferred > 65535) fail('Invalid Web port')
+  if (!await busy(preferred)) return preferred
+  for (let port = 17633; port <= 17700; port++) if (port !== preferred && !await busy(port)) return port
+  fail('No loopback port is available for the CANNBot server')
+}
+
+function ensureProfile(home, profile, buildId, target) {
+  const profiles = join(home, 'profiles'), dir = join(profiles, profile)
+  const link = packageDir => join(packageDir, 'node_modules', ...PACKAGE.split('/'))
+  mkdirSync(profiles, { recursive: true, mode: 0o700 })
+  if (existsSync(dir)) {
+    const manifest = json(join(dir, 'package.json'))
+    if (lstatSync(dir).isSymbolicLink() || manifest.cannbotManagedBuild !== buildId ||
+        !manifest.dsh?.profile?.bundles?.includes(PACKAGE) || realpathSync(link(dir)) !== realpathSync(target)) {
+      fail('The managed CANNBot profile has changed. Restore its original configuration before reconnecting.')
+    }
+    return
+  }
+  const staging = mkdtempSync(join(profiles, '.cannbot-staging-'))
+  try {
+    mkdirSync(dirname(link(staging)), { recursive: true })
+    symlinkSync(target, link(staging), 'dir')
+    atomic(join(staging, 'package.json'), {
+      name: 'dsh-profile-' + profile, private: true, cannbotManagedBuild: buildId, dependencies: { [PACKAGE]: 'file:' + target },
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', PACKAGE] } },
+    })
+    renameSync(staging, dir)
+  } finally { rmSync(staging, { recursive: true, force: true }) }
+}
+
+export async function runDeployment(args = process.argv.slice(1)) {
+  const [buildId, version, requestedPort, registry] = args
+  let lock
+  try {
+    if (process.platform !== 'linux') fail('CANNBot Server requires Linux')
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(buildId || '') || !/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i.test(version || '')) fail('Invalid deployment identity')
+    if (registry && new URL(registry).protocol !== 'https:') fail('Registry must use HTTPS')
+    const profile = 'cannbot-server-' + buildId
+    const home = resolve(process.env.DSH_HOME || join(homedir(), '.dsh'))
+    const state = join(home, 'cannbot-remote'), builds = join(state, 'builds'), store = join(builds, buildId)
+    mkdirSync(builds, { recursive: true, mode: 0o700 })
+    if (realpathSync(builds) !== join(realpathSync(home), 'cannbot-remote', 'builds')) fail('Unsafe deployment directory')
+    // Serialize install, profile creation and port selection across clients. An
+    // SSH cancellation or process exit releases this kernel-held lock.
+    const lockFile = join(state, 'deployment.sqlite3')
+    closeSync(openSync(lockFile, 'a', 0o600))
+    lock = new DatabaseSync(lockFile)
+    lock.exec('PRAGMA busy_timeout=720000; BEGIN EXCLUSIVE')
+    mkdirSync(store, { recursive: true, mode: 0o700 })
+    if (lstatSync(store).isSymbolicLink()) fail('Unsafe package store')
+    const target = join(store, 'node_modules', ...PACKAGE.split('/'))
+    const chunks = []
+    let length = 0
+    for await (const chunk of process.stdin) { length += chunk.length; if (length > 128 * 1024 * 1024) fail('Package archive too large'); chunks.push(chunk) }
+    const complete = join(store, 'complete.json')
+    if (!existsSync(complete) || json(complete).buildId !== buildId || !installedServer(target, version, buildId)) {
+      const archive = join(store, 'source.tgz')
+      let bytes = length ? Buffer.concat(chunks) : cachedArchive(archive)
+      bytes ??= preinstalledArchive(home, homedir(), version, buildId)
+      if (!bytes) { console.log('CANNBOT_NEED_ARCHIVE=1'); return }
+      console.log('CANNBOT_STEP=Installing the matching CANNBot server and workflow dependencies')
+      writeFileSync(archive, bytes, { mode: 0o600 })
+      atomic(join(store, 'package.json'), { name: 'cannbot-server-build', private: true })
+      installCurrentPackage(store, archive, registry)
+      if (!installedServer(target, version, buildId)) fail('Installed package does not match the requested CANNBot server build')
+      atomic(complete, { version, buildId })
+    }
+
+    ensureProfile(home, profile, buildId, target)
+    const executable = realpathSync(run('sh', ['-c', 'command -v dsh']))
+    const existing = existingWeb(home, executable, profile)
+    const port = existing?.port ?? await availablePort(Number(requestedPort) || 17633)
+    const log = join(home, 'web-' + port + '.log')
+    if (!existing) {
+      console.log('CANNBOT_STEP=Starting the CANNBot server profile')
+      const output = openSync(log, 'w', 0o600)
+      const env = { ...process.env, DSH_HOME: home }
+      delete env.CANNBOT_CONNECT_ATTEMPT
+      let child
+      try { child = spawn(process.execPath, [executable, '--profile', profile, '--host', '127.0.0.1', '--port', String(port), '--no-open'], {
+        cwd: homedir(), env, detached: true, stdio: ['ignore', output, output],
+      }) } finally { closeSync(output) }
+      let spawnFailure
+      child.once('error', error => { spawnFailure = error })
+      child.unref()
+      let identity
+      for (let attempt = 0; attempt < 40; attempt++) {
+        if (spawnFailure) fail('Unable to start DSH Web')
+        identity = processIdentity(child.pid, { executable, port, log, profile })
+        if (identity) break
+        await sleep(100)
+      }
+      if (!identity) fail('Unable to verify the started DSH Web process; check its log before retrying')
+    }
+    let token = '', ready = false
+    for (let attempt = 0; attempt < 120; attempt++) {
+      const matches = existsSync(log) ? [...readFileSync(log, 'utf8').matchAll(/token=([A-Za-z0-9._-]+)/g)] : []
+      token = matches.at(-1)?.[1] || ''
+      if (token && await readyServer(port, token, version, buildId)) { ready = true; break }
+      await sleep(500)
+    }
+    if (!ready) fail('The matching CANNBot Server did not become ready; inspect the DSH startup log and reconnect')
+    console.log('CANNBOT_REMOTE_PORT=' + port)
+    console.log('CANNBOT_WEB_LOG=' + log)
+    console.log('CANNBOT_TOKEN=' + token)
+    console.log('CANNBOT_REUSE=' + (existing ? '1' : '0'))
+    console.log('CANNBOT_PLUGIN_VERSION=' + version)
+    console.log('CANNBOT_BUILD_ID=' + buildId)
+    console.log('CANNBOT_OK=1')
+  } catch (error) {
+    console.log('CANNBOT_ERROR=' + (error?.message || 'Remote package deployment failed').replace(/[\r\n]/g, ' '))
+    process.exitCode = 1
+  } finally { lock?.close() }
+}
+if (process.argv[1] === 'cannbot-deploy') await runDeployment(process.argv.slice(2))

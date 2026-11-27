@@ -17,7 +17,7 @@ import {
   readConfigTree,
   resolveFromBlocks,
   listAliases,
-} from '../../src/remote/ssh-config.js'
+} from '../../plugin/backend/ssh/ssh-config.js'
 
 const SCRATCH = join(process.cwd(), '_scratch', 'tests')
 

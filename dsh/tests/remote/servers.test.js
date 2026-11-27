@@ -14,7 +14,7 @@ import {
   mergeInventory,
   normalizeInventory,
   saveInventory,
-} from '../../src/remote/servers.js'
+} from '../../plugin/backend/ssh/servers.js'
 import { join } from 'node:path'
 import { mkdirSync, rmSync } from 'node:fs'
 

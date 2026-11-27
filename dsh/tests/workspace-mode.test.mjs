@@ -1,10 +1,18 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
-import { WorkspaceModes } from '../src/workspace-mode.ts'
-import { workspaceModeResponse, registerWorkspaceModes } from '../src/workspace-mode-host.ts'
-import { ContentManager } from '../src/content-manager.ts'
+import { WorkspaceModes } from '../plugin/backend/workspace-mode.ts'
+import { workspaceModeResponse, registerWorkspaceModes } from '../plugin/backend/workspace-mode-host.ts'
+import { ContentManager } from '../plugin/backend/content-manager.ts'
 
 const ownedRoot = resolve('.acceptance-workspace-mode-tests')
 async function fixture(t) {
@@ -558,15 +566,19 @@ test('new-folder endpoint requires an explicit type, rejects existing paths, and
   }
 })
 
-test('local creation rejects workflows before creating directories, while remote still requires Linux', async t => {
+test('only Linux hosts can create workflow directories, regardless of transport or entry point', async t => {
   const f = await fixture(t)
   const body = { action: 'create-folder', parent: f.directory, name: 'local-workflow', pluginId: 'flow-a', requestId: '12345678-1234-1234-1234-123456789abc' }
-  const response = await workspaceModeResponse(f.modes, request(body))
-  assert.equal(response.status, 400); assert.equal((await response.json()).error, 'workflow-linux-only')
-  assert.equal((await readdir(f.directory)).includes(body.name), false)
-  const remote = new Request('http://localhost/api/cannbot-dsh/workspaces', { method: 'POST', headers: { 'x-cannbot-remote-workspace': '1' }, body: JSON.stringify(body) })
-  const result = await workspaceModeResponse(f.modes, remote)
-  assert.equal(result.status, process.platform === 'linux' ? 200 : 400)
+  for (const platform of ['win32', 'darwin']) {
+    f.dependencies.platform = platform
+    const response = await workspaceModeResponse(f.modes, request(body))
+    assert.equal(response.status, 400); assert.equal((await response.json()).error, 'workflow-linux-only')
+    assert.equal((await readdir(f.directory)).includes(body.name), false)
+    await assert.rejects(f.modes.prepareBeforeLaunch(f.project, 'flow-a'), { code: 'workflow-linux-only' })
+    await assert.rejects(f.modes.withPreparation(f.project, 'flow-a', async () => assert.fail()), { code: 'workflow-linux-only' })
+  }
+  f.dependencies.platform = 'linux'
+  assert.equal((await workspaceModeResponse(f.modes, request(body))).status, 200)
 })
 
 test('directory browser starts at the filesystem root and only returns child folders', async t => {

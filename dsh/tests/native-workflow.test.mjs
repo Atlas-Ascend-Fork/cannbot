@@ -1,4 +1,13 @@
-import { installGoalWorkflowResume } from '../src/goal-workflow-resume.mjs'
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+import { existsSync } from 'node:fs'
+import { installGoalWorkflowResume } from '../plugin/backend/goal-workflow-resume.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
@@ -6,12 +15,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
-import { NativeWorkflow } from '../src/native-workflow.mjs'
-import { pythonBootstrap } from '../src/native-workflow-bootstrap.mjs'
+import { NativeWorkflow } from '../plugin/backend/native-workflow.mjs'
+import { pythonBootstrap } from '../plugin/backend/native-workflow-bootstrap.mjs'
 
 const scripts = fileURLToPath(new URL('../../harness/workflow-orchestrator/scripts/', import.meta.url))
 const runner = join(scripts, 'orchestrator.py')
-const posixOnly = process.platform === 'win32' ? 'Upstream Python orchestrator/workspace import POSIX fcntl; run this integration suite on Linux.' : false
+const posixOnly = process.platform === 'win32' ? 'Upstream Python orchestrator/workspace import POSIX fcntl; run this integration suite on Linux.' : !existsSync(runner) ? 'An upstream workflow checkout is needed.' : false
 async function fixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), 'native-workflow-'))
   t.after(() => rm(cwd, { recursive: true, force: true }))
@@ -145,4 +154,6 @@ test('goal pause stops Python and native children, then goal resume completes sa
 
 if (posixOnly) test('direct-invoke frozen Python phase integration', { skip: posixOnly }, () => {})
 else await import('../../plugins-official/ops-direct-invoke/tests/dsh/native.test.mjs')
-import '../../plugins-official/ops-direct-invoke/tests/dsh/package.test.mjs'
+const upstreamSuite = new URL('../../plugins-official/ops-direct-invoke/tests/dsh/package.test.mjs', import.meta.url)
+if (existsSync(upstreamSuite)) await import(upstreamSuite.href)
+else test.skip('upstream direct-invoke package integration (requires a workflow checkout)', () => {})
