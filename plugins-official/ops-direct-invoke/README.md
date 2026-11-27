@@ -108,6 +108,8 @@ PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装�
 
 `workspace.py prepare` 只复制性能插件本体（约 30M），依赖目录以软链进入 `.context`；Skill 与外部链接仍会在冻结副本内实体化，因此验收与身份校验不受影响。修订目录不自动清理，需要回收磁盘时删除 `.shared/<依赖>/` 下不再使用的 `rev-*`。
 
+直调任务准备时会解析已安装的 `asc-devkit` 检出路径，向使用 `ascendc-docs-search` 的阶段提供 `ASC_DEVKIT_DIR`。跳过依赖仓安装时，可在准备任务前将该变量设为包含 `docs/zh/api/` 的本地仓库根目录。
+
 ### 任务输入与恢复
 
 任务请求提供已确认的开发语言、目标平台和相关资料。PM 先生成并读取 workflow 引导，再按模板的 `use_when` 选择流程并准备输入；具体方法见 [流程编排入口](skills/orchestrator/SKILL.md#从生成的引导选择模板)。
@@ -141,7 +143,7 @@ PM 入口随 `ops-direct-invoke` Skill 安装，角色与 Skill 路径见安装�
 ## 从需求到执行
 
 - 需求对齐：必须加载 [ops-direct-invoke-requirement](skills/custom-skills/requirement/README.md) Skill，按其中的要求执行。
-- 启动前环境检查由 PM 负责：必须加载 [ops-direct-invoke-env-check](skills/custom-skills/env-check/README.md) Skill，按其中的要求执行。
+- 初始化已选语言时，主工作区注册对应环境检查入口。需求对齐后由 PM 从本轮 `pm_skills_root` 加载实际组合及其依赖。启动前环境检查由 PM 负责：必须加载 [ops-direct-invoke-env-check](skills/custom-skills/env-check/README.md) Skill，按其中的要求执行。
 - 算子开发：必须加载 [ops-direct-invoke](skills/orchestrator/SKILL.md) Skill，按其中的要求执行。
 - Workflow 执行：必须加载 [workflow-orchestrator](../../harness/workflow-orchestrator/SKILL.md) Skill，按其中的要求执行。
 

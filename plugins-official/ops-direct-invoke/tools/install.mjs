@@ -297,7 +297,7 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
     if (process.env.CANNBOT_OPMODEL_STRICT === "1") throw new Error("OpModel setup failed in strict mode");
   }
 
-  // Feed a standard four-Skill plugin to the shared installer, then publish private resources.
+  // Feed a selected main-session Skills to the shared installer, then publish private resources.
   report("安装直调插件、依赖仓库与客户端配置");
   const temporary = mkdtempSync(join(tmpdir(), "ops-direct-invoke-install-"));
   const cleanup = () => rmSync(temporary, { recursive: true, force: true });
@@ -364,6 +364,8 @@ export async function initialize({ options, pluginDir, sourceRepositoryRoot, sou
     const registry = readJson(registryPath);
     registry.plugins = registry.plugins.map((item) => item.plugin === NAME ? record : item);
     writeJson(registryPath, registry);
+    const devkit = record.dependencies.find((path) => basename(path) === "asc-devkit");
+    if (devkit) config.asc_devkit_dir = resolve(options.target, devkit);
     config.performance_registry = join(pathsFor(config.performance_root, options.tool).configDir, "cannbot-plugin.json");
     writeJson(join(options.target, ".cannbot/ops-direct-invoke.json"), config);
     if (dshWanted) {

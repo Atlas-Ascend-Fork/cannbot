@@ -49,6 +49,28 @@ function configuration(box) {
   return JSON.parse(readFileSync(join(box.target, '.cannbot/ops-direct-invoke.json'), 'utf8'));
 }
 
+for (const source of ['repository', 'package']) {
+  test(`${source}: PM environment Skill follows language changes and is removed when deferred`, (t) => {
+    const box = sandbox(t);
+    const name = 'ops-direct-invoke-env-check';
+    const visible = join(join(box.target, '.agents/skills'), name);
+    const config = JSON.parse(readFileSync(box.initConfig, 'utf8'));
+    for (const [platform, language] of [['ascend', 'dsl'], ['kirin', 'ascendc'], ['ascend', 'ascendc'], ['ascend', 'unspecified']]) {
+      writeFileSync(box.initConfig, JSON.stringify({ ...config, repo: 'common', platform, language }));
+      install(box, 'codex', source);
+      const registry = JSON.parse(readFileSync(join(box.target, '.codex/cannbot-plugin.json'), 'utf8'));
+      const registered = registry.plugins.find(item => item.plugin === plugin).skills;
+      assert.equal(registered.includes(relative(box.target, visible)), language !== 'unspecified');
+      assert.equal(existsSync(visible), language !== 'unspecified');
+      if (language !== 'unspecified') {
+        const leaf = `skills/custom-skills/env-check/${platform}/${language}`;
+        assert.equal(realpathSync(visible), realpathSync(join(configuration(box).asset_root, leaf)));
+        assertSkillResources(visible, join(repository, sourceDirectory, leaf));
+      }
+    }
+  });
+}
+
 function assertAssets(root) {
   // Every classified implementation and its resources must survive packaging, even
   // when it is not selected for the main session.

@@ -278,6 +278,17 @@ def validate_preparation(config, work, task, provider):
     return provider
 
 
+def bind_pm_skills(stage, final, available, selected):
+    local_available = {name: path.replace(str(final), str(stage), 1)
+                       for name, path in available.items()}
+    skill_closure([PREFIX + name for name in selected], local_available)
+    # PM reads these flat entries before scheduling; separate runs may choose different languages.
+    pm_root = stage / "pm-skills"
+    pm_root.mkdir()
+    for name, path in skill_closure([PREFIX + "env-check", PREFIX + "engineering"], local_available).items():
+        (pm_root / name).symlink_to(os.path.relpath(path, pm_root), target_is_directory=True)
+
+
 def prepare(config_path, work, language, task, engineering, code_dir, provider=None):
     config = read_json(config_path)
     work = Path(work).resolve()
@@ -303,25 +314,26 @@ def prepare(config_path, work, language, task, engineering, code_dir, provider=N
         # Only the public entry is selectable by an outer task. Its complete
         # installation is mounted when that task executes the delegated workflow.
         available["ops-perf-optimize-workflow"] = perf_skills["ops-perf-optimize-workflow"]
-        if "ops-theoretical-performance-estimation" in perf_skills:
-            available.setdefault(
-                "ops-theoretical-performance-estimation",
-                perf_skills["ops-theoretical-performance-estimation"],
-            )
-        local_available = {name: path.replace(str(final), str(stage), 1)
-                           for name, path in available.items()}
-        skill_closure([PREFIX + name for name in selected], local_available)
-        snapshot_names = ["plugin", "external-skills", "performance"] + (["overrides"] if overrides else [])
+        estimation = "ops-theoretical-performance-estimation"
+        if estimation in perf_skills:
+            available.setdefault(estimation, perf_skills[estimation])
+        bind_pm_skills(stage, final, available, selected)
+        snapshot_names = ["plugin", "external-skills", "performance", "pm-skills"]
+        if overrides:
+            snapshot_names.append("overrides")
         context = {"schema_version": 1, "plugin": "ops-direct-invoke", "work_dir": str(work), "provider": provider,
                    "selection": {key: config[key] for key in ["repo", "platform", "chip", "preferences"]},
                    "code_dir": str(Path(code_dir).resolve()),
                    "project_root": str(Path(config_path).resolve().parent.parent),
-                   "plugin_root": str(final / "plugin"),
+                   "plugin_root": str(final / "plugin"), "pm_skills_root": str(final / "pm-skills"),
                    "performance_root": str(final / "performance"),
                    "performance_skills": perf_skills, "skills": available,
                    "sources": {"plugin": str(source), "external-skills": str(external),
                                "performance": str(performance)},
                    "digests": {name: digest(stage / name) for name in snapshot_names}}
+        devkit = config.get("asc_devkit_dir") or os.environ.get("ASC_DEVKIT_DIR")
+        if devkit and (Path(devkit) / "docs/zh/api").is_dir():
+            context["asc_devkit_dir"] = str(Path(devkit).resolve(strict=True))
         context["selection"].update(language=language, task=task, engineering=engineering)
         # No user file is replaced. Publication is complete before context.json
         # becomes visible to the launcher.
@@ -581,6 +593,8 @@ def prepare_phase(entry, work, context=None):
            "OPS_DIRECT_INVOKE_ROOT": str(Path(context["plugin_root"])),
            "DOC_TEMPLATES_DIR": context["skills"][PREFIX + "doc-templates"],
            "HARNESS_SKILL_DIR": context["skills"]["workflow-orchestrator"]}
+    if "ascendc-docs-search" in skills and "asc_devkit_dir" in context:
+        env["ASC_DEVKIT_DIR"] = context["asc_devkit_dir"]
     envelope = {"task_id": task_id, "phase": phase, "role": role, "cwd": str(cwd),
                 "identity": str(identity), "skills": {n: str(p) for n, p in skills.items()}, "env": env}
     return write_phase_context(cwd, envelope, skill_dir, entry["prompt"])

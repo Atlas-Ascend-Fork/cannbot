@@ -17,6 +17,7 @@ description: 维护 ops-direct-invoke 工作流的架构与设计思想。修改
 │   ├── ops-direct-invoke-maintain/     # 本维护 Skill
 │   ├── ops-direct-invoke/              # 主会话 PM 入口
 │   ├── ops-direct-invoke-requirement/  # 已选平台需求能力
+│   ├── ops-direct-invoke-env-check/    # 初始化已确定语言时注册
 │   └── ops-direct-invoke-repo-guide/   # 已选仓库能力
 ├── <客户端配置目录>/
 │   └── cannbot-plugin.json            # 插件安装记录
@@ -81,6 +82,8 @@ Skill 目录可能是 `.agents/skills/`，也可能是客户端配置目录下�
 不得修改 harness core；复用公开调度与执行回调接口，节点的阶段与 Skill 绑定由插件自行管理。不得修改 ops-perf-optimize 的文件或独立运行行为，接入适配限定在直调调用侧。
 
 先检查相关 Skill 的软链接目标，并按需读取客户端配置目录中的 `cannbot-plugin.json` 确认插件归属和安装方式。源码安装下，编辑 Skill 链接中的文件会影响其源目录及使用该源码的其他工作区。
+
+**按调用者和使用时机检查 Skill 可达性。** 从 PM、execute 和 verifier 实际要求加载的公开名出发，分别核对入口、传递依赖和文内跨 Skill 引用。用源码和打包安装覆盖已选语言、暂未指定、任务改选及重装；从实际可见路径打开 SKILL.md 和配套资料，并核对变体、安装记录和本轮快照。对依赖外部资料的 Skill，从绑定该能力的阶段目录，使用实际下发的环境变量读取一份资料，并验证恢复时仍指向原检出。确认首个调用发生前入口已生成，后续任务不会覆写其他运行的绑定。
 
 **相对路径按 Agent 实际看到的安装位置检视。** Skill 被链接到扁平技能目录后，不能假定源码的父级或兄弟目录关系仍成立。Skill 内资料使用不越出本 Skill 根目录的引用；跨 Skill 或插件资产从安装记录、初始化配置的 `asset_root` 或本轮 `context.json` 取得明确路径。验证时从公开 Skill 路径先做客户端常见的词法归一化，再实际读取并核对目标内容；不能先解析软链接回源码位置再检查。覆盖源码安装、打包安装及 execute/verifier 阶段工作区，既防止缺失，也防止误读同名文件。
 

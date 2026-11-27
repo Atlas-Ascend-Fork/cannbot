@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -202,7 +203,14 @@ class WorkspaceTests(unittest.TestCase):
             with self.subTest(platform=platform, language=language):
                 write_json(self.config, {**original, "platform": platform, "chip": platform})
                 self.work = self.root / f"{platform}-{language}" / "workflow1"
-                self.freeze(language=language, engineering=engineering)
+                frozen = self.freeze(language=language, engineering=engineering)
+                pm_root = Path(frozen["pm_skills_root"])
+                env = pm_root / "ops-direct-invoke-env-check"
+                self.assert_linked_resources(env, self.source / "skills/custom-skills/env-check" / platform / language)
+                for dependency in metadata(env).get("metadata", {}).get("required_skills", []):
+                    self.assertEqual(metadata(pm_root / dependency)["name"], dependency)
+                self.assertEqual((pm_root / "ops-direct-invoke-engineering").resolve(),
+                                 Path(frozen["skills"]["ops-direct-invoke-engineering"]))
                 names = ["ops-direct-invoke-env-check", "ops-direct-invoke-doc-templates"]
                 self.bind(names=names, verify=names)
                 self.assert_phase_resource_links(platform, language)
@@ -301,6 +309,38 @@ class WorkspaceTests(unittest.TestCase):
                 write_template(template, workflow)
                 with self.assertRaisesRegex(ValueError, error):
                     validate_graph_context(workflow, self.work, context)
+
+    def test_skipped_devkit_install_accepts_a_local_documentation_checkout(self):
+        checkout = self.root / "local devkit"
+        with patch.dict(os.environ, {"ASC_DEVKIT_DIR": str(checkout)}):
+            self.assertNotIn("asc_devkit_dir", self.freeze())
+            (checkout / "docs/zh/api").mkdir(parents=True)
+            self.work = self.root / "with-local-checkout"
+            self.assertEqual(self.freeze()["asc_devkit_dir"], str(checkout))
+
+    def test_docs_search_reads_the_frozen_devkit_from_each_bound_phase(self):
+        checkout = self.root / "devkit revision 1"
+        docs = checkout / "docs/zh/api"
+        docs.mkdir(parents=True)
+        (docs / "Add.md").write_text("Add API")
+        installed = self.root / "asc-devkit"
+        installed.symlink_to(checkout, target_is_directory=True)
+        config = json.loads(self.config.read_text())
+        write_json(self.config, {**config, "asc_devkit_dir": str(installed)})
+        skill(self.root / "external/ascendc-docs-search", "ascendc-docs-search")
+        self.freeze()
+        installed.unlink()
+        installed.symlink_to(self.root / "new revision")
+        self.bind(names=["ascendc-docs-search"], verify=["ascendc-docs-search"])
+        for phase in ["execute", "verify"]:
+            result = prepare_phase(self.entry(phase), self.work)
+            self.assertEqual(result["env"]["ASC_DEVKIT_DIR"], str(checkout))
+            exports = [line for line in result["prompt"].splitlines() if line.startswith("export ")]
+            script = "\n".join(exports + ['cat "$ASC_DEVKIT_DIR/docs/zh/api/Add.md"'])
+            read = subprocess.run(["sh", "-c", script], cwd=result["cwd"], check=True,
+                                  capture_output=True, text=True, env={"PATH": os.defpath})
+            self.assertEqual(read.stdout, "Add API")
+        self.assertNotIn("ASC_DEVKIT_DIR", prepare_phase(self.entry("advice"), self.work)["env"])
 
     def test_phases_use_only_declared_skills_and_frozen_sources(self):
         context = self.freeze()

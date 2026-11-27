@@ -260,7 +260,9 @@ export async function prepareDirectInvokeConfig(options, io = {}) {
 }
 
 export function directInvokeSkillPaths(config) {
-  return ["skills/maintain", "skills/orchestrator",
+  const paths = ["skills/maintain", "skills/orchestrator",
     `skills/custom-skills/requirement/${config.platform}`,
     `skills/custom-skills/repo-guide/${config.repo}`];
+  if (config.language && config.language !== "unspecified") paths.push(`skills/custom-skills/env-check/${config.platform}/${config.language}`);
+  return paths;
 }

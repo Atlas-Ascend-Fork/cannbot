@@ -182,6 +182,10 @@ function fixture(t) {
     symlinkSync("../references", join(plugin, "skills/custom-skills/requirement", platform, "references"));
   }
   for (const platform of ["ascend", "kirin"]) {
+    for (const language of platform === "ascend" ? ["ascendc", "dsl"] : ["ascendc"]) {
+      write(join(plugin, "skills/custom-skills/env-check", platform, language, "SKILL.md"),
+        `---\nname: ops-direct-invoke-env-check\ndescription: fixture\n---\n${platform}/${language}\n`);
+    }
     write(join(plugin, "skills/custom-skills/env-check", platform, "platform.json"), { languages: platform === "ascend" ? ["ascendc", "dsl"] : ["ascendc"] });
   }
   for (const path of ["tools/runtime.py", "docs/contract.md", "orchestrations/tasks/task.yaml", "agents/developer.md", "skills/custom-skills/common/shared.md"]) {
@@ -775,6 +779,28 @@ test("shared dependency checkouts are linked instead of cloned twice", (t) => {
   assert.equal(readFileSync(join(target, "ops-tensor", "keep.txt"), "utf8"), "keep");
 });
 
+
+test("init records the provisioned asc-devkit checkout for workflow preparation", (t) => {
+  const f = fixture(t);
+  const repo = join(f.box, "local devkit");
+  write(join(repo, "docs/zh/api/Add.md"), "Add API");
+  for (const args of [["init", "-q"], ["add", "."],
+    ["-c", "user.name=test", "-c", "user.email=test@example.org", "commit", "-qm", "fixture"]]) {
+    const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  write(join(f.plugin, "plugin-install.json"), { initializer: "tools/install.mjs",
+    dependencies: [{ name: "asc-devkit", repository: repo }] });
+  f.env.CANNBOT_SKIP_DEPENDENCY_REPOS = "0";
+  const result = f.install();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const config = JSON.parse(readFileSync(join(f.target, ".cannbot/ops-direct-invoke.json")));
+  assert.equal(readFileSync(join(config.asc_devkit_dir, "docs/zh/api/Add.md"), "utf8"), "Add API");
+  f.env.CANNBOT_SKIP_DEPENDENCY_REPOS = "1";
+  const skipped = f.install();
+  assert.equal(skipped.status, 0, skipped.stdout + skipped.stderr);
+  assert.equal(JSON.parse(readFileSync(join(f.target, ".cannbot/ops-direct-invoke.json"))).asc_devkit_dir, undefined);
+});
 
 for (const location of ["private assets", "registered client Skills"]) {
   test(`reinitialization rejects overrides inside ${location} before changing installed content`, (t) => {
